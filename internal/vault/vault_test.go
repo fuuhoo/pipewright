@@ -98,7 +98,7 @@ func TestUnconfiguredVault(t *testing.T) {
 // TestCreateGetRoundTrip 验证 Create→Get 取回原文,并更新 last_used_at。
 func TestCreateGetRoundTrip(t *testing.T) {
 	v := New(testDB(t), testKey())
-	cred, err := v.Create(CreateInput{Name: "deploy key", Type: TypeSSHKey, Scope: "prod", Secret: pemKey})
+	cred, err := v.Create(CreateInput{Name: "deploy key", Type: TypeSSHKey, Scope: "global", Secret: pemKey})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -188,13 +188,13 @@ func TestUpdateRotateSecret(t *testing.T) {
 // TestUpdateNameScope 验证仅改名/作用域不动密文。
 func TestUpdateNameScope(t *testing.T) {
 	v := New(testDB(t), testKey())
-	cred, _ := v.Create(CreateInput{Name: "old", Type: TypeRegistry, Scope: "s1", Secret: "alice:pw"})
-	newName, newScope := "new", "s2"
+	cred, _ := v.Create(CreateInput{Name: "old", Type: TypeRegistry, Scope: "global", Secret: "alice:pw"})
+	newName, newScope := "new", "global"
 	updated, err := v.Update(cred.ID, UpdateInput{Name: &newName, Scope: &newScope})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if updated.Name != "new" || updated.Scope != "s2" {
+	if updated.Name != "new" || updated.Scope != "global" {
 		t.Fatalf("update mismatch: %+v", updated)
 	}
 	plain, _ := v.Get(cred.ID)
@@ -249,7 +249,7 @@ func TestACSEC01_NoPlaintextInDB(t *testing.T) {
 	storetest.SkipIfMySQL(t) // 整库 dump 经 sqlite_master 遍历表,SQLite 文件专有;密文属性由 vault 层保证
 	db := testDB(t)
 	v := New(db, testKey())
-	if _, err := v.Create(CreateInput{Name: "ci key", Type: TypeSSHKey, Scope: "prod", Secret: pemKey}); err != nil {
+	if _, err := v.Create(CreateInput{Name: "ci key", Type: TypeSSHKey, Scope: "global", Secret: pemKey}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 

@@ -64,6 +64,7 @@ type CreateInput struct {
 	Scope    string
 	Username string
 	Secret   string
+	OwnerID  string // v6.2 阶段 5:personal 凭据必填 users.id
 }
 
 // UpdateInput 是更新凭据的入参;指针字段为 nil 表示不修改。
@@ -73,6 +74,7 @@ type UpdateInput struct {
 	Scope    *string
 	Username *string
 	Secret   *string
+	OwnerID  *string // v6.2 阶段 5:personal 必填
 }
 
 type GitAuth struct {
