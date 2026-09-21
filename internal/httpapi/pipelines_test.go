@@ -463,3 +463,44 @@ func TestPipelineImportInvalidStage(t *testing.T) {
 		t.Fatalf("error code = %q, want invalid_stage, body=%s", body2.Error.Code, raw)
 	}
 }
+
+// TestPipelineSaveRejectsBodyYaml v6.2 阶段 13:PUT /api/projects/{id}/pipeline
+// body 含 yaml 字段 → 400 yaml_direct_edit_disabled。
+// 前端应走画布(stages)或 /import(save=true)路径写入。
+func TestPipelineSaveRejectsBodyYaml(t *testing.T) {
+	srv, client, csrf, projID := setupPipelineServer(t)
+	doc := "stages:\n  - name: x\n    kind: build\n    jobs: [{name: j, type: git_source}]\n"
+	// 故意带 yaml 字段(stages 空也行,关键是含 yaml 键)。
+	body, _ := json.Marshal(map[string]any{
+		"yaml":   doc,
+		"stages": []any{},
+	})
+	resp := doJSON(t, client, http.MethodPut, srv.URL+"/api/projects/"+projID+"/pipeline", csrf, string(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("body 含 yaml 应 400, got %d, body=%s", resp.StatusCode, raw)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Error struct{ Code string `json:"code"` } `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.Error.Code != "yaml_direct_edit_disabled" {
+		t.Fatalf("error code = %q, want yaml_direct_edit_disabled", out.Error.Code)
+	}
+}
+
+// TestPipelineSaveAcceptsStagesOnly v6.2 阶段 13:不带 yaml 字段的 PUT(stages)
+// 仍正常工作(回归覆盖,确认改动未破坏正常画布 PUT 路径)。
+func TestPipelineSaveAcceptsStagesOnly(t *testing.T) {
+	srv, client, csrf, projID := setupPipelineServer(t)
+	// 必须含 source 阶段(流水线不变式:恰一个 source)。
+	body := `{"stages":[{"name":"src","kind":"source","jobs":[{"name":"j1","type":"git_source"}]},{"name":"build","kind":"build","jobs":[{"name":"j2","type":"build_image"}]}]}`
+	resp := doJSON(t, client, http.MethodPut, srv.URL+"/api/projects/"+projID+"/pipeline", csrf, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("stages-only 应 200, got %d, body=%s", resp.StatusCode, raw)
+	}
+}

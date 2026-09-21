@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -199,8 +200,16 @@ func makeGetPipelineHandler(svc pipeline.Service) http.HandlerFunc {
 }
 
 // makeSavePipelineHandler 返回 PUT /api/projects/{id}/pipeline handler。
+//
 // 收 {stages:[...]};服务端规范化(补 id、trim)→ 校验 → 渲染 YAML → 持久化(draft)→ 回读。
 // 校验失败 → 422 定位到项;请求体限 256KB。
+//
+// v6.2 阶段 13:拒绝 body 含 `yaml` 字段(yaml_direct_edit_disabled)。前端应通过
+// 画布(stages)或 import(yaml 预览 + save=true)路径写入;直接 PUT yaml 已被禁用,
+// 但保留 GET 返回的 yaml 字段(只读导出)。
+//
+// 实现:先把 body 完整读到 buf(限 256KB),用 map[string]json.RawMessage 探一次
+// 顶层 yaml 键;不存在 → 重新按 {Stages:...} 解码走原路径。
 func makeSavePipelineHandler(svc pipeline.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -209,10 +218,25 @@ func makeSavePipelineHandler(svc pipeline.Service) http.HandlerFunc {
 		}
 		id := chi.URLParam(r, "id")
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<18) // 256KB
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "读取请求体失败: "+err.Error())
+			return
+		}
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if _, hasYAML := probe["yaml"]; hasYAML {
+			writeError(w, http.StatusBadRequest, "yaml_direct_edit_disabled",
+				"PUT /api/projects/{id}/pipeline 不接受 yaml 字段(仅 GET 返回只读 yaml);请用 stages 或 /import 路径")
+			return
+		}
 		var req struct {
 			Stages []reqStage `json:"stages"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
