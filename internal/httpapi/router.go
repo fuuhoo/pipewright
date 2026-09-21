@@ -673,7 +673,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 显式同步仓库(refs sync):用户在前端点「⟳ 同步远程」时调用,触发 repocache 增量 fetch + 回读,
 		// 让远程刚 push 的新分支/新 tag 立刻出现在下拉里。POST 命中写方法 → 过 auth + CSRF(上层 middleware 已统一罩住);
 		// handler 内部按结果记 audit(NFR-8:写操作的任何尝试均留痕)。o.refsLister 为 nil → 503。
-		ar.Post("/projects/{id}/refs/sync", makeSyncRefsHandler(p, v, o.refsLister, aud))
+		// ar.Post("/projects/{id}/refs/sync", makeSyncRefsHandler(p, v, o.refsLister, aud)) // TODO(restore after refs_sync handler is re-added)
 		ar.Get("/projects/{id}/runner", makeGetRunnerHandler(o.runnerConfig))
 		ar.Put("/projects/{id}/runner", makeSaveRunnerHandler(o.runnerConfig, aud))
 
