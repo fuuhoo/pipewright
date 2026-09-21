@@ -569,7 +569,8 @@ func (s *service) DisableWithActor(actor *Actor, id string) error {
 		return err
 	}
 	if cred.Scope != "personal" {
-		return fmt.Errorf("vault: disable: only personal credentials can be disabled (got scope=%q)", cred.Scope)
+		// 用 ErrForbidden 而非裸 error:HTTP 层据此返回 403 而不是 500。
+		return ErrForbidden
 	}
 	// 0053 未落地:enabled 列不存在,跳过 UPDATE,等迁移重做后启用。
 	return nil

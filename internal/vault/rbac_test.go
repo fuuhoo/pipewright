@@ -1,7 +1,10 @@
 package vault
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/huangchengsir/pipewright/internal/storetest"
 )
 
 // 单元测试集中覆盖 rbac.go 的纯逻辑:
@@ -176,5 +179,28 @@ func TestAuthorizeWrite(t *testing.T) {
 				t.Fatalf("authorizeWrite: got=%v want=%v", got, tc.wantErr)
 			}
 		})
+	}
+}
+
+// 回归:DisableWithActor 对 global 凭据曾返回裸 fmt.Errorf,HTTP 层落到 default
+// → 500(应为 403)。联调抓到时才暴露。
+func TestRegression_DisableGlobalReturnsForbidden(t *testing.T) {
+	db := storetest.OpenDB(t)
+	v := New(db, testKey())
+	// 建一条 scope=global 的凭据
+	g, err := v.Create(CreateInput{
+		Name: "g", Type: TypeGitToken, Scope: "global", Secret: "s",
+	})
+	if err != nil {
+		t.Fatalf("create global: %v", err)
+	}
+	admin := &Actor{UserID: "admin-1", Role: "admin"}
+	if err := v.DisableWithActor(admin, g.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("禁 global 应 ErrForbidden(→403), got %v", err)
+	}
+	// 非 admin → 同样 ErrForbidden
+	user := &Actor{UserID: "u-1", Role: "user"}
+	if err := v.DisableWithActor(user, g.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("user 禁 global 应 ErrForbidden, got %v", err)
 	}
 }

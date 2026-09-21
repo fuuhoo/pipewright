@@ -58,6 +58,11 @@ func writeVaultError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_credential", "secret 不能为空")
 	case errors.Is(err, vault.ErrEmptyName):
 		writeError(w, http.StatusBadRequest, "invalid_credential", "name 不能为空")
+	case errors.Is(err, vault.ErrForbidden):
+		// 普通用户调 admin 端点(双重防线)/ 禁 global 凭据 / 越权访他人 personal
+		writeError(w, http.StatusForbidden, "forbidden", "无权执行该操作:global 凭据不可禁用,个人凭据仅管理员可禁用")
+	case errors.Is(err, vault.ErrAccessDenied):
+		writeError(w, http.StatusForbidden, "access_denied", "无权访问该凭据")
 	default:
 		// 包含 ErrDecrypt 等内部错误:不泄漏细节。
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")

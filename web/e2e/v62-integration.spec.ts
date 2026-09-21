@@ -219,6 +219,25 @@ test.describe('v6.2 前后端联调', () => {
     await expect(page.locator('.banner')).toContainText(/e2e-admin-personal/)
   })
 
+  test('I4b 禁 global 凭据 → 403(不是 500)', async ({ request }) => {
+    // 联调补充:DisableWithActor 对 global 曾返回裸 error → HTTP 500。
+    const loginResp = await request.post(`${BASE}/api/auth/login`, { data: ADMIN })
+    expect(loginResp.status()).toBe(200)
+    const csrf = (await request.storageState()).cookies.find((c) => c.name === 'pipewright_csrf')
+    const h = { 'X-CSRF-Token': csrf?.value ?? '' }
+
+    const creds = await (await request.get(`${BASE}/api/credentials`, { headers: h })).json()
+    const global = (creds as Array<{ id: string; scope: string }>).find((c) => c.scope === 'global')
+    expect(global, '应存在一条 global 凭据(前置 seed)').toBeTruthy()
+
+    const resp = await request.post(`${BASE}/api/admin/credentials/${global!.id}/disable`, {
+      headers: h,
+    })
+    expect(resp.status()).toBe(403)
+    const body = await resp.json()
+    expect(body.error?.code).toBe('forbidden')
+  })
+
   test('I5 audit:UI 操作写入审计,actor 来自 session', async ({ page, request }) => {
     test.setTimeout(180_000)
     // 先经 API 做一次可审计的写操作(建 build_env)。
