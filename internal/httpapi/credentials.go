@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/huangchengsir/pipewright/internal/auth"
 	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
@@ -85,7 +86,8 @@ func makeListCredentialsHandler(v vault.Vault) http.HandlerFunc {
 
 // makeCreateCredentialHandler 返回 POST /api/credentials handler。
 // 创建成功后追加 credential_create 审计(detail 仅元数据,经 Masker 脱敏,绝无明文)。
-func makeCreateCredentialHandler(v vault.Vault, aud audit.Recorder) http.HandlerFunc {
+// v6.2 阶段 7:audit actor 由 session 派生(ac 为 auth.Authenticator 派生用户名)。
+func makeCreateCredentialHandler(v vault.Vault, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key")
@@ -114,8 +116,7 @@ func makeCreateCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 			writeVaultError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionCredentialCreate,
 			TargetType: audit.TargetCredential,
 			TargetID:   cred.ID,
@@ -128,7 +129,7 @@ func makeCreateCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 
 // makeUpdateCredentialHandler 返回 PATCH /api/credentials/{id} handler。
 // 更新成功后追加 credential_update 审计(detail 仅元数据 + 是否轮换密钥;绝无明文)。
-func makeUpdateCredentialHandler(v vault.Vault, aud audit.Recorder) http.HandlerFunc {
+func makeUpdateCredentialHandler(v vault.Vault, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key")
@@ -156,8 +157,7 @@ func makeUpdateCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 			writeVaultError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionCredentialUpdate,
 			TargetType: audit.TargetCredential,
 			TargetID:   cred.ID,
@@ -171,7 +171,7 @@ func makeUpdateCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 // makeRevealCredentialHandler 返回 POST /api/credentials/{id}/reveal handler。
 // 解密并回传明文(仅此一处对外暴露明文);每次查看追加 credential_reveal 审计,
 // 谁在何时看过哪条凭据均留痕。POST + 登录态 + CSRF(写方法路由),不做成可预取的 GET。
-func makeRevealCredentialHandler(v vault.Vault, aud audit.Recorder) http.HandlerFunc {
+func makeRevealCredentialHandler(v vault.Vault, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key")
@@ -183,8 +183,7 @@ func makeRevealCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 			writeVaultError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionCredentialReveal,
 			TargetType: audit.TargetCredential,
 			TargetID:   id,
@@ -197,7 +196,7 @@ func makeRevealCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 
 // makeDeleteCredentialHandler 返回 DELETE /api/credentials/{id} handler。
 // 删除成功后追加 credential_delete 审计。
-func makeDeleteCredentialHandler(v vault.Vault, aud audit.Recorder) http.HandlerFunc {
+func makeDeleteCredentialHandler(v vault.Vault, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key")
@@ -208,8 +207,7 @@ func makeDeleteCredentialHandler(v vault.Vault, aud audit.Recorder) http.Handler
 			writeVaultError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionCredentialDelete,
 			TargetType: audit.TargetCredential,
 			TargetID:   id,

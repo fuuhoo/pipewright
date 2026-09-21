@@ -33,6 +33,8 @@ const (
 	ActionCredentialUpdate   = "credential_update"
 	ActionCredentialDelete   = "credential_delete"
 	ActionCredentialReveal   = "credential_reveal"
+	// v6.2 阶段 7:admin 禁用 personal 凭据(enabled=0);不改密、不删。
+	ActionCredentialDisable  = "credential_disable"
 	ActionTriggerSecretReset = "trigger_secret_reset"
 	ActionProjectCreate      = "project_create"
 	ActionProjectUpdate      = "project_update"
@@ -60,20 +62,42 @@ const (
 	ActionCustomNodeCreate = "custom_node_create"
 	ActionCustomNodeUpdate = "custom_node_update"
 	ActionCustomNodeDelete = "custom_node_delete"
+	// v6.2 阶段 7:构建环境管理 + 配置资源管理 + 用户管理。
+	ActionBuildEnvCreate = "build_env_create"
+	ActionBuildEnvUpdate = "build_env_update"
+	ActionBuildEnvDelete = "build_env_delete"
+	ActionBuildEnvToggle = "build_env_toggle" // enable/disable 切换
+	ActionBuildEnvCheck  = "build_env_check"  // 手动/自动镜像检查
+	ActionBuildEnvPull   = "build_env_pull"   // 手动 pull 镜像
+
+	ActionConfigProfileCreate = "config_profile_create"
+	ActionConfigProfileUpdate = "config_profile_update"
+	ActionConfigProfileDelete = "config_profile_delete"
+	ActionConfigProfileUpload = "config_profile_upload" // multipart 上传文件
+
+	ActionUserInvite = "user_invite" // 创建邀请 token
+	ActionUserCreate = "user_create" // 邀请注册落地
+	ActionUserUpdate = "user_update" // 改描述/启用禁用
+	ActionUserLogin  = "user_login"  // 普通用户登录成功(与 admin 区分)
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
 const (
-	TargetCredential = "credential"
-	TargetProject    = "project"
-	TargetTrigger    = "trigger"
-	TargetRun        = "run"
-	TargetAccount    = "account"
-	TargetSession    = "session"
-	TargetServer     = "server"
-	TargetTemplate   = "template"
-	TargetVarGroup   = "variable_group"
-	TargetCustomNode = "custom_node"
+	TargetCredential    = "credential"
+	TargetProject       = "project"
+	TargetTrigger       = "trigger"
+	TargetRun           = "run"
+	TargetAccount       = "account"
+	TargetSession       = "session"
+	TargetServer        = "server"
+	TargetTemplate      = "template"
+	TargetVarGroup      = "variable_group"
+	TargetCustomNode    = "custom_node"
+	// v6.2 阶段 7:新增 target 类型。
+	TargetBuildEnv       = "build_env"
+	TargetConfigProfile  = "config_profile"
+	TargetUser           = "user"
+	TargetUserInvitation = "user_invitation"
 )
 
 // Entry 是一条审计写入入参(冻结契约)。Detail 写库前过 Masker,绝不含明文 secret。

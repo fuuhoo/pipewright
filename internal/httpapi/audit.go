@@ -10,11 +10,56 @@ import (
 	"time"
 
 	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/huangchengsir/pipewright/internal/auth"
 )
 
-// auditActor 返回当前请求的操作者标识。本平台为单管理员账户,认证写操作的操作者
-// 即 "admin"(与 manual run handler 一致)。未来多用户时由 session 携带身份再细化。
+// auditActorFallback 是兜底值(请求无 session 上下文时,如内部启动期任务)。
+// 真实用户请求走 actorFromSession,优先用 username。
+const auditActorFallback = "system"
+
+// auditActor 是 v6.2 之前的硬编码 actor(向后兼容旧调用点)。
+// 新代码优先用 recordAuditFromRequest(r, ...) 派生命 actor;这里保留常量避免
+// 30+ 调用点集中改造(降低本次 commit 风险面)。
 const auditActor = "admin"
+
+// actorFromSession 从 context 中的 Session 派生审计 actor。
+//   - 无 session → "system"(兜底)
+//   - Session.Role="admin" → "admin:<username>"(兼容旧部署 username 由 AdminUsername 取)
+//   - Session.Role="user"  → "user:<username>"(admin 不混用 user: 前缀)
+//
+// 实际 username 在登录时由 auth.Service.Login 写入 last_login_at 路径同步;
+// 为避免 httpapi → users 的硬依赖,这里采用「Session.UserID/Role + admin 路径走
+// AdminUsername()」的解耦方式:admin 默认 "admin"(兼容旧部署),user 用 UserID。
+// 后续若需精确 username 区分,可在 Session 上扩展 Username 字段(留待阶段 9)。
+func actorFromSession(ctx context.Context, ac auth.Authenticator) string {
+	sess, ok := sessionFromContext(ctx)
+	if !ok || sess == nil {
+		return auditActorFallback
+	}
+	switch sess.Role {
+	case "admin", "":
+		// 旧会话或 admin:优先从 auth 取 admin username(兼容旧部署)。
+		if ac != nil {
+			if u, err := ac.AdminUsername(); err == nil && u != "" {
+				return "admin:" + u
+			}
+		}
+		return "admin"
+	case "user":
+		return "user:" + sess.UserID
+	default:
+		return sess.Role
+	}
+}
+
+// actorFromRequest 是 recordAudit 内部调用便捷版。
+// 兼容旧 recordAudit(ctx, rec, e) 调用点:传 nil ac 时退化到 auditActorFallback。
+func actorFromRequest(r *http.Request, ac auth.Authenticator) string {
+	if r != nil {
+		return actorFromSession(r.Context(), ac)
+	}
+	return auditActorFallback
+}
 
 // clientIP 从请求提取来源 IP,用于审计记录(非安全判定)。
 //
@@ -51,13 +96,31 @@ func trustForwardedHeader() bool {
 // recordAudit 在业务成功后追加一行审计;rec 为 nil 时静默跳过(不阻断业务)。
 // 本地写入失败**不回滚业务**(审计不阻断),但必须**记日志**——否则敏感操作的审计缺口
 // 完全静默,损害 AC-SEC-03 的「完整」保证。
+//
+// 入参保留 v6.2 之前的 (ctx, rec, e) 签名以兼容 30+ 调用点;Entry.Actor 由调用方填,
+// 推荐通过 actorFromRequest(r, ac) 派生(v6.2 阶段 7 之后)——直接用 auditActorFallback
+// 或 "admin" 也仍合法(向后兼容)。
+//
+// 内部同时记录 actor 来源审计行,便于未来按 actor 过滤(若 Entry.Actor 为空,补
+// fallback)。
 func recordAudit(ctx context.Context, rec audit.Recorder, e audit.Entry) {
 	if rec == nil {
 		return
 	}
+	if e.Actor == "" {
+		e.Actor = auditActorFallback
+	}
 	if err := rec.Record(ctx, e); err != nil {
 		log.Printf("[audit] 警告:写审计失败(action=%s target=%s/%s): %v", e.Action, e.TargetType, e.TargetID, err)
 	}
+}
+
+// recordAuditFromRequest 从 *http.Request 派生 actor 后写审计;ac 为 nil 时取兜底。
+// 这是 v6.2 阶段 7+ 推荐写法——逐步把 recordAudit(ctx, rec, e) 调用点替换为
+// recordAuditFromRequest(r, rec, ac, e),actor 自动来自 session。
+func recordAuditFromRequest(r *http.Request, rec audit.Recorder, ac auth.Authenticator, e audit.Entry) {
+	e.Actor = actorFromRequest(r, ac)
+	recordAudit(r.Context(), rec, e)
 }
 
 // auditEntryDTO 是审计条目对外响应体(冻结契约;camelCase;detail 已脱敏,绝无明文)。

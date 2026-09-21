@@ -461,20 +461,20 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 凭据保险库(Story 1.3)。v 为 nil 时 handler 返回 vault_unconfigured。
 		v := o.vault
 		ar.Get("/credentials", makeListCredentialsHandler(v))
-		ar.Post("/credentials", makeCreateCredentialHandler(v, aud))
-		ar.Patch("/credentials/{id}", makeUpdateCredentialHandler(v, aud))
-		ar.Delete("/credentials/{id}", makeDeleteCredentialHandler(v, aud))
+		ar.Post("/credentials", makeCreateCredentialHandler(v, aud, authn))
+		ar.Patch("/credentials/{id}", makeUpdateCredentialHandler(v, aud, authn))
+		ar.Delete("/credentials/{id}", makeDeleteCredentialHandler(v, aud, authn))
 		// 查看明文(POST + auth + CSRF;每次留 credential_reveal 审计)。
-		ar.Post("/credentials/{id}/reveal", makeRevealCredentialHandler(v, aud))
+		ar.Post("/credentials/{id}/reveal", makeRevealCredentialHandler(v, aud, authn))
 
 		// 项目接入与列表(Story 2.1)。p 为 nil 时 handler 返回 503。
 		// test-clone 须在 {id} 路由之前注册,否则被 /projects/{id} 吞掉。
 		p := o.projects
 		ar.Get("/projects", makeListProjectsHandler(p))
-		ar.Post("/projects", makeCreateProjectHandler(p, aud))
+		ar.Post("/projects", makeCreateProjectHandler(p, aud, authn))
 		ar.Post("/projects/test-clone", makeTestCloneHandler(p))
-		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, aud))
-		ar.Delete("/projects/{id}", makeDeleteProjectHandler(p, aud))
+		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, aud, authn))
+		ar.Delete("/projects/{id}", makeDeleteProjectHandler(p, aud, authn))
 
 		// 触发设置与分支映射(Story 2.3)。t 为 nil 时 handler 返回 503。
 		// secret/reset 须在通用 trigger 路由之外单独注册;均过 auth + 写方法 CSRF。

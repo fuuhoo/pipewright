@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/huangchengsir/pipewright/internal/auth"
 	"github.com/huangchengsir/pipewright/internal/project"
 )
 
@@ -114,7 +115,7 @@ func makeListProjectsHandler(svc project.Service) http.HandlerFunc {
 
 // makeCreateProjectHandler 返回 POST /api/projects handler。
 // 创建成功后追加 project_create 审计(detail 仅项目元数据)。
-func makeCreateProjectHandler(svc project.Service, aud audit.Recorder) http.HandlerFunc {
+func makeCreateProjectHandler(svc project.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "项目服务未初始化")
@@ -141,8 +142,7 @@ func makeCreateProjectHandler(svc project.Service, aud audit.Recorder) http.Hand
 			writeProjectError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionProjectCreate,
 			TargetType: audit.TargetProject,
 			TargetID:   p.ID,
@@ -155,7 +155,7 @@ func makeCreateProjectHandler(svc project.Service, aud audit.Recorder) http.Hand
 
 // makeUpdateProjectHandler 返回 PATCH /api/projects/{id} handler。
 // 更新成功后追加 project_update 审计。
-func makeUpdateProjectHandler(svc project.Service, aud audit.Recorder) http.HandlerFunc {
+func makeUpdateProjectHandler(svc project.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "项目服务未初始化")
@@ -185,8 +185,7 @@ func makeUpdateProjectHandler(svc project.Service, aud audit.Recorder) http.Hand
 			writeProjectError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionProjectUpdate,
 			TargetType: audit.TargetProject,
 			TargetID:   p.ID,
@@ -199,7 +198,7 @@ func makeUpdateProjectHandler(svc project.Service, aud audit.Recorder) http.Hand
 
 // makeDeleteProjectHandler 返回 DELETE /api/projects/{id} handler。
 // 删除成功后追加 project_delete 审计。
-func makeDeleteProjectHandler(svc project.Service, aud audit.Recorder) http.HandlerFunc {
+func makeDeleteProjectHandler(svc project.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "项目服务未初始化")
@@ -210,8 +209,7 @@ func makeDeleteProjectHandler(svc project.Service, aud audit.Recorder) http.Hand
 			writeProjectError(w, err)
 			return
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     audit.ActionProjectDelete,
 			TargetType: audit.TargetProject,
 			TargetID:   id,

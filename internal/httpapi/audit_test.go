@@ -90,8 +90,8 @@ func TestCredentialCreateProducesAuditEntry(t *testing.T) {
 	if e.Action != "credential_create" || e.TargetType != "credential" {
 		t.Fatalf("审计字段错: %+v", e)
 	}
-	if e.Actor != "admin" {
-		t.Fatalf("actor = %q, want admin", e.Actor)
+	if e.Actor != "admin:admin" {
+		t.Fatalf("actor = %q, want admin:admin(由 session 派生)", e.Actor)
 	}
 	if e.TargetID == "" || e.Timestamp == "" {
 		t.Fatalf("targetId/timestamp 不应为空: %+v", e)
