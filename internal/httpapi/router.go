@@ -3,8 +3,6 @@
 package httpapi
 
 import (
-	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -912,69 +910,9 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 }
 
 // ---- 认证中间件 --------------------------------------------------------
-
-// requireAuth 中间件:校验会话 cookie → 注入 Session 到 context;未过 → 401 JSON。
-func requireAuth(svc auth.Authenticator, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if svc == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
-			return
-		}
-		cookie, err := r.Cookie(cookieSession)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
-			return
-		}
-		sess, err := svc.Verify(cookie.Value)
-		if err != nil {
-			if errors.Is(err, auth.ErrSessionNotFound) {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "会话已过期,请重新登录")
-				return
-			}
-			// 其它错误(如 DB 故障)不应被当作「会话过期」掩盖。
-			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-			return
-		}
-		ctx := context.WithValue(r.Context(), contextKeySession, sess)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// sessionFromContext 从已认证的 context 取 Session。
-func sessionFromContext(ctx context.Context) (*auth.Session, bool) {
-	sess, ok := ctx.Value(contextKeySession).(*auth.Session)
-	return sess, ok
-}
-
-// requireCSRF 中间件:将 X-CSRF-Token header 与服务端权威的 session.CSRFToken 比对。
-// GET/HEAD/OPTIONS 豁免;写方法需 header == session.CSRFToken。
-// 必须套在 requireAuth 之后(依赖 context 中的 Session)。
 //
-// 相较旧的「header == cookie」双提交方案,以会话存储的 csrf_token 为权威值,
-// 子域/MITM 写入伪造 cookie 无法绕过(攻击者读不到 HttpOnly 会话对应的服务端 token)。
-// 前端契约不变:它仍发送 header = pipewright_csrf cookie 值,而该 cookie 下发的正是
-// session.CSRFToken,故 header 仍等于 session.CSRFToken。
-func requireCSRF(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-			next.ServeHTTP(w, r)
-			return
-		}
-		sess, ok := sessionFromContext(r.Context())
-		if !ok || sess == nil {
-			// 未经 requireAuth 注入 Session:无法校验 CSRF。
-			writeError(w, http.StatusForbidden, "csrf_invalid", "CSRF token 缺失或不匹配")
-			return
-		}
-		headerVal := r.Header.Get(headerCsrf)
-		if headerVal == "" || subtle.ConstantTimeCompare([]byte(headerVal), []byte(sess.CSRFToken)) != 1 {
-			writeError(w, http.StatusForbidden, "csrf_invalid", "CSRF token 缺失或不匹配")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
+// requireAuth / sessionFromContext / requireCSRF / RequireAdmin / RequireUser 已
+// 抽出到 internal/httpapi/middleware.go(v6.2 阶段 8)。
 
 // ---- 认证 Handler --------------------------------------------------------
 
