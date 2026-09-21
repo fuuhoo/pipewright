@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/huangchengsir/pipewright/internal/users"
 )
 
 // Authenticator 定义认证领域对外接口。(-er 命名约定)
@@ -140,39 +142,75 @@ func (s *Service) Bootstrap(username, password string) error {
 }
 
 // Login 认证用户名/口令;通过则创建新会话,失败则记录失败计数。
+//
+// v6.2 阶段 6:先查 admin_user(兼容旧部署);若用户名匹配或 admin 不存在,再查
+// users 表以支持普通用户登录。匹配规则:
+//   1) admin_user.username == username → role="admin",UserID=BootstrapAdminRegularUserID
+//   2) users.username == username AND enabled=1 → role=users.role,UserID=users.id
+//
+// 优先 admin_user:旧部署管理员行可能在 users 也有同步行,但 admin_user.id=1 的
+// 语义优先(避免普通用户重名 admin 时被普通用户抢占)。
+//
+// 时序保护:无论命中哪条路径都执行一次 VerifyPassword(真实 hash 或 dummy),
+// 使「用户名错 / 口令错 / 角色错」耗时一致。
 func (s *Service) Login(username, password string) (*Session, error) {
 	// 查询管理员记录。即便不匹配也要继续走口令校验路径以消除时序枚举。
-	var storedUsername, storedHash string
+	var adminUsername, adminHash string
+	adminFound := false
 	err := s.db.QueryRow(
 		`SELECT username, password_hash FROM admin_user WHERE id = 1`,
-	).Scan(&storedUsername, &storedHash)
-
-	usernameMatches := false
-	verifyHash := dummyHash
+	).Scan(&adminUsername, &adminHash)
 	switch {
 	case err == nil:
-		// 恒定时间比较用户名,避免按字节短路泄露。
-		usernameMatches = subtle.ConstantTimeCompare([]byte(storedUsername), []byte(username)) == 1
-		if usernameMatches {
-			verifyHash = storedHash
-		}
+		adminFound = true
 	case errors.Is(err, sql.ErrNoRows):
-		// 无 admin 账号:用 dummy hash 校验,使耗时与正常路径一致。
-		usernameMatches = false
+		adminFound = false
 	default:
 		return nil, fmt.Errorf("auth: query admin: %w", err)
 	}
 
+	adminMatches := false
+	if adminFound {
+		// 恒定时间比较用户名,避免按字节短路泄露。
+		adminMatches = subtle.ConstantTimeCompare([]byte(adminUsername), []byte(username)) == 1
+	}
+
+	// 查询 users 表。普通用户登录路径。
+	var userID, userHash, userRole string
+	var userEnabled int
+	userFound := false
+	userRow := s.db.QueryRow(
+		`SELECT id, password_hash, role, enabled FROM users WHERE username = ?`,
+		username,
+	)
+	if err := userRow.Scan(&userID, &userHash, &userRole, &userEnabled); err == nil {
+		userFound = userEnabled == 1
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("auth: query users: %w", err)
+	}
+
+	// 决策:admin 优先,普通用户次之;均要求用户名前缀(避免「两个表都查」的开销分支)。
+	useAdmin := adminFound && adminMatches
+	useUser := !useAdmin && userFound
+
+	verifyHash := dummyHash
+	okPredicate := func(pwOK bool) bool { return false } // 默认失败
+	switch {
+	case useAdmin:
+		verifyHash = adminHash
+		okPredicate = func(pwOK bool) bool { return pwOK }
+	case useUser:
+		verifyHash = userHash
+		okPredicate = func(pwOK bool) bool { return pwOK }
+	}
+
 	// 在单次持锁内完成「检查锁定 → 口令校验 → 记失败/重置」,消除 TOCTOU。
-	// 无论用户名是否匹配都执行一次 VerifyPassword(真实 hash 或 dummy),
-	// 使「用户名错」与「口令错」两条失败路径耗时一致。
 	ok, locked, remaining, gErr := s.lockout.Guard(func() (bool, error) {
 		pwOK, vErr := VerifyPassword(password, verifyHash)
 		if vErr != nil {
 			return false, vErr
 		}
-		// 用户名不匹配时即使口令校验偶然通过(dummy 永不通过)也判失败。
-		return usernameMatches && pwOK, nil
+		return okPredicate(pwOK), nil
 	})
 	if locked {
 		return nil, &ErrLockedOut{RetryAfter: remaining}
@@ -185,17 +223,25 @@ func (s *Service) Login(username, password string) (*Session, error) {
 	}
 
 	// 认证成功:创建会话(Guard 已重置计数)。
-	sess, err := s.sessions.Create()
+	var sessUserID, sessRole string
+	switch {
+	case useAdmin:
+		sessUserID = users.BootstrapAdminRegularUserID
+		sessRole = "admin"
+	case useUser:
+		sessUserID = userID
+		sessRole = userRole
+	}
+	sess, err := s.sessions.Create(sessUserID, sessRole)
 	if err != nil {
 		return nil, fmt.Errorf("auth: create session: %w", err)
 	}
 
 	// 同步 last_login_at 到 users 表(best-effort;失败不影响登录)。
-	// 当前阶段 1 只针对 admin;后续 story 接入普通用户登录后,按 username 同步。
-	if s.userSyncer != nil {
+	if sessUserID != "" {
 		if _, err := s.db.Exec(
-			`UPDATE users SET last_login_at = ? WHERE username = ? AND role = ?`,
-			time.Now().UTC().Format(time.RFC3339), username, "admin",
+			`UPDATE users SET last_login_at = ? WHERE id = ?`,
+			time.Now().UTC().Format(time.RFC3339), sessUserID,
 		); err != nil {
 			log.Printf("[auth] 警告:更新 last_login_at 失败:%v", err)
 		}

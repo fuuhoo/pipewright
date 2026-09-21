@@ -23,13 +23,32 @@ const (
 // ErrSessionNotFound 表示会话不存在或已过期。
 var ErrSessionNotFound = errors.New("auth: session not found or expired")
 
-// Session 代表一个服务端会话。
+// Session 代表一个服务端会话(v6.2 阶段 6:绑定到 users)。
+//
+// UserID / Role 是 sessions 表新增列的内存镜像:
+//   - admin 登录(从 admin_user 表认证)→ UserID = users.BootstrapAdminRegularUserID,
+//     Role = "admin"
+//   - 普通 user 登录(从 users 表认证)→ UserID = 该用户 id,Role = "user"
+//   - 旧部署未升级前签发的会话行 user_id/role 均为 '' → 这里也填空,
+//     requireAuth 后由中间件根据 Role 判断;旧会话在登出重登一次前不参与 RBAC 校验
+//     (见 rbac.go RequireAdmin 文档)
 type Session struct {
 	Token      string
 	CSRFToken  string
+	UserID     string // v6.2 阶段 6:绑定的 users.id(admin 取固定 UUID)
+	Role       string // v6.2 阶段 6:"admin" | "user" | ''(旧会话)
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 	LastSeenAt time.Time
+}
+
+// IsAdmin 报告会话是否为管理员角色。
+// 旧会话(role=''为兼容保留)按 admin 放行;阶段 6 起新会话必填 Role。
+func (s *Session) IsAdmin() bool {
+	if s == nil {
+		return false
+	}
+	return s.Role == "" || s.Role == "admin"
 }
 
 // SessionStore 操作 sessions 表。
@@ -43,7 +62,10 @@ func NewSessionStore(db *sql.DB) *SessionStore {
 }
 
 // Create 创建新会话并持久化到 DB。返回 Session(含 Token 与 CSRFToken)。
-func (ss *SessionStore) Create() (*Session, error) {
+//
+// userID / role 写入 sessions.user_id / sessions.role 列(v6.2 阶段 6)。
+// 旧会话行 user_id/role 为空(向后兼容);新签发必填。
+func (ss *SessionStore) Create(userID, role string) (*Session, error) {
 	token, err := randHex(tokenBytes)
 	if err != nil {
 		return nil, fmt.Errorf("auth: generate session token: %w", err)
@@ -56,10 +78,12 @@ func (ss *SessionStore) Create() (*Session, error) {
 	exp := now.Add(sessionTTL)
 
 	_, err = ss.db.Exec(
-		`INSERT INTO sessions (token, csrf_token, created_at, expires_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (token, csrf_token, user_id, role, created_at, expires_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		token,
 		csrfToken,
+		userID,
+		role,
 		now.Format(time.RFC3339),
 		exp.Format(time.RFC3339),
 		now.Format(time.RFC3339),
@@ -70,6 +94,8 @@ func (ss *SessionStore) Create() (*Session, error) {
 	return &Session{
 		Token:      token,
 		CSRFToken:  csrfToken,
+		UserID:     userID,
+		Role:       role,
 		CreatedAt:  now,
 		ExpiresAt:  exp,
 		LastSeenAt: now,
@@ -78,19 +104,27 @@ func (ss *SessionStore) Create() (*Session, error) {
 
 // Get 按 token 查找会话;不存在或已过期返回 ErrSessionNotFound。
 // 若会话有效则滑动更新 last_seen_at。
+// v6.2 阶段 6:同时读 user_id / role;旧会话行填空。
 func (ss *SessionStore) Get(token string) (*Session, error) {
 	var s Session
+	var userID, role sql.NullString
 	var createdStr, expiresStr, lastSeenStr string
 	err := ss.db.QueryRow(
-		`SELECT token, csrf_token, created_at, expires_at, last_seen_at
+		`SELECT token, csrf_token, user_id, role, created_at, expires_at, last_seen_at
 		 FROM sessions WHERE token = ?`,
 		token,
-	).Scan(&s.Token, &s.CSRFToken, &createdStr, &expiresStr, &lastSeenStr)
+	).Scan(&s.Token, &s.CSRFToken, &userID, &role, &createdStr, &expiresStr, &lastSeenStr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrSessionNotFound
 		}
 		return nil, fmt.Errorf("auth: get session: %w", err)
+	}
+	if userID.Valid {
+		s.UserID = userID.String
+	}
+	if role.Valid {
+		s.Role = role.String
 	}
 
 	if s.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
