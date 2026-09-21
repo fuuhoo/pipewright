@@ -13,6 +13,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/users"
@@ -52,16 +53,32 @@ func toUserDTO(u *users.User) userDTO {
 }
 
 // makeListUsersHandler GET /api/admin/users。
-// 阶段 9 最小集:仅返回空列表(占位);完整 List 由后续 story 接入(邀请注册后才有用户)。
-// 当前阶段 admin 是唯一用户,前端此端点无需列出"普通用户"——直接走前端 profile 即可。
+// v6.2 §5.2:列出所有用户(视图,绝不含 password_hash)。
+// query:role(admin|user)· includeDisabled(1|true)。
+// 分页:limit 默认 100、上限 500(与 audit 包一致)。
 func makeListUsersHandler(us *users.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if us == nil {
 			writeError(w, http.StatusServiceUnavailable, "users_unavailable", "用户服务未初始化")
 			return
 		}
-		// 阶段 9 占位:返回空列表。前端不展示此端点(后续 user invitation story 接入)。
-		writeJSON(w, http.StatusOK, map[string]any{"items": []userDTO{}})
+		q := r.URL.Query()
+		includeDisabled := q.Get("includeDisabled") == "1" || q.Get("includeDisabled") == "true"
+		list, err := us.List(users.ListFilter{
+			Role:            strings.TrimSpace(q.Get("role")),
+			IncludeDisabled: includeDisabled,
+			Limit:           atoiDefault(q.Get("limit"), users.DefaultListLimit),
+			Offset:          atoiDefault(q.Get("offset"), 0),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "查询用户列表失败")
+			return
+		}
+		out := make([]userDTO, 0, len(list))
+		for _, u := range list {
+			out = append(out, toUserDTO(u))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
 	}
 }
 

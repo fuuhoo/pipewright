@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,6 +141,62 @@ func (s *Service) GetByID(id string) (*User, error) {
 		`SELECT id, username, role, enabled, description, created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id)
 	return scanView(row)
+}
+
+// ListFilter 用户列表过滤/分页(v6.2 阶段 9:admin 用户管理页)。
+type ListFilter struct {
+	Role           string // "admin" | "user" | ""(不限)
+	IncludeDisabled bool   // false=仅 enabled=1(默认)
+	Limit          int    // <=0 → 默认 100;上限 500
+	Offset         int    // >=0
+}
+
+// DefaultListLimit / MaxListLimit 列表分页边界。
+const (
+	DefaultListLimit = 100
+	MaxListLimit     = 500
+)
+
+// List 按 filter 返回用户视图(不含 password_hash),按 username 字典序稳定排序。
+// 分页边界与 audit 包一致:Limit 归一化到 [1, MaxListLimit]。
+func (s *Service) List(f ListFilter) ([]*User, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = DefaultListLimit
+	}
+	if limit > MaxListLimit {
+		limit = MaxListLimit
+	}
+	conds := []string{"1=1"}
+	args := []any{}
+	if f.Role != "" {
+		conds = append(conds, "role = ?")
+		args = append(args, f.Role)
+	}
+	if !f.IncludeDisabled {
+		conds = append(conds, "enabled = 1")
+	}
+	args = append(args, limit, f.Offset)
+
+	rows, err := s.db.Query(
+		`SELECT id, username, role, enabled, description, created_at, updated_at, last_login_at
+		 FROM users WHERE `+strings.Join(conds, " AND ")+`
+		 ORDER BY username ASC
+		 LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("users: list: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*User, 0, limit)
+	for rows.Next() {
+		u, err := scanView(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // NewID 生成新用户 ID(UUID v4);供后续 story(邀请注册)使用。

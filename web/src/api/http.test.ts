@@ -133,3 +133,50 @@ describe('http client', () => {
     await expect(http.post('/api/auth/login', {})).rejects.toBeInstanceOf(HttpError)
   })
 })
+
+// 回归:v6.2 联调发现 http.post 曾无条件 JSON.stringify,把 FormData 序列化成
+// "[object FormData]" 且 Content-Type 不是 multipart → 后端 ParseMultipartForm
+// 直接 400。config_profiles 上传端点因此完全不可用。
+describe('FormData body passthrough', () => {
+  it('post() sends FormData as-is (no JSON.stringify)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const form = new FormData()
+    form.append('file', new Blob(['x']), 'a.npmrc')
+    form.append('language', 'node')
+
+    await http.post('/api/admin/config-profiles/upload', form)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0]
+    // body 必须是原 FormData,不能被字符串化
+    expect(init.body).toBe(form)
+    // Content-Type 不手动指定(浏览器负责带 boundary)
+    const headers = init.headers as Headers
+    expect(headers.get('Content-Type')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('post() still JSON-stringifies plain objects', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await http.post('/api/x', { a: 1 })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.body).toBe('{"a":1}')
+    expect((init.headers as Headers).get('Content-Type')).toBe('application/json')
+    vi.unstubAllGlobals()
+  })
+})

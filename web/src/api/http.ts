@@ -120,30 +120,26 @@ async function request<T>(
   return body as T
 }
 
+/** 请求体序列化:FormData 原样透传(浏览器自动带 boundary),其余 JSON 化。 */
+function serializeBody(data: unknown): BodyInit | undefined {
+  if (data === undefined) return undefined
+  if (data instanceof FormData) return data
+  if (typeof data === 'string') return data
+  return JSON.stringify(data)
+}
+
 export const http = {
   get<T>(url: string, options?: RequestInit): Promise<T> {
     return request<T>(url, { ...options, method: 'GET' })
   },
   post<T>(url: string, data?: unknown, options?: RequestInit): Promise<T> {
-    return request<T>(url, {
-      ...options,
-      method: 'POST',
-      body: data !== undefined ? JSON.stringify(data) : undefined,
-    })
+    return request<T>(url, { ...options, method: 'POST', body: serializeBody(data) })
   },
   put<T>(url: string, data?: unknown, options?: RequestInit): Promise<T> {
-    return request<T>(url, {
-      ...options,
-      method: 'PUT',
-      body: data !== undefined ? JSON.stringify(data) : undefined,
-    })
+    return request<T>(url, { ...options, method: 'PUT', body: serializeBody(data) })
   },
   patch<T>(url: string, data?: unknown, options?: RequestInit): Promise<T> {
-    return request<T>(url, {
-      ...options,
-      method: 'PATCH',
-      body: data !== undefined ? JSON.stringify(data) : undefined,
-    })
+    return request<T>(url, { ...options, method: 'PATCH', body: serializeBody(data) })
   },
   delete<T>(url: string, options?: RequestInit): Promise<T> {
     return request<T>(url, { ...options, method: 'DELETE' })
