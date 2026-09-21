@@ -216,3 +216,26 @@ func makeDeleteCredentialHandler(v vault.Vault, aud audit.Recorder, ac auth.Auth
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+// makeDisableCredentialHandler POST /api/admin/credentials/{id}/disable。
+// admin 禁用 personal 凭据(v6.2 §3.4 矩阵);0053 未落地时该端点为 no-op + warning。
+func makeDisableCredentialHandler(v vault.Vault, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if v == nil {
+			writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key")
+			return
+		}
+		id := chi.URLParam(r, "id")
+		if err := v.DisableWithActor(&vault.Actor{UserID: "admin-actor", Role: "admin"}, id); err != nil {
+			writeVaultError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionCredentialDisable,
+			TargetType: audit.TargetCredential,
+			TargetID:   id,
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"disabled": true})
+	}
+}

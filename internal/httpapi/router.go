@@ -20,7 +20,9 @@ import (
 	"github.com/huangchengsir/pipewright/internal/artifactstore"
 	"github.com/huangchengsir/pipewright/internal/audit"
 	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/huangchengsir/pipewright/internal/buildenv"
 	"github.com/huangchengsir/pipewright/internal/chain"
+	"github.com/huangchengsir/pipewright/internal/configprofile"
 	"github.com/huangchengsir/pipewright/internal/cron"
 	"github.com/huangchengsir/pipewright/internal/deploy"
 	"github.com/huangchengsir/pipewright/internal/dnsprovider"
@@ -39,6 +41,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/runner"
 	"github.com/huangchengsir/pipewright/internal/target"
 	"github.com/huangchengsir/pipewright/internal/trigger"
+	"github.com/huangchengsir/pipewright/internal/users"
 	"github.com/huangchengsir/pipewright/internal/vault"
 	"github.com/huangchengsir/pipewright/internal/version"
 )
@@ -102,6 +105,11 @@ type options struct {
 	proxy            proxy.Service
 	dnsProviders     dnsprovider.Service
 	previewEnvs      PreviewService
+	// v6.2 阶段 9:新增领域服务。
+	buildEnvSvc   *buildenv.Service
+	buildEnvCheck *buildenv.Checker
+	cpSvc         *configprofile.Service
+	usersSvc      *users.Service
 }
 
 // WithArtifactStore 注入制品库(Story 8-16):挂载产物下载端点
@@ -262,6 +270,28 @@ func WithAudit(rec audit.Recorder) Option {
 // (改口令 / 会话列表 / 撤销会话)。不传则相关端点返回 503。
 func WithAccount(s accountService) Option {
 	return func(o *options) { o.account = s }
+}
+
+// WithBuildEnvs 注入构建环境服务 + 镜像检查器(阶段 9),挂载 /api/admin/build-envs*
+// 与 /api/build-envs/languages(普通用户可访问)路由。
+// 不传则相关端点返回 503;checker 为 nil 时 check/pull 端点 503,list/create/update/delete 仍可用。
+func WithBuildEnvs(svc *buildenv.Service, checker *buildenv.Checker) Option {
+	return func(o *options) {
+		o.buildEnvSvc = svc
+		o.buildEnvCheck = checker
+	}
+}
+
+// WithConfigProfiles 注入配置资源服务(阶段 9),挂载 /api/admin/config-profiles* 路由。
+// 不传则相关端点返回 503。
+func WithConfigProfiles(svc *configprofile.Service) Option {
+	return func(o *options) { o.cpSvc = svc }
+}
+
+// WithUsers 注入用户服务(阶段 9 最小骨架),挂载 /api/admin/users* 路由。
+// 完整用户管理(邀请/注册)留到后续 story。
+func WithUsers(svc *users.Service) Option {
+	return func(o *options) { o.usersSvc = svc }
 }
 
 // WithAISettings 注入可配置 AI 提供商服务(Story 7.1),挂载 /api/settings/ai* 路由
@@ -464,6 +494,50 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Delete("/credentials/{id}", makeDeleteCredentialHandler(v, aud, authn))
 		// 查看明文(POST + auth + CSRF;每次留 credential_reveal 审计)。
 		ar.Post("/credentials/{id}/reveal", makeRevealCredentialHandler(v, aud, authn))
+
+		// v6.2 阶段 9:admin 子组 + 普通用户可见端点。
+		//   /api/admin/*  → RequireAdmin(非 admin → 403)
+		//   /api/build-envs/languages, /api/config-profiles → RequireUser(admin/user 都可)
+		ar.Route("/admin", func(adminR chi.Router) {
+			adminR.Use(RequireAdmin)
+
+			// build_envs CRUD + 镜像检查/拉取
+			bSvc := o.buildEnvSvc
+			bChk := o.buildEnvCheck
+			adminR.Get("/build-envs", makeListBuildEnvsHandler(bSvc))
+			adminR.Post("/build-envs", makeCreateBuildEnvHandler(bSvc, aud, authn))
+			adminR.Get("/build-envs/{id}", makeGetBuildEnvHandler(bSvc))
+			adminR.Put("/build-envs/{id}", makeUpdateBuildEnvHandler(bSvc, aud, authn))
+			adminR.Delete("/build-envs/{id}", makeDeleteBuildEnvHandler(bSvc, aud, authn))
+			adminR.Post("/build-envs/{id}/toggle", makeToggleBuildEnvHandler(bSvc, aud, authn))
+			adminR.Post("/build-envs/{id}/check", makeCheckBuildEnvHandler(bSvc, bChk, aud, authn))
+			adminR.Post("/build-envs/{id}/pull", makePullBuildEnvHandler(bChk, aud, authn))
+			adminR.Post("/build-envs/check-all", makeCheckAllBuildEnvsHandler(bChk, aud, authn))
+
+			// config_profiles CRUD + multipart 上传
+			cpSvc := o.cpSvc
+			adminR.Get("/config-profiles", makeListConfigProfilesHandler(cpSvc))
+			adminR.Post("/config-profiles", makeCreateConfigProfileHandler(cpSvc, aud, authn))
+			adminR.Get("/config-profiles/{id}", makeGetConfigProfileHandler(cpSvc))
+			adminR.Put("/config-profiles/{id}", makeUpdateConfigProfileHandler(cpSvc, aud, authn))
+			adminR.Delete("/config-profiles/{id}", makeDeleteConfigProfileHandler(cpSvc, aud, authn))
+			adminR.Post("/config-profiles/upload", makeUploadConfigProfileHandler(cpSvc, aud, authn))
+
+			// users 最小集(完整邀请注册留到后续 story)
+			adminR.Get("/users", makeListUsersHandler(o.usersSvc))
+			adminR.Get("/users/{id}", makeGetUserHandler(o.usersSvc))
+
+			// admin 禁用 personal 凭据(v6.2 §3.4 矩阵)
+			adminR.Post("/credentials/{id}/disable", makeDisableCredentialHandler(v, aud, authn))
+		})
+
+		// 普通用户可访问的端点(挂在 /api/ 平级,RequireUser)
+		ar.Route("/", func(userR chi.Router) {
+			userR.Use(RequireUser)
+			// 注:已经在 ar.Post("/credentials", ...) 等处定义;此处只放新增的「普通用户可见」端点。
+			userR.Get("/build-envs/languages", makeListBuildEnvLanguagesHandler(o.buildEnvSvc))
+			userR.Get("/config-profiles", makeListEnabledConfigProfilesHandler(o.cpSvc))
+		})
 
 		// 项目接入与列表(Story 2.1)。p 为 nil 时 handler 返回 503。
 		// test-clone 须在 {id} 路由之前注册,否则被 /projects/{id} 吞掉。
