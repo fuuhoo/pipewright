@@ -183,10 +183,45 @@ func scanInternal(sc scanner) (*InternalUser, error) {
 	return &u, nil
 }
 
+// scanView 把「8 列视图 SELECT(id, username, role, enabled, description, created_at,
+// updated_at, last_login_at,不含 password_hash)」扫描为 User。
+//
+// 不复用 scanInternal(后者要求 password_hash 在 SELECT 里),否则 GetByID 的
+// 8 列查询会因 destination 数不匹配直接报错(scan: expected 9 destination, not 8)。
 func scanView(sc scanner) (*User, error) {
-	internal, err := scanInternal(sc)
-	if err != nil {
-		return nil, err
+	var (
+		u            User
+		enabled      int
+		createdStr   string
+		updatedStr   string
+		lastLoginStr sql.NullString
+	)
+	if err := sc.Scan(
+		&u.ID, &u.Username, &u.Role, &enabled, &u.Description,
+		&createdStr, &updatedStr, &lastLoginStr,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("users: scan view: %w", err)
 	}
-	return &internal.User, nil
+	u.Enabled = enabled != 0
+	created, err := time.Parse(time.RFC3339, createdStr)
+	if err != nil {
+		return nil, fmt.Errorf("users: parse created_at: %w", err)
+	}
+	updated, err := time.Parse(time.RFC3339, updatedStr)
+	if err != nil {
+		return nil, fmt.Errorf("users: parse updated_at: %w", err)
+	}
+	u.CreatedAt = created
+	u.UpdatedAt = updated
+	if lastLoginStr.Valid && lastLoginStr.String != "" {
+		t, err := time.Parse(time.RFC3339, lastLoginStr.String)
+		if err != nil {
+			return nil, fmt.Errorf("users: parse last_login_at: %w", err)
+		}
+		u.LastLoginAt = &t
+	}
+	return &u, nil
 }

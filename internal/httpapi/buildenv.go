@@ -386,7 +386,22 @@ func makeCheckAllBuildEnvsHandler(c *buildenv.Checker, aud audit.Recorder, ac au
 }
 
 // writeBuildEnvError 把领域错误映射到 HTTP 状态码。
+// 注意:SetEnabled 等入口返回 *buildenv.ValidationError(带 Code),不是 Err* sentinel,
+// 必须先匹配 ValidationError 再匹配 sentinel,否则会落 default 500。
 func writeBuildEnvError(w http.ResponseWriter, err error) {
+	var ve *buildenv.ValidationError
+	if errors.As(err, &ve) {
+		switch ve.Code {
+		case "ENV_NOT_FOUND":
+			writeError(w, http.StatusNotFound, ve.Code, ve.Message)
+		case "ENV_DISABLED", "IMAGE_UNAVAILABLE", "IMAGE_NOT_CHECKED":
+			// 三态校验(P0 #4)拒绝:409 Conflict,消息已人读化。
+			writeError(w, http.StatusConflict, ve.Code, ve.Message)
+		default:
+			writeError(w, http.StatusBadRequest, ve.Code, ve.Message)
+		}
+		return
+	}
 	switch {
 	case errors.Is(err, buildenv.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())

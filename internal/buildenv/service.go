@@ -52,17 +52,29 @@ func (s *Service) GetByLanguageVersion(lang, ver string) (*BuildEnv, error) {
 // List 按 filter。
 func (s *Service) List(filter ListFilter) ([]*BuildEnv, error) { return s.repo.List(filter) }
 
-// Update 更新;若 image/source_type/credential_id 任一变化 → 重置为 unchecked。
-// 若 unavailable → 强制 enabled=false。
+// Update 更新。检查状态字段(image_check_status/image_check_error/image_checked_at)
+// 由系统(checker)维护,**不接受调用方写入**:
+//   - image / source_type / credential_id 任一变化 → 重置为 unchecked(需重新检查)
+//   - 否则 → 保留 old 的检查状态(调用方传空串/旧值都被忽略)
+//
+// 这条不变式必须在领域层守住:HTTP handler 以「完整替换」语义构造 BuildEnv 时不会
+// 带这三个字段(它们是系统列),若直接落库会把 status 写成空串,而空 status 在
+// SetEnabled 的 switch 里两个 case 都不命中 → 三态校验(P0 #4)被静默绕过。
 func (s *Service) Update(in *BuildEnv) (*BuildEnv, error) {
 	old, err := s.repo.GetByID(in.ID)
 	if err != nil {
 		return nil, err
 	}
 	if old.Image != in.Image || old.SourceType != in.SourceType || old.CredentialID != in.CredentialID {
+		// 镜像来源变化 → 检查结论失效,重置为未检查。
 		in.ImageCheckStatus = StatusUnchecked
 		in.ImageCheckError = ""
 		in.ImageCheckedAt = nil
+	} else {
+		// 镜像来源未变 → 检查结论仍有效,保留系统维护的状态。
+		in.ImageCheckStatus = old.ImageCheckStatus
+		in.ImageCheckError = old.ImageCheckError
+		in.ImageCheckedAt = old.ImageCheckedAt
 	}
 	if err := in.Validate(); err != nil {
 		return nil, err
