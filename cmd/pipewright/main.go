@@ -572,6 +572,12 @@ func main() {
 	// v6.2 阶段 15:装配构建环境服务(v6.2 §3.1)+ 镜像检查器。
 	buildEnvRepo := buildenv.NewSQLiteRepo(st.DB)
 	buildEnvSvc := buildenv.NewService(buildEnvRepo)
+	// v6.2 阶段 16:首次启动时空 DB 时预置 11 个常用构建环境。
+	if n, err := buildenv.SeedIfEmpty(buildEnvSvc); err != nil {
+		log.Printf("[seed] 警告:buildenv seed 失败: %v", err)
+	} else if n > 0 {
+		log.Printf("[seed] buildenv 新增 %d 条", n)
+	}
 	// credRef 让 Checker 在 ManualPull 时按 credential_id 取凭据做 docker login。
 	credRef := buildenv.NewVaultCredentialRefetch(credVault)
 	bin := strings.TrimSpace(strings.ToLower(os.Getenv("PIPEWRIGHT_BUILDER")))
@@ -591,6 +597,12 @@ func main() {
 	// v6.2 阶段 15:装配配置资源服务(v6.2 §3.2)。
 	cpRepo := configprofile.NewSQLiteRepo(st.DB)
 	cpSvc := configprofile.NewService(cpRepo, cfg.DataDir)
+	// v6.2 阶段 16:首次启动时空 DB 时预置 4 个常用配置资源。
+	if n, err := configprofile.SeedIfEmpty(cpRepo, cfg.DataDir); err != nil {
+		log.Printf("[seed] 警告:configprofile seed 失败: %v", err)
+	} else if n > 0 {
+		log.Printf("[seed] configprofile 新增 %d 条", n)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
