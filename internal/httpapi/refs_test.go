@@ -30,7 +30,7 @@ func (f fakeRefsLister) ListCommits(_ context.Context, _, _, _, _ string, _ int)
 func setupRefsServer(t *testing.T, lister RefsLister) (string, *http.Client, string, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

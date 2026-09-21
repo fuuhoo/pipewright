@@ -47,7 +47,7 @@ func (d stubDialer) RunWithStdin(_ context.Context, _ string, _ target.SSHConfig
 func setupServerAPI(t *testing.T, dialer target.SSHDialer) (*httptest.Server, *http.Client, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestServerInvalidInput(t *testing.T) {
 // TestServerListServiceUnavailable 验证未注入 target 服务时返回 503(不 panic)。
 func TestServerListServiceUnavailable(t *testing.T) {
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

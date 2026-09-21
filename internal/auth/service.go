@@ -53,24 +53,42 @@ func (e *ErrLockedOut) Error() string {
 // 逼近 NFR-4 的 ≤100MB 红线。静态常量下 64MB 仅在实际登录校验时**瞬时**分配。
 const dummyHash = "$argon2id$v=19$m=65536,t=1,p=4$WyWRpzFnab6vlgFLECjL9g$ZJhWU5lKWEo1T7NhxBxQf70Gk+We+sUQ8SO52b8nnxQ"
 
+// UserSyncer 是 auth 包与 users 包解耦的接口;由 main.go 注入 *users.Service 实例。
+//
+// auth 包通过该接口在 Bootstrap / ChangePassword 时把 admin_user 状态同步到 users 表,
+// 但**不直接 import users 包**(避免 auth → users 的硬依赖,便于测试注入 mock)。
+//
+// 接口设计原则:每个方法的语义与 users.Service 同名方法一致,且失败不 panic;
+// auth 包对调用失败采取"打 log 后继续"策略,因为 users 同步失败不应阻断登录/改密。
+type UserSyncer interface {
+	// BootstrapAdminRow 在 users 中创建或更新 admin 行(id 固定为 BootstrapAdminRegularUserID)。
+	BootstrapAdminRow(username, passwordHash string) error
+	// SyncAdminPasswordChange 在 users.role='admin' 对应行更新 hash。
+	SyncAdminPasswordChange(username, newPasswordHash string) error
+}
+
 // Service 实现 Authenticator,依赖 *sql.DB(经构造函数注入)。
 type Service struct {
-	db       *sql.DB
-	sessions *SessionStore
-	lockout  *LockoutManager
+	db         *sql.DB
+	sessions   *SessionStore
+	lockout    *LockoutManager
+	userSyncer UserSyncer // 可选;nil 表示不同步(旧部署兼容)
 }
 
 // NewService 构造 Service;clock 为 nil 时使用 RealClock。
-func NewService(db *sql.DB, clock Clock) *Service {
+// userSyncer 可选(nil = 不同步 users 表),main.go 通常传 *users.Service。
+func NewService(db *sql.DB, clock Clock, userSyncer UserSyncer) *Service {
 	return &Service{
-		db:       db,
-		sessions: NewSessionStore(db),
-		lockout:  NewLockoutManager(clock),
+		db:         db,
+		sessions:   NewSessionStore(db),
+		lockout:    NewLockoutManager(clock),
+		userSyncer: userSyncer,
 	}
 }
 
 // Bootstrap 首次启动引导:若 admin_user 为空且提供了口令则 argon2id 哈希入库。
 // 已存在则忽略 env;无口令且无 admin 时明确日志提示(不 panic,不阻断 /healthz)。
+// 同步:若 userSyncer 非 nil,把 admin_user 状态同步到 users 表的 role='admin' 行。
 func (s *Service) Bootstrap(username, password string) error {
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(1) FROM admin_user`).Scan(&count); err != nil {
@@ -78,6 +96,15 @@ func (s *Service) Bootstrap(username, password string) error {
 	}
 	if count > 0 {
 		// 已有管理员,忽略 env(口令变更在 Story 1.7)。
+		// 但仍需把当前 admin_user 状态同步到 users(可能 users 表行缺失或 hash 不一致)。
+		if s.userSyncer != nil {
+			var u, h string
+			if err := s.db.QueryRow(`SELECT username, password_hash FROM admin_user WHERE id = 1`).Scan(&u, &h); err == nil {
+				if err := s.userSyncer.BootstrapAdminRow(u, h); err != nil {
+					log.Printf("[auth] 警告:同步 admin 到 users 表失败:%v", err)
+				}
+			}
+		}
 		return nil
 	}
 	if password == "" {
@@ -102,6 +129,13 @@ func (s *Service) Bootstrap(username, password string) error {
 		return fmt.Errorf("auth: bootstrap insert: %w", err)
 	}
 	log.Printf("[auth] 管理员账号已初始化:username=%s", username)
+
+	// 同步到 users 表(若有 userSyncer)。
+	if s.userSyncer != nil {
+		if err := s.userSyncer.BootstrapAdminRow(username, hash); err != nil {
+			log.Printf("[auth] 警告:同步 admin 到 users 表失败:%v", err)
+		}
+	}
 	return nil
 }
 
@@ -154,6 +188,17 @@ func (s *Service) Login(username, password string) (*Session, error) {
 	sess, err := s.sessions.Create()
 	if err != nil {
 		return nil, fmt.Errorf("auth: create session: %w", err)
+	}
+
+	// 同步 last_login_at 到 users 表(best-effort;失败不影响登录)。
+	// 当前阶段 1 只针对 admin;后续 story 接入普通用户登录后,按 username 同步。
+	if s.userSyncer != nil {
+		if _, err := s.db.Exec(
+			`UPDATE users SET last_login_at = ? WHERE username = ? AND role = ?`,
+			time.Now().UTC().Format(time.RFC3339), username, "admin",
+		); err != nil {
+			log.Printf("[auth] 警告:更新 last_login_at 失败:%v", err)
+		}
 	}
 	return sess, nil
 }
@@ -212,7 +257,8 @@ func (s *Service) ChangePassword(current, newPassword, currentToken string) erro
 	}
 
 	var storedHash string
-	err := s.db.QueryRow(`SELECT password_hash FROM admin_user WHERE id = 1`).Scan(&storedHash)
+	var username string
+	err := s.db.QueryRow(`SELECT username, password_hash FROM admin_user WHERE id = 1`).Scan(&username, &storedHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrInvalidCurrentPassword
@@ -244,6 +290,15 @@ func (s *Service) ChangePassword(current, newPassword, currentToken string) erro
 	if _, err := s.sessions.DeleteOthers(currentToken); err != nil {
 		return fmt.Errorf("auth: revoke other sessions: %w", err)
 	}
+
+	// 同步到 users 表(若有 userSyncer)。
+	if s.userSyncer != nil {
+		if err := s.userSyncer.SyncAdminPasswordChange(username, newHash); err != nil {
+			// 同步失败仅打 log,不阻断(用户已成功改密;users 表不一致下次 bootstrap 时会修复)。
+			log.Printf("[auth] 警告:同步 admin 密码到 users 表失败:%v", err)
+		}
+	}
+
 	return nil
 }
 

@@ -32,7 +32,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/dagrun"
 	"github.com/huangchengsir/pipewright/internal/deploy"
 	"github.com/huangchengsir/pipewright/internal/dnsprovider"
-	"github.com/huangchengsir/pipewright/internal/environments"
+	"github.com/huangchengsir/pipewright/internal/deployenv"
 	"github.com/huangchengsir/pipewright/internal/httpapi"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/mask"
@@ -52,6 +52,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/runner"
 	"github.com/huangchengsir/pipewright/internal/store"
 	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/huangchengsir/pipewright/internal/users"
 	"github.com/huangchengsir/pipewright/internal/trigger"
 	"github.com/huangchengsir/pipewright/internal/vault"
 	"github.com/huangchengsir/pipewright/internal/version"
@@ -90,8 +91,10 @@ func main() {
 		log.Printf("data db: %s", abs)
 	}
 
-	// 装配认证服务(nil clock → RealClock)并执行首次启动管理员引导。
-	authSvc := auth.NewService(st.DB, nil)
+	// 装配认证服务(nil clock → RealClock);userSyncer 注入 users 包,实现
+	// Bootstrap/ChangePassword 时 admin_user 与 users 表双向同步。
+	usersSvc := users.NewService(st.DB)
+	authSvc := auth.NewService(st.DB, nil, usersSvc)
 	if err := authSvc.Bootstrap(cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		log.Fatalf("auth bootstrap: %v", err)
 	}
@@ -183,7 +186,7 @@ func main() {
 
 	// 装配「环境一等公民」只读聚合服务(对标 GitLab environments):按环境聚合部署历史 +
 	// 一键回滚定位。纯查询既有表(pipeline_runs + deploy_targets + run_artifacts),零迁移、无副作用。
-	environmentsSvc := environments.NewService(st.DB)
+	environmentsSvc := deployenv.NewService(st.DB)
 
 	// 重启清理:进程重启会丢失内存等待者,把残留 waiting_approval 运行清为 failed(孤儿不可恢复)。
 	if n, err := runSvc.FailOrphanedRuns(context.Background()); err != nil {

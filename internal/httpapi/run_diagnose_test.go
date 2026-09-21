@@ -103,7 +103,7 @@ func (s *diagStubAI) GenerateCompose(context.Context, ai.GenerateComposeInput) (
 func setupDiagnoseServer(t *testing.T, stubAI ai.Service) (*httptest.Server, *http.Client, string, string, run.Service) {
 	t.Helper()
 	st := testStoreAuth(t)
-	asvc := auth.NewService(st.DB, nil)
+	asvc := auth.NewService(st.DB, nil, nil)
 	if err := asvc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

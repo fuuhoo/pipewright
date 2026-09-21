@@ -16,19 +16,28 @@ import (
 
 // stubProber 让 HTTP 层测试可控仓库探测结果,不触网。
 type stubProber struct {
-	branch string
-	err    error
+	branch   string
+	err      error
+	branches []string
+	tags     []string
 }
 
 func (s stubProber) Probe(_ context.Context, _ string, _ string, _ string) (string, error) {
 	return s.branch, s.err
 }
 
+func (s stubProber) ProbeRefs(_ context.Context, _ string, _ string, _ string) (string, []string, []string, error) {
+	if s.err != nil {
+		return "", nil, nil, s.err
+	}
+	return s.branch, s.branches, s.tags, nil
+}
+
 // setupProjectServer 构造带 auth + vault + project 的测试 server。
 func setupProjectServer(t *testing.T, pr project.RemoteProber) (*httptest.Server, *http.Client, string, vault.Vault) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -171,7 +180,7 @@ func TestTestCloneSuccess(t *testing.T) {
 func TestProjectVaultUnconfigured422(t *testing.T) {
 	// 项目服务持有未配置的 vault → 创建/test-clone 应 422 vault_unconfigured。
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -250,4 +259,65 @@ func TestProjectRequiresAuth(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
+}
+
+// TestTestCloneReturnsBranchList 验证 test-clone 在响应里同时带回全部分支/tag 列表(供前端
+// 「新建项目」弹窗的默认分支下拉)。失败时列表保证为 [] 而非 null,前端可安全迭代。
+func TestTestCloneReturnsBranchList(t *testing.T) {
+	srv, client, csrf, _ := setupProjectServer(t, stubProber{
+		branch:   "main",
+		branches: []string{"main", "develop", "release/1.0"},
+		tags:     []string{"v1.0.0", "v1.1.0"},
+	})
+	credID := newGitCred(t, client, srv.URL, csrf, "tok")
+	body := `{"repoUrl":"https://gitee.com/a/b.git","credentialId":"` + credID + `"}`
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/projects/test-clone", csrf, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		OK            bool     `json:"ok"`
+		DefaultBranch string   `json:"defaultBranch"`
+		Branches      []string `json:"branches"`
+		Tags          []string `json:"tags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.OK || out.DefaultBranch != "main" {
+		t.Fatalf("ok/defaultBranch 不对: %+v", out)
+	}
+	if got, want := out.Branches, []string{"main", "develop", "release/1.0"}; !equalStrings(got, want) {
+		t.Fatalf("branches 不对: got %v, want %v", got, want)
+	}
+	if got, want := out.Tags, []string{"v1.0.0", "v1.1.0"}; !equalStrings(got, want) {
+		t.Fatalf("tags 不对: got %v, want %v", got, want)
+	}
+}
+
+// TestTestCloneFailureEmptyLists 验证 test-clone 失败时(422 repo_unreachable)响应正确。
+// branches/tags 字段在此路径上不被返回(走 writeProjectError),前端 catch 后会走纯文本输入。
+func TestTestCloneFailureEmptyLists(t *testing.T) {
+	srv, client, csrf, _ := setupProjectServer(t, stubProber{err: project.ErrRepoUnreachable})
+	credID := newGitCred(t, client, srv.URL, csrf, "tok")
+	body := `{"repoUrl":"https://gitee.com/a/b.git","credentialId":"` + credID + `"}`
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/projects/test-clone", csrf, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (repo_unreachable)", resp.StatusCode)
+	}
+}
+
+// equalStrings 比较两个 []string 是否完全相等(顺序敏感)。
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+		return false
+	}
+	}
+	return true
 }

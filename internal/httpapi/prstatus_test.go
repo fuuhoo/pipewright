@@ -22,6 +22,10 @@ func (stubProberPR) Probe(_ context.Context, _ /*repoURL*/ string, _ string, _ s
 	return "main", nil
 }
 
+func (stubProberPR) ProbeRefs(_ context.Context, _ string, _ string, _ string) (string, []string, []string, error) {
+	return "main", nil, nil, nil
+}
+
 // prStatusHookFixture 起一个把所有平台 API 收编到本地的 httptest server,并装好真 run/project/vault
 // 服务 + 经种子建一个 GitHub 项目(带可 Reveal 的凭据)与一个带 commit 的成功 run。
 // 返回:hits(server 命中计数指针)、runID、projID、project.Service、reporter。

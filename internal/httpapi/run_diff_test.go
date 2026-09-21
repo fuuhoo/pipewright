@@ -113,7 +113,7 @@ func seedDiffRun(t *testing.T, db *sql.DB, projID, branch, commit, status string
 func setupDiffServer(t *testing.T, repoURL string) (*httptest.Server, *http.Client, string, *sql.DB, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

@@ -27,7 +27,7 @@ func testMasterKey() *[32]byte {
 func setupVaultServer(t *testing.T) (*httptest.Server, *http.Client, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestRevealCredential(t *testing.T) {
 // TestVaultUnconfiguredEndpoint 验证未配置 master key 时端点返回 503 vault_unconfigured。
 func TestVaultUnconfiguredEndpoint(t *testing.T) {
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

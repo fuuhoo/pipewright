@@ -80,7 +80,7 @@ func (s *stubProxyService) PrepareCaddy(_ context.Context, serverID string) (*pr
 func setupProxyServer(t *testing.T, px proxy.Service) (*httptest.Server, *http.Client, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestProxyOverview(t *testing.T) {
 // TestProxyUpdate_Unconfigured503 验证未注入 proxy 时端点 503。
 func TestProxyUpdate_Unconfigured503(t *testing.T) {
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestProxyRouteDTO_DefaultUpstreamKindContainer(t *testing.T) {
 // TestProxyCaddy_Unconfigured503 验证未注入 proxy 时 GET /api/proxy/caddy 返回 503。
 func TestProxyCaddy_Unconfigured503(t *testing.T) {
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

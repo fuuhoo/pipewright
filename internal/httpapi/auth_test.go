@@ -41,7 +41,7 @@ func setupAuthServer(t *testing.T) (*httptest.Server, *auth.Service) {
 func setupAuthServerWithClock(t *testing.T, clock auth.Clock) (*httptest.Server, *auth.Service) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, clock)
+	svc := auth.NewService(st.DB, clock, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

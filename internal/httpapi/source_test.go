@@ -94,7 +94,7 @@ func seedSourceProject(t *testing.T, db *sql.DB, repoURL string) string {
 func setupSourceServer(t *testing.T, repoURL string) (*httptest.Server, *http.Client, string, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

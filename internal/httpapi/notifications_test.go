@@ -18,7 +18,7 @@ import (
 func setupNotifyServer(t *testing.T, client *http.Client) (*httptest.Server, *http.Client, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestWecomDingtalkRequireURLViaAPI(t *testing.T) {
 // 未注入 notify 服务 → 503。
 func TestNotifyServiceUnavailable(t *testing.T) {
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	_ = svc.Bootstrap("admin", "testpass")
 	srv := httptest.NewServer(New(testWebFSAuth(), svc)) // 无 WithNotifications
 	t.Cleanup(srv.Close)

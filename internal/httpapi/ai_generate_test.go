@@ -90,7 +90,7 @@ func sampleProposal() *ai.Proposal {
 func setupAIGenServer(t *testing.T, aiSvc ai.Service, analyzer ai.RepoAnalyzer) (*httptest.Server, *http.Client, string, string) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

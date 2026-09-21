@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/huangchengsir/pipewright/internal/auth"
 	"github.com/huangchengsir/pipewright/internal/deploy"
-	"github.com/huangchengsir/pipewright/internal/environments"
+	"github.com/huangchengsir/pipewright/internal/deployenv"
 	"github.com/huangchengsir/pipewright/internal/project"
 	"github.com/huangchengsir/pipewright/internal/run"
 	"github.com/huangchengsir/pipewright/internal/vault"
@@ -53,14 +53,14 @@ func (s *stubDeploy) DeployForStage(context.Context, string, []string, map[strin
 func setupEnvironmentsServer(t *testing.T) (*httptest.Server, *http.Client, string, string, run.Service, *stubDeploy) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	v := vault.New(st.DB, testMasterKey())
 	psvc := project.New(st.DB, v, stubProber{branch: "main"})
 	rsvc := run.New(st.DB)
-	envSvc := environments.NewService(st.DB)
+	envSvc := deployenv.NewService(st.DB)
 	dep := &stubDeploy{}
 	pool := run.NewWorkerPool(rsvc)
 	pool.Start()

@@ -1,4 +1,4 @@
-// Package environments 把「环境」做成可观测的一等只读对象(对标 GitLab environments):
+// Package deployenv 把「部署环境」做成可观测的一等只读对象(对标 GitLab environments):
 // 按环境聚合部署历史(哪个 run、何时、什么产物、成功/失败、目标机、谁触发),并标出每环境
 // 当前「活跃版本」(最近一次全成功部署),为一键回滚提供「上一次成功部署」的定位。
 //
@@ -13,7 +13,11 @@
 //     那次 run 的同一产物 + 同一组目标机经既有 deploy 链路重发(执行编排在 httpapi 层注入 deploy.Service)。
 //
 // 本包只 import database/sql(+ 标准库);不 import run/deploy(避免环),与 promotion.Store 同范式。
-package environments
+//
+// 迁移说明(v6.2 阶段 2):本包曾位于 internal/environments,因 v6.2 引入"构建环境"
+// (internal/buildenv)需要 deployenv 名称;保留 internal/environments/alias.go 作为
+// type alias 兼容层,旧 import 仍可工作(后续版本删除)。
+package deployenv
 
 import (
 	"context"

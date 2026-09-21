@@ -7,17 +7,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/audit"
 	"github.com/huangchengsir/pipewright/internal/deploy"
-	"github.com/huangchengsir/pipewright/internal/environments"
+	"github.com/huangchengsir/pipewright/internal/deployenv"
 	"github.com/huangchengsir/pipewright/internal/run"
 )
 
-// environments.go 暴露「环境一等公民」只读聚合 + 一键回滚端点(对标 GitLab environments)。
+// deployenv.go 暴露「环境一等公民」只读聚合 + 一键回滚端点(对标 GitLab environments)。
 //
 //	GET  /api/projects/{id}/environments/deployments        → 按环境聚合的部署时间线(每环境最近 N 次 + 活跃版本)
 //	GET  /api/projects/{id}/environments/{env}/history       → 单环境时间线
 //	POST /api/projects/{id}/environments/{env}/rollback      → 一键回滚到上一次成功部署(需 CSRF)
 //
-// 聚合是纯查询既有表(零迁移);回滚定位由 environments.Service 完成,执行复用既有 deploy.Service.Deploy
+// 聚合是纯查询既有表(零迁移);回滚定位由 deployenv.Service 完成,执行复用既有 deploy.Service.Deploy
 // 链路(重发上一次成功部署的同一产物到同一组目标机)。env 路径段经 URL 解码(chi 已解)。
 
 // ---- 只读聚合 DTO --------------------------------------------------------------
@@ -53,7 +53,7 @@ type envTimelineDTO struct {
 	Deployments []envDeploymentDTO `json:"deployments"`
 }
 
-func toEnvDeploymentDTO(d environments.Deployment) envDeploymentDTO {
+func toEnvDeploymentDTO(d deployenv.Deployment) envDeploymentDTO {
 	targets := make([]envTargetDTO, 0, len(d.Targets))
 	for _, t := range d.Targets {
 		targets = append(targets, envTargetDTO{ServerID: t.ServerID, ServerName: t.ServerName, Status: t.Status})
@@ -75,7 +75,7 @@ func toEnvDeploymentDTO(d environments.Deployment) envDeploymentDTO {
 	}
 }
 
-func toEnvTimelineDTO(tl environments.EnvironmentTimeline) envTimelineDTO {
+func toEnvTimelineDTO(tl deployenv.EnvironmentTimeline) envTimelineDTO {
 	deps := make([]envDeploymentDTO, 0, len(tl.Deployments))
 	for i := range tl.Deployments {
 		deps = append(deps, toEnvDeploymentDTO(tl.Deployments[i]))
@@ -90,11 +90,11 @@ func toEnvTimelineDTO(tl environments.EnvironmentTimeline) envTimelineDTO {
 
 func writeEnvError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, environments.ErrProjectNotFound):
+	case errors.Is(err, deployenv.ErrProjectNotFound):
 		writeError(w, http.StatusNotFound, "project_not_found", "项目不存在")
-	case errors.Is(err, environments.ErrEnvNotFound):
+	case errors.Is(err, deployenv.ErrEnvNotFound):
 		writeError(w, http.StatusNotFound, "environment_not_found", "该环境暂无部署历史")
-	case errors.Is(err, environments.ErrNoRollbackTarget):
+	case errors.Is(err, deployenv.ErrNoRollbackTarget):
 		writeError(w, http.StatusUnprocessableEntity, "no_rollback_target", "该环境没有可回滚的上一次成功部署")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
@@ -102,7 +102,7 @@ func writeEnvError(w http.ResponseWriter, err error) {
 }
 
 // makeListEnvironmentDeploymentsHandler 返回 GET /api/projects/{id}/environments/deployments。
-func makeListEnvironmentDeploymentsHandler(svc *environments.Service) http.HandlerFunc {
+func makeListEnvironmentDeploymentsHandler(svc *deployenv.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "环境服务未初始化")
@@ -122,7 +122,7 @@ func makeListEnvironmentDeploymentsHandler(svc *environments.Service) http.Handl
 }
 
 // makeEnvironmentHistoryHandler 返回 GET /api/projects/{id}/environments/{env}/history。
-func makeEnvironmentHistoryHandler(svc *environments.Service) http.HandlerFunc {
+func makeEnvironmentHistoryHandler(svc *deployenv.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "环境服务未初始化")
@@ -153,7 +153,7 @@ type rollbackResponse struct {
 //
 // 项目不存在 / 环境无历史 → 404;无可回滚目标 / 产物缺失 / 服务器不存在 → 422;
 // 重发执行失败由 deploy.Deploy 内化为每机 failed(整体 200,不 500)。
-func makeRollbackEnvironmentHandler(envSvc *environments.Service, deploySvc deploy.Service, runSvc run.Service, rec audit.Recorder) http.HandlerFunc {
+func makeRollbackEnvironmentHandler(envSvc *deployenv.Service, deploySvc deploy.Service, runSvc run.Service, rec audit.Recorder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if envSvc == nil || deploySvc == nil || runSvc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "回滚服务未初始化")

@@ -18,7 +18,7 @@ import (
 func setupAuditServer(t *testing.T) (*httptest.Server, *http.Client, string, audit.Recorder) {
 	t.Helper()
 	st := testStoreAuth(t)
-	svc := auth.NewService(st.DB, nil)
+	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/cron"
 	"github.com/huangchengsir/pipewright/internal/deploy"
 	"github.com/huangchengsir/pipewright/internal/dnsprovider"
-	"github.com/huangchengsir/pipewright/internal/environments"
+	"github.com/huangchengsir/pipewright/internal/deployenv"
 	"github.com/huangchengsir/pipewright/internal/i18n"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/metrics"
@@ -94,7 +94,7 @@ type options struct {
 	approvalStore    *approval.Store
 	approvalSigner   *approval.Signer
 	promotionStore   *promotion.Store
-	environments     *environments.Service
+	environments     *deployenv.Service
 	doraMetrics      run.MetricsService
 	templates        library.TemplateService
 	varGroups        library.VarGroupService
@@ -139,7 +139,7 @@ func WithPromotion(store *promotion.Store) Option {
 // 按环境部署历史时间线 + 单环境历史 + 一键回滚路由。聚合纯查询既有表(零迁移);回滚执行复用
 // 既有 deploy.Service(经 WithDeploy 注入)。GET 过 auth;rollback 为写方法,过 auth + CSRF + 审计。
 // 不传则相关端点返回 503(服务未初始化);未注入 deploy 时回滚端点 503。
-func WithEnvironments(s *environments.Service) Option {
+func WithEnvironments(s *deployenv.Service) Option {
 	return func(o *options) { o.environments = s }
 }
 
@@ -670,6 +670,10 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 列仓库分支/tag(代码管理区 · Story 8-18):供前端触发时分支/commit 下拉。o.refsLister 为 nil → 503。
 		ar.Get("/projects/{id}/refs", makeListRefsHandler(p, v, o.refsLister))
 		ar.Get("/projects/{id}/commits", makeListCommitsHandler(p, v, o.refsLister))
+		// 显式同步仓库(refs sync):用户在前端点「⟳ 同步远程」时调用,触发 repocache 增量 fetch + 回读,
+		// 让远程刚 push 的新分支/新 tag 立刻出现在下拉里。POST 命中写方法 → 过 auth + CSRF(上层 middleware 已统一罩住);
+		// handler 内部按结果记 audit(NFR-8:写操作的任何尝试均留痕)。o.refsLister 为 nil → 503。
+		ar.Post("/projects/{id}/refs/sync", makeSyncRefsHandler(p, v, o.refsLister, aud))
 		ar.Get("/projects/{id}/runner", makeGetRunnerHandler(o.runnerConfig))
 		ar.Put("/projects/{id}/runner", makeSaveRunnerHandler(o.runnerConfig, aud))
 
