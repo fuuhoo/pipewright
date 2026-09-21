@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // MasterKeyLen 是凭据保险库 master key 的字节长度(NaCl secretbox 需 32B)。
@@ -31,7 +33,31 @@ type Config struct {
 	// AdminPassword 是管理员初始口令(首次启动引导用);已存在管理员时忽略。
 	// 注:此字段仅用于首次引导,不持久化,不入日志。
 	AdminPassword string
+
+	// v6.2 阶段 14:构建环境/配置资源/UI YAML 校验 相关配置。
+	DataDir         string // 配置资源文件存储目录(默认 ./data)
+	ConfigUploadMax int64  // 配置文件上传大小上限(字节;默认 1<<20 = 1MB)
+	// PIPEWRIGHT_ENFORCE_BUILD_ENV(默认 true):是否校验 job 镜像来源于 build_envs。
+	EnforceBuildEnv bool
+	// PIPEWRIGHT_UI_ONLY(默认 true):是否禁用 YAML 直接编辑(导入/导出保留)。
+	UIOnly bool
+
+	// v6.2 阶段 14:镜像检查器配置。
+	AutoCheckOnStart     bool          // 服务启动后自动检查所有 build_env 镜像(默认 true)
+	CheckConcurrency     int           // 并发上限(默认 10)
+	CheckTimeout         time.Duration // 单次 inspect 超时(默认 60s)
+	PullTimeoutMultiply  int           // pull 超时 = CheckTimeout × N(默认 4)
+	AllowUncheckedEnable bool          // 紧急逃生:允许 unchecked 状态启用 env(默认 false)
 }
+
+// v6.2 阶段 14 配置默认值。
+const (
+	DefaultDataDir           = "./data"
+	DefaultConfigUploadMax   = 1 << 20 // 1MB
+	DefaultCheckTimeoutSec   = 60
+	DefaultCheckConcurrency  = 10
+	DefaultPullTimeoutMult   = 4
+)
 
 // Load 从环境变量读取配置,缺失项回退到合理默认值。
 func Load() Config {
@@ -42,6 +68,17 @@ func Load() Config {
 		DBPath:        getenv("PIPEWRIGHT_DB", "pipewright.db"),
 		AdminUsername: getenv("PIPEWRIGHT_ADMIN_USERNAME", "admin"),
 		AdminPassword: os.Getenv("PIPEWRIGHT_ADMIN_PASSWORD"), // 无默认值,空串表示未设置
+
+		DataDir:         getenv("PIPEWRIGHT_DATA_DIR", DefaultDataDir),
+		ConfigUploadMax: getenvInt64("PIPEWRIGHT_CONFIG_UPLOAD_MAX_SIZE", DefaultConfigUploadMax),
+		EnforceBuildEnv: getenvBool("PIPEWRIGHT_ENFORCE_BUILD_ENV", true),
+		UIOnly:          getenvBool("PIPEWRIGHT_UI_ONLY", true),
+
+		AutoCheckOnStart:     getenvBool("PIPEWRIGHT_AUTO_CHECK_ON_START", true),
+		CheckConcurrency:     getenvInt("PIPEWRIGHT_CHECK_CONCURRENCY", DefaultCheckConcurrency),
+		CheckTimeout:         time.Duration(getenvInt("PIPEWRIGHT_CHECK_TIMEOUT_SECONDS", DefaultCheckTimeoutSec)) * time.Second,
+		PullTimeoutMultiply:  getenvInt("PIPEWRIGHT_PULL_TIMEOUT_MULTIPLIER", DefaultPullTimeoutMult),
+		AllowUncheckedEnable: getenvBool("PIPEWRIGHT_ALLOW_UNCHECKED_ENABLE", false),
 	}
 }
 
@@ -115,4 +152,46 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// getenvInt 读 int;解析失败或空 → def。
+func getenvInt(key string, def int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// getenvInt64 读 int64;解析失败或空 → def。
+func getenvInt64(key string, def int64) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// getenvBool 读 bool;接受 1/true/yes/on(忽略大小写)→ true,其它 → def。
+func getenvBool(key string, def bool) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if raw == "" {
+		return def
+	}
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
