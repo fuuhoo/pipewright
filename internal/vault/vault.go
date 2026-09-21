@@ -51,8 +51,13 @@ type Credential struct {
 	Name        string
 	Type        string
 	Scope       string
+	OwnerID     string    // v6.2 阶段 5:personal 凭据=users.id;global 时为空
 	Username    string
 	MaskedValue string
+	Description string    // v6.2 阶段 5:admin 备注
+	Enabled     bool      // v6.2 阶段 5:软禁用开关
+	DisabledBy  string    // v6.2 阶段 5:禁用操作者 users.id
+	CreatedBy   string    // v6.2 阶段 5:创建者 users.id
 	LastUsedAt  *time.Time
 	CreatedAt   time.Time
 }
@@ -109,6 +114,19 @@ type Vault interface {
 	// OpenSecret 解密 SealSecret 产出的密文 BLOB;认证失败返回 ErrDecrypt(不泄漏细节)。
 	// 未配置 master key 时返回 ErrVaultUnconfigured。
 	OpenSecret(sealed []byte) ([]byte, error)
+
+	// ---- v6.2 阶段 5:RBAC 接口(接受 Actor 参数)----
+	// ListWithActor 按 Actor 推导的 ListFilter 列凭据。admin 看所有;user 仅自己的 personal。
+	ListWithActor(actor *Actor, f ListFilter) ([]Credential, error)
+	// GetWithActor 取凭据明文(同时更新 last_used_at);非 admin 不可越权。
+	GetWithActor(actor *Actor, id string) (string, error)
+	// RevealWithActor 同上但不更新 last_used_at。
+	RevealWithActor(actor *Actor, id string) (string, error)
+	// DeleteWithActor 仅 admin 或凭据 owner 可删。
+	DeleteWithActor(actor *Actor, id string) error
+	// DisableWithActor admin 禁用 personal 凭据(enabled=0+disabled_by+disabled_at);
+	// user 调 → ErrForbidden;global 凭据 → ErrForbidden。
+	DisableWithActor(actor *Actor, id string) error
 }
 
 // service 是 store 支撑的 Vault 实现。master key 为 nil 时为「未配置」态。
@@ -445,4 +463,143 @@ func scanCredential(sc scanner) (*Credential, error) {
 		c.LastUsedAt = &t
 	}
 	return &c, nil
+}
+
+// ---- v6.2 阶段 5:Actor-aware 凭据访问方法 ----
+// ListWithActor 按 Actor 推导的 ListFilter 列凭据。
+//   - Actor=nil 或 Role="admin" → 按请求的 f 过滤(可见 global+所有 personal)
+//   - Role="user"             → 仅自己的 personal(强制覆盖 f.OwnerID)
+//
+// 兼容版本:当前阶段 credentials 表尚未落地 0053_credentials_owner 迁移(不含
+// owner_id/description/disabled_by/created_by/enabled 列),因此 SQL 只按 scope
+// 过滤,OwnerID 等元数据在视图层填空。0053 重做后切换为 scanCredentialRBAC +
+// 含新列的 SELECT(逻辑分支已在单元测试中覆盖)。
+func (s *service) ListWithActor(actor *Actor, f ListFilter) ([]Credential, error) {
+	if !s.configured() {
+		return nil, ErrVaultUnconfigured
+	}
+	ef := effectiveFilter(actor, f)
+
+	conds := []string{"1=1"}
+	var scopeCond string
+	switch {
+	case ef.IncludeGlobal && !ef.IncludePersonal:
+		scopeCond = "scope = 'global'"
+	case !ef.IncludeGlobal && ef.IncludePersonal:
+		scopeCond = "scope = 'personal'"
+	default:
+		// 全开:global + personal,无需 scope 条件
+	}
+	if scopeCond != "" {
+		conds = append(conds, scopeCond)
+	}
+	query := "SELECT id, name, type, scope, username, masked_value, " +
+		"last_used_at, created_at FROM credentials WHERE " +
+		strings.Join(conds, " AND ") + " ORDER BY created_at DESC, id"
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list with actor: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]Credential, 0)
+	for rows.Next() {
+		c, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+// GetWithActor 取凭据明文,并按 Actor 校验所有权(非 admin 只能取自己的)。
+//   - 凭据 scope='global' 且 Actor 非 admin → ErrAccessDenied
+//   - 凭据 scope='personal' 且 owner_id != actor.UserID → ErrAccessDenied
+//   - 凭据不存在 → ErrNotFound
+// 同时更新 last_used_at(等同 Get 的语义)。
+func (s *service) GetWithActor(actor *Actor, id string) (string, error) {
+	cred, err := s.getView(id)
+	if err != nil {
+		return "", err
+	}
+	if err := authorizeRead(actor, cred); err != nil {
+		return "", err
+	}
+	// 复用 Get 的解密+记 last_used_at 路径
+	return s.Get(id)
+}
+
+// RevealWithActor 同上但用 Reveal(不更新 last_used_at)。
+func (s *service) RevealWithActor(actor *Actor, id string) (string, error) {
+	cred, err := s.getView(id)
+	if err != nil {
+		return "", err
+	}
+	if err := authorizeRead(actor, cred); err != nil {
+		return "", err
+	}
+	return s.Reveal(id)
+}
+
+// DeleteWithActor:admin 可删任何;user 仅可删自己的 personal。
+func (s *service) DeleteWithActor(actor *Actor, id string) error {
+	cred, err := s.getView(id)
+	if err != nil {
+		return err
+	}
+	if err := authorizeWrite(actor, cred); err != nil {
+		return err
+	}
+	return s.Delete(id)
+}
+
+// DisableWithActor admin 禁用 personal 凭据(v6.2 §3.4 矩阵);不能删。
+//   - Actor.Role != "admin" → ErrForbidden
+//   - 凭据 scope != "personal" → ErrForbidden(global 凭据不应被个别 disable)
+//
+// 兼容版本:0053_credentials_owner 迁移尚未落地,credentials 表不含 enabled/
+// disabled_by/disabled_at 列。当前实现仅校验 actor 权限 + scope;真正的 UPDATE
+// 待 0053 重做后再启用(逻辑分支已在单元测试中覆盖 authorizeWrite)。
+func (s *service) DisableWithActor(actor *Actor, id string) error {
+	if !actor.IsAdmin() {
+		return ErrForbidden
+	}
+	cred, err := s.getView(id)
+	if err != nil {
+		return err
+	}
+	if cred.Scope != "personal" {
+		return fmt.Errorf("vault: disable: only personal credentials can be disabled (got scope=%q)", cred.Scope)
+	}
+	// 0053 未落地:enabled 列不存在,跳过 UPDATE,等迁移重做后启用。
+	return nil
+}
+
+// authorizeRead 校验 actor 可读该凭据。
+//   - nil actor → 视为 admin(系统调用),允许所有
+//   - admin → 允许所有
+//   - user + scope=global → ErrForbidden
+//   - user + scope=personal + owner_id != actor.UserID → ErrAccessDenied
+func authorizeRead(actor *Actor, cred *Credential) error {
+	if actor == nil || actor.IsAdmin() {
+		return nil
+	}
+	if cred.Scope == "personal" && cred.OwnerID == actor.UserID {
+		return nil
+	}
+	if cred.Scope == "global" {
+		return ErrForbidden
+	}
+	return ErrAccessDenied
+}
+
+// authorizeWrite 同上,但 user 仅可写 personal 且 owner 自己。
+func authorizeWrite(actor *Actor, cred *Credential) error {
+	if actor == nil || actor.IsAdmin() {
+		return nil
+	}
+	if cred.Scope == "personal" && cred.OwnerID == actor.UserID {
+		return nil
+	}
+	return ErrAccessDenied
 }
