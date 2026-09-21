@@ -36,6 +36,8 @@ const ko: typeof zhCN = {
     ariaEnvironments: '환경 배포 이력',
     expand: '사이드바 펼치기',
     collapse: '사이드바 접기',
+    buildEnvs: '빌드 환경',
+    configProfiles: '구성 프로필',
   },
 
   shell: {

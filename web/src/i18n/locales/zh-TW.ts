@@ -36,6 +36,8 @@ const zhTW: typeof zhCN = {
     ariaEnvironments: '環境部署歷史',
     expand: '展開側欄',
     collapse: '收合側欄',
+    buildEnvs: '建置環境',
+    configProfiles: '配置資源',
   },
 
   shell: {

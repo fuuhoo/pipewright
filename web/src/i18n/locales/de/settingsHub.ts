@@ -11,4 +11,15 @@ export default {
   navServers: 'Server',
   navDiagnosisStats: 'Diagnose-Feedback',
   navSystem: 'System',
+
+  // v6.2 §3.6:设置按角色分组
+  globalGroup: 'Globale Einstellungen',
+  globalGroupHint: 'Nur Administratoren',
+  personalGroup: 'Persönliche Einstellungen',
+  navBuildEnvs: 'Build-Umgebungen',
+  navConfigProfiles: 'Konfigurationsprofile',
+  navCredentials: 'Globale Zugangsdaten',
+  navUsers: 'Benutzer',
+  navAudit: 'Audit-Protokoll',
+  navMyCredentials: 'Meine Zugangsdaten',
 }

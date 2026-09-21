@@ -36,6 +36,8 @@ const en: typeof zhCN = {
     ariaEnvironments: 'Environment deployment history',
     expand: 'Expand sidebar',
     collapse: 'Collapse sidebar',
+    buildEnvs: 'Build environments',
+    configProfiles: 'Config profiles',
   },
 
   shell: {

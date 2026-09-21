@@ -37,6 +37,7 @@ type Session struct {
 	CSRFToken  string
 	UserID     string // v6.2 阶段 6:绑定的 users.id(admin 取固定 UUID)
 	Role       string // v6.2 阶段 6:"admin" | "user" | ''(旧会话)
+	Username   string // v6.2:登录名(内存字段,不落 sessions 表;Verify 时按 UserID 解析)
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 	LastSeenAt time.Time

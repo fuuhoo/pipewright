@@ -1,15 +1,22 @@
 /**
  * Auth API — aligns to frozen 1.2 contract.
  *
- * GET  /api/auth/session → { username } | 401
- * POST /api/auth/login   → { username } | 401 | 429
+ * GET  /api/auth/session → { username, role } | 401
+ * POST /api/auth/login   → { username, role } | 401 | 429
  * POST /api/auth/logout  → 204
+ *
+ * v6.2:login / session 均回显 role("admin" | "user"),前端据其做菜单与
+ * 入口隔离(§3.6)。旧部署会话 role 为空 → 后端统一按 "admin" 回显。
  */
 
 import { http, HttpError } from './http'
 
+/** 平台角色。与后端 auth.RoleAdmin / RoleUser 同集合。 */
+export type UserRole = 'admin' | 'user'
+
 export interface SessionUser {
   username: string
+  role: UserRole
 }
 
 /**

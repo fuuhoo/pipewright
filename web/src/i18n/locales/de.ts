@@ -36,6 +36,8 @@ const de: typeof zhCN = {
     ariaEnvironments: 'Deployment-Verlauf nach Umgebung',
     expand: 'Seitenleiste ausklappen',
     collapse: 'Seitenleiste einklappen',
+    buildEnvs: 'Build-Umgebungen',
+    configProfiles: 'Konfigurationsprofile',
   },
 
   shell: {

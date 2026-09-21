@@ -179,3 +179,40 @@ func mustV(t *testing.T, err error, step string) {
 		t.Fatalf("%s: %v", step, err)
 	}
 }
+
+// 回归:普通用户登录/Verify 后 Session.Username 必须是本人,不能被 admin 覆盖
+// (httpapi 曾用 AdminUsername() 无条件回显,导致 alice 显示成 "admin")。
+func TestRegression_SessionCarriesRealUsername(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db, nil, users.NewService(db))
+	mustV(t, svc.Bootstrap("admin", "testpass1234"), "b")
+
+	hash, err := HashPassword("alice-pass-1234")
+	mustV(t, err, "hash")
+	_, err = db.Exec(`INSERT INTO users (id, username, password_hash, role, enabled, created_at, updated_at)
+	                  VALUES ('u-alice','alice',?,'user',1,'2024-01-01T00:00:00Z','2024-01-01T00:00:00Z')`, hash)
+	mustV(t, err, "seed alice")
+
+	sess, err := svc.Login("alice", "alice-pass-1234")
+	mustV(t, err, "login alice")
+	if sess.Username != "alice" {
+		t.Fatalf("Login 后 Username = %q, want alice", sess.Username)
+	}
+	if sess.Role != "user" {
+		t.Fatalf("Role = %q, want user", sess.Role)
+	}
+
+	// Verify(模拟后续请求重新读会话)也必须解析出本人用户名
+	got, err := svc.Verify(sess.Token)
+	mustV(t, err, "verify")
+	if got.Username != "alice" {
+		t.Fatalf("Verify 后 Username = %q, want alice", got.Username)
+	}
+
+	// admin 侧不受影响
+	asess, err := svc.Login("admin", "testpass1234")
+	mustV(t, err, "login admin")
+	if asess.Username != "admin" || asess.Role != "admin" {
+		t.Fatalf("admin 会话错: %+v", asess)
+	}
+}

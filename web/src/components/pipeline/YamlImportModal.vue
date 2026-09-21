@@ -2,12 +2,14 @@
 /**
  * YamlImportModal — import a `.pipewright.yml` document into the pipeline editor (FR-8-12).
  *
- * Flow:
- *   1. Paste/edit YAML → 「预览」 calls importPipeline(save=false): server parses + validates,
+ * Flow(v6.2 §3.7 修订):
+ *   1. Paste YAML → 「预览」 calls importPipeline(save=false): server parses + validates,
  *      returns the parsed PipelineDTO. We emit `preview` so the canvas reflects it without saving.
- *   2. 「导入到画布」 commits the previewed stages into the editor's local state (still unsaved —
- *      user reviews on the canvas, then clicks 保存草稿 as usual).
- *   3. 「导入并保存」 calls importPipeline(save=true): parses, persists, reloads.
+ *   2. 「导入到画布」 closes the modal; the user reviews on the canvas and saves the draft
+ *      through the normal 保存草稿 button (PUT /api/projects/{id}/pipeline with stages).
+ *
+ * v6.2 删除:「导入并保存」(save=true)按钮 —— YAML 不再是可持久化的直接编辑通道。
+ * 保留导入预览,是为了让用户把现有 YAML 搬到画布上;之后的编辑全部走结构化 stages。
  *
  * Validation errors (422) are shown inline with the server's human-readable, secret-free message.
  */
@@ -26,7 +28,7 @@ const emit = defineEmits<{
   (e: 'close'): void
   /** A successful preview (save=false): parent applies stages to the canvas without saving. */
   (e: 'preview', dto: PipelineDTO): void
-  /** A successful save (save=true): parent reloads pipeline + settings. */
+  /** @deprecated v6.2 起不再有「导入并保存」入口;保留声明以兼容旧调用方。 */
   (e: 'saved', dto: PipelineDTO): void
 }>()
 
@@ -108,21 +110,6 @@ async function onApplyToCanvas(): Promise<void> {
   }
 }
 
-/** 导入并保存:解析 + 持久化 + 重载。 */
-async function onImportAndSave(): Promise<void> {
-  errorMsg.value = ''
-  busy.value = 'save'
-  try {
-    const dto = await importPipeline(props.projectId, yamlText.value, true)
-    emit('saved', dto)
-    emit('close')
-  } catch (err) {
-    handleError(err)
-  } finally {
-    busy.value = null
-  }
-}
-
 function loadStarter(): void {
   yamlText.value = STARTER
 }
@@ -176,10 +163,9 @@ function onBackdrop(e: MouseEvent): void {
           {{ t('pipelinePanels.yiPreview') }}
         </button>
         <div class="yi-foot-right">
-          <button class="yi-btn" :disabled="busy !== null || !yamlText.trim()" @click="onApplyToCanvas">{{ t('pipelinePanels.yiImportToCanvas') }}</button>
-          <button class="yi-btn yi-btn--primary" :disabled="busy !== null || !yamlText.trim()" @click="onImportAndSave">
-            <span v-if="busy === 'save'" class="yi-spin" aria-hidden="true"/>
-            {{ t('pipelinePanels.yiImportAndSave') }}
+          <button class="yi-btn yi-btn--primary" :disabled="busy !== null || !yamlText.trim()" @click="onApplyToCanvas">
+            <span v-if="busy === 'preview'" class="yi-spin" aria-hidden="true"/>
+            {{ t('pipelinePanels.yiImportToCanvas') }}
           </button>
         </div>
       </footer>

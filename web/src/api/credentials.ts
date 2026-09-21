@@ -71,3 +71,13 @@ export async function revealCredential(id: string): Promise<string> {
   const res = await http.post<{ secret: string }>(`/api/credentials/${id}/reveal`, {})
   return res.secret
 }
+
+/**
+ * 禁用一条 personal 凭据(v6.2 §3.4 / §5.2;POST /api/admin/credentials/:id/disable)。
+ * 仅管理员可调;global 凭据或 user 角色 → 403。
+ *
+ * 审计动作为 credential_disable;只改 enabled 元数据,不动密文、不删除。
+ */
+export async function disableCredential(id: string): Promise<void> {
+  await http.post<{ disabled: boolean }>(`/api/admin/credentials/${id}/disable`, {})
+}

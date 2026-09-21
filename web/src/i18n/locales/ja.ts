@@ -36,6 +36,8 @@ const ja: typeof zhCN = {
     ariaEnvironments: '環境デプロイ履歴',
     expand: 'サイドバーを展開',
     collapse: 'サイドバーを折りたたむ',
+    buildEnvs: 'ビルド環境',
+    configProfiles: '構成プロファイル',
   },
 
   shell: {

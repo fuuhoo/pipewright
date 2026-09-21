@@ -18,6 +18,11 @@ import './pipeline.css'
 
 const props = defineProps<{
   stages: PipelineStage[]
+  /**
+   * v6.2:保留入参但不再使用(原 YAML 折叠区已删,见 §3.7)。
+   * 保留是为不破坏调用方(ProjectPipeline.vue 仍传 yaml);YAML 只读导出走
+   * GET /api/projects/{id}/pipeline 的 yaml 字段,导入走 .../pipeline/import。
+   */
   yaml: string
   credentials?: Credential[]
   servers?: Server[]
@@ -322,9 +327,11 @@ onMounted(() => {
 onBeforeUnmount(() => ro?.disconnect())
 watch(() => props.stages, () => nextTick(measureEdges), { deep: true })
 
-// ─── YAML preview toggle ──────────────────────────────────────────────────────
-
-const yamlOpen = ref(false)
+// ─── v6.2 §3.7:YAML 折叠区已删除 ───
+// 原「查看 YAML」按钮 + 只读预览块下架(前端不再提供直接查看/编辑入口)。
+// YAML 仍可经 GET /api/projects/{id}/pipeline 的只读 `yaml` 字段导出,以及
+// POST .../pipeline/import 导入;PUT .../pipeline 已拒绝 body.yaml。
+// 相关 i18n 键(pipelineCanvas.viewYaml)与 CSS(.yaml-toggle/.yaml-block)一并清理。
 
 function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
   if (!selectedJob.value || !selectedStage.value) return
@@ -379,25 +386,6 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
           @click="addStage"
         >{{ t('pipelineCanvas.addStage') }}</button>
       </div>
-
-      <!-- YAML preview (collapsible, read-only) -->
-      <template v-if="yaml">
-        <button
-          class="yaml-toggle"
-          :class="{ 'yaml-toggle--open': yamlOpen }"
-          :aria-expanded="yamlOpen"
-          aria-controls="yaml-block"
-          @click="yamlOpen = !yamlOpen"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-          {{ t('pipelineCanvas.viewYaml') }}
-        </button>
-        <div v-if="yamlOpen" id="yaml-block" class="yaml-block">
-          <pre class="yaml-code">{{ yaml }}</pre>
-        </div>
-      </template>
     </div>
 
     <!-- ─── Right-side drawer (selected job OR stage settings — one shared slot) ─ -->

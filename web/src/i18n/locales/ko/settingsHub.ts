@@ -11,4 +11,15 @@ export default {
   navServers: '서버',
   navDiagnosisStats: '진단 피드백',
   navSystem: '시스템',
+
+  // v6.2 §3.6:设置按角色分组
+  globalGroup: '전역 설정',
+  globalGroupHint: '관리자 전용',
+  personalGroup: '개인 설정',
+  navBuildEnvs: '빌드 환경',
+  navConfigProfiles: '구성 프로필',
+  navCredentials: '전역 자격 증명',
+  navUsers: '사용자',
+  navAudit: '감사 로그',
+  navMyCredentials: '내 자격 증명',
 }

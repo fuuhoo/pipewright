@@ -7,15 +7,16 @@
  *   - 5xx / network → backend unreachable (session stays as-is if already
  *     loaded; isNetworkError = true so callers can show a fault state
  *     instead of kicking a logged-in user to /login)
+ *
+ * v6.2:SessionUser 带 role("admin" | "user"),供菜单与路由级 adminOnly 隔离。
  */
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { http, HttpError } from '../api/http'
+import type { SessionUser } from '../api/auth'
 
-export interface SessionUser {
-  username: string
-}
+export type { SessionUser }
 
 /** Discriminated result returned by fetchSession */
 export type SessionResult =

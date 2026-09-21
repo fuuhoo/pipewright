@@ -11,4 +11,15 @@ export default {
   navServers: 'Servidores',
   navDiagnosisStats: 'Comentarios de diagnóstico',
   navSystem: 'Sistema',
+
+  // v6.2 §3.6:设置按角色分组
+  globalGroup: 'Ajustes globales',
+  globalGroupHint: 'Solo administradores',
+  personalGroup: 'Ajustes personales',
+  navBuildEnvs: 'Entornos de build',
+  navConfigProfiles: 'Perfiles de configuración',
+  navCredentials: 'Credenciales globales',
+  navUsers: 'Usuarios',
+  navAudit: 'Registro de auditoría',
+  navMyCredentials: 'Mis credenciales',
 }

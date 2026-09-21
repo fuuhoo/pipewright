@@ -11,4 +11,15 @@ export default {
   navServers: '伺服器',
   navDiagnosisStats: '診斷回饋',
   navSystem: '系統',
+
+  // v6.2 §3.6:设置按角色分组
+  globalGroup: '全域設定',
+  globalGroupHint: '僅管理員可見',
+  personalGroup: '個人設定',
+  navBuildEnvs: '建置環境',
+  navConfigProfiles: '配置資源',
+  navCredentials: '全域憑證',
+  navUsers: '使用者',
+  navAudit: '稽核日誌',
+  navMyCredentials: '我的憑證',
 }

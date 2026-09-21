@@ -41,6 +41,19 @@ const SettingsNotifications = () => import('../views/settings/SettingsNotificati
 const SettingsDiagnosisStats = () => import('../views/settings/SettingsDiagnosisStats.vue')
 // 系统信息 + 一键检查更新
 const SettingsSystem = () => import('../views/settings/SettingsSystem.vue')
+// ─── v6.2 新增页面 ───
+// 构建环境管理(admin-only;§3.1/§3.2)
+const AdminBuildEnvs = () => import('../views/admin/BuildEnvs.vue')
+// 配置资源管理(admin-only;§3.3)
+const AdminConfigProfiles = () => import('../views/admin/ConfigProfiles.vue')
+// 全局凭据管理 + personal 禁用(admin-only;§3.4)
+const AdminCredentials = () => import('../views/admin/Credentials.vue')
+// 用户管理(admin-only;§3.5)
+const AdminUsers = () => import('../views/admin/Users.vue')
+// 审计日志(admin-only,只读)
+const AdminAudit = () => import('../views/admin/Audit.vue')
+// 我的凭据(所有登录用户;§3.4)
+const MyCredentials = () => import('../views/personal/Credentials.vue')
 // Story 2-2: new pipeline editor
 const ProjectPipeline = () => import('../views/ProjectPipeline.vue')
 // Story 2-3: triggers (kept for backward compat; now a thin wrapper around TriggersPanel)
@@ -153,6 +166,16 @@ const router = createRouter({
             { path: 'servers', name: 'settings-servers', component: SettingsServers, meta: { title: '服务器' } },
             // Story 7-5: diagnosis feedback-loop stats (FR-26)
             { path: 'diagnosis-stats', name: 'settings-diagnosis-stats', component: SettingsDiagnosisStats, meta: { title: '诊断统计' } },
+
+            // ─── v6.2 §3.6:全局设置(仅管理员)───
+            { path: 'build-envs', name: 'settings-build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', adminOnly: true } },
+            { path: 'config-profiles', name: 'settings-config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', adminOnly: true } },
+            { path: 'credentials', name: 'settings-credentials', component: AdminCredentials, meta: { title: '全局凭据', adminOnly: true } },
+            { path: 'users', name: 'settings-users', component: AdminUsers, meta: { title: '用户管理', adminOnly: true } },
+            { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', adminOnly: true } },
+
+            // ─── v6.2 §3.6:个人设置(所有登录用户)───
+            { path: 'my-credentials', name: 'settings-my-credentials', component: MyCredentials, meta: { title: '我的凭据' } },
           ],
         },
       ],
@@ -179,7 +202,14 @@ router.beforeEach(async (to) => {
   const sessionStore = useSessionStore()
   const result = await sessionStore.ensureSession()
 
-  if (result.kind === 'ok') return true
+  if (result.kind === 'ok') {
+    // v6.2 §3.6:adminOnly 路由只放行 admin。后端 RequireAdmin 中间件是权威校验,
+    // 这里提前拦是为了不渲染注定 403 的页面(普通用户看到的是「无权限」而非白屏)。
+    if (to.meta.adminOnly && result.user.role !== 'admin') {
+      return { name: 'dashboard' }
+    }
+    return true
+  }
 
   if (result.kind === 'unauthenticated') {
     return {

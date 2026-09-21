@@ -1047,13 +1047,30 @@ func makeLoginHandler(svc auth.Authenticator) http.HandlerFunc {
 			Secure:   secure,
 			Expires:  sess.ExpiresAt,
 		})
-		// 回显真实存储的用户名(不再硬编码 "admin")。
-		username := req.Username
-		if u, err := svc.AdminUsername(); err == nil {
-			username = u
+		// 回显真实登录名(v6.2:Session 带 Username,普通用户不再被误显为 admin)。
+		// 兜底:旧会话未解析出 Username 时,admin 角色仍走 admin_user 表读规范名。
+		username := sess.Username
+		if username == "" {
+			if u, err := svc.AdminUsername(); err == nil {
+				username = u
+			} else {
+				username = req.Username
+			}
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"username": username})
+		writeJSON(w, http.StatusOK, map[string]string{
+			"username": username,
+			"role":     sessionRoleOf(sess),
+		})
 	}
+}
+
+// sessionRoleOf 归一化会话角色。旧部署会话 role 为空字符串(0053 迁移前的行),
+// 按 admin 放行(Session.IsAdmin 语义),避免升级后管理员被锁出前端入口。
+func sessionRoleOf(sess *auth.Session) string {
+	if sess == nil || sess.Role == "" {
+		return "admin"
+	}
+	return sess.Role
 }
 
 // makeSessionHandler 返回 GET /api/auth/session handler。
@@ -1089,12 +1106,21 @@ func makeSessionHandler(svc auth.Authenticator) http.HandlerFunc {
 			Secure:   secure,
 			Expires:  sess.ExpiresAt,
 		})
-		// 回显真实存储的用户名。
-		username := "admin"
-		if u, err := svc.AdminUsername(); err == nil {
-			username = u
+		// 回显真实登录名(v6.2:Session 带 Username)。兜底逻辑同 login handler。
+		username := sess.Username
+		if username == "" {
+			if u, err := svc.AdminUsername(); err == nil {
+				username = u
+			}
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"username": username})
+		if username == "" {
+			username = "admin"
+		}
+		// v6.2:role 从会话读(§5.2 要求 login/session 均返回 role)。
+		writeJSON(w, http.StatusOK, map[string]string{
+			"username": username,
+			"role":     sessionRoleOf(sess),
+		})
 	}
 }
 

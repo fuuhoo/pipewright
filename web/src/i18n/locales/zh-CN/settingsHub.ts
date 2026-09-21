@@ -11,4 +11,15 @@ export default {
   navServers: '服务器',
   navDiagnosisStats: '诊断反馈',
   navSystem: '系统',
+
+  // ─── v6.2 §3.6:设置模块按角色隔离 ───
+  globalGroup: '全局设置',
+  globalGroupHint: '仅管理员可见',
+  personalGroup: '个人设置',
+  navBuildEnvs: '构建环境',
+  navConfigProfiles: '配置资源',
+  navCredentials: '全局凭据',
+  navUsers: '用户管理',
+  navAudit: '审计日志',
+  navMyCredentials: '我的凭据',
 }

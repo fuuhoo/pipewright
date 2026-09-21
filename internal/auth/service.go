@@ -223,19 +223,22 @@ func (s *Service) Login(username, password string) (*Session, error) {
 	}
 
 	// 认证成功:创建会话(Guard 已重置计数)。
-	var sessUserID, sessRole string
+	var sessUserID, sessRole, sessUsername string
 	switch {
 	case useAdmin:
 		sessUserID = users.BootstrapAdminRegularUserID
 		sessRole = "admin"
+		sessUsername = username
 	case useUser:
 		sessUserID = userID
 		sessRole = userRole
+		sessUsername = username
 	}
 	sess, err := s.sessions.Create(sessUserID, sessRole)
 	if err != nil {
 		return nil, fmt.Errorf("auth: create session: %w", err)
 	}
+	sess.Username = sessUsername
 
 	// 同步 last_login_at 到 users 表(best-effort;失败不影响登录)。
 	if sessUserID != "" {
@@ -269,6 +272,8 @@ func (s *Service) AdminUsername() (string, error) {
 }
 
 // Verify 校验会话 token;有效返回 Session。
+// v6.2:按 UserID 解析 Username(内存字段,不落库),供 HTTP 层回显真实登录名
+// —— 避免普通用户被 AdminUsername() 误显示成 "admin"。
 func (s *Service) Verify(token string) (*Session, error) {
 	sess, err := s.sessions.Get(token)
 	if err != nil {
@@ -276,6 +281,14 @@ func (s *Service) Verify(token string) (*Session, error) {
 			return nil, ErrSessionNotFound
 		}
 		return nil, fmt.Errorf("auth: verify session: %w", err)
+	}
+	if sess.Username == "" && sess.UserID != "" {
+		var uname string
+		if err := s.db.QueryRow(
+			`SELECT username FROM users WHERE id = ?`, sess.UserID,
+		).Scan(&uname); err == nil && uname != "" {
+			sess.Username = uname
+		}
 	}
 	return sess, nil
 }

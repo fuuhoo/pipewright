@@ -13,16 +13,16 @@ describe('session store', () => {
   })
 
   it('returns { kind: ok } and caches the user on a successful session fetch', async () => {
-    const getSpy = vi.spyOn(http, 'get').mockResolvedValue({ username: 'admin' })
+    const getSpy = vi.spyOn(http, 'get').mockResolvedValue({ username: 'admin', role: 'admin' })
     const store = useSessionStore()
 
     const r1 = await store.ensureSession()
-    expect(r1).toEqual({ kind: 'ok', user: { username: 'admin' } })
-    expect(store.user).toEqual({ username: 'admin' })
+    expect(r1).toEqual({ kind: 'ok', user: { username: 'admin', role: 'admin' } })
+    expect(store.user).toEqual({ username: 'admin', role: 'admin' })
 
     // Cached: second call must NOT hit the network again.
     const r2 = await store.ensureSession()
-    expect(r2).toEqual({ kind: 'ok', user: { username: 'admin' } })
+    expect(r2).toEqual({ kind: 'ok', user: { username: 'admin', role: 'admin' } })
     expect(getSpy).toHaveBeenCalledTimes(1)
   })
 
@@ -39,7 +39,7 @@ describe('session store', () => {
   it('returns { kind: error } on 5xx and sets isNetworkError without evicting a cached user', async () => {
     const store = useSessionStore()
     // Prime with a known user first.
-    store.setUser({ username: 'admin' })
+    store.setUser({ username: 'admin', role: 'admin' })
 
     vi.spyOn(http, 'get').mockRejectedValue(new HttpError(503, null, 'unavailable'))
     const r = await store.ensureSession(true) // force bypass cache
@@ -48,7 +48,7 @@ describe('session store', () => {
     if (r.kind === 'error') expect(r.status).toBe(503)
     expect(store.isNetworkError).toBe(true)
     // Cached user must survive a backend fault.
-    expect(store.user).toEqual({ username: 'admin' })
+    expect(store.user).toEqual({ username: 'admin', role: 'admin' })
   })
 
   it('treats raw network errors (non-HttpError) as { kind: error, status: 0 }', async () => {
@@ -65,17 +65,17 @@ describe('session store', () => {
   it('setUser primes the cache so a later ensureSession does not fetch', async () => {
     const getSpy = vi.spyOn(http, 'get')
     const store = useSessionStore()
-    store.setUser({ username: 'root' })
+    store.setUser({ username: 'root', role: 'user' })
 
     const r = await store.ensureSession()
-    expect(r).toEqual({ kind: 'ok', user: { username: 'root' } })
+    expect(r).toEqual({ kind: 'ok', user: { username: 'root', role: 'user' } })
     expect(getSpy).not.toHaveBeenCalled()
   })
 
   it('clearSession marks the user as confirmed-logged-out', async () => {
     const getSpy = vi.spyOn(http, 'get')
     const store = useSessionStore()
-    store.setUser({ username: 'admin' })
+    store.setUser({ username: 'admin', role: 'admin' })
     store.clearSession()
 
     const r = await store.ensureSession()
