@@ -94,9 +94,9 @@ const navItems: NavItem[] = [
   // Story 6-5: configurable anomaly detection & alerts (FR-23)
   { name: 'anomaly',       to: '/anomaly',       icon: AlertTriangle, labelKey: 'nav.anomaly',    ariaKey: 'nav.anomaly' },
   { name: 'notifications', to: '/settings/notifications', icon: Bell, labelKey: 'nav.notifications', ariaKey: 'nav.notifications' },
-  // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(仅管理员;进入设置内的对应二级页)。
-  { name: 'build-envs',    to: '/settings/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', adminOnly: true },
-  { name: 'config-profiles', to: '/settings/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', adminOnly: true },
+  // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(仅管理员;一级页面)。
+  { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', adminOnly: true },
+  { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', adminOnly: true },
 ]
 
 // v6.2 §3.6:非管理员隐藏 adminOnly 入口(后端 RequireAdmin 仍是权威校验)。

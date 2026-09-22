@@ -376,6 +376,10 @@ func makeCheckAllBuildEnvsHandler(c *buildenv.Checker, aud audit.Recorder, ac au
 		}
 		ok, total, err := c.CheckAll(r.Context())
 		if err != nil {
+			if errors.Is(err, buildenv.ErrCheckAllRunning) {
+				writeError(w, http.StatusConflict, "check_all_running", "一键检查正在进行中,请等待完成")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "check_all_failed", "一键检查失败: "+err.Error())
 			return
 		}

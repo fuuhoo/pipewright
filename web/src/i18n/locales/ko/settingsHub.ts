@@ -16,8 +16,6 @@ export default {
   globalGroup: '전역 설정',
   globalGroupHint: '관리자 전용',
   personalGroup: '개인 설정',
-  navBuildEnvs: '빌드 환경',
-  navConfigProfiles: '구성 프로필',
   navCredentials: '전역 자격 증명',
   navUsers: '사용자',
   navAudit: '감사 로그',

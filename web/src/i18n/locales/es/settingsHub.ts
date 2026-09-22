@@ -16,8 +16,6 @@ export default {
   globalGroup: 'Ajustes globales',
   globalGroupHint: 'Solo administradores',
   personalGroup: 'Ajustes personales',
-  navBuildEnvs: 'Entornos de build',
-  navConfigProfiles: 'Perfiles de configuración',
   navCredentials: 'Credenciales globales',
   navUsers: 'Usuarios',
   navAudit: 'Registro de auditoría',

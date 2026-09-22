@@ -4,7 +4,8 @@
  *
  * 分两组:
  *   - 全局设置(仅管理员):AI / OAuth / 通知 / 凭据保险库 / DNS / 服务器 / 诊断反馈 /
- *     系统 / 构建环境 / 配置资源 / 全局凭据 / 用户管理 / 审计日志
+ *     系统 / 全局凭据 / 用户管理 / 审计日志
+ *     (构建环境与配置资源已提升为左栏一级页面,不在此列)
  *   - 个人设置(所有登录用户):账户 / 我的凭据
  *
  * role 来自 session store(后端 /api/auth/session 回显);普通用户看不到全局组。
@@ -27,8 +28,6 @@ interface SettingsNavItem {
 }
 
 const globalItems: SettingsNavItem[] = [
-  { to: '/settings/build-envs', key: 'navBuildEnvs', adminOnly: true },
-  { to: '/settings/config-profiles', key: 'navConfigProfiles', adminOnly: true },
   { to: '/settings/credentials', key: 'navCredentials', adminOnly: true },
   { to: '/settings/vault', key: 'navVault' },
   { to: '/settings/users', key: 'navUsers', adminOnly: true },

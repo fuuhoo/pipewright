@@ -144,6 +144,9 @@ const router = createRouter({
         { path: 'previews', name: 'previews', component: Previews, meta: { title: '预览环境' } },
         // Story 6-5: configurable anomaly detection & alerts (FR-23)
         { path: 'anomaly', name: 'anomaly', component: AnomalyDetection, meta: { title: '异常检测' } },
+        // ─── v6.2 §3.1/§3.3:构建环境 / 配置资源(一级入口,仅管理员;侧栏 adminOnly 过滤)───
+        { path: 'build-envs', name: 'build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', adminOnly: true } },
+        { path: 'config-profiles', name: 'config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', adminOnly: true } },
         // 顶层「通知」占位页 → 重定向到真实的通知配置页。
         { path: 'notifications', name: 'notifications', redirect: { name: 'settings-notifications' } },
         {
@@ -168,8 +171,9 @@ const router = createRouter({
             { path: 'diagnosis-stats', name: 'settings-diagnosis-stats', component: SettingsDiagnosisStats, meta: { title: '诊断统计' } },
 
             // ─── v6.2 §3.6:全局设置(仅管理员)───
-            { path: 'build-envs', name: 'settings-build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', adminOnly: true } },
-            { path: 'config-profiles', name: 'settings-config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', adminOnly: true } },
+            // 构建环境 / 配置资源已提升为一级页面(左栏直达);旧路径重定向兼容书签。
+            { path: 'build-envs', redirect: { name: 'build-envs' } },
+            { path: 'config-profiles', redirect: { name: 'config-profiles' } },
             { path: 'credentials', name: 'settings-credentials', component: AdminCredentials, meta: { title: '全局凭据', adminOnly: true } },
             { path: 'users', name: 'settings-users', component: AdminUsers, meta: { title: '用户管理', adminOnly: true } },
             { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', adminOnly: true } },

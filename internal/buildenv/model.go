@@ -34,7 +34,8 @@ const (
 const (
 	StatusUnchecked   = "unchecked"
 	StatusChecking    = "checking"
-	StatusAvailable   = "available"
+	StatusAvailable   = "available"   // 本地 docker 已有
+	StatusPullable    = "pullable"    // 本地没有,但 registry 探测到、可拉取
 	StatusUnavailable = "unavailable"
 )
 
@@ -45,6 +46,8 @@ var (
 	ErrInvalidInput   = errors.New("buildenv: invalid input")
 	ErrImageUnavail   = errors.New("buildenv: image unavailable")
 	ErrImageNotChecked = errors.New("buildenv: image not checked")
+	// ErrCheckAllRunning 一键检查尚未完成时再次触发 → 409。
+	ErrCheckAllRunning = errors.New("buildenv: check-all already running")
 )
 
 // BuildEnv 是对外可见的构建环境视图;不持密的字段值绝不暴露。

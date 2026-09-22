@@ -24,7 +24,8 @@ export default {
   // 状态(P0 #4 三态)
   statusUnchecked: '未检查',
   statusChecking: '检查中',
-  statusAvailable: '可用',
+  statusAvailable: '本地可用',
+  statusPullable: '可拉取',
   statusUnavailable: '不可用',
   statusHintUnchecked: '新创建或地址刚改过,需检查后才能启用',
   statusHintUnavailable: '镜像不存在或拉取失败,不可启用',
@@ -75,6 +76,7 @@ export default {
   errNotChecked: '镜像未检查过,请先点击【检查】或【拉取】验证可用性后再启用',
   errNotFound: '构建环境不存在',
   checkOk: '镜像可用',
+  checkPullable: '镜像可拉取(本地暂无,点「拉取」后转为可用)',
   checkFailed: '镜像不可用: {error}',
   pullOk: '镜像拉取成功',
   pullFailed: '拉取失败:{error}',

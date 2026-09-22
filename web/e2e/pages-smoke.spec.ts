@@ -40,8 +40,8 @@ const ROUTES: Array<{ path: string; label: string; adminOnly?: boolean }> = [
   { path: '/states', label: 'States showcase' },
 
   // ─── v6.2 新增(admin-only + 普通用户)───
-  { path: '/settings/build-envs', label: '构建环境管理', adminOnly: true },
-  { path: '/settings/config-profiles', label: '配置资源管理', adminOnly: true },
+  { path: '/build-envs', label: '构建环境管理', adminOnly: true },
+  { path: '/config-profiles', label: '配置资源管理', adminOnly: true },
   { path: '/settings/credentials', label: '全局凭据', adminOnly: true },
   { path: '/settings/users', label: '用户管理', adminOnly: true },
   { path: '/settings/audit', label: '审计日志', adminOnly: true },

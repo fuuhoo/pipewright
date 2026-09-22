@@ -4,7 +4,7 @@
 //   1. session API 回显 role(§5.2)
 //   2. admin 页面真实渲染(构建环境 11 条 / 配置资源 4 条 / 审计 / 用户)
 //   3. 菜单 role 隔离(§3.6):admin 看到「构建环境/配置资源」入口,普通用户看不到
-//   4. 路由守卫:普通用户访问 /settings/build-envs 被弹回 dashboard
+//   4. 路由守卫:普通用户访问 /build-envs 被弹回 dashboard
 //   5. YAML 折叠区已删(§3.7):画布页无「查看 YAML」按钮
 //
 // 运行前提:pipewright 后端在 :8080,PIPEWRIGHT_ADMIN_PASSWORD=testpass1234,
@@ -32,8 +32,8 @@ async function login(page: Page, cred: { username: string; password: string }): 
  * Vite 完成依赖预打包,后续断言才稳定。
  */
 const NEW_ROUTES = [
-  '/settings/build-envs',
-  '/settings/config-profiles',
+  '/build-envs',
+  '/config-profiles',
   '/settings/credentials',
   '/settings/users',
   '/settings/audit',
@@ -91,7 +91,7 @@ test.describe('v6.2 新功能', () => {
     test.setTimeout(120_000)
     await login(page, ADMIN)
     await warmup(page)
-    await page.goto(`${BASE}/settings/build-envs`, { waitUntil: 'load' })
+    await page.goto(`${BASE}/build-envs`, { waitUntil: 'load' })
     await page.waitForTimeout(2000)
 
     // 页面已挂载(标题在),再等表格
@@ -107,7 +107,7 @@ test.describe('v6.2 新功能', () => {
     test.setTimeout(120_000)
     await login(page, ADMIN)
     await warmup(page)
-    await page.goto(`${BASE}/settings/config-profiles`, { waitUntil: 'load' })
+    await page.goto(`${BASE}/config-profiles`, { waitUntil: 'load' })
     await page.waitForTimeout(2000)
 
     await expect(page.locator('h1.view-title', { hasText: /Config profiles|配置资源/ })).toBeVisible({ timeout: 20000 })
@@ -142,8 +142,8 @@ test.describe('v6.2 新功能', () => {
     await login(page, ADMIN)
     await page.goto(`${BASE}/dashboard`, { waitUntil: 'load' })
     await page.waitForTimeout(2000)
-    await expect(page.locator('a[href="/settings/build-envs"]')).toBeVisible({ timeout: 20000 })
-    await expect(page.locator('a[href="/settings/config-profiles"]')).toBeVisible({ timeout: 20000 })
+    await expect(page.locator('a[href="/build-envs"]')).toBeVisible({ timeout: 20000 })
+    await expect(page.locator('a[href="/config-profiles"]')).toBeVisible({ timeout: 20000 })
 
     // 设置页应有「全局设置 / 个人设置」两组
     await page.goto(`${BASE}/settings/ai`, { waitUntil: 'load' })
@@ -161,11 +161,11 @@ test.describe('v6.2 新功能', () => {
     // 侧栏不应有 admin 入口
     await page.goto(`${BASE}/dashboard`, { waitUntil: 'load' })
     await page.waitForTimeout(2000)
-    await expect(page.locator('a[href="/settings/build-envs"]')).toHaveCount(0, { timeout: 20000 })
-    await expect(page.locator('a[href="/settings/config-profiles"]')).toHaveCount(0)
+    await expect(page.locator('a[href="/build-envs"]')).toHaveCount(0, { timeout: 20000 })
+    await expect(page.locator('a[href="/config-profiles"]')).toHaveCount(0)
 
     // 直接打 admin 路由 → 守卫重定向到 dashboard
-    await page.goto(`${BASE}/settings/build-envs`, { waitUntil: 'load' })
+    await page.goto(`${BASE}/build-envs`, { waitUntil: 'load' })
     await page.waitForTimeout(3000)
     expect(new URL(page.url()).pathname).toBe('/dashboard')
 

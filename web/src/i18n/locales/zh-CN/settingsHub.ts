@@ -16,8 +16,6 @@ export default {
   globalGroup: '全局设置',
   globalGroupHint: '仅管理员可见',
   personalGroup: '个人设置',
-  navBuildEnvs: '构建环境',
-  navConfigProfiles: '配置资源',
   navCredentials: '全局凭据',
   navUsers: '用户管理',
   navAudit: '审计日志',

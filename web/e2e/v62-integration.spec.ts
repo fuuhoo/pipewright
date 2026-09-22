@@ -53,8 +53,8 @@ test.describe('v6.2 前后端联调', () => {
     const page = await ctx.newPage()
     await login(page)
     for (const r of [
-      '/settings/build-envs',
-      '/settings/config-profiles',
+      '/build-envs',
+      '/config-profiles',
       '/settings/credentials',
       '/settings/users',
       '/settings/audit',
@@ -68,7 +68,7 @@ test.describe('v6.2 前后端联调', () => {
   test('I1 build-envs:UI 新建 → 编辑 → 删除 全闭环', async ({ page }) => {
     test.setTimeout(180_000)
     await login(page)
-    await openAdmin(page, '/settings/build-envs', /Build environments|构建环境/)
+    await openAdmin(page, '/build-envs', /Build environments|构建环境/)
 
     const before = await page.locator('table.grid tbody tr').count()
 
@@ -114,7 +114,7 @@ test.describe('v6.2 前后端联调', () => {
   test('I2 P0#4 三态:UI 启用 unchecked 被拒并显示原因', async ({ page }) => {
     test.setTimeout(180_000)
     await login(page)
-    await openAdmin(page, '/settings/build-envs', /Build environments|构建环境/)
+    await openAdmin(page, '/build-envs', /Build environments|构建环境/)
 
     // seed 的 11 条默认 enabled=true 且 unchecked。直接 check() 是 no-op(无 change 事件),
     // 所以先取消勾选(禁用成功)→ 再勾选(启用)→ 触发 IMAGE_NOT_CHECKED 拒绝。
@@ -146,7 +146,7 @@ test.describe('v6.2 前后端联调', () => {
       }
     }
 
-    await openAdmin(page, '/settings/config-profiles', /Config profiles|配置资源/)
+    await openAdmin(page, '/config-profiles', /Config profiles|配置资源/)
     const before = await page.locator('table.grid tbody tr').count()
     const uniq = String(Date.now()).slice(-6)
     const profileName = `e2e-profile-${uniq}`
@@ -290,7 +290,7 @@ test.describe('v6.2 前后端联调', () => {
   test('I7 错误透传:重复 (language,version) 在 UI 显示冲突', async ({ page }) => {
     test.setTimeout(180_000)
     await login(page)
-    await openAdmin(page, '/settings/build-envs', /Build environments|构建环境/)
+    await openAdmin(page, '/build-envs', /Build environments|构建环境/)
 
     // 取第一行的 language / version
     const firstRow = page.locator('table.grid tbody tr').first()

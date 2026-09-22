@@ -24,8 +24,8 @@ import { http } from './http'
 /** 镜像来源:官方短名 / 任意自定义地址。系统不拼接地址(R8)。 */
 export type BuildEnvSourceType = 'official' | 'custom'
 
-/** 镜像检查状态(P0 #4 三态)。 */
-export type ImageCheckStatus = 'unchecked' | 'checking' | 'available' | 'unavailable'
+/** 镜像检查状态。available=本地已有;pullable=registry 有、可拉取;unavailable=都不可用。 */
+export type ImageCheckStatus = 'unchecked' | 'checking' | 'available' | 'pullable' | 'unavailable'
 
 export interface BuildEnv {
   id: string

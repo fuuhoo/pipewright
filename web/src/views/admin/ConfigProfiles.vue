@@ -57,6 +57,7 @@ function openAdd(): void {
   editingId.value = null
   editingBuiltin.value = false
   form.value = emptyForm()
+  formFile.value = null
   formBanner.value = ''
   modalOpen.value = true
 }
@@ -75,6 +76,7 @@ function openEdit(p: ConfigProfile): void {
     description: p.description,
     enabled: p.enabled,
   }
+  formFile.value = null
   formBanner.value = ''
   modalOpen.value = true
 }
@@ -86,28 +88,21 @@ const deleting = ref<ConfigProfile | null>(null)
 const deleteSubmitting = ref(false)
 const deleteBanner = ref('')
 
-// ─── upload ─────────────────────────────────────────────────────────────────
+// ─── upload (并入新建弹窗:选了文件就走 multipart 上传,忽略 content 文本框) ───
 
-const uploadOpen = ref(false)
-const uploadFile = ref<File | null>(null)
-const uploadSubmitting = ref(false)
-const uploadBanner = ref('')
-const uploadForm = ref({ language: '', configType: '', name: '', targetPath: '', description: '' })
+const formFile = ref<File | null>(null)
+const acceptExts = CONFIG_UPLOAD_EXTS.join(',')
 
-function openUpload(): void {
-  uploadFile.value = null
-  uploadForm.value = { language: '', configType: '', name: '', targetPath: '', description: '' }
-  uploadBanner.value = ''
-  uploadOpen.value = true
-}
-
-function onFilePick(ev: Event): void {
+function onFormFilePick(ev: Event): void {
   const input = ev.target as HTMLInputElement
-  uploadFile.value = input.files?.[0] ?? null
-  // 用文件名兜一个默认 name,省一次输入。
-  if (uploadFile.value && !uploadForm.value.name) {
-    uploadForm.value.name = uploadFile.value.name
+  const file = input.files?.[0] ?? null
+  if (file && !isExtAllowed(file.name)) {
+    formBanner.value = t('configProfiles.errExt', { exts: extsText })
+    formFile.value = null
+    input.value = ''
+    return
   }
+  formFile.value = file
 }
 
 // ─── data ───────────────────────────────────────────────────────────────────
@@ -142,6 +137,16 @@ async function submitForm(): Promise<void> {
   try {
     if (editingId.value) {
       await updateConfigProfile(editingId.value, form.value)
+    } else if (formFile.value) {
+      await uploadConfigProfile({
+        file: formFile.value,
+        language: form.value.language,
+        configType: form.value.configType,
+        name: form.value.name,
+        targetPath: form.value.targetPath,
+        description: form.value.description,
+        isDefault: form.value.isDefault,
+      })
     } else {
       await createConfigProfile(form.value)
     }
@@ -168,34 +173,6 @@ async function confirmDelete(): Promise<void> {
     deleteSubmitting.value = false
   }
 }
-
-async function submitUpload(): Promise<void> {
-  if (!uploadFile.value) return
-  // 前端预检扩展名,省一次注定失败的往返。
-  if (!isExtAllowed(uploadFile.value.name)) {
-    uploadBanner.value = t('configProfiles.errExt', { exts: extsText })
-    return
-  }
-  uploadSubmitting.value = true
-  uploadBanner.value = ''
-  try {
-    await uploadConfigProfile({
-      file: uploadFile.value,
-      language: uploadForm.value.language,
-      configType: uploadForm.value.configType,
-      name: uploadForm.value.name,
-      targetPath: uploadForm.value.targetPath,
-      description: uploadForm.value.description,
-      isDefault: false,
-    })
-    uploadOpen.value = false
-    await load()
-  } catch (err) {
-    uploadBanner.value = msg(err, 'configProfiles.errUpload')
-  } finally {
-    uploadSubmitting.value = false
-  }
-}
 </script>
 
 <template>
@@ -206,7 +183,6 @@ async function submitUpload(): Promise<void> {
         <p class="view-sub">{{ t('configProfiles.desc') }}</p>
       </div>
       <div class="header-actions">
-        <button class="btn" @click="openUpload">{{ t('configProfiles.upload') }}</button>
         <button class="btn btn--primary" @click="openAdd">
           + {{ t('configProfiles.add') }}
         </button>
@@ -309,8 +285,27 @@ async function submitUpload(): Promise<void> {
           </label>
           <label v-if="!editingBuiltin" class="field field--wide">
             <span>{{ t('configProfiles.fieldContent') }}</span>
-            <textarea v-model="form.content" rows="10" class="mono" />
-            <small>{{ t('configProfiles.contentHint') }}</small>
+            <input
+              v-if="!editingId"
+              type="file"
+              :accept="acceptExts"
+              @change="onFormFilePick"
+            />
+            <small v-if="!editingId">
+              {{
+                formFile
+                  ? t('configProfiles.uploadOk') + ': ' + formFile.name
+                  : t('configProfiles.uploadHint', { exts: extsText, max: maxText })
+              }}
+            </small>
+            <textarea
+              v-if="!formFile"
+              v-model="form.content"
+              rows="10"
+              class="mono"
+              :disabled="!!formFile"
+            />
+            <small v-if="!formFile">{{ t('configProfiles.contentHint') }}</small>
           </label>
           <label class="field field--wide">
             <span>{{ t('configProfiles.fieldDescription') }}</span>
@@ -343,60 +338,6 @@ async function submitUpload(): Promise<void> {
           <button class="btn" @click="deleteOpen = false">{{ t('configProfiles.cancel') }}</button>
           <button class="btn btn--danger" :disabled="deleteSubmitting" @click="confirmDelete">
             {{ t('configProfiles.delete') }}
-          </button>
-        </footer>
-      </div>
-    </div>
-
-    <!-- ── upload ── -->
-    <div v-if="uploadOpen" class="modal-mask" @click.self="uploadOpen = false">
-      <div class="modal" role="dialog">
-        <h2 class="modal-title">{{ t('configProfiles.uploadTitle') }}</h2>
-        <p class="modal-sub">
-          {{ t('configProfiles.uploadHint', { exts: extsText, max: maxText }) }}
-        </p>
-
-        <div class="form-grid">
-          <label class="field field--wide">
-            <span>{{ t('configProfiles.fieldFile') }}</span>
-            <input type="file" @change="onFilePick" />
-          </label>
-          <label class="field">
-            <span>{{ t('configProfiles.fieldLanguage') }}</span>
-            <input v-model="uploadForm.language" type="text" placeholder="node" />
-          </label>
-          <label class="field">
-            <span>{{ t('configProfiles.fieldConfigType') }}</span>
-            <input v-model="uploadForm.configType" type="text" placeholder="npmrc" />
-          </label>
-          <label class="field">
-            <span>{{ t('configProfiles.fieldName') }}</span>
-            <input v-model="uploadForm.name" type="text" />
-          </label>
-          <label class="field">
-            <span>{{ t('configProfiles.fieldTargetPath') }}</span>
-            <input
-              v-model="uploadForm.targetPath"
-              type="text"
-              :placeholder="t('configProfiles.targetPathPlaceholder')"
-            />
-          </label>
-          <label class="field field--wide">
-            <span>{{ t('configProfiles.fieldDescription') }}</span>
-            <input v-model="uploadForm.description" type="text" />
-          </label>
-        </div>
-
-        <p v-if="uploadBanner" class="banner banner--err">{{ uploadBanner }}</p>
-
-        <footer class="modal-actions">
-          <button class="btn" @click="uploadOpen = false">{{ t('configProfiles.cancel') }}</button>
-          <button
-            class="btn btn--primary"
-            :disabled="uploadSubmitting || !uploadFile"
-            @click="submitUpload"
-          >
-            {{ uploadSubmitting ? t('configProfiles.uploading') : t('configProfiles.upload') }}
           </button>
         </footer>
       </div>

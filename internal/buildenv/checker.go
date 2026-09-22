@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -38,6 +39,8 @@ type Checker struct {
 	once     sync.Once
 	pullMu      sync.Mutex
 	pullPending map[string]struct{} // 正在排队/拉取中的 envID,防重复触发
+	checkAllMu      sync.Mutex
+	checkAllRunning bool // 一键检查进行中,防重复触发(409)
 }
 
 // NewChecker 构造 Checker。
@@ -66,9 +69,12 @@ type CheckResult struct {
 	Error  string `json:"error"`
 }
 
-// Check 检查单个构建环境的镜像是否存在(60s 上限)。
-//   - 不调用 dockerLogin(避免污染 ~/.docker/config.json)
-//   - 结果直接覆盖 build_envs 当前行,不存历史
+// Check 检查单个构建环境的镜像可用性(60s 上限):
+//  1. 本地已有(`image inspect`)→ available;
+//  2. 本地没有但 `manifest inspect` 探测到 registry 有 → pullable(可拉取);
+//  3. 都没有 / registry 不可达 → unavailable。
+//
+// 结果直接覆盖 build_envs 当前行,不存历史;不调用 dockerLogin(避免污染 ~/.docker/config.json)。
 func (c *Checker) Check(ctx context.Context, env *BuildEnv) (*CheckResult, error) {
 	if err := c.acquire(ctx, c.sem); err != nil {
 		return nil, err
@@ -83,16 +89,27 @@ func (c *Checker) Check(ctx context.Context, env *BuildEnv) (*CheckResult, error
 	checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(checkCtx, c.bin, "manifest", "inspect", env.Image)
-	output, err := cmd.CombinedOutput()
 	checkedAt := time.Now().UTC().Format(time.RFC3339)
-	if err != nil {
-		msg := truncate(string(output), 1024)
-		_ = c.repo.UpdateCheckStatus(env.ID, StatusUnavailable, msg, checkedAt)
-		return &CheckResult{Status: StatusUnavailable, Error: msg}, nil
+	status, errMsg := c.probeImage(checkCtx, env.Image)
+	_ = c.repo.UpdateCheckStatus(env.ID, status, errMsg, checkedAt)
+	return &CheckResult{Status: status, Error: errMsg}, nil
+}
+
+// probeImage 返回三态之一:available(本地有)/ pullable(registry 有,本地无)/ unavailable。
+// unavailable 时 errMsg 带失败原因。
+func (c *Checker) probeImage(ctx context.Context, image string) (status, errMsg string) {
+	if err := exec.CommandContext(ctx, c.bin, "image", "inspect", image).Run(); err == nil {
+		return StatusAvailable, ""
 	}
-	_ = c.repo.UpdateCheckStatus(env.ID, StatusAvailable, "", checkedAt)
-	return &CheckResult{Status: StatusAvailable}, nil
+	out, err := exec.CommandContext(ctx, c.bin, "manifest", "inspect", image).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return StatusUnavailable, truncate(fmt.Sprintf("本地无该镜像,registry 探测失败: %s", msg), 1024)
+	}
+	return StatusPullable, ""
 }
 
 // PullResult 单次拉取结果。
@@ -183,6 +200,8 @@ func (c *Checker) runPull(ctx context.Context, env *BuildEnv) (*PullResult, erro
 
 // StartAutoCheck 启动后遍历所有 build_envs,异步检查每个镜像。
 // sync.Once 防服务重启时多次触发。
+// ctx 生命周期必须覆盖全部检查:调用方传入长期有效的 ctx(如 Background),
+// 总超时在本函数内部的 goroutine 里管理,全部检查结束才释放。
 func (c *Checker) StartAutoCheck(ctx context.Context) {
 	c.once.Do(func() {
 		go func() {
@@ -191,35 +210,67 @@ func (c *Checker) StartAutoCheck(ctx context.Context) {
 				log.Printf("[buildenv] 加载构建环境列表失败:%v", err)
 				return
 			}
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			var wg sync.WaitGroup
 			for _, env := range envs {
-				env := env
+				wg.Add(1)
 				go func() {
+					defer wg.Done()
 					if _, err := c.Check(ctx, env); err != nil {
 						log.Printf("[buildenv] 检查 %s/%s 失败:%v", env.Language, env.Version, err)
 					}
 				}()
 			}
+			wg.Wait()
 		}()
 	})
 }
 
-// CheckAll 手动一键检查所有;返回 (总计, 失败数)。
+// CheckAll 手动一键检查所有。同步等待全部检查完成后返回 (可用数[本地+可拉取], 总数);
+// 期间用 checkAllMu 防重复触发(再次调用返回 ErrCheckAllRunning → 409)。
 func (c *Checker) CheckAll(ctx context.Context) (int, int, error) {
+	c.checkAllMu.Lock()
+	if c.checkAllRunning {
+		c.checkAllMu.Unlock()
+		return 0, 0, ErrCheckAllRunning
+	}
+	c.checkAllRunning = true
+	c.checkAllMu.Unlock()
+	defer func() {
+		c.checkAllMu.Lock()
+		c.checkAllRunning = false
+		c.checkAllMu.Unlock()
+	}()
+
 	envs, err := c.repo.List(ListFilter{IncludeDisabled: true})
 	if err != nil {
 		return 0, 0, err
 	}
-	failed := 0
+	// 浏览器断开不应中断检查(否则行会卡在 checking)。
+	ctx = context.WithoutCancel(ctx)
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		available int
+	)
 	for _, env := range envs {
-		env := env
+		wg.Add(1)
 		go func() {
-			if _, err := c.Check(ctx, env); err != nil {
-				failed++
+			defer wg.Done()
+			res, err := c.Check(ctx, env)
+			mu.Lock()
+			if err == nil && res != nil && (res.Status == StatusAvailable || res.Status == StatusPullable) {
+				available++
+			} else if err != nil {
 				log.Printf("[buildenv] CheckAll %s/%s 失败:%v", env.Language, env.Version, err)
 			}
+			mu.Unlock()
 		}()
 	}
-	return len(envs), failed, nil
+	wg.Wait()
+	return available, len(envs), nil
 }
 
 // CredentialLite 是 checker 内部的轻量凭据载体(只用于 ManualPull 的 docker login)。

@@ -283,7 +283,9 @@ async function onCheck(env: BuildEnv): Promise<void> {
     rowBanner.value =
       res.status === 'available'
         ? t('buildEnvs.checkOk')
-        : t('buildEnvs.checkFailed', { error: res.error || res.status })
+        : res.status === 'pullable'
+          ? t('buildEnvs.checkPullable')
+          : t('buildEnvs.checkFailed', { error: res.error || res.status })
     await load()
   } catch (err) {
     rowBanner.value = errMsg(err, 'buildEnvs.errCheck')
@@ -321,13 +323,15 @@ const checkingAll = ref(false)
 async function onCheckAll(): Promise<void> {
   checkingAll.value = true
   rowBanner.value = ''
+  // 后端同步跑完才返回;请求期间按钮禁用防重复点击,行状态先置「检查中」给出反馈。
+  for (const e of envs.value) e.imageCheckStatus = 'checking'
   try {
     const res = await checkAllBuildEnvs()
     rowBanner.value = t('buildEnvs.checkAllDone', { ok: res.ok, total: res.total })
-    await load()
   } catch (err) {
     rowBanner.value = errMsg(err, 'buildEnvs.errCheckAll')
   } finally {
+    await load()
     checkingAll.value = false
   }
 }
@@ -386,7 +390,7 @@ async function onCheckAll(): Promise<void> {
             <span class="pill" :class="`pill--${e.imageCheckStatus}`">
               {{ statusLabel(e.imageCheckStatus) }}
             </span>
-            <div v-if="e.imageCheckError" class="cell-dim cell--err">
+            <div v-if="e.imageCheckError" class="cell-dim cell--err" :title="e.imageCheckError">
               {{ e.imageCheckError }}
             </div>
             <div v-else-if="e.imageCheckedAt" class="cell-dim">
@@ -405,25 +409,27 @@ async function onCheckAll(): Promise<void> {
               <span>{{ e.enabled ? t('buildEnvs.enable') : t('buildEnvs.disable') }}</span>
             </label>
           </td>
-          <td class="actions">
-            <button
-              class="btn btn--sm"
-              :disabled="busyId === e.id || e.imageCheckStatus === 'checking'"
-              @click="onCheck(e)"
-            >
-              {{ busyId === e.id ? t('buildEnvs.checking') : t('buildEnvs.check') }}
-            </button>
-            <button
-              class="btn btn--sm"
-              :disabled="busyId === e.id || e.imageCheckStatus === 'checking'"
-              @click="onPull(e)"
-            >
-              {{ pullingIds.includes(e.id) ? t('buildEnvs.pulling') : t('buildEnvs.pull') }}
-            </button>
-            <button class="btn btn--sm" @click="openEdit(e)">{{ t('buildEnvs.editAction') }}</button>
-            <button class="btn btn--sm btn--danger" @click="openDelete(e)">
-              {{ t('buildEnvs.delete') }}
-            </button>
+          <td>
+            <div class="actions">
+              <button
+                class="btn btn--sm btn--state"
+                :disabled="busyId === e.id || e.imageCheckStatus === 'checking'"
+                @click="onCheck(e)"
+              >
+                {{ busyId === e.id ? t('buildEnvs.checking') : t('buildEnvs.check') }}
+              </button>
+              <button
+                class="btn btn--sm btn--state"
+                :disabled="busyId === e.id || e.imageCheckStatus === 'checking'"
+                @click="onPull(e)"
+              >
+                {{ pullingIds.includes(e.id) ? t('buildEnvs.pulling') : t('buildEnvs.pull') }}
+              </button>
+              <button class="btn btn--sm" @click="openEdit(e)">{{ t('buildEnvs.editAction') }}</button>
+              <button class="btn btn--sm btn--danger" @click="openDelete(e)">
+                {{ t('buildEnvs.delete') }}
+              </button>
+            </div>
           </td>
         </tr>
       </tbody>
@@ -596,6 +602,13 @@ async function onCheckAll(): Promise<void> {
 }
 .cell--err {
   color: var(--color-danger, #dc2626);
+  /* 错误信息可长达 1KB(含 registry URL):限制列宽,最多两行,完整内容悬浮查看。 */
+  max-width: 300px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
 }
 .mono {
   font-family: var(--font-mono, monospace);
@@ -613,6 +626,10 @@ async function onCheckAll(): Promise<void> {
 .pill--available {
   background: rgba(34, 197, 94, 0.15);
   color: #16a34a;
+}
+.pill--pullable {
+  background: rgba(20, 184, 166, 0.16);
+  color: #0d9488;
 }
 .pill--unavailable {
   background: rgba(220, 38, 38, 0.15);
@@ -668,6 +685,12 @@ async function onCheckAll(): Promise<void> {
 .btn--sm {
   padding: 4px 10px;
   font-size: var(--text-small, 0.85em);
+}
+
+/* 检查/拉取按钮文案会在"拉取 ↔ 拉取中…"间切换,预留最长文案宽度避免行内按钮抖动错位 */
+.btn--state {
+  min-width: 6.5em;
+  text-align: center;
 }
 
 .modal-mask {
