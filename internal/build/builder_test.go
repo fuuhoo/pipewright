@@ -504,16 +504,20 @@ func TestPushFailureSetsFailureLog(t *testing.T) {
 
 // TestSSRFBlocksMetadataIP 验证 SSRF 收口拒绝云元数据 IP(生产 cloner)。
 func TestSSRFBlocksMetadataIP(t *testing.T) {
-	if validRepoURL("http://169.254.169.254/latest/meta-data/") {
+	if IsRepoURLAllowed("http://169.254.169.254/latest/meta-data/") {
 		t.Fatalf("metadata IP must be blocked")
 	}
-	if validRepoURL("http://127.0.0.1/repo.git") {
+	if IsRepoURLAllowed("http://127.0.0.1/repo.git") {
 		t.Fatalf("loopback must be blocked")
 	}
-	if !validRepoURL("https://gitee.com/u/r.git") {
+	if !IsRepoURLAllowed("https://gitee.com/u/r.git") {
 		t.Fatalf("public host must be allowed")
 	}
-	if validRepoURL("file:///tmp/repo") {
+	if IsRepoURLAllowed("file:///tmp/repo") {
 		t.Fatalf("file scheme must be blocked")
+	}
+	// 自托管内网 Git 走 SSH:私网 host + ssh scheme 都要放行。
+	if !IsRepoURLAllowed("ssh://git@172.17.4.41:5052/org/repo.git") {
+		t.Fatalf("private SSH repo must be allowed")
 	}
 }

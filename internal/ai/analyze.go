@@ -18,14 +18,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/memfs"
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/huangchengsir/pipewright/internal/gitauth"
@@ -97,23 +96,20 @@ func (a goGitAnalyzer) Analyze(ctx context.Context, repoURL, username, token str
 		return RepoAnalysis{Cloned: false, Signals: []string{}, DegradeReason: "仓库地址为空,无法克隆分析"}
 	}
 
-	if !a.allowInsecure {
-		if !validRepoURL(repoURL) {
-			// SSRF 拒绝:同样走降级(绝不泄漏 URL 细节),不报致命错。
-			return RepoAnalysis{Cloned: false, Signals: []string{}, DegradeReason: "仓库地址不可达或不被允许"}
-		}
-	}
-
 	fs := memfs.New()
 	storer := memory.NewStorage()
 
-	auth := gitauth.BasicAuth(repoURL, username, token)
+	remoteURL, auth, ok := resolveRepo(repoURL, username, token, a.allowInsecure)
+	if !ok {
+		// SSRF 拒绝 / 凭据与协议不匹配:走降级(绝不泄漏 URL 细节),不报致命错。
+		return RepoAnalysis{Cloned: false, Signals: []string{}, DegradeReason: "仓库地址不可达或不被允许"}
+	}
 
 	cctx, cancel := context.WithTimeout(ctx, cloneTimeout)
 	defer cancel()
 
 	_, err := gogit.CloneContext(cctx, storer, fs, &gogit.CloneOptions{
-		URL:          repoURL,
+		URL:          remoteURL,
 		Auth:         auth,
 		Depth:        1,
 		SingleBranch: true,
@@ -342,43 +338,15 @@ func readManifest(fs billy.Filesystem, name string) []byte {
 	return data
 }
 
-// validRepoURL 对仓库地址做 SSRF 收口(生产路径),复用 project 包同款策略:
-// 仅 http/https;拒云元数据/链路本地/回环;私网放行(自托管内网 Git 友好)。
-// 返回 true=允许。解析失败/被拒返回 false(调用方走降级,绝不泄漏细节)。
-func validRepoURL(repoURL string) bool {
-	u, err := url.Parse(strings.TrimSpace(repoURL))
+// resolveRepo 一次完成「SSRF 收口 + 地址归一化 + 认证构造」(http(s) 用 token,ssh 用私钥)。
+// allowInsecure 仅供测试夹具放行 file://。ok=false 表示地址/凭据不被接受,调用方走优雅降级。
+func resolveRepo(repoURL, username, token string, allowInsecure bool) (string, transport.AuthMethod, bool) {
+	if allowInsecure {
+		return repoURL, gitauth.HTTPAuth(repoURL, username, token), true
+	}
+	u, auth, err := gitauth.Resolve(repoURL, username, token)
 	if err != nil {
-		return false
+		return "", nil, false
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-	default:
-		return false
-	}
-	host := u.Hostname()
-	if host == "" {
-		return false
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return !blockedIP(ip)
-	}
-	addrs, err := net.LookupIP(host)
-	if err != nil || len(addrs) == 0 {
-		// 解析失败:留给 clone 路径(会降级);不在此误拒临时 DNS 抖动。
-		return true
-	}
-	for _, ip := range addrs {
-		if blockedIP(ip) {
-			return false
-		}
-	}
-	return true
-}
-
-// blockedIP 判定 IP 是否落在禁止区:回环、链路本地(含云元数据 169.254.169.254)、未指定。
-func blockedIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
+	return u, auth, true
 }

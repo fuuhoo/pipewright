@@ -27,6 +27,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/huangchengsir/pipewright/internal/build"
 	"github.com/huangchengsir/pipewright/internal/gitauth"
@@ -87,23 +88,35 @@ func (c *Cache) repoLock(repoURL string) *sync.Mutex {
 	return m.(*sync.Mutex)
 }
 
+// resolve 归一化地址并构造认证(生产过 SSRF 收口;测试夹具 file:// 放行且匿名)。
+func (c *Cache) resolve(repoURL, username, token string) (string, transport.AuthMethod, error) {
+	if c.allowInsecure {
+		return strings.TrimSpace(repoURL), gitauth.HTTPAuth(repoURL, username, token), nil
+	}
+	return gitauth.Resolve(repoURL, username, token)
+}
+
 // ensureMirror 确保本地 bare 镜像存在并增量更新到最新(首次 mirror 克隆,后续 fetch)。
 // 返回镜像目录;失败返回 error(调用方回退直连克隆)。已是最新(ErrAlreadyUpToDate)视为成功。
 func (c *Cache) ensureMirror(ctx context.Context, repoURL, username, token string) (string, error) {
-	// SSRF 收口:生产仅镜像 http/https 且非元数据/回环/链路本地的仓库(复用 build 同款校验)。
+	// SSRF 收口:仅镜像 http(s)/ssh 且非元数据/回环/链路本地的仓库(复用 build 同款校验)。
 	// 不通过 → 返回错误,由 Clone 回退直连(build.Cloner 同样会拒,净效果=拦截)。
 	if !c.allowInsecure && !build.IsRepoURLAllowed(repoURL) {
 		return "", errors.New("repocache: repo url not allowed")
 	}
+	// 镜像目录按**原始 URL** 哈希(与 repoLock 一致);触网才用归一化 URL(scp 语法 → ssh://)。
 	mirror := c.mirrorPath(repoURL)
-	auth := gitauth.BasicAuth(repoURL, username, token)
+	remoteURL, auth, err := c.resolve(repoURL, username, token)
+	if err != nil {
+		return "", err
+	}
 	cctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
 	if _, err := os.Stat(mirror); os.IsNotExist(err) {
 		// 首次:mirror 克隆(含全部分支/tag)。失败清理半截目录。
 		_, cerr := gogit.PlainCloneContext(cctx, mirror, true, &gogit.CloneOptions{
-			URL:    repoURL,
+			URL:    remoteURL,
 			Auth:   auth,
 			Mirror: true,
 		})

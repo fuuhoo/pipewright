@@ -17,12 +17,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 )
 
 // 凭据类型枚举(DB 存 snake_case 字串;JSON camelCase 字段)。
 const (
-	TypeGitToken    = "git_token"
-	TypeGitHTTP     = "git_http" // Git HTTPS 用户名 + 密码或 Token
+	TypeGitToken = "git_token"
+	TypeGitHTTP  = "git_http" // Git HTTPS 用户名 + 密码或 Token
+	// TypeGitSSH 是 git over SSH 的部署私钥:username=登录用户(常为 git),secret=无口令 PEM 私钥。
+	// 与 TypeSSHKey(主机登录用)分开,是为了让「可用于代码仓」的凭据在前端可被单独筛出。
+	TypeGitSSH      = "git_ssh"
 	TypeSSHKey      = "ssh_key"
 	TypeRegistry    = "registry"
 	TypeSSHPassword = "ssh_password" // SSH 登录密码(非 PEM);SSH 层据 looksLikePEM 自动按密码认证
@@ -43,6 +47,11 @@ var (
 	ErrEmptyName = errors.New("vault: name must not be empty")
 	// ErrCredentialInUse 表示凭据正被项目/流水线配置引用,不可删除(防悬挂引用)。
 	ErrCredentialInUse = errors.New("vault: credential in use")
+	// ErrInvalidGitSSHKey 表示 git_ssh 凭据的 secret 不是可解析的 PEM 私钥。
+	ErrInvalidGitSSHKey = errors.New("vault: git ssh 凭据需要有效的 PEM 私钥")
+	// ErrEncryptedGitSSHKey 表示私钥带口令(passphrase)。无人值守克隆无法交互解锁,
+	// 需先用 `ssh-keygen -p -N ""` 去掉口令再录入。
+	ErrEncryptedGitSSHKey = errors.New("vault: git ssh 凭据不支持带口令的私钥")
 )
 
 // Credential 是对外可见的凭据视图:只含掩码 + 元数据,绝无明文/密文。
@@ -51,13 +60,13 @@ type Credential struct {
 	Name        string
 	Type        string
 	Scope       string
-	OwnerID     string    // v6.2 阶段 5:personal 凭据=users.id;global 时为空
+	OwnerID     string // v6.2 阶段 5:personal 凭据=users.id;global 时为空
 	Username    string
 	MaskedValue string
-	Description string    // v6.2 阶段 5:admin 备注
-	Enabled     bool      // v6.2 阶段 5:软禁用开关
-	DisabledBy  string    // v6.2 阶段 5:禁用操作者 users.id
-	CreatedBy   string    // v6.2 阶段 5:创建者 users.id
+	Description string // v6.2 阶段 5:admin 备注
+	Enabled     bool   // v6.2 阶段 5:软禁用开关
+	DisabledBy  string // v6.2 阶段 5:禁用操作者 users.id
+	CreatedBy   string // v6.2 阶段 5:创建者 users.id
 	LastUsedAt  *time.Time
 	CreatedAt   time.Time
 }
@@ -147,11 +156,28 @@ func (s *service) configured() bool { return s.key != nil }
 // validateType 校验类型枚举。
 func validateType(t string) error {
 	switch t {
-	case TypeGitToken, TypeGitHTTP, TypeSSHKey, TypeRegistry, TypeSSHPassword, TypeDNSToken:
+	case TypeGitToken, TypeGitHTTP, TypeGitSSH, TypeSSHKey, TypeRegistry, TypeSSHPassword, TypeDNSToken:
 		return nil
 	default:
 		return ErrInvalidType
 	}
+}
+
+// validateSecret 在加密入库前按类型把关 secret 形态。git_ssh 必须是可解析的**无口令**
+// PEM 私钥:带口令的私钥在无人值守克隆里解不开,晚失败会表现为莫名的「克隆失败」,
+// 因此在录入这一刻就拒绝并给出可操作提示。
+func validateSecret(credType, secret string) error {
+	if credType != TypeGitSSH {
+		return nil
+	}
+	if _, err := ssh.ParseRawPrivateKey([]byte(secret)); err != nil {
+		var pme *ssh.PassphraseMissingError
+		if errors.As(err, &pme) {
+			return ErrEncryptedGitSSHKey
+		}
+		return ErrInvalidGitSSHKey
+	}
+	return nil
 }
 
 func (s *service) Create(in CreateInput) (*Credential, error) {
@@ -166,6 +192,9 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 	}
 	if in.Secret == "" {
 		return nil, ErrEmptySecret
+	}
+	if err := validateSecret(in.Type, in.Secret); err != nil {
+		return nil, err
 	}
 
 	sealed, err := seal(s.key, []byte(in.Secret))
@@ -339,6 +368,9 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 	if in.Secret != nil {
 		if *in.Secret == "" {
 			return nil, ErrEmptySecret
+		}
+		if err := validateSecret(credType, *in.Secret); err != nil {
+			return nil, err
 		}
 		sealed, err := seal(s.key, []byte(*in.Secret))
 		if err != nil {
@@ -516,6 +548,7 @@ func (s *service) ListWithActor(actor *Actor, f ListFilter) ([]Credential, error
 //   - 凭据 scope='global' 且 Actor 非 admin → ErrAccessDenied
 //   - 凭据 scope='personal' 且 owner_id != actor.UserID → ErrAccessDenied
 //   - 凭据不存在 → ErrNotFound
+//
 // 同时更新 last_used_at(等同 Get 的语义)。
 func (s *service) GetWithActor(actor *Actor, id string) (string, error) {
 	cred, err := s.getView(id)

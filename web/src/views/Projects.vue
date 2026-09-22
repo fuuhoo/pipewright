@@ -15,12 +15,14 @@ import {
 } from '../api/projects'
 import { listCredentials, createCredential, type Credential, type CredentialType } from '../api/credentials'
 import { triggerManual, type RunDetail, type TriggerManualInput } from '../api/runs'
-import { listRefs, listCommits, type GitRef, type GitCommit } from '../api/refs'
+import { listRefs, listCommits, type GitCommit } from '../api/refs'
 import RunParamsEditor from '../components/RunParamsEditor.vue'
 import TypedRunParams from '../components/TypedRunParams.vue'
 import CredentialSelect from '../components/projects/CredentialSelect.vue'
+import RefPicker from '../components/projects/RefPicker.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { HttpError } from '../api/http'
+import { isSupportedRepoUrl } from '../lib/gitUrl'
 
 // ─── i18n ─────────────────────────────────────────────────────────────────────
 
@@ -99,8 +101,20 @@ const credentials = ref<Credential[]>([])
 const credentialsLoading = ref(false)
 
 const gitCredentials = computed(() =>
-  credentials.value.filter((c) => c.type === 'git_token' || c.type === 'git_http'),
+  credentials.value.filter(
+    (c) => c.type === 'git_token' || c.type === 'git_http' || c.type === 'git_ssh',
+  ),
 )
+
+// 行内建凭据用的类型标签(与保险库一致;三种 git 类型可选)
+const inlineCredTypeLabels = computed<Record<CredentialType, string>>(() => ({
+  git_token: t('settingsVault.typeGitToken'),
+  git_http: t('settingsVault.typeGitHttp'),
+  git_ssh: t('settingsVault.typeGitSSH'),
+  ssh_key: t('settingsVault.typeSshKey'),
+  ssh_password: t('settingsVault.typeSshPassword'),
+  registry: t('settingsVault.typeRegistry'),
+}))
 
 async function loadCredentials(): Promise<void> {
   credentialsLoading.value = true
@@ -170,6 +184,9 @@ type TestState = 'idle' | 'testing' | 'ok' | 'error'
 const testState = ref<TestState>('idle')
 const testError = ref('')
 const testDetectedBranch = ref('')
+// 「测试连接」成功后带回的远端分支/tag,供默认分支输入框的 RefPicker 下拉候选。
+const remoteBranches = ref<string[]>([])
+const remoteTags = ref<string[]>([])
 
 function openCreateModal(): void {
   createForm.value = { name: '', repoUrl: '', credentialId: '', defaultBranch: '' }
@@ -178,6 +195,8 @@ function openCreateModal(): void {
   testState.value = 'idle'
   testError.value = ''
   testDetectedBranch.value = ''
+  remoteBranches.value = []
+  remoteTags.value = []
   inlineCredentialOpen.value = false
   inlineCredentialForm.value = { name: '', type: 'git_http', username: '', secret: '' }
   inlineCredentialErrors.value = { name: '', username: '', secret: '' }
@@ -251,10 +270,7 @@ function validateCreateForm(): boolean {
   if (!createForm.value.repoUrl.trim()) {
     createErrors.value.repoUrl = t('projects.errRepoRequired')
     ok = false
-  } else if (
-    !createForm.value.repoUrl.trim().startsWith('http') &&
-    !createForm.value.repoUrl.trim().startsWith('git@')
-  ) {
+  } else if (!isSupportedRepoUrl(createForm.value.repoUrl.trim())) {
     createErrors.value.repoUrl = t('projects.errRepoFormat')
     ok = false
   }
@@ -281,6 +297,8 @@ async function handleTestClone(): Promise<void> {
   testState.value = 'testing'
   testError.value = ''
   testDetectedBranch.value = ''
+  remoteBranches.value = []
+  remoteTags.value = []
 
   try {
     const result = await testClone({
@@ -289,6 +307,8 @@ async function handleTestClone(): Promise<void> {
     })
     testState.value = 'ok'
     testDetectedBranch.value = result.defaultBranch
+    remoteBranches.value = result.branches ?? []
+    remoteTags.value = result.tags ?? []
     // Auto-fill default branch if user hasn't typed one
     if (!createForm.value.defaultBranch) {
       createForm.value.defaultBranch = result.defaultBranch
@@ -488,15 +508,18 @@ async function loadTriggerDefs(projectId: string): Promise<void> {
   }
 }
 
-// 代码管理区(Story 8-18):拉取真实分支/commit 供下拉建议(datalist);未启用/失败 → 静默回退手填。
-const branchOptions = ref<GitRef[]>([])
+// 代码管理区(Story 8-18):拉取真实分支/commit 供下拉建议;未启用/失败 → 静默回退手填。
+const triggerBranches = ref<string[]>([])
+const triggerTags = ref<string[]>([])
 const commitOptions = ref<GitCommit[]>([])
 async function loadBranchOptions(projectId: string): Promise<void> {
-  branchOptions.value = []
+  triggerBranches.value = []
+  triggerTags.value = []
   commitOptions.value = []
   try {
     const refs = await listRefs(projectId)
-    branchOptions.value = [...refs.branches, ...refs.tags]
+    triggerBranches.value = refs.branches.map((r) => r.name)
+    triggerTags.value = refs.tags.map((r) => r.name)
   } catch {
     // 代码管理区未启用(503)或仓库不可达:静默,保持纯文本输入(优雅降级)。
   }
@@ -515,9 +538,9 @@ async function loadCommitOptions(projectId: string, ref: string): Promise<void> 
   }
 }
 
-function onTriggerBranchInput(): void {
+function onTriggerBranchInput(value?: string): void {
   triggerBranchError.value = ''
-  if (triggerProject.value) void loadCommitOptions(triggerProject.value.id, triggerForm.value.branch)
+  if (triggerProject.value) void loadCommitOptions(triggerProject.value.id, value ?? triggerForm.value.branch)
 }
 
 function closeTriggerModal(): void {
@@ -967,24 +990,19 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
               {{ t('projects.branch') }}
               <span class="field-hint-inline">{{ t('projects.branchHint') }}</span>
             </label>
-            <input
-              id="trigger-branch"
+            <RefPicker
+              input-id="trigger-branch"
               v-model="triggerForm.branch"
-              class="field-input field-input--mono"
-              :class="{ 'field-input--error': triggerBranchError }"
-              type="text"
-              placeholder="main"
-              autocomplete="off"
-              list="trigger-branch-options"
+              :branches="triggerBranches"
+              :tags="triggerTags"
               :disabled="triggerSubmitting"
-              :aria-invalid="triggerBranchError ? 'true' : undefined"
-              :aria-describedby="triggerBranchError ? 'trigger-branch-err' : undefined"
-              @input="onTriggerBranchInput"
+              :has-error="!!triggerBranchError"
+              :described-by="triggerBranchError ? 'trigger-branch-err' : undefined"
+              placeholder="main"
+              :branches-label="t('projects.refGroupBranches')"
+              :tags-label="t('projects.refGroupTags')"
+              @update:model-value="onTriggerBranchInput"
             />
-            <!-- 代码管理区:真实分支/tag 下拉建议(空则纯文本输入,优雅降级) -->
-            <datalist id="trigger-branch-options">
-              <option v-for="r in branchOptions" :key="r.name" :value="r.name" />
-            </datalist>
             <span
               v-if="triggerBranchError"
               id="trigger-branch-err"
@@ -1144,12 +1162,12 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
               class="field-input field-input--mono"
               :class="{ 'field-input--error': createErrors.repoUrl }"
               type="url"
-              placeholder="https://gitee.com/your-org/repo.git"
+              :placeholder="t('projects.repoUrlPlaceholder')"
               autocomplete="off"
               :disabled="createSubmitting"
               :aria-invalid="createErrors.repoUrl ? 'true' : undefined"
               :aria-describedby="createErrors.repoUrl ? 'proj-repo-err' : undefined"
-              @input="createErrors.repoUrl = ''; testState = 'idle'"
+              @input="createErrors.repoUrl = ''; testState = 'idle'; remoteBranches = []; remoteTags = []"
             />
             <span v-if="createErrors.repoUrl" id="proj-repo-err" class="field-error" role="alert">{{ createErrors.repoUrl }}</span>
           </div>
@@ -1198,14 +1216,14 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
               <span class="field-label">{{ t('settingsVault.fieldType') }}</span>
               <div class="inline-credential-types" role="group" :aria-label="t('settingsVault.credentialTypeAria')">
                 <button
-                  v-for="type in (['git_token', 'git_http'] as CredentialType[])"
+                  v-for="type in (['git_token', 'git_http', 'git_ssh'] as CredentialType[])"
                   :key="type"
                   type="button"
                   class="inline-credential-type"
                   :class="{ 'inline-credential-type--active': inlineCredentialForm.type === type }"
                   :disabled="inlineCredentialSubmitting"
-                  @click="inlineCredentialForm.type = type"
-                >{{ type === 'git_token' ? t('settingsVault.typeGitToken') : t('settingsVault.typeGitHttp') }}</button>
+                  @click="inlineCredentialForm.type = type; inlineCredentialErrors.secret = ''"
+                >{{ inlineCredTypeLabels[type] }}</button>
               </div>
             </div>
             <div class="field">
@@ -1242,7 +1260,22 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             </div>
             <div class="field">
               <label class="field-label" for="inline-cred-secret">{{ t('projects.inlineCredSecret') }}</label>
+              <!-- git_ssh 私钥是多行 PEM:<input> 会按 HTML 规范吃掉换行,私钥直接作废 -->
+              <textarea
+                v-if="inlineCredentialForm.type === 'git_ssh'"
+                id="inline-cred-secret"
+                v-model="inlineCredentialForm.secret"
+                class="field-input field-input--mono"
+                :class="{ 'field-input--error': inlineCredentialErrors.secret }"
+                rows="6"
+                :placeholder="t('projects.inlineCredSecretPlaceholderSsh')"
+                :disabled="inlineCredentialSubmitting"
+                autocomplete="off"
+                spellcheck="false"
+                @input="inlineCredentialErrors.secret = ''"
+              ></textarea>
               <input
+                v-else
                 id="inline-cred-secret"
                 v-model="inlineCredentialForm.secret"
                 class="field-input"
@@ -1253,7 +1286,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
                 autocomplete="new-password"
                 @input="inlineCredentialErrors.secret = ''"
               />
-              <span class="field-hint">{{ t('projects.inlineCredSecretHint') }}</span>
+              <span class="field-hint">{{ inlineCredentialForm.type === 'git_ssh' ? t('projects.inlineCredSecretHintSsh') : t('projects.inlineCredSecretHint') }}</span>
               <span v-if="inlineCredentialErrors.secret" class="field-error" role="alert">{{ inlineCredentialErrors.secret }}</span>
             </div>
             <button
@@ -1264,21 +1297,23 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             >{{ inlineCredentialSubmitting ? t('projects.inlineCredCreating') : t('projects.inlineCredCreate') }}</button>
           </div>
 
-          <!-- Default branch (optional) -->
+          <!-- Default branch (optional) — 测试连接后展示真实分支/tag 面板下拉(仍可手输) -->
           <div class="field">
             <label class="field-label" for="proj-branch">
               {{ t('projects.fieldDefaultBranch') }}
               <span class="field-hint-inline">{{ t('projects.fieldDefaultBranchHint') }}</span>
             </label>
-            <input
-              id="proj-branch"
+            <RefPicker
+              input-id="proj-branch"
               v-model="createForm.defaultBranch"
-              class="field-input field-input--mono"
-              type="text"
-              placeholder="main"
-              autocomplete="off"
+              :branches="remoteBranches"
+              :tags="remoteTags"
               :disabled="createSubmitting"
+              placeholder="main"
+              :branches-label="t('projects.refGroupBranches')"
+              :tags-label="t('projects.refGroupTags')"
             />
+            <span v-if="remoteBranches.length" class="field-hint">{{ t('projects.fieldDefaultBranchListed', { n: remoteBranches.length + remoteTags.length }) }}</span>
           </div>
 
           <!-- Test clone — left-bottom, separated from primary actions -->

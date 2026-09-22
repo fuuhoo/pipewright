@@ -89,9 +89,12 @@ type UpdateInput struct {
 	PRStatusEnabled *bool
 }
 
-// TestCloneResult 是测试连接的结果(成功时携探测到的默认分支)。
+// TestCloneResult 是测试连接的结果(成功时携探测到的默认分支与远端引用列表)。
 type TestCloneResult struct {
 	DefaultBranch string
+	// Branches/Tags 是远端全部分支/tag 短名(供前端「新建项目」弹窗默认分支下拉)。
+	Branches []string
+	Tags     []string
 }
 
 // ListResult 是分页列表结果(契约可携带分页元信息;DTO 兼容)。
@@ -109,6 +112,13 @@ type RemoteProber interface {
 	// 成功返回远端默认分支(可能为空字符串);失败返回 ErrCredentialError /
 	// ErrRepoUnreachable(绝不含明文/凭据)。
 	Probe(ctx context.Context, repoURL, username, token string) (defaultBranch string, err error)
+}
+
+// RefProber 是 RemoteProber 的可选扩展:探测时额外带回全部分支/tag 短名
+// (供前端「新建项目」弹窗的默认分支下拉)。TestClone 优先使用;prober 未实现时
+// 自动回退到 Probe(列表为空)。
+type RefProber interface {
+	ProbeRefs(ctx context.Context, repoURL, username, token string) (defaultBranch string, branches, tags []string, err error)
 }
 
 // Service 定义项目领域对外接口。
@@ -165,29 +175,54 @@ func validateCreate(in CreateInput) error {
 	return nil
 }
 
-// probe 取凭据明文并对仓库做 ls-remote 校验;token 仅进程内存在,用完即弃。
+// gitAuthOrErr 取凭据明文并映射干净领域错误;token 仅进程内存在。
 // 凭据不存在 → ErrCredentialNotFound;保险库未配置 → ErrVaultUnconfigured。
-func (s *service) probe(ctx context.Context, repoURL, credentialID string) (string, error) {
+func (s *service) gitAuthOrErr(credentialID string) (vault.GitAuth, error) {
 	if s.vault == nil {
-		return "", ErrVaultUnconfigured
+		return vault.GitAuth{}, ErrVaultUnconfigured
 	}
 	auth, err := s.vault.GetGitAuth(credentialID)
 	if err != nil {
 		switch {
 		case errors.Is(err, vault.ErrVaultUnconfigured):
-			return "", ErrVaultUnconfigured
+			return vault.GitAuth{}, ErrVaultUnconfigured
 		case errors.Is(err, vault.ErrNotFound):
-			return "", ErrCredentialNotFound
+			return vault.GitAuth{}, ErrCredentialNotFound
 		default:
 			// 解密等内部错误:不泄漏细节,统一按凭据错误对待。
-			return "", ErrCredentialError
+			return vault.GitAuth{}, ErrCredentialError
 		}
+	}
+	return auth, nil
+}
+
+// probe 取凭据明文并对仓库做 ls-remote 校验;token 仅进程内存在,用完即弃。
+func (s *service) probe(ctx context.Context, repoURL, credentialID string) (string, error) {
+	auth, err := s.gitAuthOrErr(credentialID)
+	if err != nil {
+		return "", err
 	}
 	token := auth.Token
 	branch, perr := s.prober.Probe(ctx, repoURL, auth.Username, token)
 	token = "" // 显式清引用,尽早不可达(明文不留)
 	_ = token
 	return branch, perr
+}
+
+// probeRefs 与 probe 相同,但 prober 实现 RefProber 时额外带回分支/tag 列表;
+// 未实现时回退 Probe(列表为 nil,handler 侧保证输出 [])。
+func (s *service) probeRefs(ctx context.Context, repoURL, credentialID string) (string, []string, []string, error) {
+	auth, err := s.gitAuthOrErr(credentialID)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	token := auth.Token
+	defer func() { token = "" }() // 显式清引用,尽早不可达(明文不留)
+	if rp, ok := s.prober.(RefProber); ok {
+		return rp.ProbeRefs(ctx, repoURL, auth.Username, token)
+	}
+	branch, perr := s.prober.Probe(ctx, repoURL, auth.Username, token)
+	return branch, nil, nil, perr
 }
 
 func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) {
@@ -396,11 +431,11 @@ func (s *service) TestClone(ctx context.Context, repoURL, credentialID string) (
 	if credentialID == "" {
 		return nil, ErrEmptyCredentialID
 	}
-	branch, err := s.probe(ctx, repoURL, credentialID)
+	branch, branches, tags, err := s.probeRefs(ctx, repoURL, credentialID)
 	if err != nil {
 		return nil, err
 	}
-	return &TestCloneResult{DefaultBranch: branch}, nil
+	return &TestCloneResult{DefaultBranch: branch, Branches: branches, Tags: tags}, nil
 }
 
 // scanner 抽象 *sql.Row 与 *sql.Rows 的 Scan。

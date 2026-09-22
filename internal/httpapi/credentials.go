@@ -54,6 +54,10 @@ func writeVaultError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "credential_in_use", "凭据正被项目或流水线配置引用,无法删除;请先解除引用")
 	case errors.Is(err, vault.ErrInvalidType):
 		writeError(w, http.StatusBadRequest, "invalid_credential", "凭据类型非法")
+	case errors.Is(err, vault.ErrEncryptedGitSSHKey):
+		writeError(w, http.StatusBadRequest, "invalid_credential", "私钥带口令(passphrase),无人值守克隆无法解锁;请先执行 ssh-keygen -p -N \"\" 去掉口令后再录入")
+	case errors.Is(err, vault.ErrInvalidGitSSHKey):
+		writeError(w, http.StatusBadRequest, "invalid_credential", "git_ssh 凭据需要有效的 PEM 私钥")
 	case errors.Is(err, vault.ErrEmptySecret):
 		writeError(w, http.StatusBadRequest, "invalid_credential", "secret 不能为空")
 	case errors.Is(err, vault.ErrEmptyName):

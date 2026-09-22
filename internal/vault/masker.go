@@ -26,7 +26,7 @@ func mask(credType, secret string) string {
 	switch credType {
 	case TypeGitToken:
 		return maskGitToken(secret)
-	case TypeSSHKey:
+	case TypeSSHKey, TypeGitSSH:
 		return maskSSHKey(secret)
 	case TypeRegistry:
 		return maskRegistry(secret)

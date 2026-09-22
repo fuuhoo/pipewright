@@ -71,6 +71,10 @@ export interface UpdateProjectInput {
 export interface TestCloneResult {
   ok: true
   defaultBranch: string
+  /** Remote branch short names (populated after a successful test — feeds the create-dialog dropdown). */
+  branches: string[]
+  /** Remote tag names (peeled duplicates excluded). */
+  tags: string[]
 }
 
 export interface TestCloneInput {

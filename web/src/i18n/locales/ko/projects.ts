@@ -1,7 +1,7 @@
 export default {
   // ─── page header ───────────────────────────────────────────────
   title: '프로젝트',
-  subtitle: '관리 중인 Gitee 저장소 — 각 프로젝트는 하나의 파이프라인 설정과 배포 대상에 매핑됩니다',
+  subtitle: '관리 중인 Git 저장소 — 각 프로젝트는 하나의 파이프라인 설정과 배포 대상에 매핑됩니다',
   newProject: '새 프로젝트',
   retry: '다시 시도',
 
@@ -15,7 +15,7 @@ export default {
   // ─── list states ───────────────────────────────────────────────
   loading: '불러오는 중',
   emptyTitle: '아직 프로젝트가 없습니다',
-  emptyHint: '첫 Gitee 저장소를 연결하면 파이프라인을 설정하고 대상 서버에 배포할 수 있습니다.',
+  emptyHint: '첫 Git 저장소를 연결하면 파이프라인을 설정하고 대상 서버에 배포할 수 있습니다.',
   noMatchTitle: '일치하는 프로젝트가 없습니다',
   noMatchHint: '검색어나 상태 필터 조건을 조정한 후 다시 시도하세요.',
   clearFilter: '필터 지우기',
@@ -66,7 +66,7 @@ export default {
   runNow: '지금 실행',
 
   // ─── create modal ──────────────────────────────────────────────
-  createSub: 'Gitee 저장소를 연결하고 저장소 자격 증명을 바인딩합니다',
+  createSub: 'Git 저장소를 연결하고 저장소 자격 증명을 바인딩합니다',
   fieldName: '프로젝트 이름',
   fieldNamePlaceholder: '예: acme-web',
   fieldRepo: '저장소 URL',
@@ -80,12 +80,14 @@ export default {
   inlineCredCancel: '새 자격 증명 취소',
   inlineCredTitle: '새 Git HTTPS 자격 증명',
   inlineCredName: '자격 증명 이름',
-  inlineCredNamePlaceholder: '예: Gitee 조직 저장소',
+  inlineCredNamePlaceholder: '예: Git 조직 저장소',
   inlineCredUsername: 'Git 사용자 이름',
   inlineCredUsernamePlaceholder: 'Git 계정 사용자 이름',
   inlineCredSecret: '비밀번호 또는 토큰',
   inlineCredSecretPlaceholder: '한 번만 전송되며 표시되지 않음',
   inlineCredSecretHint: 'GitHub, Gitee 등의 제공자는 일반적으로 토큰을 권장합니다.',
+  inlineCredSecretPlaceholderSsh: '전체 개인 키를 붙여넣으세요(PEM)',
+  inlineCredSecretHintSsh: 'passphrase가 포함된 개인 키는 자동 클론에 사용할 수 없습니다.',
   inlineCredNameRequired: '자격 증명 이름을 입력하세요',
   inlineCredUsernameRequired: 'Git 사용자 이름을 입력하세요',
   inlineCredSecretRequired: '비밀번호 또는 토큰을 입력하세요',
@@ -95,6 +97,10 @@ export default {
   inlineCredCreateRetry: '자격 증명 생성에 실패했습니다. 나중에 다시 시도하세요.',
   fieldDefaultBranch: '기본 브랜치',
   fieldDefaultBranchHint: '(선택, 비워 두면 연결 테스트로 자동 감지됩니다)',
+  fieldDefaultBranchListed: '원격 브랜치/tag {n}개 감지 — 드롭다운에서 선택할 수 있습니다',
+  refGroupBranches: '브랜치',
+  refGroupTags: '태그',
+
   testConnection: '연결 테스트',
   testing: '테스트 중…',
   testOk: '연결 성공',
@@ -123,13 +129,14 @@ export default {
   errLoadRetry: '프로젝트를 불러오지 못했습니다. 잠시 후 다시 시도하세요',
   errNameRequired: '프로젝트 이름을 입력하세요',
   errRepoRequired: '저장소 URL을 입력하세요',
-  errRepoFormat: '저장소 URL 형식이 올바르지 않습니다. https:// 또는 git{\'@\'} 로 시작해야 합니다',
+  repoUrlPlaceholder: 'https://example.com/org/repo.git 또는 git{\'@\'}example.com:org/repo.git',
+  errRepoFormat: '저장소 URL 형식이 올바르지 않습니다. http(s)://, ssh:// 또는 git{\'@\'}host:path 형식으로 입력하세요',
   errCredRequired: '저장소 자격 증명을 선택하세요',
   errRepoFirst: '먼저 저장소 URL을 입력하세요',
   errCredFirst: '먼저 저장소 자격 증명을 선택하세요',
   errNameEmpty: '프로젝트 이름은 비워 둘 수 없습니다',
 
-  testErrCredential: '자격 증명 오류: Gitee 액세스 토큰이 유효한지 확인하고 자격 증명 볼트에서 업데이트하세요.',
+  testErrCredential: '자격 증명 오류: Git 액세스 토큰이 유효한지 확인하고 자격 증명 볼트에서 업데이트하세요.',
   testErrUnreachable: '저장소에 연결할 수 없습니다: URL이 올바르고 저장소가 존재하며 접근 가능한지 확인하세요.',
   testErrVault: '볼트에 master key가 설정되지 않아 자격 증명을 읽을 수 없습니다.',
   testErrStatus: '연결 테스트에 실패했습니다({status})',

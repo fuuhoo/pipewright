@@ -32,7 +32,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/go-git/go-git/v5/storage/memory"
-	"github.com/huangchengsir/pipewright/internal/gitauth"
 )
 
 // diffCloneTimeout 是单次克隆的硬超时(防黑洞 IP / 慢 DNS 把 goroutine 挂死)。
@@ -136,20 +135,19 @@ func (d goGitDiffer) Diff(ctx context.Context, repoURL, username, token, baselin
 		return RunDiff{Available: false, Reason: "缺少可对比的提交,无法计算差异", Files: []FileDiff{}}
 	}
 
-	if !d.allowInsecure && !validRepoURL(repoURL) {
-		// SSRF 拒绝:走降级(绝不泄漏 URL 细节),不报致命错。
-		return RunDiff{Available: false, Reason: "仓库地址不可达或不被允许", Files: []FileDiff{}}
-	}
-
 	cctx, cancel := context.WithTimeout(ctx, diffCloneTimeout)
 	defer cancel()
 
 	// 克隆到内存(不设 Depth:浅克隆 HEAD 取不到任意历史 commit;此处需两个具体 commit 的 tree,
 	// 故取全量历史。内存 storer 限驻留,用完即随 GC 释放)。
 	storer := memory.NewStorage()
-	auth := gitauth.BasicAuth(repoURL, username, token)
+	remoteURL, auth, ok := resolveRepo(repoURL, username, token, d.allowInsecure)
+	if !ok {
+		// SSRF 拒绝 / 凭据与协议不匹配:走降级(绝不泄漏 URL 细节),不报致命错。
+		return RunDiff{Available: false, Reason: "仓库地址不可达或不被允许", Files: []FileDiff{}}
+	}
 	repo, err := gogit.CloneContext(cctx, storer, memfs.New(), &gogit.CloneOptions{
-		URL:  repoURL,
+		URL:  remoteURL,
 		Auth: auth,
 		Tags: gogit.NoTags,
 	})
@@ -185,17 +183,16 @@ func (d goGitDiffer) DiffCommit(ctx context.Context, repoURL, username, token, c
 	if commit == "" {
 		return RunDiff{Available: false, Reason: "本次运行无提交信息,无可对比的代码差异", Files: []FileDiff{}}, ""
 	}
-	if !d.allowInsecure && !validRepoURL(repoURL) {
-		return RunDiff{Available: false, Reason: "仓库地址不可达或不被允许", Files: []FileDiff{}}, ""
-	}
-
 	cctx, cancel := context.WithTimeout(ctx, diffCloneTimeout)
 	defer cancel()
 
 	storer := memory.NewStorage()
-	auth := gitauth.BasicAuth(repoURL, username, token)
+	remoteURL, auth, ok := resolveRepo(repoURL, username, token, d.allowInsecure)
+	if !ok {
+		return RunDiff{Available: false, Reason: "仓库地址不可达或不被允许", Files: []FileDiff{}}, ""
+	}
 	repo, err := gogit.CloneContext(cctx, storer, memfs.New(), &gogit.CloneOptions{
-		URL:  repoURL,
+		URL:  remoteURL,
 		Auth: auth,
 		Tags: gogit.NoTags,
 	})

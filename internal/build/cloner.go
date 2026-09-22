@@ -3,14 +3,13 @@ package build
 import (
 	"context"
 	"errors"
-	"net"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/huangchengsir/pipewright/internal/gitauth"
 )
@@ -29,8 +28,8 @@ var (
 // Cloner 把项目仓库在指定 commit/branch 上克隆到**磁盘临时工作区**(Docker build 需 `.` 上下文落盘)。
 //
 // 与 2-5/3-6 的内存克隆(memfs)不同:构建上下文须是真实目录树供容器 CLI 读取。工作区由调用方
-// (Builder)经 MkdirTemp 建、defer RemoveAll 销(宿主零污染,FR-5)。SSRF 收口复用全平台同款策略:
-// 仅 http/https;拒云元数据/链路本地/回环;私网放行(自托管内网 Git 友好)。
+// (Builder)经 MkdirTemp 建、defer RemoveAll 销(宿主零污染,FR-5)。SSRF 收口复用全平台同款策略
+// (见 internal/giturl):http(s) 与 ssh 均放行;拒云元数据/链路本地/回环;私网放行(自托管内网 Git 友好)。
 type Cloner struct {
 	// allowInsecure 仅供测试:为 true 时跳过 SSRF scheme/host 校验(放行 file:// 本地夹具)。
 	// 生产路径绝不设置(NewCloner 默认 false)。
@@ -46,29 +45,26 @@ type CloneResolved struct {
 }
 
 // Clone 把 repoURL 在 ref(commit sha 优先,否则分支名;皆空则默认分支)上克隆到 destDir。
-// token 经 BasicAuth.Password 传入(绝不进 URL/日志/错误)。失败统一映射干净错误。
+// token 对 http(s) 是访问令牌(BasicAuth.Password)、对 ssh 是私钥 PEM;两者绝不进 URL/日志/错误。
+// 失败统一映射干净错误。
 //
 // 策略:先克隆默认/指定分支(Depth:1 浅克隆省带宽),若指定了 commit 则再 checkout 到该 commit
 //
 //	(commit 不在浅克隆历史里时回退为不限深克隆重试一次,best-effort)。
 func (c *Cloner) Clone(ctx context.Context, repoURL, username, token, branch, commit, destDir string) (*CloneResolved, error) {
-	repoURL = strings.TrimSpace(repoURL)
-	if repoURL == "" {
-		return nil, ErrCloneFailed
-	}
-	if !c.allowInsecure && !validRepoURL(repoURL) {
-		return nil, ErrRepoBlocked
+	cloneURL, auth, err := c.resolve(repoURL, username, token)
+	if err != nil {
+		return nil, err
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, cloneTimeout)
 	defer cancel()
 
-	auth := gitauth.BasicAuth(repoURL, username, token)
 	commit = strings.TrimSpace(commit)
 	branch = strings.TrimSpace(branch)
 
 	opts := &gogit.CloneOptions{
-		URL:  repoURL,
+		URL:  cloneURL,
 		Auth: auth,
 		Tags: gogit.NoTags,
 	}
@@ -104,47 +100,31 @@ func (c *Cloner) Clone(ctx context.Context, repoURL, username, token, branch, co
 	return resolved, nil
 }
 
-// IsRepoURLAllowed 是 validRepoURL 的导出包装(供 repocache 等复用同款 SSRF 收口,不重复实现)。
-func IsRepoURLAllowed(repoURL string) bool { return validRepoURL(repoURL) }
-
-// validRepoURL 对仓库地址做 SSRF 收口(生产路径),复用全平台同款策略:
-// 仅 http/https;拒云元数据/链路本地/回环;私网放行(自托管内网 Git 友好)。
-func validRepoURL(repoURL string) bool {
-	u, err := url.Parse(strings.TrimSpace(repoURL))
+// resolve 归一化地址并构造认证(生产路径过 SSRF 收口;测试夹具 file:// 放行且匿名)。
+// 返回的地址已是 go-git 可直接消费的形式(scp 语法归一化为 ssh://)。
+func (c *Cloner) resolve(repoURL, username, token string) (string, transport.AuthMethod, error) {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return "", nil, ErrCloneFailed
+	}
+	if c.allowInsecure {
+		return repoURL, gitauth.HTTPAuth(repoURL, username, token), nil
+	}
+	r, err := gitauth.ResolveRepoURL(repoURL)
 	if err != nil {
-		return false
+		return "", nil, ErrRepoBlocked
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-	default:
-		return false
+	auth, err := gitauth.TransportFor(r, username, token)
+	if err != nil {
+		return "", nil, ErrCloneFailed
 	}
-	host := u.Hostname()
-	if host == "" {
-		return false
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return !blockedIP(ip)
-	}
-	addrs, err := net.LookupIP(host)
-	if err != nil || len(addrs) == 0 {
-		return true // 留给 clone 路径(会失败映射);不在此误拒临时 DNS 抖动。
-	}
-	for _, ip := range addrs {
-		if blockedIP(ip) {
-			return false
-		}
-	}
-	return true
+	return r.URL, auth, nil
 }
 
-// blockedIP 判定 IP 是否落在禁止区:回环、链路本地(含云元数据 169.254.169.254)、未指定。
-// 私网(RFC1918 / fc00::/7)不在此列(放行)。
-func blockedIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
+// IsRepoURLAllowed 报告地址是否通过全平台 SSRF 收口(供 repocache 等复用,不重复实现)。
+func IsRepoURLAllowed(repoURL string) bool {
+	_, err := gitauth.ResolveRepoURL(repoURL)
+	return err == nil
 }
 
 // shortSHA 取 commit 的前 7 位(短 sha);不足 7 位原样返回。

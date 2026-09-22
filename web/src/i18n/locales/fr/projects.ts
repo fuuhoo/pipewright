@@ -1,7 +1,7 @@
 export default {
   // ─── page header ───────────────────────────────────────────────
   title: 'Projets',
-  subtitle: 'Dépôts Gitee gérés : chaque projet correspond à une configuration de pipeline et à des cibles de déploiement',
+  subtitle: 'Dépôts Git gérés : chaque projet correspond à une configuration de pipeline et à des cibles de déploiement',
   newProject: 'Nouveau projet',
   retry: 'Réessayer',
 
@@ -15,7 +15,7 @@ export default {
   // ─── list states ───────────────────────────────────────────────
   loading: 'Chargement',
   emptyTitle: 'Aucun projet pour l’instant',
-  emptyHint: 'Connectez votre premier dépôt Gitee, puis configurez un pipeline et déployez vers les serveurs cibles.',
+  emptyHint: 'Connectez votre premier dépôt Git, puis configurez un pipeline et déployez vers les serveurs cibles.',
   noMatchTitle: 'Aucun projet correspondant',
   noMatchHint: 'Ajustez le terme de recherche ou le filtre de statut, puis réessayez.',
   clearFilter: 'Effacer les filtres',
@@ -66,7 +66,7 @@ export default {
   runNow: 'Exécuter maintenant',
 
   // ─── create modal ──────────────────────────────────────────────
-  createSub: 'Connectez un dépôt Gitee et liez un identifiant de dépôt',
+  createSub: 'Connectez un dépôt Git et liez un identifiant de dépôt',
   fieldName: 'Nom du projet',
   fieldNamePlaceholder: 'ex. acme-web',
   fieldRepo: 'URL du dépôt',
@@ -80,12 +80,14 @@ export default {
   inlineCredCancel: 'Annuler le nouvel identifiant',
   inlineCredTitle: 'Nouvel identifiant Git HTTPS',
   inlineCredName: 'Nom de l’identifiant',
-  inlineCredNamePlaceholder: 'ex. dépôt d’organisation Gitee',
+  inlineCredNamePlaceholder: 'ex. dépôt d’organisation Git',
   inlineCredUsername: 'Nom d’utilisateur Git',
   inlineCredUsernamePlaceholder: 'Nom du compte Git',
   inlineCredSecret: 'Mot de passe ou jeton',
   inlineCredSecretPlaceholder: 'Envoyé une fois, jamais réaffiché',
   inlineCredSecretHint: 'GitHub, Gitee et les fournisseurs similaires recommandent généralement un jeton.',
+  inlineCredSecretPlaceholderSsh: 'Collez la clé privée complète (PEM)',
+  inlineCredSecretHintSsh: 'Les clés avec passphrase ne conviennent pas au clonage automatique.',
   inlineCredNameRequired: 'Saisissez un nom d’identifiant',
   inlineCredUsernameRequired: 'Saisissez un nom d’utilisateur Git',
   inlineCredSecretRequired: 'Saisissez un mot de passe ou un jeton',
@@ -95,6 +97,10 @@ export default {
   inlineCredCreateRetry: 'Échec de la création de l’identifiant. Réessayez plus tard.',
   fieldDefaultBranch: 'Branche par défaut',
   fieldDefaultBranchHint: '(facultatif, laissez vide pour la détecter automatiquement via le test de connexion)',
+  fieldDefaultBranchListed: '{n} branches/tags distantes détectées — sélectionnables dans la liste',
+  refGroupBranches: 'Branches',
+  refGroupTags: 'Tags',
+
   testConnection: 'Tester la connexion',
   testing: 'Test en cours…',
   testOk: 'Connexion réussie',
@@ -123,13 +129,14 @@ export default {
   errLoadRetry: 'Échec du chargement des projets, veuillez réessayer plus tard',
   errNameRequired: 'Veuillez saisir un nom de projet',
   errRepoRequired: 'Veuillez saisir une URL de dépôt',
-  errRepoFormat: 'Format d’URL de dépôt invalide. Elle doit commencer par https:// ou git{\'@\'}',
+  repoUrlPlaceholder: 'https://example.com/org/repo.git ou git{\'@\'}example.com:org/repo.git',
+  errRepoFormat: 'Format d’URL de dépôt invalide. Utilisez http(s)://, ssh:// ou git{\'@\'}host:path',
   errCredRequired: 'Veuillez sélectionner un identifiant de dépôt',
   errRepoFirst: 'Veuillez d’abord saisir une URL de dépôt',
   errCredFirst: 'Veuillez d’abord sélectionner un identifiant de dépôt',
   errNameEmpty: 'Le nom du projet ne peut pas être vide',
 
-  testErrCredential: 'Erreur d’identifiant : vérifiez que votre jeton d’accès Gitee est valide et mettez-le à jour dans le coffre d’identifiants.',
+  testErrCredential: 'Erreur d’identifiant : vérifiez que votre jeton d’accès Git est valide et mettez-le à jour dans le coffre d’identifiants.',
   testErrUnreachable: 'Dépôt inaccessible : vérifiez que l’URL est correcte et que le dépôt existe et est accessible.',
   testErrVault: 'Le coffre n’a pas de master key configurée ; les identifiants ne peuvent pas être lus.',
   testErrStatus: 'Échec du test de connexion ({status})',

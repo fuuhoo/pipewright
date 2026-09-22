@@ -1,7 +1,7 @@
 export default {
   // ─── page header ───────────────────────────────────────────────
   title: 'Projekte',
-  subtitle: 'Verwaltete Gitee-Repositorys – jedes Projekt entspricht einer Pipeline-Konfiguration und Bereitstellungszielen',
+  subtitle: 'Verwaltete Git-Repositorys – jedes Projekt entspricht einer Pipeline-Konfiguration und Bereitstellungszielen',
   newProject: 'Neues Projekt',
   retry: 'Erneut versuchen',
 
@@ -15,7 +15,7 @@ export default {
   // ─── list states ───────────────────────────────────────────────
   loading: 'Wird geladen',
   emptyTitle: 'Noch keine Projekte',
-  emptyHint: 'Verbinde dein erstes Gitee-Repository, konfiguriere dann eine Pipeline und stelle auf Zielservern bereit.',
+  emptyHint: 'Verbinde dein erstes Git-Repository, konfiguriere dann eine Pipeline und stelle auf Zielservern bereit.',
   noMatchTitle: 'Keine passenden Projekte',
   noMatchHint: 'Passe den Suchbegriff oder den Statusfilter an und versuche es erneut.',
   clearFilter: 'Filter zurücksetzen',
@@ -66,7 +66,7 @@ export default {
   runNow: 'Jetzt ausführen',
 
   // ─── create modal ──────────────────────────────────────────────
-  createSub: 'Verbinde ein Gitee-Repository und binde Repository-Anmeldedaten ein',
+  createSub: 'Verbinde ein Git-Repository und binde Repository-Anmeldedaten ein',
   fieldName: 'Projektname',
   fieldNamePlaceholder: 'z. B. acme-web',
   fieldRepo: 'Repository-URL',
@@ -80,12 +80,14 @@ export default {
   inlineCredCancel: 'Neue Anmeldedaten abbrechen',
   inlineCredTitle: 'Neue Git-HTTPS-Anmeldedaten',
   inlineCredName: 'Name der Anmeldedaten',
-  inlineCredNamePlaceholder: 'z. B. Gitee-Organisations-Repository',
+  inlineCredNamePlaceholder: 'z. B. Git-Organisations-Repository',
   inlineCredUsername: 'Git-Benutzername',
   inlineCredUsernamePlaceholder: 'Benutzername des Git-Kontos',
   inlineCredSecret: 'Passwort oder Token',
   inlineCredSecretPlaceholder: 'Wird einmalig gesendet und nie angezeigt',
   inlineCredSecretHint: 'GitHub, Gitee und ähnliche Anbieter empfehlen normalerweise ein Token.',
+  inlineCredSecretPlaceholderSsh: 'Vollständigen privaten Schlüssel einfügen (PEM)',
+  inlineCredSecretHintSsh: 'Schlüssel mit Passphrase sind für unbeaufsichtigte Klone ungeeignet.',
   inlineCredNameRequired: 'Gib einen Namen für die Anmeldedaten ein',
   inlineCredUsernameRequired: 'Gib einen Git-Benutzernamen ein',
   inlineCredSecretRequired: 'Gib ein Passwort oder Token ein',
@@ -95,6 +97,10 @@ export default {
   inlineCredCreateRetry: 'Erstellen der Anmeldedaten fehlgeschlagen. Bitte später erneut versuchen.',
   fieldDefaultBranch: 'Standard-Branch',
   fieldDefaultBranchHint: '(optional, leer lassen zur automatischen Erkennung über den Verbindungstest)',
+  fieldDefaultBranchListed: '{n} Remote-Branches/Tags erkannt – per Dropdown auswählbar',
+  refGroupBranches: 'Branches',
+  refGroupTags: 'Tags',
+
   testConnection: 'Verbindung testen',
   testing: 'Wird getestet…',
   testOk: 'Verbindung erfolgreich',
@@ -123,13 +129,14 @@ export default {
   errLoadRetry: 'Laden der Projekte fehlgeschlagen, bitte später erneut versuchen',
   errNameRequired: 'Bitte gib einen Projektnamen ein',
   errRepoRequired: 'Bitte gib eine Repository-URL ein',
-  errRepoFormat: 'Ungültiges Repository-URL-Format. Sie muss mit https:// oder git{\'@\'} beginnen',
+  repoUrlPlaceholder: 'https://example.com/org/repo.git oder git{\'@\'}example.com:org/repo.git',
+  errRepoFormat: 'Ungültiges Repository-URL-Format. Verwenden Sie http(s)://, ssh:// oder git{\'@\'}host:path',
   errCredRequired: 'Bitte wähle Repository-Anmeldedaten aus',
   errRepoFirst: 'Bitte gib zuerst eine Repository-URL ein',
   errCredFirst: 'Bitte wähle zuerst Repository-Anmeldedaten aus',
   errNameEmpty: 'Der Projektname darf nicht leer sein',
 
-  testErrCredential: 'Anmeldedaten-Fehler: Prüfe, ob dein Gitee-Zugriffstoken gültig ist, und aktualisiere es im Anmeldedaten-Tresor.',
+  testErrCredential: 'Anmeldedaten-Fehler: Prüfe, ob dein Git-Zugriffstoken gültig ist, und aktualisiere es im Anmeldedaten-Tresor.',
   testErrUnreachable: 'Repository nicht erreichbar: Stelle sicher, dass die URL korrekt ist und das Repository existiert und zugänglich ist.',
   testErrVault: 'Im Tresor ist kein Master Key konfiguriert, daher können die Anmeldedaten nicht gelesen werden.',
   testErrStatus: 'Verbindungstest fehlgeschlagen ({status})',

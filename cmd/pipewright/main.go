@@ -35,6 +35,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/deploy"
 	"github.com/huangchengsir/pipewright/internal/dnsprovider"
 	"github.com/huangchengsir/pipewright/internal/deployenv"
+	"github.com/huangchengsir/pipewright/internal/gitauth"
 	"github.com/huangchengsir/pipewright/internal/httpapi"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/mask"
@@ -70,6 +71,12 @@ func main() {
 	}
 
 	cfg := config.Load()
+
+	// git over SSH 主机密钥策略:默认不校验(内网自托管 Git 可用);
+	// PIPEWRIGHT_GIT_SSH_KNOWN_HOSTS 指定 known_hosts 后收紧为未知主机拒绝。
+	if err := gitauth.SetSSHHostKeyFile(cfg.GitSSHKnownHosts); err != nil {
+		log.Fatalf("git ssh 主机密钥配置: %v", err)
+	}
 
 	dbDriver, dbDSN, err := cfg.StoreConfig()
 	if err != nil {
@@ -586,12 +593,10 @@ func main() {
 	}
 	checker := buildenv.NewChecker(buildEnvRepo, credRef, bin, cfg.CheckConcurrency, cfg.CheckTimeout)
 	// v6.2 阶段 15:启动后自动检查所有 build_env 镜像(默认 true;可由 PIPEWRIGHT_AUTO_CHECK_ON_START=false 关闭)。
+	// StartAutoCheck 内部异步且自管超时:这里必须传长期有效的 ctx,
+	// 不能带 defer cancel —— 之前 30s ctx 在调用返回即被取消,启动检查全部失败。
 	if cfg.AutoCheckOnStart {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			checker.StartAutoCheck(ctx)
-		}()
+		checker.StartAutoCheck(context.Background())
 	}
 
 	// v6.2 阶段 15:装配配置资源服务(v6.2 §3.2)。

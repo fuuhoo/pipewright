@@ -48,6 +48,10 @@ type Config struct {
 	CheckTimeout         time.Duration // 单次 inspect 超时(默认 60s)
 	PullTimeoutMultiply  int           // pull 超时 = CheckTimeout × N(默认 4)
 	AllowUncheckedEnable bool          // 紧急逃生:允许 unchecked 状态启用 env(默认 false)
+
+	// Git over SSH:主机密钥校验策略。空串=不校验(自托管内网 Git 默认可用);
+	// 生产收紧时填 known_hosts 文件路径,未知主机将拒绝连接。
+	GitSSHKnownHosts string
 }
 
 // v6.2 阶段 14 配置默认值。
@@ -79,6 +83,8 @@ func Load() Config {
 		CheckTimeout:         time.Duration(getenvInt("PIPEWRIGHT_CHECK_TIMEOUT_SECONDS", DefaultCheckTimeoutSec)) * time.Second,
 		PullTimeoutMultiply:  getenvInt("PIPEWRIGHT_PULL_TIMEOUT_MULTIPLIER", DefaultPullTimeoutMult),
 		AllowUncheckedEnable: getenvBool("PIPEWRIGHT_ALLOW_UNCHECKED_ENABLE", false),
+
+		GitSSHKnownHosts: os.Getenv("PIPEWRIGHT_GIT_SSH_KNOWN_HOSTS"),
 	}
 }
 

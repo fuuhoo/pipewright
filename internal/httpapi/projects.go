@@ -243,6 +243,9 @@ func makeTestCloneHandler(svc project.Service) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":            true,
 			"defaultBranch": res.DefaultBranch,
+			// 空列表保证为 [] 而非 null,前端可安全迭代。
+			"branches": orEmptySlice(res.Branches),
+			"tags":     orEmptySlice(res.Tags),
 		})
 	}
 }

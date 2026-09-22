@@ -185,7 +185,7 @@ func TestAnalyzeSSRFRejectsLoopback(t *testing.T) {
 		"http://169.254.169.254/repo.git",
 		"http://[::1]/repo.git",
 	} {
-		if validRepoURL(u) {
+		if _, _, ok := resolveRepo(u, "", "", false); ok {
 			t.Fatalf("%s 应被 SSRF 拒绝", u)
 		}
 	}

@@ -1,7 +1,7 @@
 export default {
   // ─── page header ───────────────────────────────────────────────
   title: 'プロジェクト',
-  subtitle: '管理対象の Gitee リポジトリ。各プロジェクトはパイプライン設定とデプロイ先に対応します',
+  subtitle: '管理対象の Git リポジトリ。各プロジェクトはパイプライン設定とデプロイ先に対応します',
   newProject: 'プロジェクトを新規作成',
   retry: '再試行',
 
@@ -15,7 +15,7 @@ export default {
   // ─── list states ───────────────────────────────────────────────
   loading: '読み込み中',
   emptyTitle: 'プロジェクトがまだありません',
-  emptyHint: '最初の Gitee リポジトリを接続すると、パイプラインを設定してターゲットサーバーへデプロイできます。',
+  emptyHint: '最初の Git リポジトリを接続すると、パイプラインを設定してターゲットサーバーへデプロイできます。',
   noMatchTitle: '一致するプロジェクトがありません',
   noMatchHint: '検索語またはステータスの絞り込み条件を調整して再試行してください。',
   clearFilter: '絞り込みをクリア',
@@ -66,7 +66,7 @@ export default {
   runNow: '今すぐ実行',
 
   // ─── create modal ──────────────────────────────────────────────
-  createSub: 'Gitee リポジトリを接続し、リポジトリ認証情報をバインドします',
+  createSub: 'Git リポジトリを接続し、リポジトリ認証情報をバインドします',
   fieldName: 'プロジェクト名',
   fieldNamePlaceholder: '例:acme-web',
   fieldRepo: 'リポジトリ URL',
@@ -80,12 +80,14 @@ export default {
   inlineCredCancel: '新規認証情報をキャンセル',
   inlineCredTitle: 'Git HTTPS 認証情報を新規作成',
   inlineCredName: '認証情報名',
-  inlineCredNamePlaceholder: '例: Gitee 組織リポジトリ',
+  inlineCredNamePlaceholder: '例: Git 組織リポジトリ',
   inlineCredUsername: 'Git ユーザー名',
   inlineCredUsernamePlaceholder: 'Git アカウントのユーザー名',
   inlineCredSecret: 'パスワードまたはトークン',
   inlineCredSecretPlaceholder: '一度だけ送信され、表示されません',
   inlineCredSecretHint: 'GitHub、Gitee などでは通常トークンが推奨されます。',
+  inlineCredSecretPlaceholderSsh: '完全な秘密鍵を貼り付けてください(PEM)',
+  inlineCredSecretHintSsh: 'パスフレーズ付きの秘密鍵は自動クローンでは利用できません。',
   inlineCredNameRequired: '認証情報名を入力してください',
   inlineCredUsernameRequired: 'Git ユーザー名を入力してください',
   inlineCredSecretRequired: 'パスワードまたはトークンを入力してください',
@@ -95,6 +97,10 @@ export default {
   inlineCredCreateRetry: '認証情報の作成に失敗しました。後でもう一度お試しください。',
   fieldDefaultBranch: 'デフォルトブランチ',
   fieldDefaultBranchHint: '（任意。空欄の場合は接続テストで自動検出されます）',
+  fieldDefaultBranchListed: '{n} 個のリモートブランチ/tag を検出 — ドロップダウンから選択できます',
+  refGroupBranches: 'ブランチ',
+  refGroupTags: 'タグ',
+
   testConnection: '接続をテスト',
   testing: 'テスト中…',
   testOk: '接続に成功しました',
@@ -123,13 +129,14 @@ export default {
   errLoadRetry: 'プロジェクトの読み込みに失敗しました。しばらくしてから再試行してください',
   errNameRequired: 'プロジェクト名を入力してください',
   errRepoRequired: 'リポジトリ URL を入力してください',
-  errRepoFormat: 'リポジトリ URL の形式が正しくありません。https:// または git{\'@\'} で始めてください',
+  repoUrlPlaceholder: 'https://example.com/org/repo.git または git{\'@\'}example.com:org/repo.git',
+  errRepoFormat: 'リポジトリ URL の形式が正しくありません。http(s)://、ssh:// または git{\'@\'}host:path で入力してください',
   errCredRequired: 'リポジトリ認証情報を選択してください',
   errRepoFirst: '先にリポジトリ URL を入力してください',
   errCredFirst: '先にリポジトリ認証情報を選択してください',
   errNameEmpty: 'プロジェクト名は空にできません',
 
-  testErrCredential: '認証情報エラー：Gitee アクセストークンが有効か確認し、認証情報ボールトで更新してください。',
+  testErrCredential: '認証情報エラー：Git アクセストークンが有効か確認し、認証情報ボールトで更新してください。',
   testErrUnreachable: 'リポジトリに到達できません：URL が正しく、リポジトリが存在しアクセス可能か確認してください。',
   testErrVault: 'ボールトに master key が設定されていないため、認証情報を読み取れません。',
   testErrStatus: '接続テストに失敗しました（{status}）',
