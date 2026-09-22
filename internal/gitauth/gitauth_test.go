@@ -49,11 +49,24 @@ func TestBasicAuthReturnsNilWithoutToken(t *testing.T) {
 	}
 }
 
-func TestUsernameUsesExplicitGiteeAccount(t *testing.T) {
-	if got := Username("https://gitee.com/university-org/private-repo.git", "actual-account"); got != "actual-account" {
-		t.Fatalf("Username() = %q, want actual-account", got)
+// TestUsernameUsesExplicitAccount 验证凭据里显式填的用户名对所有平台都生效
+// (GitLab/Gitea 的「账号 + 密码」要求真实用户名,写死 "git" 会被拒)。
+func TestUsernameUsesExplicitAccount(t *testing.T) {
+	for _, c := range []struct{ repoURL, want string }{
+		{"https://gitee.com/university-org/private-repo.git", "actual-account"},
+		{"https://github.com/org/private-repo.git", "actual-account"},
+		{"http://172.17.4.41/fuuhoo/sw-lowcode.git", "actual-account"},
+	} {
+		if got := Username(c.repoURL, "actual-account"); got != c.want {
+			t.Fatalf("Username(%q, actual-account) = %q, want %q", c.repoURL, got, c.want)
+		}
 	}
-	if got := Username("https://github.com/org/private-repo.git", "actual-account"); got != "git" {
-		t.Fatalf("non-Gitee Username() = %q, want git", got)
+}
+
+// TestBasicAuthUsesExplicitUsername 验证 BasicAuth 透传凭据用户名 + 密钥当密码。
+func TestBasicAuthUsesExplicitUsername(t *testing.T) {
+	auth := BasicAuth("http://172.17.4.41/fuuhoo/sw-lowcode.git", "fuuhoo", "p@ssw0rd")
+	if auth.Username != "fuuhoo" || auth.Password != "p@ssw0rd" {
+		t.Fatalf("BasicAuth = %+v, want username=fuuhoo", auth)
 	}
 }
