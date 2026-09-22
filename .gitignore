@@ -31,6 +31,10 @@
 # 服务数据目录(sqlite 库 / 产物 / 仓库缓存)与旧二进制备份 — 不入库
 /data/
 /pipewright.old*
+# 实例在 cwd 下自建的服务数据(代码镜像 / 制品归档 / 构建依赖缓存)—— 含私有源码,绝不入库
+/repos/
+/artifacts/
+/cache/
 
 # docker-compose 本地密钥(含 master key / 口令),不入库;仅 .env.example 入库
 .env
