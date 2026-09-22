@@ -10,7 +10,7 @@
  *
  * 权限:路由 meta.adminOnly + AppShell 菜单 role 隔离双保险。
  */
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   listBuildEnvs,
@@ -104,6 +104,69 @@ function openDelete(env: BuildEnv): void {
 const busyId = ref<string | null>(null)
 const rowBanner = ref('')
 
+// ─── checking 轮询(后端 pull 异步化:状态先置 checking,完成后落终态) ───
+
+const POLL_INTERVAL_MS = 3000
+const POLL_SETTLE_TIMEOUT_MS = 300_000
+// 静默轮询上限:约 10 分钟;进程崩溃遗留的 checking 状态不会让轮询永动。
+const POLL_MAX_TICKS = 200
+
+let pollTimer: number | null = null
+let pollTicks = 0
+const pullWaiters = new Map<string, (status: ImageCheckStatus, error: string) => void>()
+const pullingIds = ref<string[]>([])
+
+function hasChecking(): boolean {
+  return envs.value.some((e) => e.imageCheckStatus === 'checking')
+}
+
+async function silentRefresh(): Promise<void> {
+  try {
+    envs.value = await listBuildEnvs({ includeDisabled: true })
+  } catch {
+    return // 网络瞬断:本轮放弃,下一轮再试
+  }
+  for (const e of envs.value) {
+    if (e.imageCheckStatus === 'checking') continue
+    const waiter = pullWaiters.get(e.id)
+    if (waiter) waiter(e.imageCheckStatus, e.imageCheckError)
+  }
+  if (pullWaiters.size === 0 && (!hasChecking() || ++pollTicks >= POLL_MAX_TICKS)) stopPolling()
+}
+
+function startPolling(): void {
+  if (pollTimer !== null) return
+  pollTicks = 0
+  pollTimer = window.setInterval(() => void silentRefresh(), POLL_INTERVAL_MS)
+}
+
+function stopPolling(): void {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+/** 等待某行离开 checking 状态(超时则返回当前状态)。 */
+function waitSettled(id: string): Promise<{ status: ImageCheckStatus; error: string }> {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (status: ImageCheckStatus, error: string): void => {
+      if (done) return
+      done = true
+      pullWaiters.delete(id)
+      resolve({ status, error })
+    }
+    pullWaiters.set(id, finish)
+    window.setTimeout(() => {
+      const row = envs.value.find((e) => e.id === id)
+      finish(row?.imageCheckStatus ?? 'checking', row?.imageCheckError ?? '')
+    }, POLL_SETTLE_TIMEOUT_MS)
+  })
+}
+
+onUnmounted(stopPolling)
+
 // ─── derived ────────────────────────────────────────────────────────────────
 
 const statusLabel = (s: ImageCheckStatus): string => t(`buildEnvs.status${cap(s)}`)
@@ -138,7 +201,12 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load().then(() => {
+    // 页面重载时若仍有拉取/检查进行中,恢复轮询直到落定。
+    if (hasChecking()) startPolling()
+  })
+})
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -228,15 +296,22 @@ async function onPull(env: BuildEnv): Promise<void> {
   busyId.value = env.id
   rowBanner.value = ''
   try {
-    const res = await pullBuildEnv(env.id)
+    // 后端异步受理:状态立即置 checking,docker pull 在后台跑。
+    await pullBuildEnv(env.id)
+    env.imageCheckStatus = 'checking'
+    pullingIds.value = [...pullingIds.value, env.id]
+    startPolling()
+    const res = await waitSettled(env.id)
     rowBanner.value =
       res.status === 'available'
-        ? t('buildEnvs.checkOk')
-        : t('buildEnvs.checkFailed', { error: res.error || res.status })
-    await load()
+        ? t('buildEnvs.pullOk')
+        : t('buildEnvs.pullFailed', { error: res.error || res.status })
   } catch (err) {
+    // 409 = 已有拉取在排队/进行中,服务端消息已说明原因。
     rowBanner.value = errMsg(err, 'buildEnvs.errPull')
   } finally {
+    pullingIds.value = pullingIds.value.filter((id) => id !== env.id)
+    await silentRefresh()
     busyId.value = null
   }
 }
@@ -331,11 +406,19 @@ async function onCheckAll(): Promise<void> {
             </label>
           </td>
           <td class="actions">
-            <button class="btn btn--sm" :disabled="busyId === e.id" @click="onCheck(e)">
+            <button
+              class="btn btn--sm"
+              :disabled="busyId === e.id || e.imageCheckStatus === 'checking'"
+              @click="onCheck(e)"
+            >
               {{ busyId === e.id ? t('buildEnvs.checking') : t('buildEnvs.check') }}
             </button>
-            <button class="btn btn--sm" :disabled="busyId === e.id" @click="onPull(e)">
-              {{ t('buildEnvs.pull') }}
+            <button
+              class="btn btn--sm"
+              :disabled="busyId === e.id || e.imageCheckStatus === 'checking'"
+              @click="onPull(e)"
+            >
+              {{ pullingIds.includes(e.id) ? t('buildEnvs.pulling') : t('buildEnvs.pull') }}
             </button>
             <button class="btn btn--sm" @click="openEdit(e)">{{ t('buildEnvs.editAction') }}</button>
             <button class="btn btn--sm btn--danger" @click="openDelete(e)">

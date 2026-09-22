@@ -76,6 +76,8 @@ export default {
   errNotFound: '构建环境不存在',
   checkOk: '镜像可用',
   checkFailed: '镜像不可用: {error}',
+  pullOk: '镜像拉取成功',
+  pullFailed: '拉取失败:{error}',
   checkAllDone: '检查完成:{ok}/{total} 可用',
   deleteOk: '已删除',
   savedOk: '已保存',

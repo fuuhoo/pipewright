@@ -36,6 +36,8 @@ type Checker struct {
 	sem      chan struct{}
 	pullSem  chan struct{}
 	once     sync.Once
+	pullMu      sync.Mutex
+	pullPending map[string]struct{} // 正在排队/拉取中的 envID,防重复触发
 }
 
 // NewChecker 构造 Checker。
@@ -48,19 +50,20 @@ func NewChecker(repo Repo, credRef CredentialRefetch, bin string,
 		timeout = DefaultCheckTimeout
 	}
 	return &Checker{
-		repo:    repo,
-		credRef: credRef,
-		bin:     bin,
-		timeout: timeout,
-		sem:     make(chan struct{}, concurrency),
-		pullSem: make(chan struct{}, 2),
+		repo:        repo,
+		credRef:     credRef,
+		bin:         bin,
+		timeout:     timeout,
+		sem:         make(chan struct{}, concurrency),
+		pullSem:     make(chan struct{}, 2),
+		pullPending: map[string]struct{}{},
 	}
 }
 
 // CheckResult 单次检查结果。
 type CheckResult struct {
-	Status string
-	Error  string
+	Status string `json:"status"`
+	Error  string `json:"error"`
 }
 
 // Check 检查单个构建环境的镜像是否存在(60s 上限)。
@@ -94,14 +97,15 @@ func (c *Checker) Check(ctx context.Context, env *BuildEnv) (*CheckResult, error
 
 // PullResult 单次拉取结果。
 type PullResult struct {
-	Status string
-	Error  string
-	Output string
+	Status string `json:"status"`
+	Error  string `json:"error"`
+	Output string `json:"output"`
 }
 
-// ManualPull 手动拉取镜像(240s 上限 = 60s × 4)。
-//   - 拉取前按需登录,完成后立即登出
-//   - 使用独立 pullSem(默认 2 并发),避免阻塞 Check
+// ManualPull 异步拉取镜像:同步把状态置为 checking 并立即返回,
+// docker pull 在后台 goroutine 里跑(240s 上限),前端轮询列表读最终状态。
+//   - 同一 env 正在拉取时返回 ErrConflict,不重复排队
+//   - 后台拉取使用脱离请求的 context,r.Context() 取消只影响排队阶段
 func (c *Checker) ManualPull(ctx context.Context, envID string) (*PullResult, error) {
 	env, err := c.repo.GetByID(envID)
 	if err != nil {
@@ -110,24 +114,54 @@ func (c *Checker) ManualPull(ctx context.Context, envID string) (*PullResult, er
 	if env == nil {
 		return nil, ErrNotFound
 	}
+
+	c.pullMu.Lock()
+	if _, pending := c.pullPending[envID]; pending {
+		c.pullMu.Unlock()
+		return nil, ErrConflict
+	}
+	c.pullPending[envID] = struct{}{}
+	c.pullMu.Unlock()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := c.repo.UpdateCheckStatus(envID, StatusChecking, "", now); err != nil {
+		c.clearPullPending(envID)
+		return nil, err
+	}
+
+	go func() {
+		defer c.clearPullPending(envID)
+		if _, err := c.runPull(context.WithoutCancel(ctx), env); err != nil {
+			checkedAt := time.Now().UTC().Format(time.RFC3339)
+			_ = c.repo.UpdateCheckStatus(envID, StatusUnavailable, truncate(err.Error(), 4096), checkedAt)
+			log.Printf("[buildenv] 拉取 %s/%s 失败:%v", env.Language, env.Version, err)
+		}
+	}()
+	return &PullResult{Status: StatusChecking}, nil
+}
+
+func (c *Checker) clearPullPending(envID string) {
+	c.pullMu.Lock()
+	delete(c.pullPending, envID)
+	c.pullMu.Unlock()
+}
+
+// runPull 实际执行 docker pull 并落最终状态(available/unavailable)。
+// 使用独立 pullSem(默认 2 并发),避免阻塞 Check。
+func (c *Checker) runPull(ctx context.Context, env *BuildEnv) (*PullResult, error) {
 	if err := c.acquire(ctx, c.pullSem); err != nil {
 		return nil, err
 	}
 	defer c.release(c.pullSem)
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	if err := c.repo.UpdateCheckStatus(envID, StatusChecking, "", now); err != nil {
-		return nil, err
-	}
-
 	if env.CredentialID != "" && c.credRef != nil {
 		username, token, err := c.credRef.GetByID(ctx, env.CredentialID)
 		if err != nil {
-			return c.markUnavailable(ctx, envID, fmt.Sprintf("加载凭据失败: %v", err))
+			return c.markUnavailable(ctx, env.ID, fmt.Sprintf("加载凭据失败: %v", err))
 		}
 		cred := &CredentialLite{Username: username, Token: token}
 		if err := c.dockerLogin(ctx, env.Image, cred); err != nil {
-			return c.markUnavailable(ctx, envID, fmt.Sprintf("登录失败: %v", err))
+			return c.markUnavailable(ctx, env.ID, fmt.Sprintf("登录失败: %v", err))
 		}
 		defer c.dockerLogout(ctx, env.Image)
 	}
@@ -140,10 +174,10 @@ func (c *Checker) ManualPull(ctx context.Context, envID string) (*PullResult, er
 	checkedAt := time.Now().UTC().Format(time.RFC3339)
 	if err != nil {
 		msg := truncate(string(output), 4096)
-		_ = c.repo.UpdateCheckStatus(envID, StatusUnavailable, msg, checkedAt)
+		_ = c.repo.UpdateCheckStatus(env.ID, StatusUnavailable, msg, checkedAt)
 		return &PullResult{Status: StatusUnavailable, Error: msg, Output: string(output)}, nil
 	}
-	_ = c.repo.UpdateCheckStatus(envID, StatusAvailable, "", checkedAt)
+	_ = c.repo.UpdateCheckStatus(env.ID, StatusAvailable, "", checkedAt)
 	return &PullResult{Status: StatusAvailable, Output: string(output)}, nil
 }
 

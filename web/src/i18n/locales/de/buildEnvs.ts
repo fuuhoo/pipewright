@@ -64,6 +64,8 @@ export default {
   errNotFound: 'Build environment not found',
   checkOk: 'Image available',
   checkFailed: 'Image unavailable: {error}',
+  pullOk: 'Image pulled successfully',
+  pullFailed: 'Pull failed: {error}',
   checkAllDone: 'Check complete: {ok}/{total} available',
   deleteOk: 'Deleted',
   savedOk: 'Saved',

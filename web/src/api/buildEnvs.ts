@@ -9,13 +9,14 @@
  *   DELETE /api/admin/build-envs/:id        → 204
  *   POST   /api/admin/build-envs/:id/toggle → { enabled, status }
  *   POST   /api/admin/build-envs/:id/check  → { status, error }
- *   POST   /api/admin/build-envs/:id/pull   → { status, error }
+ *   POST   /api/admin/build-envs/:id/pull   → 202 { status: 'checking', error, output }
  *   POST   /api/admin/build-envs/check-all  → { ok, total }
  *
  * 普通用户端点(RequireUser):
  *   GET    /api/build-envs/languages        → { languages: string[] }
  *
- * 注意:check / pull 需要宿主机 docker,耗时可达 60s / 240s;调用方应给足超时预期。
+ * 注意:check 同步执行(默认 60s 超时);pull 为异步 —— 后端立即返回 checking,
+ * docker pull 在后台跑(默认 240s 上限),前端轮询列表直到状态落定。
  */
 
 import { http } from './http'
@@ -66,6 +67,7 @@ export interface ToggleResult {
 export interface CheckResult {
   status: ImageCheckStatus
   error: string
+  output?: string
 }
 
 export interface CheckAllResult {
@@ -119,7 +121,7 @@ export async function checkBuildEnv(id: string): Promise<CheckResult> {
   return http.post<CheckResult>(`/api/admin/build-envs/${id}/check`, {})
 }
 
-/** 手动拉取镜像(docker pull,默认 240s 超时;拉前按需 login)。 */
+/** 手动拉取镜像(异步):202 立即返回 status=checking;同镜像重复触发返回 409。 */
 export async function pullBuildEnv(id: string): Promise<CheckResult> {
   return http.post<CheckResult>(`/api/admin/build-envs/${id}/pull`, {})
 }

@@ -339,6 +339,7 @@ func makeCheckBuildEnvHandler(svc *buildenv.Service, c *buildenv.Checker, aud au
 }
 
 // makePullBuildEnvHandler POST /api/admin/build-envs/{id}/pull。
+// 异步:立即返回 202 + status=checking,前端轮询列表直到 available/unavailable。
 func makePullBuildEnvHandler(c *buildenv.Checker, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if c == nil {
@@ -348,6 +349,10 @@ func makePullBuildEnvHandler(c *buildenv.Checker, aud audit.Recorder, ac auth.Au
 		id := chi.URLParam(r, "id")
 		res, err := c.ManualPull(r.Context(), id)
 		if err != nil {
+			if errors.Is(err, buildenv.ErrConflict) {
+				writeError(w, http.StatusConflict, "pull_in_progress", "该镜像正在拉取中,请等待完成")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "pull_failed", "拉取失败: "+err.Error())
 			return
 		}
@@ -355,10 +360,10 @@ func makePullBuildEnvHandler(c *buildenv.Checker, aud audit.Recorder, ac auth.Au
 			Action:     audit.ActionBuildEnvPull,
 			TargetType: audit.TargetBuildEnv,
 			TargetID:   id,
-			Detail:     map[string]any{"status": res.Status, "error": res.Error},
+			Detail:     map[string]any{"status": res.Status, "queued": true},
 			IP:         clientIP(r),
 		})
-		writeJSON(w, http.StatusOK, res)
+		writeJSON(w, http.StatusAccepted, res)
 	}
 }
 
