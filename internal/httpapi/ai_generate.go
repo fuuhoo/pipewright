@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/ai"
+	"github.com/huangchengsir/pipewright/internal/buildenv"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/pipeline"
 	"github.com/huangchengsir/pipewright/internal/project"
@@ -142,6 +143,9 @@ type aiGenerateDeps struct {
 	triggers    trigger.Service
 	vault       vault.Vault
 	customNodes library.CustomNodeService // 复用库自定义节点(动态拼入 AI 节点目录;可 nil)
+	// buildEnvs 提供预置构建环境目录,拼入 prompt 让提案**直接可保存**:镜像只能引用这里的
+	// ID(R4),模型不知道清单就会自己编 node:20,而那种 config 过不了保存白名单(#8)。
+	buildEnvs *buildenv.Service
 }
 
 // reasonAINotConfigured 是 AI 未配置时的友好引导(不阻断手动建项目;HTTP 200,available=false)。
@@ -222,9 +226,10 @@ func makeAIGenerateHandler(d aiGenerateDeps) http.HandlerFunc {
 		}
 
 		proposal, gerr := d.aiSvc.Generate(ctx, ai.GenerateInput{
-			Analysis: analysis,
-			NL:       req.NLSupplement,
-			Catalog:  catalog,
+			Analysis:  analysis,
+			NL:        req.NLSupplement,
+			Catalog:   catalog,
+			BuildEnvs: aiBuildEnvCatalog(d.buildEnvs),
 		})
 		switch {
 		case gerr == nil:
@@ -379,8 +384,8 @@ func applySelectedStages(ctx context.Context, svc pipeline.Service, projectID st
 	}
 
 	// 把第 i 个提案阶段转为 pipeline.Stage。为每个 job 分配稳定 id(服务端保留已给 id),
-	// 并把 LLM 按「依赖 job 的 name」写的 needs 映射为对应 job id —— 实现节点级串行依赖
-	// (如 build_image needs build_backend),否则同阶段全并行、镜像拿不到 jar 而失败。
+	// 把 LLM 按「依赖 job 的 name」写的 needs 映射为对应 job id —— 实现节点级串行依赖
+	// (如镜像档位的构建任务 needs 产出 jar 的构建任务),否则同阶段全并行、镜像拿不到 jar 而失败。
 	toStage := func(i int) pipeline.Stage {
 		st := prop.Stages[i]
 		// 先给每个 job 定 id,并建 name/原 id → 分配 id 的映射(供 needs 解析)。
@@ -538,6 +543,27 @@ func applySelectedMappings(ctx context.Context, svc trigger.Service, projectID s
 	return err
 }
 
+// aiBuildEnvCatalog 取**已启用**的预置构建环境,拼成 prompt 目录(#14:AI 提案的镜像只能引用这里)。
+// 服务为 nil / 读失败 → 空目录:prompt 转而要求把 buildEnvId 留空交用户选,而不是让模型编镜像名。
+func aiBuildEnvCatalog(svc *buildenv.Service) []ai.BuildEnvOption {
+	if svc == nil {
+		return nil
+	}
+	list, err := svc.List(buildenv.ListFilter{})
+	if err != nil {
+		return nil
+	}
+	out := make([]ai.BuildEnvOption, 0, len(list))
+	for _, e := range list {
+		label := strings.TrimSpace(e.DisplayName)
+		if label == "" {
+			label = strings.TrimSpace(e.Language + " " + e.Version)
+		}
+		out = append(out, ai.BuildEnvOption{ID: e.ID, Label: label, Image: e.Image})
+	}
+	return out
+}
+
 // writeAIApplyError 把 apply 过程中各服务的领域错误映射为契约错误码(404/422/503/500)。
 func writeAIApplyError(w http.ResponseWriter, err error) {
 	switch {
@@ -553,6 +579,10 @@ func writeAIApplyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "duplicate_id", "阶段或任务 id 重复")
 	case errors.Is(err, pipeline.ErrInvalidBuild):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_build", "构建配置非法")
+	case errors.Is(err, pipeline.ErrBuildEnvRequired):
+		// 提案里的节点没绑定预置构建环境(或绑了个不存在的):消息只含阶段/节点名与镜像名,
+		// 无 secret,原样回显。缺了这条会掉进 default → 500,用户看不到「该选哪个环境」。
+		writeError(w, http.StatusUnprocessableEntity, "build_env_required", err.Error())
 	case errors.Is(err, trigger.ErrInvalidBranchPattern):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_branch_pattern", "分支模式非法")
 	case errors.Is(err, trigger.ErrInvalidPolicy):

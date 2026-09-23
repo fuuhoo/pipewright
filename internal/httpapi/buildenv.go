@@ -10,6 +10,7 @@
 //   POST   /api/admin/build-envs/{id}/check       → 手动镜像检查
 //   POST   /api/admin/build-envs/{id}/pull        → 手动 pull 镜像
 //   POST   /api/admin/build-envs/check-all        → 一键检查全部
+//   GET    /api/build-envs                       → 已启用环境(普通用户可访问)
 //   GET    /api/build-envs/languages              → 已启用环境去重语言列表(普通用户可访问)
 //
 // 所有写端点套 RequireAdmin + CSRF;所有 admin 端点走 RequireAdmin。
@@ -99,6 +100,51 @@ func makeListBuildEnvsHandler(svc *buildenv.Service) http.HandlerFunc {
 		out := make([]buildEnvDTO, 0, len(list))
 		for _, e := range list {
 			out = append(out, toBuildEnvDTO(e))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+// publicBuildEnvDTO 是流水线编辑器用的预置目录条目:只保留「选哪个环境」需要的字段。
+// credential_id / image_check_error / created_by 属于管理员运维信息,不出现在普通用户响应里。
+type publicBuildEnvDTO struct {
+	ID               string `json:"id"`
+	Language         string `json:"language"`
+	Version          string `json:"version"`
+	DisplayName      string `json:"displayName"`
+	Description      string `json:"description"`
+	SourceType       string `json:"sourceType"`
+	Image            string `json:"image"`
+	ImageCheckStatus string `json:"imageCheckStatus"`
+	SortOrder        int    `json:"sortOrder"`
+}
+
+// makeListEnabledBuildEnvsHandler GET /api/build-envs?language=node(普通用户可访问)。
+// 无论调用方是否 admin,一律只返回已启用条目 —— 禁用环境不能成为流水线的新选项。
+func makeListEnabledBuildEnvsHandler(svc *buildenv.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "buildenv_unavailable", "构建环境服务未初始化")
+			return
+		}
+		list, err := svc.List(buildenv.ListFilter{Language: r.URL.Query().Get("language")})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "查询构建环境失败")
+			return
+		}
+		out := make([]publicBuildEnvDTO, 0, len(list))
+		for _, e := range list {
+			out = append(out, publicBuildEnvDTO{
+				ID:               e.ID,
+				Language:         e.Language,
+				Version:          e.Version,
+				DisplayName:      e.DisplayName,
+				Description:      e.Description,
+				SourceType:       e.SourceType,
+				Image:            e.Image,
+				ImageCheckStatus: e.ImageCheckStatus,
+				SortOrder:        e.SortOrder,
+			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": out})
 	}

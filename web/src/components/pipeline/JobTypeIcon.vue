@@ -17,6 +17,9 @@ const accent = computed(() => jobTypeAccent(props.type))
 const ICONS: Record<string, string> = {
   git_source:
     '<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M18 11.4c0 3-2.4 4.2-5 4.2"/>',
+  // 构建任务与旧的构建镜像节点同一图形:合并后它就是那条路径的上位类型。
+  build:
+    '<path d="M21 7.5 12 3 3 7.5 12 12l9-4.5Z"/><path d="M3 7.5v9l9 4.5 9-4.5v-9"/><path d="M12 12v9"/>',
   build_image:
     '<path d="M21 7.5 12 3 3 7.5 12 12l9-4.5Z"/><path d="M3 7.5v9l9 4.5 9-4.5v-9"/><path d="M12 12v9"/>',
   push_image:

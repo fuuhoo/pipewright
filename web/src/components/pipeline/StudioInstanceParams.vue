@@ -16,11 +16,21 @@
 import { ref, watch } from 'vue'
 import type { PromotedParam } from './studioCompile'
 
+export interface ImageOption {
+  value: string
+  label: string
+}
+
 const props = defineProps<{
   /** 提升参数定义(只读):提供控件类型/标签/候选项与初始值。 */
   params: PromotedParam[]
   /** 当前实例值表(key → value);缺失的 key 由 param.default 兜底。 */
   modelValue: Record<string, string>
+  /**
+   * 预置构建环境选项(key === 'image' 的提升参数用):镜像只能来自预置目录(R4),
+   * 值仍是镜像串(如 node:20-alpine),渲染后由后端二次校验是否命中目录。
+   */
+  imageOptions?: ImageOption[]
 }>()
 
 const emit = defineEmits<{
@@ -65,9 +75,25 @@ function toggleBool(key: string): void {
         <code class="si-key">{{ p.key }}</code>
       </label>
 
+      <!-- 镜像参数 → 预置目录下拉(选项为空时回退普通文本框) -->
+      <select
+        v-if="p.key === 'image' && (imageOptions?.length ?? 0) > 0"
+        :id="`si-${p.key}`"
+        class="si-input"
+        :value="values[p.key]"
+        :aria-label="p.label || p.key"
+        @change="setVal(p.key, ($event.target as HTMLSelectElement).value)"
+      >
+        <option
+          v-if="values[p.key] && !(imageOptions ?? []).some((o) => o.value === values[p.key])"
+          :value="values[p.key]"
+        >{{ values[p.key] }} ⚠</option>
+        <option v-for="opt in imageOptions ?? []" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+      </select>
+
       <!-- 枚举 → 下拉 -->
       <select
-        v-if="p.type === 'select'"
+        v-else-if="p.type === 'select'"
         :id="`si-${p.key}`"
         class="si-input"
         :value="values[p.key]"

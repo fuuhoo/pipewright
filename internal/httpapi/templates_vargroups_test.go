@@ -56,7 +56,7 @@ func TestTemplateCreateApplyToProjectHTTP(t *testing.T) {
 	// 建模板:含一个源阶段 + 一个构建阶段。
 	tplBody := `{"name":"go-svc","description":"Go 模板","stages":[
 		{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]},
-		{"name":"构建","kind":"build","jobs":[{"name":"compile","type":"build"}]}
+		{"name":"构建","kind":"build","jobs":[{"name":"compile","type":"build","config":{"artifactType":"jar","commands":"go build ./..."}}]}
 	]}`
 	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/templates", csrf, tplBody)
 	defer resp.Body.Close()

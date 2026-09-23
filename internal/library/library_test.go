@@ -58,7 +58,7 @@ func sampleSpec() pipeline.Spec {
 			{ID: "j1", Name: "git", Type: "git_source"},
 		}},
 		{ID: "build", Name: "构建", Kind: pipeline.KindBuild, Jobs: []pipeline.Job{
-			{ID: "j2", Name: "compile", Type: "build"},
+			{ID: "j2", Name: "compile", Type: "build", Config: map[string]any{pipeline.ConfigKeyArtifactType: pipeline.ArtifactJAR}},
 		}},
 	}}
 }

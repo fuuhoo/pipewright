@@ -37,8 +37,6 @@ type Config struct {
 	// v6.2 阶段 14:构建环境/配置资源/UI YAML 校验 相关配置。
 	DataDir         string // 配置资源文件存储目录(默认 ./data)
 	ConfigUploadMax int64  // 配置文件上传大小上限(字节;默认 1<<20 = 1MB)
-	// PIPEWRIGHT_ENFORCE_BUILD_ENV(默认 true):是否校验 job 镜像来源于 build_envs。
-	EnforceBuildEnv bool
 	// PIPEWRIGHT_UI_ONLY(默认 true):是否禁用 YAML 直接编辑(导入/导出保留)。
 	UIOnly bool
 
@@ -75,7 +73,6 @@ func Load() Config {
 
 		DataDir:         getenv("PIPEWRIGHT_DATA_DIR", DefaultDataDir),
 		ConfigUploadMax: getenvInt64("PIPEWRIGHT_CONFIG_UPLOAD_MAX_SIZE", DefaultConfigUploadMax),
-		EnforceBuildEnv: getenvBool("PIPEWRIGHT_ENFORCE_BUILD_ENV", true),
 		UIOnly:          getenvBool("PIPEWRIGHT_UI_ONLY", true),
 
 		AutoCheckOnStart:     getenvBool("PIPEWRIGHT_AUTO_CHECK_ON_START", true),

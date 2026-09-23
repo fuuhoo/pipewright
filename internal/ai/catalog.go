@@ -22,22 +22,16 @@ func BuiltinNodeCatalog() []NodeKind {
 	return []NodeKind{
 		{Type: "git_source", Label: "Gitee 源", Category: "source",
 			Description: "拉取 Git 仓库源码到构建工作区。每条流水线必须恰有一个 source 阶段,含一个 git_source。"},
-		{Type: "build_frontend", Label: "前端构建", Category: "build",
-			Description: "Node 容器内装依赖并构建前端,产出 dist。适合含 package.json 的前端/子目录。"},
-		{Type: "build_backend", Label: "后端构建", Category: "build",
-			Description: "Maven/Gradle 容器内打包后端,产出 jar。适合含 pom.xml / build.gradle 的后端/子目录。"},
-		{Type: "build_image", Label: "构建镜像", Category: "build",
-			Description: "用 Dockerfile 或工具链构建 Docker 镜像(产物=image)。有 Dockerfile 时优先用它。"},
-		{Type: "push_image", Label: "推送镜像", Category: "build",
-			Description: "把构建出的镜像推送到镜像仓库。通常紧随 build_image,部署 image 产物前需要。"},
+		{Type: "build", Label: "构建", Category: "build",
+			Description: "唯一的构建任务,config.artifactType 必须先选档位:" +
+				"image = 构建 Docker 镜像(buildModel=dockerfile 时给 dockerfilePath/context;toolchain 时选 buildEnvId + buildCommand)," +
+				"jar / dist = 在预置构建环境容器里跑 commands(多行),用 artifactPath 收文件产物。" +
+				"档位=image 时 pushImage=false 表示只构建不推送(缺省推送到运行环境绑定的镜像仓,不需要单独的推送节点)。" +
+				"需要镜像部署就用 artifactType=image;前端/后端项目用档位 dist/jar 并预填各自构建命令。"},
 		{Type: "script", Label: "自定义脚本", Category: "build",
 			Description: "隔离容器内执行任意命令(跑测试、lint、代码扫描、自定义步骤等)。"},
-		{Type: "deploy_ssh", Label: "SSH 部署", Category: "deploy",
-			Description: "经 SSH 把产物(jar/dist/image)部署到目标服务器。"},
-		{Type: "deploy_frontend", Label: "前端推送部署", Category: "deploy",
-			Description: "把前端 dist 经 SSH 零停机部署到服务器(滚动 + reload)。"},
-		{Type: "health_check", Label: "健康检查", Category: "deploy",
-			Description: "部署后探测服务健康(HTTP/命令),失败可回滚。建议接在部署节点之后。"},
+		{Type: "deploy_ssh", Label: "部署", Category: "deploy",
+			Description: "经 SSH 把产物(jar/dist/image)或命令部署到目标服务器。可选 healthProbe 做部署后健康门控(不通则该节点失败)。前端静态站点部署也用它:artifactType=dist + strategy=rolling + restartCommand=\"nginx -s reload\"。"},
 		{Type: "notify", Label: "通知", Category: "notify",
 			Description: "运行到此节点时向已配渠道(飞书/Webhook/邮件)发通知,支持标题/正文模板。"},
 		{Type: "templated", Label: "自定义节点", Category: "custom",

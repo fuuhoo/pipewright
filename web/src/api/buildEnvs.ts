@@ -13,6 +13,7 @@
  *   POST   /api/admin/build-envs/check-all  → { ok, total }
  *
  * 普通用户端点(RequireUser):
+ *   GET    /api/build-envs                   → { items: PresetBuildEnv[] }(仅启用)
  *   GET    /api/build-envs/languages        → { languages: string[] }
  *
  * 注意:check 同步执行(默认 60s 超时);pull 为异步 —— 后端立即返回 checking,
@@ -45,6 +46,22 @@ export interface BuildEnv {
   createdBy: string
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * 预置目录条目(流水线编辑器视角):后端只回选项需要的字段,
+ * 不含 credentialId / imageCheckError / createdBy(管理员运维信息)。
+ */
+export interface PresetBuildEnv {
+  id: string
+  language: string
+  version: string
+  displayName: string
+  description: string
+  sourceType: BuildEnvSourceType
+  image: string
+  imageCheckStatus: ImageCheckStatus
+  sortOrder: number
 }
 
 export interface BuildEnvInput {
@@ -135,4 +152,18 @@ export async function checkAllBuildEnvs(): Promise<CheckAllResult> {
 export async function listBuildEnvLanguages(): Promise<string[]> {
   const res = await http.get<{ languages: string[] }>('/api/build-envs/languages')
   return res.languages ?? []
+}
+
+/**
+ * 已启用构建环境目录(普通用户可访问):流水线编辑器的唯一镜像来源。
+ * 禁用的预置环境后端不会返回,因此下架后不会再出现在下拉里。
+ */
+export async function listEnabledBuildEnvs(params?: {
+  language?: string
+}): Promise<PresetBuildEnv[]> {
+  const q = new URLSearchParams()
+  if (params?.language) q.set('language', params.language)
+  const qs = q.toString()
+  const res = await http.get<{ items: PresetBuildEnv[] }>(`/api/build-envs${qs ? `?${qs}` : ''}`)
+  return res.items ?? []
 }

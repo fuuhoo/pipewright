@@ -143,12 +143,32 @@ func RenderYAML(spec Spec) (string, error) { return renderYAML(spec) }
 // service 是 store 支撑的 Service 实现。
 type service struct {
 	db *sql.DB
+	// gate 是保存期预置构建环境白名单(#8);nil = 未注入(测试 / 目录服务缺席)。
+	gate BuildEnvGate
 }
+
+// BuildEnvGate 提供预置目录的即时快照,由装配层(main)注入到流水线服务。
+//
+// 为什么注入而非直接依赖 internal/buildenv:白名单校验是纯领域规则(见 buildenv_validate.go),
+// 目录服务是基础设施 —— 用快照解耦,pipeline 包不引入新依赖,单测也能造目录。
+type BuildEnvGate interface {
+	Snapshot() (BuildEnvSnapshot, error)
+}
+
+// ServiceOption 是 New 的可选装配项。
+type ServiceOption func(*service)
+
+// WithBuildEnvGate 注入预置目录来源(#8);不调用 = 保存期不做白名单校验。
+func WithBuildEnvGate(g BuildEnvGate) ServiceOption { return func(s *service) { s.gate = g } }
 
 // New 构造 Service(经参数化 SQL 触库)。不在此做任何重活
 // (无 init() 副作用、无包级重对象,避免抬高空载内存)。
-func New(db *sql.DB) Service {
-	return &service{db: db}
+func New(db *sql.DB, opts ...ServiceOption) Service {
+	s := &service{db: db}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
@@ -224,6 +244,11 @@ func (s *service) Save(ctx context.Context, projectID string, spec Spec) (*Confi
 
 	normalized, err := normalizeSpec(spec)
 	if err != nil {
+		return nil, err
+	}
+
+	// 预置构建环境白名单(R4/R6 · #8):未选/选错/引用已删或已禁用环境的节点一律拒绝落库。
+	if err := s.enforceBuildEnvCatalog(normalized); err != nil {
 		return nil, err
 	}
 
@@ -406,6 +431,9 @@ func normalizeSpec(in Spec) (Spec, error) {
 			if jobType == "" {
 				return Spec{}, fmt.Errorf("%w: job type must not be empty", ErrInvalidJob)
 			}
+			if guidance, retired := RetiredJobType(jobType); retired {
+				return Spec{}, issuef(ErrJobTypeRetired, "阶段「%s」任务「%s」类型 %s 已撤销。%s", name, jobName, jobType, guidance)
+			}
 			jobID := strings.TrimSpace(jb.ID)
 			if jobID == "" {
 				jobID = uuid.NewString()
@@ -418,6 +446,14 @@ func normalizeSpec(in Spec) (Spec, error) {
 			cfg := jb.Config
 			if cfg == nil {
 				cfg = map[string]any{}
+			}
+			// 部署节点开了健康探测就得探得到:半截配置会静默退化成「不探测」,正是假绿。
+			if err := validateHealthProbe(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
+			}
+			// 「构建」任务按产物档位派发到两条完全不同的执行路径,档位不能留空。
+			if err := validateBuildTask(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
 			}
 			jobs = append(jobs, Job{
 				ID:      jobID,
@@ -478,6 +514,26 @@ func normalizeSpec(in Spec) (Spec, error) {
 	}
 
 	return out, nil
+}
+
+// enforceBuildEnvCatalog 按预置目录快照校验 spec 的构建环境引用(#8)。
+//
+// 三种「不校验」的降级都是有意为之,而不是漏洞:未注入 gate(单测 / 装配缺席)、快照取不到
+// (目录服务报错时不该连带锁死流水线编辑)、快照里一个环境都没有(全新安装尚未 seed)。
+// 这三种情况下运行时镜像解析(#9)仍会诚实失败,不会出现「静默用错镜像」。
+func (s *service) enforceBuildEnvCatalog(spec Spec) error {
+	if s.gate == nil {
+		return nil
+	}
+	snap, err := s.gate.Snapshot()
+	if err != nil || snap.Empty() {
+		return nil
+	}
+	problems := ValidateBuildEnvRefs(spec, snap)
+	if len(problems) == 0 {
+		return nil
+	}
+	return &BuildEnvValidationError{Problems: problems}
 }
 
 // normalizeNeeds 规范化阶段依赖列表:trim、剔空、去重(保留首次出现序)。

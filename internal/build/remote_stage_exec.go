@@ -57,9 +57,17 @@ func NewStageExecutorWithRunner(b *Builder, reportSink TestReportSink, lookup Ru
 
 // runStageRemote 在远程 runner 上执行本阶段的 script job(见文件头模型)。
 func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline.Stage, rep dagrun.StageReporter, serverID string, tgt remoteExec) error {
+	// 撤销的类型两条派发路径都要拒绝(与本地执行器同一判定,避免「远程放行、本地失败」的分叉)。
+	for _, jb := range stage.Jobs {
+		if guidance, retired := pipeline.RetiredJobType(jb.Type); retired {
+			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("节点「%s」类型 %s 已撤销。%s", jb.Name, jb.Type, guidance))
+			return ErrBuildFailed
+		}
+	}
 	scriptJobs := make([]pipeline.Job, 0, len(stage.Jobs))
 	for _, jb := range stage.Jobs {
-		if isScriptJob(jb.Type) {
+		// 按折算后的类型判定:构建任务的 jar/dist 档位进 runner,image 档位要本地 docker,不适用远程。
+		if isScriptJob(pipeline.EffectiveJobType(jb.Type, jb.Config)) {
 			scriptJobs = append(scriptJobs, jb)
 		}
 	}
@@ -120,12 +128,22 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 		if canceled(ctx) {
 			return run.ErrCanceled
 		}
-		step, verr := scriptStepFromJob(jb)
+		step, verr := b.scriptStepFromJob(jb, stage.Name)
 		if verr != nil {
 			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」配置无效:%v", jb.Name, verr))
 			return ErrBuildFailed
 		}
 		step.Env = append(runParamsAsEnv(r.Trigger.Params), step.Env...)
+		// 配置资源注入是「宿主文件 → 容器」的 bind;远程 runner 的容器在另一台机器上,
+		// 中控机上的配置资源文件对它不可见 → 诚实跳过并说明,不假装注入成功。
+		if n := len(step.Resource.Mounts); n > 0 {
+			_ = rep.Log(ctx, streamStdout, fmt.Sprintf("⚠ 远程 runner 跳过 %d 个配置资源挂载(文件在中控机,远程机不可见);需注入配置资源的节点请用本地 runner", n))
+			step.Resource.Mounts = nil
+		}
+		// 同理:登录私有镜像仓要经 stdin 喂口令,SSH 通道不收 stdin → 说明并要求远程机预先登录。
+		if step.ImageCredentialID != "" {
+			_ = rep.Log(ctx, streamStdout, "⚠ 远程 runner 跳过镜像仓库登录(SSH 通道不支持 stdin 口令);私有构建镜像请在远程机预先 docker login")
+		}
 		if err := b.runScriptOnDriver(ctx, driver, onLine, step, remoteWS); err != nil {
 			return err
 		}

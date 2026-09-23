@@ -18,7 +18,8 @@ export type StageKind = 'source' | 'build' | 'deploy' | 'notify' | 'custom'
 export interface PipelineJob {
   id: string
   name: string
-  /** Free-form token; e.g. git_source | build_image | push_image | deploy_ssh | health_check | notify | custom */
+  /** Free-form token; pickable verbs are git_source | build | deploy_ssh | notify | script | templated
+   *  (build_image / build_frontend / build_backend / push_image / deploy_frontend stay readable as legacy types) */
   type: string
   /** Card subtitle — may be empty */
   summary: string

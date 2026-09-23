@@ -23,7 +23,7 @@ import {
   checkAllBuildEnvs,
 } from '../../api/buildEnvs'
 import type { BuildEnv, BuildEnvInput, ImageCheckStatus } from '../../api/buildEnvs'
-import { listCredentials } from '../../api/credentials'
+import { listCredentials, usableCredentials } from '../../api/credentials'
 import type { Credential } from '../../api/credentials'
 import { HttpError } from '../../api/http'
 
@@ -192,7 +192,7 @@ async function load(): Promise<void> {
   }
   try {
     const creds = await listCredentials()
-    registryCredentials.value = creds.filter(
+    registryCredentials.value = usableCredentials(creds).filter(
       (c) => c.type === 'registry' || c.type === 'git_http',
     )
   } catch {

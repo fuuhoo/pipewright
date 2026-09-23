@@ -66,6 +66,7 @@ func contains(ss []string, s string) bool {
 func TestStagePostOnSuccess(t *testing.T) {
 	drv := &postRecDriver{}
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("job-img") // job 镜像必须在目录内(post 步骤镜像走各自通路)
 	exec := NewStageExecutor(b, nil)
 	if err := exec(context.Background(), &run.Run{ProjectID: "p1"}, postStage("job-img", postSet), &fakeReporter{}); err != nil {
 		t.Fatalf("exec: %v", err)
@@ -86,6 +87,7 @@ func TestStagePostOnSuccess(t *testing.T) {
 func TestStagePostOnFailure(t *testing.T) {
 	drv := &postRecDriver{failImage: "job-img"}
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("job-img") // job 镜像必须在目录内(post 步骤镜像走各自通路)
 	exec := NewStageExecutor(b, nil)
 	err := exec(context.Background(), &run.Run{ProjectID: "p1"}, postStage("job-img", postSet), &fakeReporter{})
 	if err == nil {
@@ -103,6 +105,7 @@ func TestStagePostOnFailure(t *testing.T) {
 func TestStagePostFailureDoesNotFailStage(t *testing.T) {
 	drv := &postRecDriver{failImage: "post-always"}
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("job-img") // job 镜像必须在目录内(post 步骤镜像走各自通路)
 	exec := NewStageExecutor(b, nil)
 	if err := exec(context.Background(), &run.Run{ProjectID: "p1"}, postStage("job-img", postSet), &fakeReporter{}); err != nil {
 		t.Fatalf("post 失败不应令阶段失败,got %v", err)
@@ -116,6 +119,7 @@ func TestStagePostFailureDoesNotFailStage(t *testing.T) {
 func TestPostOnlyStageRuns(t *testing.T) {
 	drv := &postRecDriver{}
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("job-img") // job 镜像必须在目录内(post 步骤镜像走各自通路)
 	exec := NewStageExecutor(b, nil)
 	stage := pipeline.Stage{ID: "s", Name: "清理", Kind: pipeline.KindCustom, Post: []pipeline.PostStep{
 		{Condition: pipeline.PostAlways, Image: "cleanup", Commands: []string{"echo clean"}},
@@ -132,6 +136,7 @@ func TestStagePostMessageHasCondition(t *testing.T) {
 	rep := &fakeReporter{}
 	drv := &postRecDriver{}
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("job-img") // job 镜像必须在目录内(post 步骤镜像走各自通路)
 	exec := NewStageExecutor(b, nil)
 	_ = exec(context.Background(), &run.Run{ProjectID: "p1"}, postStage("job-img", postSet[:1]), rep)
 	if !strings.Contains(strings.Join(rep.logs, "\n"), "阶段后置步骤") {

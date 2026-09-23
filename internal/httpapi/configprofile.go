@@ -90,6 +90,7 @@ func makeListConfigProfilesHandler(svc *configprofile.Service) http.HandlerFunc 
 }
 
 // makeListEnabledConfigProfilesHandler GET /api/config-profiles?language=java。
+// 普通用户视角:只回启用条目,且不回宿主机路径(file_path 是宿主目录,选配置用不到)。
 func makeListEnabledConfigProfilesHandler(svc *configprofile.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -99,6 +100,7 @@ func makeListEnabledConfigProfilesHandler(svc *configprofile.Service) http.Handl
 		q := r.URL.Query()
 		list, err := svc.List(configprofile.ListFilter{
 			Language:        q.Get("language"),
+			ConfigType:      q.Get("configType"),
 			IncludeBuiltin:  true,
 			IncludeDisabled: false, // 普通用户只看启用的
 		})
@@ -111,7 +113,9 @@ func makeListEnabledConfigProfilesHandler(svc *configprofile.Service) http.Handl
 			if !p.Enabled {
 				continue
 			}
-			out = append(out, toConfigProfileDTO(p))
+			dto := toConfigProfileDTO(p)
+			dto.FilePath = ""
+			out = append(out, dto)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": out})
 	}

@@ -5,12 +5,13 @@ import type { PipelineStage, PipelineJob, StageKind } from '../../api/pipeline'
 import type { Credential } from '../../api/credentials'
 import type { Server } from '../../api/servers'
 import type { NotificationChannel } from '../../api/notifications'
+import type { Environment } from '../../api/pipelineSettings'
 import StageColumn from './StageColumn.vue'
 import JobDrawer from './JobDrawer.vue'
 import StageDrawer from './StageDrawer.vue'
 import JobTypePicker from './JobTypePicker.vue'
 import type { CustomNode } from '../../api/customNodes'
-import { jobTypeLabel, getJobTypeSpec } from './jobConfigSchema'
+import { jobTypeLabel, getJobTypeSpec, jobTemplatePrefill } from './jobConfigSchema'
 import { hasAnyNeeds } from './stageDeps'
 import './pipeline.css'
 
@@ -27,6 +28,8 @@ const props = defineProps<{
   credentials?: Credential[]
   servers?: Server[]
   channels?: NotificationChannel[]
+  /** 透传给 JobDrawer:push_image 节点只读回显各环境绑定的镜像仓。 */
+  environments?: Environment[]
 }>()
 
 const emit = defineEmits<{
@@ -165,18 +168,19 @@ function closePicker(): void {
   picker.value = { ...picker.value, open: false }
 }
 
-function onPickerSelect(type: string): void {
+function onPickerSelect(type: string, templateId?: string): void {
   const p = picker.value
   if (p.mode === 'add') {
     const stage = props.stages.find((s) => s.id === p.stageId)
     if (!stage) return closePicker()
+    const spec = getJobTypeSpec(type)
     const newJob: PipelineJob = {
       id:      `job_${uid()}`,
       name:    jobTypeLabel(type),
       type,
       summary: '',
-      // 模板节点带预填配置(深拷贝避免共享引用);普通节点空配置。
-      config:  { ...(getJobTypeSpec(type)?.defaultConfig ?? {}) },
+      // 模板节点带预填配置(深拷贝避免共享引用);选中模板胶囊时再叠一层模板预填。
+      config:  { ...(spec?.defaultConfig ?? {}), ...jobTemplatePrefill(type, templateId ?? '') },
       ...(p.needs.length ? { needs: [...p.needs] } : {}),
     }
     addJobToStage(p.stageId, newJob)
@@ -396,6 +400,7 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
       :credentials="props.credentials"
       :servers="props.servers"
       :channels="props.channels"
+      :environments="props.environments"
       @close="closeDrawer"
       @update="handleDrawerUpdate"
       @change-type="requestChangeType"

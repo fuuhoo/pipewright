@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localizeName } from '../../lib/pipelineLabels'
 import type { PipelineJob, PipelineStage } from '../../api/pipeline'
 import type { Credential } from '../../api/credentials'
 import type { Server } from '../../api/servers'
 import type { NotificationChannel } from '../../api/notifications'
+import type { Environment } from '../../api/pipelineSettings'
+import { listEnabledBuildEnvs, type PresetBuildEnv } from '../../api/buildEnvs'
+import { listEnabledConfigProfiles, type ConfigProfile } from '../../api/configProfiles'
 import {
   getJobTypeSpec,
   splitConfig,
+  droppedKeys,
+  managedKeys,
   jobTypeLabel,
   isScriptClassType,
+  effectiveJobType,
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
@@ -32,6 +38,8 @@ const props = defineProps<{
   credentials?: Credential[]
   servers?: Server[]
   channels?: NotificationChannel[]
+  /** 项目的部署环境(含各自绑定的镜像仓)—— push_image 只读回显推送目标用。 */
+  environments?: Environment[]
 }>()
 
 const emit = defineEmits<{
@@ -80,13 +88,33 @@ function hydrate(job: PipelineJob): void {
 /** Recompute typed config + raw extras for a given type, preserving all values. */
 function splitOnType(type: string, config: Record<string, string>, repickView = true): void {
   const { extras } = splitConfig(type, config)
+  const drop = droppedKeys(type)
   const typed: Record<string, string> = {}
+  let dropped = 0
   for (const [k, v] of Object.entries(config)) {
+    if (drop.has(k)) {
+      dropped++
+      continue
+    }
     if (!extras.some(([ek]) => ek === k)) typed[k] = v
+  }
+  // 旧配置收敛:有镜像/toolchain 但无 buildEnvId 时,按预置目录反查预填(仅内存,
+  // 下次 flush 才落库)。查不到就留给 buildenv 控件显示「未匹配」告警项。
+  if (!typed.buildEnvId) {
+    const spec = getJobTypeSpec(type)
+    if (spec?.fields.some((f) => f.kind === 'buildenv')) {
+      const hit =
+        (config.image && presetByImage(config.image)) ||
+        ((config.toolchainLanguage || config.toolchainVersion) &&
+          presetByToolchain(config.toolchainLanguage ?? '', config.toolchainVersion ?? ''))
+      if (hit) typed.buildEnvId = hit.id
+    }
   }
   typedConfig.value = typed
   extraRows.value = extras.map(([k, v]) => ({ _key: ++_kvSeq, k, v }))
   showAdvanced.value = extras.length > 0
+  // 假字段只抹内存副本还不够:回写一次,让它从 config 里真正消失(nextTick 避开 setup 期 emit)。
+  if (dropped > 0) void nextTick(flush)
   if (repickView) pickViewMode(config)
 }
 
@@ -97,6 +125,14 @@ watch(() => props.job, (next) => hydrate(next))
 // ─── Field schema for the current type ────────────────────────────────────────
 
 const spec = computed(() => getJobTypeSpec(localType.value))
+
+/** 推送目标的唯一来源:各环境绑定的镜像仓(push_image 只读回显,节点不再手填 registry)。 */
+const pushTargets = computed<Array<{ env: string; registry: string }>>(() =>
+  (props.environments ?? []).map((env) => ({
+    env: env.name,
+    registry: env.imageRegistry?.url?.trim() ?? '',
+  })),
+)
 
 /** 步骤构建器拥有的 config 键(commands 多行 / artifactPath 多行)。 */
 const STEP_OWNED_KEYS = new Set(['commands', 'artifactPath'])
@@ -111,7 +147,8 @@ const ADVANCED_FIELD_KEYS = new Set(['timeoutSeconds', 'retries', 'cpu', 'memory
 
 /** 该类型能用可视化步骤构建器吗(脚本类 + 有 commands/artifactPath 字段;但 script/custom 除外)。 */
 const canUseStepBuilder = computed<boolean>(() => {
-  if (!isScriptClassType(localType.value)) return false
+  // 构建任务按产物档位折算:只有 jar/dist 档走脚本路径,才有步骤可编;镜像档是 docker 构建。
+  if (!isScriptClassType(localType.value, liveConfig.value)) return false
   if (RAW_ONLY_SCRIPT_TYPES.has(localType.value)) return false
   if (!spec.value) return false
   return spec.value.fields.some((f) => STEP_OWNED_KEYS.has(f.key))
@@ -192,6 +229,16 @@ function onShortlistUpdate(values: Record<string, string>): void {
   flush()
 }
 
+// ─── 预置目录(构建环境 / 配置资源)───────────────────────────────────────────
+// 流水线编辑器的镜像只来自预置目录(R4):buildenv 控件列出已启用环境,选中即把目录里的
+// image / language:version 一并写回 config,但**没有手填地址的入口** —— 保存校验(#8)与
+// 运行时解析(#9)都只认目录里的条目,目录外的镜像一律报错、要求重新选择(旧配置不迁移)。
+// 配置资源(configprofiles 多选)按所选环境的语言过滤,存逗号分隔 ID,运行时只读注入容器(#10)。
+// 注:state 声明须在下方 hydrate 之前 —— splitOnType 会按旧镜像反查预置。
+const presetEnvs = ref<PresetBuildEnv[]>([])
+const presetProfiles = ref<ConfigProfile[]>([])
+const presetsReady = ref(false)
+
 // Initial hydrate (after the computeds above are declared, see watch comment).
 hydrate(props.job)
 
@@ -200,6 +247,114 @@ function credentialOptions(field: JobField): Credential[] {
   if (!field.credentialType) return all
   return all.filter((c) => c.type === field.credentialType)
 }
+
+onMounted(async () => {
+  try {
+    const [envs, profiles] = await Promise.all([listEnabledBuildEnvs(), listEnabledConfigProfiles('')])
+    presetEnvs.value = envs
+    presetProfiles.value = profiles
+    presetsReady.value = true
+    // 预置到达前 hydrate 过的旧配置,这里补一次反查预填。
+    splitOnType(localType.value, currentConfig(), false)
+  } catch {
+    presetsReady.value = false
+  }
+})
+
+function presetById(id: string): PresetBuildEnv | undefined {
+  return presetEnvs.value.find((e) => e.id === id)
+}
+
+/** 旧镜像串 → 预置(精确匹配 image 字段)。 */
+function presetByImage(image: string): PresetBuildEnv | undefined {
+  const needle = image.trim()
+  if (!needle) return undefined
+  return presetEnvs.value.find((e) => e.image === needle)
+}
+
+/** 旧 toolchainLanguage/Version → 预置(语言精确 + 版本前缀匹配,如 "20" 命中 "20-alpine")。 */
+function presetByToolchain(language: string, version: string): PresetBuildEnv | undefined {
+  const lang = language.trim()
+  if (!lang) return undefined
+  const ver = version.trim()
+  return presetEnvs.value.find(
+    (e) => e.language === lang && (ver === '' || e.version === ver || e.image.endsWith(`:${ver}`)),
+  )
+}
+
+/** 控件当前应显示的环境 ID:显式 buildEnvId 优先,其次旧键反查。
+ * 旧镜像键(image / toolchain*)由本控件托管 —— 不进「原始参数」,但值仍留在 config 里,
+ * 所以这里读完整 config 而不是只看 typed 字段。 */
+function buildEnvFieldValue(): string {
+  const cfg = currentConfig()
+  const explicit = cfg.buildEnvId
+  if (explicit) return explicit
+  const byImage = cfg.image ? presetByImage(cfg.image) : undefined
+  if (byImage) return byImage.id
+  const byTc = presetByToolchain(cfg.toolchainLanguage ?? '', cfg.toolchainVersion ?? '')
+  return byTc?.id ?? ''
+}
+
+/** 旧值完全不在目录里时需展示告警占位(值为 '' 时下拉显示未选中,无法区分)。 */
+function hasUnmatchedLegacyImage(): boolean {
+  const cfg = currentConfig()
+  if (cfg.buildEnvId) return false
+  const legacy =
+    (cfg.image ?? '') !== '' ||
+    (cfg.toolchainLanguage ?? '') !== '' ||
+    (cfg.toolchainVersion ?? '') !== ''
+  return legacy && buildEnvFieldValue() === ''
+}
+
+/** 选中预置环境:写 buildEnvId + 旧键镜像(image 或 toolchain 拆分),随后 flush。 */
+function onBuildEnvSelect(id: string): void {
+  const preset = presetById(id)
+  const patch: Record<string, string> = { buildEnvId: id }
+  if (preset) {
+    const isToolchainNode = effectiveJobType(localType.value, currentConfig()) === 'build_image'
+    if (isToolchainNode) {
+      // 目录里的 image 形如 language:version —— 按最后一个冒号拆,拼回与原镜像一致。
+      const idx = preset.image.lastIndexOf(':')
+      if (idx > 0) {
+        patch.toolchainLanguage = preset.image.slice(0, idx)
+        patch.toolchainVersion = preset.image.slice(idx + 1)
+      } else {
+        patch.toolchainLanguage = preset.image
+        patch.toolchainVersion = 'latest'
+      }
+      delete patch.image
+    } else {
+      patch.image = preset.image
+    }
+  }
+  typedConfig.value = { ...typedConfig.value, ...patch }
+  flush()
+}
+
+/** 配置资源多选:逗号分隔 ID 存 configProfileIds。 */
+function selectedProfileIds(): string[] {
+  return (typedConfig.value.configProfileIds ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/** 候选项按所选环境的语言过滤;未选环境时给全量。 */
+function profileOptions(): ConfigProfile[] {
+  const env = presetById(buildEnvFieldValue())
+  if (!env) return presetProfiles.value
+  const same = presetProfiles.value.filter((p) => p.language === env.language)
+  return same.length > 0 ? same : presetProfiles.value
+}
+
+function toggleProfile(id: string): void {
+  const cur = selectedProfileIds()
+  const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+  typedConfig.value = { ...typedConfig.value, configProfileIds: next.join(',') }
+  flush()
+}
+
+/** 工作室提升参数里的 image 参数:选项限定预置目录(值仍是镜像串,渲染后后端二次校验)。 */
+const studioImageOptions = computed(() =>
+  presetEnvs.value.map((e) => ({ value: e.image, label: `${e.displayName} · ${e.image}` })),
+)
 
 const CHANNEL_TYPE_LABELS: Record<string, string> = {
   webhook: 'Webhook',
@@ -253,6 +408,17 @@ function extrasToObject(rows: KVRow[]): Record<string, string> {
     if (key) out[key] = row.v
   }
   return out
+}
+
+/** 受管键(image / toolchain*)与已删假字段(registry 等)不许在「原始参数」里手填 ——
+ *  那正是预置目录(R4/R5)要堵死的后门;输入即撤销该行,与表单里消失的镜像控件同一口径。 */
+function onExtraBlur(row: KVRow): void {
+  const k = row.k.trim()
+  if (k && (managedKeys(localType.value).has(k) || droppedKeys(localType.value).has(k))) {
+    removeExtra(row._key)
+    return
+  }
+  flush()
 }
 
 // ─── Flush ─────────────────────────────────────────────────────────────────────
@@ -402,6 +568,7 @@ async function confirmSave(): Promise<void> {
       <StudioInstanceParams
         :params="promotedParams"
         :model-value="shortlistValues"
+        :image-options="studioImageOptions"
         @update:model-value="onShortlistUpdate"
       />
     </div>
@@ -536,6 +703,41 @@ async function confirmSave(): Promise<void> {
           </option>
         </select>
 
+        <!-- 预置构建环境选择器(镜像唯一来源,R4) -->
+        <select
+          v-else-if="field.kind === 'buildenv'"
+          class="drawer-select"
+          :value="buildEnvFieldValue()"
+          :aria-label="field.label"
+          @change="onBuildEnvSelect(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{
+            hasUnmatchedLegacyImage()
+              ? t('pipelineJob.fieldBuildEnvLegacy')
+              : t('pipelineJob.fieldBuildEnvUnselected')
+          }}</option>
+          <option v-for="env in presetEnvs" :key="env.id" :value="env.id">
+            {{ env.displayName }} · {{ env.image }}
+          </option>
+        </select>
+
+        <!-- 配置资源多选(按所选环境语言过滤) -->
+        <div v-else-if="field.kind === 'configprofiles'" class="profile-multi">
+          <label v-for="p in profileOptions()" :key="p.id" class="profile-option">
+            <input
+              type="checkbox"
+              :checked="selectedProfileIds().includes(p.id)"
+              :aria-label="p.name"
+              @change="toggleProfile(p.id)"
+            />
+            <span class="profile-option-name">{{ p.name }}</span>
+            <code class="profile-option-path">{{ p.targetPath }}</code>
+          </label>
+          <p v-if="profileOptions().length === 0" class="field-hint">
+            {{ t('pipelineJob.fieldConfigProfilesEmpty') }}
+          </p>
+        </div>
+
         <!-- toggle -->
         <label v-else-if="field.kind === 'toggle'" class="drawer-toggle">
           <input
@@ -546,6 +748,17 @@ async function confirmSave(): Promise<void> {
           />
           <span>{{ field.hint || t('pipelineJob.toggleEnable') }}</span>
         </label>
+
+        <!-- 推送目标只读回显:registry 来自「环境」绑定,tag 由服务端按 commit 生成 -->
+        <div v-else-if="field.kind === 'pushTarget'" class="push-target">
+          <ul v-if="pushTargets.length" class="push-target-list">
+            <li v-for="pt in pushTargets" :key="pt.env" class="push-target-row">
+              <span class="push-target-env">{{ pt.env }}</span>
+              <code class="push-target-url">{{ pt.registry || t('pipelineJob.fieldPushTargetUnbound') }}</code>
+            </li>
+          </ul>
+          <p v-else class="field-hint">{{ t('pipelineJob.fieldPushTargetNone') }}</p>
+        </div>
 
         <!-- number / text -->
         <input
@@ -603,7 +816,7 @@ async function confirmSave(): Promise<void> {
             type="text"
             :placeholder="t('pipelineJob.kvKeyPlaceholder')"
             :aria-label="t('pipelineJob.kvKeyAria', { n: row._key })"
-            @blur="flush"
+            @blur="onExtraBlur(row)"
           />
           <input
             v-model="row.v"
@@ -811,6 +1024,66 @@ async function confirmSave(): Promise<void> {
   font-size: 0.72rem;
   color: var(--color-faint);
   line-height: 1.4;
+}
+
+/* 推送目标只读回显:环境 → 该环境绑定的镜像仓 */
+.push-target {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.push-target-list {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md, 6px);
+  background: var(--color-inset);
+}
+.push-target-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+.push-target-env { font-weight: 500; color: var(--color-text); }
+.push-target-url {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  color: var(--color-faint);
+  overflow-wrap: anywhere;
+}
+
+/* 配置资源多选:语言过滤后的复选清单 */
+.profile-multi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md, 6px);
+  background: var(--color-inset);
+  max-height: 180px;
+  overflow-y: auto;
+}
+.profile-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.profile-option input { flex: none; }
+.profile-option-name { font-weight: 500; }
+.profile-option-path {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  color: var(--color-faint);
 }
 
 .drawer-textarea {

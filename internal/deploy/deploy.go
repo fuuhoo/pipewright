@@ -317,11 +317,13 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 	if len(serverIDs) == 0 {
 		return nil, ErrNoServers
 	}
+	// 流水线部署节点的健康探测(节点表单配置;未配 → nil,行为与此前完全一致)。
+	hc := HealthCheckFromConfig(cfg)
 	// 「命令型」部署(artifactType=command):不取构建产物,直接在目标机执行 cfg["restartCommand"]。
 	// 供「配置类」流水线用(如 frp 隧道:就地 upsert frpc.ini + reload)。与产物发布完全隔离——
 	// **真实产物部署(artifactType != command)绝不进此分支**,既有部署/策略/健康检查路径零影响。
 	if strings.TrimSpace(cfg["artifactType"]) == "command" {
-		return s.runCommandOnly(ctx, runID, serverIDs, cfg)
+		return s.runCommandOnly(ctx, runID, serverIDs, cfg, hc)
 	}
 	// 取该 run 已产出的可部署产物。dist/jar/archive 走文件发布;image 走容器 pull→停旧起新→
 	// 健康→回滚(复用 image_release.go)。二者都在时按节点 cfg["artifactType"] 选(空 → 默认优先
@@ -347,7 +349,7 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 		servers = append(servers, srv)
 	}
 
-	results := s.deployWithStrategy(ctx, servers, *artifact, cfg, nil, NormalizeStrategy(strategy))
+	results := s.deployWithStrategy(ctx, servers, *artifact, cfg, hc, NormalizeStrategy(strategy))
 
 	// 持久化每机结果(填 run-detail targets slot);**不置 run 终态**(dag 调度器控制)。
 	dts := make([]run.DeployTarget, 0, len(results))
@@ -366,7 +368,8 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 // runCommandOnly 执行「命令型」部署:在每台目标机直接跑 cfg["restartCommand"](无构建产物)。
 // 命令文本里的 {{param}} 已在 build 层(runDeployJob)用本次运行参数渲染好;此处只逐机执行 +
 // 经 s.exec 把命令/输出实时回流步骤日志(脱敏由 sink Masker 兜底)+ 持久化每机结果。
-func (s *service) runCommandOnly(ctx context.Context, runID string, serverIDs []string, cfg map[string]string) ([]TargetResult, error) {
+// hc 非 nil 时命令成功后再探测该机(与产物部署路径同一门控语义)。
+func (s *service) runCommandOnly(ctx context.Context, runID string, serverIDs []string, cfg map[string]string, hc *HealthCheck) ([]TargetResult, error) {
 	command := strings.TrimSpace(cfg["restartCommand"])
 	if command == "" {
 		return nil, fmt.Errorf("deploy: 命令型部署缺少 restartCommand")
@@ -392,8 +395,17 @@ func (s *service) runCommandOnly(ctx context.Context, runID string, serverIDs []
 			tr.Status = run.TargetFailed
 			tr.Message = fmt.Sprintf("命令退出码 %d", out.ExitCode)
 		default:
+			// 命令成功 != 服务可用:配了健康探测就继续在同一条 exec 链路上探测,失败判该机 failed。
 			tr.Status = run.TargetSuccess
 			tr.Message = "命令执行成功"
+			if hc.enabled() {
+				if herr := s.runHealthCheck(ctx, sid, hc); herr != nil {
+					tr.Status = run.TargetFailed
+					tr.Message = herr.Error()
+				} else {
+					tr.Message = "命令执行成功;健康检查通过"
+				}
+			}
 		}
 		results = append(results, tr)
 	}

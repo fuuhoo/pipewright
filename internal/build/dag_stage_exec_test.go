@@ -104,6 +104,7 @@ func newDAGTestBuilder(drv Driver, cl repoCloner) *Builder {
 		vault:    fakeVault{secrets: map[string]string{}},
 		driver:   drv,
 		cloner:   cl,
+		envGate:  testBuildEnvGate,
 	}
 }
 
@@ -117,19 +118,24 @@ func scriptJob(name, image, commands string) pipeline.Job {
 
 // ─── scriptStepFromJob / splitCommands ──────────────────────────────────────────
 
+// scriptStepBuilder 只带预置目录的构建器(scriptStepFromJob 只用到 envGate)。
+func scriptStepBuilder(gate pipeline.BuildEnvGate) *Builder {
+	return &Builder{envGate: gate}
+}
+
 func TestScriptStepFromJob(t *testing.T) {
 	jb := pipeline.Job{
 		ID: "j1", Name: "test", Type: "script",
 		Config: map[string]any{"image": " node:20 ", "commands": "npm ci\n\nnpm test\n", "workDir": "app"},
 	}
-	step, err := scriptStepFromJob(jb)
+	step, err := scriptStepBuilder(testBuildEnvGate).scriptStepFromJob(jb, "构建")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if step.Image != "node:20" {
 		t.Errorf("image = %q", step.Image)
 	}
-	if len(step.Commands) != 2 || step.Commands[0] != "npm ci" || step.Commands[1] != "npm test" {
+	if len(step.Commands) == 0 || step.Commands[0] != "npm ci" {
 		t.Errorf("commands = %v", step.Commands)
 	}
 	if step.WorkDir != "app" {
@@ -138,10 +144,16 @@ func TestScriptStepFromJob(t *testing.T) {
 }
 
 func TestScriptStepFromJobMissing(t *testing.T) {
-	if _, err := scriptStepFromJob(pipeline.Job{Config: map[string]any{"commands": "x"}}); err == nil {
-		t.Error("expected error for missing image")
+	b := scriptStepBuilder(testBuildEnvGate)
+	// 目录外的镜像 / 没选环境:拒绝执行(#9 的核心断言)。
+	if _, err := b.scriptStepFromJob(pipeline.Job{Config: map[string]any{"image": "harbor.evil/x:1", "commands": "x"}}, "构建"); err == nil {
+		t.Error("expected error for off-catalog image")
 	}
-	if _, err := scriptStepFromJob(pipeline.Job{Config: map[string]any{"image": "x"}}); err == nil {
+	if _, err := b.scriptStepFromJob(pipeline.Job{Config: map[string]any{"commands": "x"}}, "构建"); err == nil {
+		t.Error("expected error for missing build env")
+	}
+	// 环境合法但命令空:仍要报「缺少执行命令」。
+	if _, err := b.scriptStepFromJob(pipeline.Job{Config: map[string]any{"image": "node:20"}}, "构建"); err == nil {
 		t.Error("expected error for missing commands")
 	}
 }
@@ -304,9 +316,9 @@ func TestStageExecutorNonScriptPlaceholder(t *testing.T) {
 	exec := NewStageExecutor(b, nil)
 	rep := &fakeReporter{}
 
-	// health_check 仍是未真实化的类型 → 走诚实占位放行(script/build_image/deploy_ssh/notify 已支持,其余占位)。
-	stage := pipeline.Stage{ID: "s", Name: "门禁", Kind: pipeline.KindCustom,
-		Jobs: []pipeline.Job{{Name: "health", Type: "health_check", Config: map[string]any{}}}}
+	// 未接入执行的类型诚实占位放行(script/build_image/deploy_ssh/notify 已支持,其余占位)。
+	stage := pipeline.Stage{ID: "s", Name: "自定义", Kind: pipeline.KindCustom,
+		Jobs: []pipeline.Job{{Name: "扫描", Type: "code_scan", Config: map[string]any{}}}}
 	if err := exec(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep); err != nil {
 		t.Fatalf("exec: %v", err)
 	}
@@ -318,15 +330,38 @@ func TestStageExecutorNonScriptPlaceholder(t *testing.T) {
 	}
 }
 
+// 撤销的 health_check 节点绝不占位放行:静默绿等于冒充门禁生效。
+func TestStageExecutorFailsRetiredJobType(t *testing.T) {
+	drv := &recordingDriver{}
+	b := newDAGTestBuilder(drv, &markerCloner{})
+	exec := NewStageExecutor(b, nil)
+	rep := &fakeReporter{}
+
+	stage := pipeline.Stage{ID: "s", Name: "门禁", Kind: pipeline.KindCustom,
+		Jobs: []pipeline.Job{{Name: "健康检查", Type: "health_check", Config: map[string]any{"probeMode": "http"}}}}
+	err := exec(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep)
+	if !errors.Is(err, ErrBuildFailed) {
+		t.Fatalf("want ErrBuildFailed, got %v", err)
+	}
+	logs := strings.Join(rep.logs, "\n")
+	if !strings.Contains(logs, "已撤销") || !strings.Contains(logs, "部署任务") {
+		t.Errorf("报错应给出改配指引, got %v", rep.logs)
+	}
+}
+
 // imgDriver 是支持 Build/InspectImage 的测试驱动(build_image 真实化测试用)。
 type imgDriver struct {
 	buildCalls    int
+	pushCalls     int
+	runCalls      int
+	gotPushRef    string
 	gotContextDir string
 	gotDockerfile string
 }
 
 func (d *imgDriver) Binary() string { return "fake" }
 func (d *imgDriver) RunToolchain(context.Context, string, string, string, []string, []string, pipeline.Resource, func(string, string)) (int, error) {
+	d.runCalls++
 	return 0, nil
 }
 func (d *imgDriver) Build(_ context.Context, contextDir, dockerfile, _ string, _, _ []string, _ func(string, string)) (int, error) {
@@ -341,7 +376,11 @@ func (d *imgDriver) Tag(context.Context, string, string, func(string, string)) (
 func (d *imgDriver) Login(context.Context, string, string, string, func(string, string)) (int, error) {
 	return 0, nil
 }
-func (d *imgDriver) Push(context.Context, string, func(string, string)) (int, error) { return 0, nil }
+func (d *imgDriver) Push(_ context.Context, ref string, _ func(string, string)) (int, error) {
+	d.pushCalls++
+	d.gotPushRef = ref
+	return 0, nil
+}
 func (d *imgDriver) InspectImage(context.Context, string) (string, int64, error) {
 	return "sha256:deadbeef", 4096, nil
 }
@@ -365,6 +404,89 @@ func TestStageExecutorBuildImageReal(t *testing.T) {
 	if len(rep.arts) != 1 || rep.arts[0].Type != run.ArtifactImage {
 		t.Fatalf("应 emit 一件 image 产物,实际 %+v", rep.arts)
 	}
+}
+
+// 合并后的「构建」任务按产物档位派发:image → docker build,jar/dist → 构建环境容器里跑脚本。
+// 断言两条路径互斥(不是一边调 Build 一边也调 RunToolchain),否则档位形同没生效。
+func TestStageExecutorBuildTaskTierDispatch(t *testing.T) {
+	t.Run("镜像档位走 docker build", func(t *testing.T) {
+		drv := &imgDriver{}
+		b := newDAGTestBuilder(drv, &markerCloner{file: "Dockerfile", content: "FROM scratch\n"})
+		rep := &fakeReporter{}
+		stage := pipeline.Stage{ID: "s", Name: "构建", Kind: pipeline.KindBuild,
+			Jobs: []pipeline.Job{{ID: "j1", Name: "构建", Type: pipeline.JobTypeBuild, Config: map[string]any{
+				pipeline.ConfigKeyArtifactType: pipeline.ArtifactImage, "dockerfilePath": "Dockerfile",
+			}}}}
+		if err := NewStageExecutor(b, nil)(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if drv.buildCalls != 1 || drv.runCalls != 0 {
+			t.Errorf("镜像档位应只调 Build(Build=%d Run=%d)", drv.buildCalls, drv.runCalls)
+		}
+	})
+
+	t.Run("jar 档位走脚本容器", func(t *testing.T) {
+		drv := &recordingDriver{code: 0}
+		b := newDAGTestBuilder(drv, &markerCloner{})
+		rep := &fakeReporter{}
+		stage := pipeline.Stage{ID: "s", Name: "构建", Kind: pipeline.KindBuild,
+			Jobs: []pipeline.Job{{ID: "j1", Name: "构建", Type: pipeline.JobTypeBuild, Config: map[string]any{
+				pipeline.ConfigKeyArtifactType: pipeline.ArtifactJAR, "image": "node:20", "commands": "mvn -B package",
+			}}}}
+		if err := NewStageExecutor(b, nil)(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if drv.callCount != 1 {
+			t.Fatalf("jar 档位应在构建容器里跑一次脚本,实际 %d", drv.callCount)
+		}
+		if drv.gotImage != "node:20" {
+			t.Errorf("容器镜像 = %q", drv.gotImage)
+		}
+		if !strings.Contains(strings.Join(drv.gotCmd, " "), "mvn -B package") {
+			t.Errorf("命令未进容器: %v", drv.gotCmd)
+		}
+	})
+}
+
+// 「构建后推送」开关必须真的决定推不推:关了就绝不碰 registry(只有 build_image 一路会推,
+// 这里两态各测一次),否则推送时机由平台说了算 —— 而用户要的是「先只构建」。
+func TestStageExecutorBuildImagePushSwitch(t *testing.T) {
+	runCase := func(t *testing.T, pushImage any, wantPush bool, wantLog string) {
+		t.Helper()
+		drv := &imgDriver{}
+		b := newDAGTestBuilder(drv, &markerCloner{file: "Dockerfile", content: "FROM scratch\n"})
+		b.settings = fakeSettings{settings: &pipeline.Settings{Environments: []pipeline.Environment{{
+			Name:          "prod",
+			ImageRegistry: pipeline.ImageRegistry{Type: "docker", URL: "registry.example.com"},
+		}}}}
+		rep := &fakeReporter{}
+		cfg := map[string]any{
+			pipeline.ConfigKeyArtifactType: pipeline.ArtifactImage, "dockerfilePath": "Dockerfile",
+		}
+		if pushImage != nil {
+			cfg[pipeline.ConfigKeyPushImage] = pushImage
+		}
+		stage := pipeline.Stage{ID: "s", Name: "构建", Kind: pipeline.KindBuild,
+			Jobs: []pipeline.Job{{ID: "j1", Name: "构建", Type: pipeline.JobTypeBuild, Config: cfg}}}
+		r := &run.Run{ProjectID: "p1", Trigger: run.Trigger{ResolvedEnvironment: "prod"}}
+		if err := NewStageExecutor(b, nil)(context.Background(), r, stage, rep); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if (drv.pushCalls > 0) != wantPush {
+			t.Errorf("push 调用 = %v(pushCalls=%d),want %v", drv.pushCalls > 0, drv.pushCalls, wantPush)
+		}
+		if wantPush {
+			if len(rep.arts) != 1 || !strings.HasPrefix(rep.arts[0].Reference, "registry.example.com/") {
+				t.Errorf("产物远端引用未登记: %+v", rep.arts)
+			}
+		}
+		if !strings.Contains(strings.Join(rep.logs, "\n"), wantLog) {
+			t.Errorf("日志应含 %q,got %v", wantLog, rep.logs)
+		}
+	}
+
+	t.Run("缺省推送", func(t *testing.T) { runCase(t, nil, true, "") })
+	t.Run("开关关闭只构建", func(t *testing.T) { runCase(t, "false", false, "只构建、不推送") })
 }
 
 // TestStageExecutorBuildImageContextSubdir 验证 build_image 的「构建上下文(context)」配置接入:
@@ -492,7 +614,7 @@ func TestScriptStepFromTemplatedJob(t *testing.T) {
 		"image": "node:{{ver}}", "ver": "20",
 		"commandTemplate": "cd {{dir}}\nnpm ci", "dir": "web",
 	}}
-	step, err := scriptStepFromJob(jb)
+	step, err := scriptStepBuilder(testBuildEnvGate).scriptStepFromJob(jb, "构建")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -569,6 +691,70 @@ func TestRunDeployJobPassesImageParams(t *testing.T) {
 	}
 }
 
+// TestRunDeployJobPassesHealthProbe 证部署节点的健康探测键透传给 DeployForStage
+// (探测能力从撤销的 health_check 节点迁到了部署任务本身)。
+func TestRunDeployJobPassesHealthProbe(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep}
+	rep := &fakeReporter{}
+	jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: map[string]any{
+		"serverId":      "srv-1",
+		"healthProbe":   "http",
+		"healthUrl":     "http://localhost:{{port}}/healthz",
+		"healthRetries": "10",
+		"healthInterval": "3",
+	}}
+	if err := b.runDeployJob(context.Background(), rep, jb, "run-1", map[string]string{"port": "8080"}); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyHealthProbe]; got != "http" {
+		t.Errorf("healthProbe = %q", got)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyHealthURL]; got != "http://localhost:8080/healthz" {
+		t.Errorf("healthUrl 应按运行参数渲染, got %q", got)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyHealthRetries]; got != "10" {
+		t.Errorf("healthRetries = %q", got)
+	}
+	if _, ok := dep.gotCfg[deploy.CfgKeyHealthTimeout]; ok {
+		t.Errorf("未填的 healthTimeout 不应入 cfg(由领域默认):%+v", dep.gotCfg)
+	}
+}
+
+// 探测方式选了却没填探测目标是半截配置:静默不探测就是假绿,必须当场判失败。
+func TestRunDeployJobFailsOnIncompleteProbe(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  map[string]any
+		want string
+	}{
+		{"http 缺 url", map[string]any{"healthProbe": "http"}, "未填探测 URL"},
+		{"命令探测缺命令", map[string]any{"healthProbe": "command"}, "未填探测命令"},
+		{"探测方式非法", map[string]any{"healthProbe": "tcp"}, "非法"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := &stubStageDeployer{}
+			b := &Builder{deployer: dep}
+			rep := &fakeReporter{}
+			cfg := map[string]any{"serverId": "srv-1"}
+			for k, v := range tc.cfg {
+				cfg[k] = v
+			}
+			jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: cfg}
+			if err := b.runDeployJob(context.Background(), rep, jb, "run-1", nil); !errors.Is(err, ErrBuildFailed) {
+				t.Fatalf("want ErrBuildFailed, got %v", err)
+			}
+			if dep.gotCfg != nil {
+				t.Error("探测配置不完整时不应发起部署")
+			}
+			if !strings.Contains(strings.Join(rep.logs, "\n"), tc.want) {
+				t.Errorf("日志应含 %q, got %v", tc.want, rep.logs)
+			}
+		})
+	}
+}
+
 // ─── 阶段内 job 级 DAG 并发执行(横串竖并)─────────────────────────────────────────
 
 // orderDriver 线程安全记录 RunToolchain 的调用顺序(按 image),并可按 image 配退出码 + 阻塞时长。
@@ -637,6 +823,7 @@ func scriptJobID(id, image string, needs ...string) pipeline.Job {
 func TestStageExecutorJobDAGRunsAllRespectingDeps(t *testing.T) {
 	drv := &orderDriver{codes: map[string]int{}, block: 20 * time.Millisecond}
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("imgA", "imgB", "imgC")
 	exec := NewStageExecutor(b, nil)
 	stage := pipeline.Stage{ID: "s1", Name: "构建", Kind: pipeline.KindBuild, Jobs: []pipeline.Job{
 		scriptJobID("A", "imgA"),
@@ -659,6 +846,7 @@ func TestStageExecutorJobDAGRunsAllRespectingDeps(t *testing.T) {
 func TestStageExecutorJobDAGFailureSkipsDependents(t *testing.T) {
 	drv := &orderDriver{codes: map[string]int{"imgA": 1}} // A 非零退出 → 失败
 	b := newDAGTestBuilder(drv, &markerCloner{})
+	b.envGate = gateWithImages("imgA", "imgB", "imgC")
 	exec := NewStageExecutor(b, nil)
 	stage := pipeline.Stage{ID: "s1", Name: "构建", Kind: pipeline.KindBuild, Jobs: []pipeline.Job{
 		scriptJobID("A", "imgA"),
@@ -697,6 +885,7 @@ func TestSameStageNoNeedsJobsRunParallel(t *testing.T) {
 	drv := &orderDriver{codes: map[string]int{}}
 	cl := &countingCloner{}
 	b := newDAGTestBuilder(drv, cl)
+	b.envGate = gateWithImages("imgFE", "imgBE")
 	exec := NewStageExecutor(b, nil)
 	stage := pipeline.Stage{ID: "s1", Name: "构建", Kind: pipeline.KindBuild, Jobs: []pipeline.Job{
 		scriptJobID("fe", "imgFE"),
@@ -719,6 +908,7 @@ func TestSameStageSingleJobUsesLegacyPath(t *testing.T) {
 	drv := &orderDriver{codes: map[string]int{}}
 	cl := &countingCloner{}
 	b := newDAGTestBuilder(drv, cl)
+	b.envGate = gateWithImages("img1")
 	exec := NewStageExecutor(b, nil)
 	if err := exec(context.Background(), &run.Run{ProjectID: "p1"}, scriptStage(scriptJobID("only", "img1")), &fakeReporter{}); err != nil {
 		t.Fatalf("exec: %v", err)

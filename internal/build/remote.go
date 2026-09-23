@@ -26,6 +26,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/huangchengsir/pipewright/internal/pipeline"
 	"github.com/huangchengsir/pipewright/internal/target"
 )
 
@@ -52,11 +53,22 @@ func NewRemoteCommander(execer RemoteExecer, serverID string) Commander {
 
 // NewRemoteDriver 构造一个「在远程机上跑容器工具链」的 Driver:shellDriver 经 SSH Commander 执行,
 // bin 为远程机上的容器 CLI 名(空 → 默认 "docker")。可注入 Builder(WithDriver)使构建在远程机发生。
+//
+// 配置资源的宿主文件在中控机上,远程机的 docker 看不见,故这里把 res.Mounts 清空:
+// 远程执行路径会另行为用户记一行「已跳过注入」的诚实说明,而不是让 docker 报一个看不懂的挂载错。
 func NewRemoteDriver(execer RemoteExecer, serverID, bin string) Driver {
 	if strings.TrimSpace(bin) == "" {
 		bin = "docker"
 	}
-	return &shellDriver{bin: bin, cmdr: NewRemoteCommander(execer, serverID)}
+	return &remoteDriver{shellDriver{bin: bin, cmdr: NewRemoteCommander(execer, serverID)}}
+}
+
+// remoteDriver 只在 RunToolchain 上剥离宿主挂载,其余能力(登录/构建/推送)与 shellDriver 同语义。
+type remoteDriver struct{ shellDriver }
+
+func (d *remoteDriver) RunToolchain(ctx context.Context, image, hostDir, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
+	res.Mounts = nil
+	return d.shellDriver.RunToolchain(ctx, image, hostDir, workdir, env, cmd, res, onLine)
 }
 
 // Run 实现 Commander.Run:把 name+args 投到远程机同步执行,取回 stdout/stderr/退出码。

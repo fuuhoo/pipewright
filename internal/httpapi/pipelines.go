@@ -176,6 +176,12 @@ func writePipelineError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_job", "任务名与类型不能为空")
 	case errors.Is(err, pipeline.ErrDuplicateID):
 		writeError(w, http.StatusUnprocessableEntity, "duplicate_id", "阶段或任务 id 重复")
+	case errors.Is(err, pipeline.ErrBuildEnvRequired):
+		// 白名单错误消息只含阶段/节点名与镜像名(用户自己填的),无 secret,可原样回显。
+		writeError(w, http.StatusUnprocessableEntity, "build_env_required", err.Error())
+	case errors.Is(err, pipeline.ErrJobTypeRetired), errors.Is(err, pipeline.ErrHealthProbeInvalid), errors.Is(err, pipeline.ErrBuildTaskInvalid):
+		// 同理:消息只含阶段/任务名与类型/探测方式(均为用户自己填的),原样回显才能直接指导改配。
+		writeError(w, http.StatusUnprocessableEntity, "invalid_job", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}

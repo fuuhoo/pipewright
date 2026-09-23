@@ -55,6 +55,7 @@ func newRemoteTestBuilder(drv Driver) *Builder {
 		vault:    fakeVault{secrets: map[string]string{"cred": gitTokenSecret}},
 		driver:   drv,
 		cloner:   &markerCloner{file: "README.md", content: "hi"},
+		envGate:  testBuildEnvGate,
 	}
 }
 

@@ -32,15 +32,19 @@ const (
 	HealthCheckCommand = "command"
 )
 
-// 健康检查默认值与上限(防滥用 / DoS 目标机)。
+// 健康检查默认值与上限(防滥用 / DoS 目标机)。秒数以 int 为单一来源,时长由其派生。
 const (
-	defaultHealthRetries  = 3
-	defaultHealthInterval = 3 * time.Second
-	defaultHealthTimeout  = 5 * time.Second
+	defaultHealthRetries         = 3
+	defaultHealthIntervalSeconds = 3
+	defaultHealthTimeoutSeconds  = 5
+	maxHealthRetries             = 20
+	maxHealthTimeoutSeconds      = 60
+	maxHealthIntervalSeconds     = 60 // code-review P7:间隔上限,防 sleep 炸弹
 
-	maxHealthRetries  = 20
-	maxHealthTimeout  = 60 * time.Second
-	maxHealthInterval = 60 * time.Second // code-review P7:间隔上限,防 sleep 炸弹
+	defaultHealthInterval = defaultHealthIntervalSeconds * time.Second
+	defaultHealthTimeout  = defaultHealthTimeoutSeconds * time.Second
+	maxHealthTimeout      = maxHealthTimeoutSeconds * time.Second
+	maxHealthInterval     = maxHealthIntervalSeconds * time.Second
 )
 
 // HealthCheck 是一次部署后健康探测的配置(对齐 deploy 请求 deployConfig.healthCheck 子结构,冻结)。
@@ -60,6 +64,63 @@ type HealthCheck struct {
 	IntervalSeconds int
 	// TimeoutSeconds 是单次探测的超时秒数(<=0 → 默认 5s;上限 60s)。
 	TimeoutSeconds int
+}
+
+// 流水线部署节点 cfg 里的健康探测键(与前端部署任务表单同名,由 build.runDeployJob 透传)。
+// 探测只在**该机部署成功之后**跑,失败即该机 failed(蓝绿下还会回滚上一版)。
+const (
+	CfgKeyHealthProbe    = "healthProbe"    // none | http | command(空 = none,不探测)
+	CfgKeyHealthURL      = "healthUrl"      // probe=http 时的探测地址
+	CfgKeyHealthCommand  = "healthCommand"  // probe=command 时在目标机跑的命令
+	CfgKeyHealthRetries  = "healthRetries"  // 最大尝试次数
+	CfgKeyHealthInterval = "healthInterval" // 两次尝试间隔秒数
+	CfgKeyHealthTimeout  = "healthTimeout"  // 单次探测超时秒数
+)
+
+// HealthCheckFromConfig 从部署 cfg 组装健康门控配置(流水线部署节点用)。
+// 未配 / 探测方式非法 / 缺少 url·命令 → nil(不探测),由调用方日志侧如实说明。
+//
+// command 探测包成 `sh -c <cmd>`:与部署命令、命令型部署(restartCommand)同形态,
+// 命令文本整体作为**一个** array 元素传给 target.Exec,平台侧不拼接额外 shell(AC-SEC-02)。
+func HealthCheckFromConfig(cfg map[string]string) *HealthCheck {
+	if cfg == nil {
+		return nil
+	}
+	switch strings.TrimSpace(cfg[CfgKeyHealthProbe]) {
+	case HealthCheckHTTP:
+		url := strings.TrimSpace(cfg[CfgKeyHealthURL])
+		if url == "" {
+			return nil
+		}
+		return &HealthCheck{Type: HealthCheckHTTP, URL: url,
+			Retries:         cfgInt(cfg, CfgKeyHealthRetries, defaultHealthRetries),
+			IntervalSeconds: cfgInt(cfg, CfgKeyHealthInterval, defaultHealthIntervalSeconds),
+			TimeoutSeconds:  cfgInt(cfg, CfgKeyHealthTimeout, defaultHealthTimeoutSeconds)}
+	case HealthCheckCommand:
+		command := strings.TrimSpace(cfg[CfgKeyHealthCommand])
+		if command == "" {
+			return nil
+		}
+		return &HealthCheck{Type: HealthCheckCommand, Command: []string{"sh", "-c", command},
+			Retries:         cfgInt(cfg, CfgKeyHealthRetries, defaultHealthRetries),
+			IntervalSeconds: cfgInt(cfg, CfgKeyHealthInterval, defaultHealthIntervalSeconds),
+			TimeoutSeconds:  cfgInt(cfg, CfgKeyHealthTimeout, defaultHealthTimeoutSeconds)}
+	default:
+		return nil
+	}
+}
+
+// cfgInt 取 cfg 里的整数配置(缺失 / 非法 → fallback;上限仍由领域方法夹紧)。
+func cfgInt(cfg map[string]string, key string, fallback int) int {
+	s := strings.TrimSpace(cfg[key])
+	if s == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 // enabled 判定该健康检查是否需要执行(非 nil 且 type 为 http/command)。

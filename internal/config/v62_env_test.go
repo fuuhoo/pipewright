@@ -11,7 +11,7 @@ func TestLoadV62Defaults(t *testing.T) {
 	// 清空所有 PIPEWRIGHT_* env vars(避免外部污染)。
 	for _, k := range []string{
 		"PIPEWRIGHT_DATA_DIR", "PIPEWRIGHT_CONFIG_UPLOAD_MAX_SIZE",
-		"PIPEWRIGHT_ENFORCE_BUILD_ENV", "PIPEWRIGHT_UI_ONLY",
+		"PIPEWRIGHT_UI_ONLY",
 		"PIPEWRIGHT_AUTO_CHECK_ON_START", "PIPEWRIGHT_CHECK_CONCURRENCY",
 		"PIPEWRIGHT_CHECK_TIMEOUT_SECONDS", "PIPEWRIGHT_PULL_TIMEOUT_MULTIPLIER",
 		"PIPEWRIGHT_ALLOW_UNCHECKED_ENABLE",
@@ -24,9 +24,6 @@ func TestLoadV62Defaults(t *testing.T) {
 	}
 	if c.ConfigUploadMax != DefaultConfigUploadMax {
 		t.Fatalf("ConfigUploadMax = %d, want %d", c.ConfigUploadMax, DefaultConfigUploadMax)
-	}
-	if !c.EnforceBuildEnv {
-		t.Fatal("EnforceBuildEnv default 应为 true")
 	}
 	if !c.UIOnly {
 		t.Fatal("UIOnly default 应为 true")
@@ -52,7 +49,6 @@ func TestLoadV62Defaults(t *testing.T) {
 func TestLoadV62Overrides(t *testing.T) {
 	t.Setenv("PIPEWRIGHT_DATA_DIR", "/custom/data")
 	t.Setenv("PIPEWRIGHT_CONFIG_UPLOAD_MAX_SIZE", "5242880")
-	t.Setenv("PIPEWRIGHT_ENFORCE_BUILD_ENV", "false")
 	t.Setenv("PIPEWRIGHT_UI_ONLY", "false")
 	t.Setenv("PIPEWRIGHT_AUTO_CHECK_ON_START", "false")
 	t.Setenv("PIPEWRIGHT_CHECK_CONCURRENCY", "20")
@@ -66,9 +62,6 @@ func TestLoadV62Overrides(t *testing.T) {
 	}
 	if c.ConfigUploadMax != 5242880 {
 		t.Fatalf("ConfigUploadMax = %d", c.ConfigUploadMax)
-	}
-	if c.EnforceBuildEnv {
-		t.Fatal("EnforceBuildEnv 应为 false")
 	}
 	if c.UIOnly {
 		t.Fatal("UIOnly 应为 false")

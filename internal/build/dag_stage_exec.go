@@ -40,13 +40,9 @@ import (
 //
 // 工作区共享(跨阶段复用同一 clone)是性能优化项,留后续;本期每阶段独立 clone 以求简单与并行安全。
 
-// scriptJobTypes 是会触发真实容器执行的 job 类型。build_frontend/build_backend 是「前端/后端构建」
-// 模板节点,本质是带预填命令的 script;templated 是「用户自定义节点」(参数 + 命令模板),
-// 渲染 {{参数}} 后同样在隔离容器跑。三者都按 script 路径执行(容器跑 + 收 artifactPath 产物)。
-func isScriptJob(jobType string) bool {
-	t := strings.TrimSpace(jobType)
-	return t == pipeline.StepTypeScript || t == "custom" || t == "build_frontend" || t == "build_backend" || t == "templated"
-}
+// isScriptJob 判断是否脚本类 job(在隔离容器跑命令 + 收 artifactPath 产物)。
+// 类型集合的唯一定义在 pipeline 契约层(#7),这里只转发,不再复述。
+func isScriptJob(jobType string) bool { return pipeline.IsScriptJobType(jobType) }
 
 // tplPlaceholder 匹配 {{key}} 占位(key 为标识符)。自定义节点参数渲染用。
 var tplPlaceholder = regexp.MustCompile(`\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}`)
@@ -88,14 +84,18 @@ func renderTemplate(tpl string, ctx map[string]string) string {
 }
 
 // isDeployJob 判断是否「SSH 部署」类节点(deploy_ssh 通用 / deploy_frontend 前端部署模板)。
-func isDeployJob(jobType string) bool {
-	t := strings.TrimSpace(jobType)
-	return t == "deploy_ssh" || t == "deploy_frontend"
-}
+// 类型集合的唯一定义在 pipeline 契约层,这里只转发。
+func isDeployJob(jobType string) bool { return pipeline.IsDeployJobType(jobType) }
 
 // isBuildImageJob 判断是否「构建产物(镜像/JAR/dist)」节点(画布 build_image 类型)。
 func isBuildImageJob(jobType string) bool {
 	return strings.TrimSpace(jobType) == "build_image"
+}
+
+// effectiveJobType 把合并后的「构建」任务按产物档位折算成真正执行它的类型
+// (image → build_image 路径,jar/dist → script 路径)。派发处只认折算结果。
+func effectiveJobType(jb pipeline.Job) string {
+	return pipeline.EffectiveJobType(jb.Type, jb.Config)
 }
 
 // NewStageExecutor 返回一个复用 Builder 容器基建的真实 dagrun.StageExecutor。
@@ -109,10 +109,11 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 		notifyJobs := make([]pipeline.Job, 0, len(stage.Jobs))
 		hasPushJob := false
 		for _, jb := range stage.Jobs {
+			et := effectiveJobType(jb)
 			switch {
-			case isScriptJob(jb.Type):
+			case isScriptJob(et):
 				scriptJobs = append(scriptJobs, jb)
-			case isBuildImageJob(jb.Type):
+			case isBuildImageJob(et):
 				buildImageJobs = append(buildImageJobs, jb)
 			case strings.TrimSpace(jb.Type) == "push_image":
 				hasPushJob = true
@@ -124,6 +125,16 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 		}
 
 		needsBuild := len(scriptJobs) > 0 || len(buildImageJobs) > 0
+		// 撤销的类型绝不因「整阶段没有可执行节点」而被兜成占位放行:静默绿等于冒充门禁生效。
+		for _, jb := range stage.Jobs {
+			if guidance, retired := pipeline.RetiredJobType(jb.Type); retired {
+				_ = rep.JobRunning(ctx, jb.ID)
+				jr := rep.JobReporter(jb.ID)
+				_ = jr.Log(ctx, streamStderr, fmt.Sprintf("节点「%s」类型 %s 已撤销。%s", jb.Name, jb.Type, guidance))
+				_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
+				return ErrBuildFailed
+			}
+		}
 		// 没有任何可执行节点(script/build_image/deploy_ssh/notify)且无 post → 诚实占位放行。
 		if !needsBuild && len(deployJobs) == 0 && len(notifyJobs) == 0 && len(stage.Post) == 0 {
 			for _, jb := range stage.Jobs {
@@ -236,7 +247,7 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 					_ = rep.JobRunning(ctx, jb.ID)
 					jrep := rep.JobReporter(jb.ID)
 					jsink := &reporterSink{rep: jrep}
-					step, verr := scriptStepFromJob(jb)
+					step, verr := b.scriptStepFromJob(jb, stage.Name)
 					if verr != nil {
 						_ = jrep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」配置无效:%v", jb.Name, verr))
 						_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
@@ -405,8 +416,9 @@ func (b *Builder) runStageJobsDAG(
 		jsink := &reporterSink{rep: jrep}
 
 		jobErr := func() error {
+			et := effectiveJobType(jb)
 			switch {
-			case isScriptJob(jb.Type):
+			case isScriptJob(et):
 				out, err := b.runScriptJobIsolated(ctx, jsink, jrep, r, jb, stage, proj, settings, svcNetwork, upstreamEnv, reportSink)
 				if err != nil {
 					return err
@@ -417,18 +429,23 @@ func (b *Builder) runStageJobsDAG(
 					envMu.Unlock()
 				}
 				return nil
-			case isBuildImageJob(jb.Type):
+			case isBuildImageJob(et):
 				return b.runBuildImageJobIsolated(ctx, jsink, jrep, r, jb, stage, proj, settings, hasPushJob)
 			case isDeployJob(jb.Type):
 				return b.runDeployJob(ctx, jrep, jb, r.ID, r.Trigger.Params)
 			case strings.TrimSpace(jb.Type) == "push_image":
-				// 推送随构建镜像节点完成(hasPushJob);本节点仅用于在 DAG 中编排顺序/展示。
-				_ = jrep.Log(ctx, streamStdout, fmt.Sprintf("· 推送镜像「%s」:已随构建镜像节点完成推送(本节点用于编排顺序)", jb.Name))
+				// 推送由构建任务自己完成(见「构建后推送」开关 + 环境是否绑定镜像仓);本节点只做编排顺序。
+				_ = jrep.Log(ctx, streamStdout, fmt.Sprintf("· 推送镜像「%s」:推送在构建任务里完成,本节点仅用于编排顺序", jb.Name))
 				return nil
 			case strings.TrimSpace(jb.Type) == "notify":
 				b.runNotifyJob(ctx, jrep, jb, r)
 				return nil
 			default:
+				if guidance, retired := pipeline.RetiredJobType(jb.Type); retired {
+					// 撤销的类型绝不放行:静默绿会让用户以为门禁在生效(health_check 曾有的行为)。
+					_ = jrep.Log(ctx, streamStderr, fmt.Sprintf("节点「%s」类型 %s 已撤销。%s", jb.Name, jb.Type, guidance))
+					return ErrBuildFailed
+				}
 				_ = jrep.Log(ctx, streamStdout, fmt.Sprintf("· %s(%s)— 真实执行未接入;本节点放行", jb.Name, jb.Type))
 				return nil
 			}
@@ -527,7 +544,7 @@ func (b *Builder) runScriptJobIsolated(
 	}
 	defer cleanup()
 
-	step, verr := scriptStepFromJob(jb)
+	step, verr := b.scriptStepFromJob(jb, stage.Name)
 	if verr != nil {
 		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」配置无效:%v", jb.Name, verr))
 		return nil, ErrBuildFailed
@@ -606,6 +623,42 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		if v := cfgString(jb.Config, k); v != "" {
 			cfg[k] = v
 		}
+	}
+	// 部署后健康探测(原「健康检查」节点的能力,现并入部署任务):deploy 层在同一条 exec
+	// 链路上逐机探测,不通 → 该机 failed(阻断下游)。缺参数当场判失败,不留「静默不探测」的假绿。
+	// job.Config 键与 deploy cfg 键逐字相同,读 pipeline.*、写 deploy.* 让边界清楚。
+	probe := cfgString(jb.Config, pipeline.ConfigKeyHealthProbe)
+	if probe != "" && probe != pipeline.HealthProbeNone {
+		cfg[deploy.CfgKeyHealthProbe] = probe
+		switch probe {
+		case pipeline.HealthProbeHTTP:
+			url := renderTemplate(cfgString(jb.Config, pipeline.ConfigKeyHealthURL), params)
+			if strings.TrimSpace(url) == "" {
+				_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」探测方式 http 但未填探测 URL", jb.Name))
+				return ErrBuildFailed
+			}
+			cfg[deploy.CfgKeyHealthURL] = url
+		case pipeline.HealthProbeCommand:
+			command := renderTemplate(cfgString(jb.Config, pipeline.ConfigKeyHealthCommand), params)
+			if strings.TrimSpace(command) == "" {
+				_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」探测方式为命令但未填探测命令", jb.Name))
+				return ErrBuildFailed
+			}
+			cfg[deploy.CfgKeyHealthCommand] = command
+		default:
+			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」探测方式 %q 非法(仅支持 http / command)", jb.Name, probe))
+			return ErrBuildFailed
+		}
+		for _, pair := range []struct{ from, to string }{
+			{pipeline.ConfigKeyHealthRetries, deploy.CfgKeyHealthRetries},
+			{pipeline.ConfigKeyHealthInterval, deploy.CfgKeyHealthInterval},
+			{pipeline.ConfigKeyHealthTimeout, deploy.CfgKeyHealthTimeout},
+		} {
+			if v := cfgString(jb.Config, pair.from); v != "" {
+				cfg[pair.to] = v
+			}
+		}
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("· 部署后将探测健康(%s),探测不通则该节点失败", probe))
 	}
 	strategy := cfgString(jb.Config, "strategy")
 	stratLabel := strategy
@@ -725,6 +778,17 @@ func (b *Builder) runBuildImageJob(ctx context.Context, sink run.StepSink, rep d
 	if cfg.Model == "" {
 		cfg.Model = pipeline.BuildModelDockerfile
 	}
+	// 只有 buildEnvId、没有 toolchainLanguage/Version 的配置(AI 提案、手改 YAML):按目录
+	// 条目把语言/版本补上,执行期仍以目录为唯一镜像来源(#9),不会退回去拼「语言:版本」。
+	if cfg.Model == pipeline.BuildModelToolchain && cfg.Toolchain.Language == "" {
+		if id := cfgString(jb.Config, pipeline.ConfigKeyBuildEnvID); id != "" {
+			if snap, serr := b.buildEnvSnapshot(stageName, jb.Name); serr == nil {
+				if opt, ok := snap.OptionByID(id); ok {
+					cfg.Toolchain = pipeline.Toolchain{Language: opt.Language, Version: opt.Version}
+				}
+			}
+		}
+	}
 
 	localTag, art, berr := b.build(ctx, sink, 0, proj, cfg, workspace, commitTag)
 	if berr != nil {
@@ -739,10 +803,12 @@ func (b *Builder) runBuildImageJob(ctx context.Context, sink run.StepSink, rep d
 	}
 
 	// 镜像产物 + 绑定了 registry → 推送并登记远端引用(与非-dag Builder 同语义)。
+	// 「构建后推送」开关(pushImage=false)可以只构建不推送;缺省仍是推送(旧行为)。
 	if art.Type == run.ArtifactImage && localTag != "" {
 		registry := b.resolveRegistry(settings, envName)
+		pushWanted := pipeline.PushImageEnabled(jb.Config)
 		switch {
-		case registry != nil:
+		case registry != nil && pushWanted:
 			remoteTag, digest, perr := b.push(ctx, sink, 0, localTag, registry, proj, commitTag)
 			if perr != nil {
 				if errors.Is(ctx.Err(), context.Canceled) {
@@ -758,6 +824,8 @@ func (b *Builder) runBuildImageJob(ctx context.Context, sink run.StepSink, rep d
 				}
 				art.Metadata["digest"] = digest
 			}
+		case !pushWanted:
+			_ = rep.Log(ctx, streamStdout, "· 按「构建后推送」开关只构建、不推送:镜像留在本机,需要上仓时打开开关重跑")
 		case hasPushJob:
 			_ = rep.Log(ctx, streamStdout, "配了 push_image 但环境未绑定镜像仓库(registry),镜像留本地;到「触发设置 → 环境」绑定仓库后即自动推送")
 		}
@@ -850,13 +918,19 @@ func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, sl
 	onLine(streamStdout, "已产出产物:"+art.Name+"("+art.Type+","+rel+")")
 }
 
-// scriptStepFromJob 从画布 job.Config 构造一条 script 步骤(image + 多行 commands + 可选 workDir)。
-// image 缺失或 commands 全空 → 错误(诚实失败,不静默跳过)。
-func scriptStepFromJob(jb pipeline.Job) (pipeline.PipelineStep, error) {
+// scriptStepFromJob 从画布 job.Config 构造一条 script 步骤(commands + 可选 workDir + 资源规格)。
+//
+// 镜像**不来自 job.Config**:按 buildEnvId(旧配置:目录内的 image / 工具链语言+版本)在预置目录
+// 里解析(#9)—— 目录外或没选环境一律失败并要求重选,不存在「任意镜像地址」这条通路。
+// 配置资源引用同批解析成只读挂载(#10),挂在 step.Resource.Mounts 上交给 driver。
+// commands 全空 → 错误(诚实失败,不静默跳过)。
+func (b *Builder) scriptStepFromJob(jb pipeline.Job, stageName string) (pipeline.PipelineStep, error) {
 	ctx := templateContext(jb.Config)
-	image := renderTemplate(cfgString(jb.Config, "image"), ctx)
-	if image == "" {
-		return pipeline.PipelineStep{}, errors.New("缺少运行镜像(image)")
+	// 自定义节点的 image 允许是 {{参数}};渲染后仍要在目录内命中才算数。
+	rendered := renderTemplate(cfgString(jb.Config, pipeline.ConfigKeyImage), ctx)
+	resolved, err := b.jobRuntime(jb.Config, rendered, stageName, jb.Name)
+	if err != nil {
+		return pipeline.PipelineStep{}, err
 	}
 	// 自定义节点(templated):有 commandTemplate 则渲染 {{参数}} 作命令;否则用原始 commands。
 	rawCmds := cfgString(jb.Config, "commands")
@@ -867,22 +941,39 @@ func scriptStepFromJob(jb pipeline.Job) (pipeline.PipelineStep, error) {
 	if len(cmds) == 0 {
 		return pipeline.PipelineStep{}, errors.New("缺少执行命令(commands / commandTemplate)")
 	}
+	mounts, merr := b.checkMountFiles(resolved.Mounts)
+	if merr != nil {
+		return pipeline.PipelineStep{}, merr
+	}
 	return pipeline.PipelineStep{
-		ID:       jb.ID,
-		Name:     jb.Name,
-		Type:     pipeline.StepTypeScript,
-		Image:    image,
-		Commands: cmds,
-		Env:      matrixEnvVars(jb.Config), // 矩阵 cell 注入的 axis 环境变量(MATRIX_<AXIS>),空时 nil
-		WorkDir:  renderTemplate(cfgString(jb.Config, "workDir"), ctx),
+		ID:                jb.ID,
+		Name:              jb.Name,
+		Type:              pipeline.StepTypeScript,
+		Image:             resolved.Image,
+		ImageCredentialID: resolved.CredentialID,
+		Commands:          cmds,
+		Env:               matrixEnvVars(jb.Config), // 矩阵 cell 注入的 axis 环境变量(MATRIX_<AXIS>),空时 nil
+		WorkDir:           renderTemplate(cfgString(jb.Config, "workDir"), ctx),
 		// 任务级 timeout/retry/资源规格(P0 引擎能力):从 job.Config 自由 KV 读取(非负;非法/缺失→零值=旧行为)。
 		TimeoutSeconds: cfgNonNegInt(jb.Config, "timeoutSeconds"),
 		Retries:        cfgNonNegInt(jb.Config, "retries"),
 		Resource: pipeline.Resource{
 			CPU:    cfgString(jb.Config, "cpu"),
 			Memory: cfgString(jb.Config, "memory"),
+			Mounts: mounts,
 		},
 	}, nil
+}
+
+// checkMountFiles 确认配置资源的宿主文件确实在磁盘上:docker 对不存在的 bind 来源会**建一个空目录**
+// 挂进去,构建会以「配置文件是空的」这种看不出根因的方式失败,所以这里提前拒绝。
+func (b *Builder) checkMountFiles(mounts []pipeline.ContainerMount) ([]pipeline.ContainerMount, error) {
+	for _, m := range mounts {
+		if _, err := os.Stat(m.HostPath); err != nil {
+			return nil, fmt.Errorf("配置资源文件在中控机上找不到(%s),请在「配置资源」里重新保存该文件", m.HostPath)
+		}
+	}
+	return mounts, nil
 }
 
 // cfgNonNegInt 从自由 KV config 取非负整数(支持 JSON number 与字符串两种存法;
@@ -957,15 +1048,7 @@ func runParamsAsEnv(params map[string]string) []pipeline.BuildVar {
 }
 
 // cfgString 从自由 KV config 取字符串值(非字符串/缺失 → "")。
-func cfgString(cfg map[string]any, key string) string {
-	if cfg == nil {
-		return ""
-	}
-	if v, ok := cfg[key].(string); ok {
-		return strings.TrimSpace(v)
-	}
-	return ""
-}
+func cfgString(cfg map[string]any, key string) string { return pipeline.ConfigString(cfg, key) }
 
 // gitSourceLogLines 为 git_source 节点拼出可读的源码信息(仓库 / 分支 / 提交 / 凭据)。
 // 注:git_source 是 go-git 库克隆(非 shell 命令),真实检出发生在构建阶段各 job 工作区,

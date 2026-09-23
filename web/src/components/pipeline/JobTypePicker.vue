@@ -6,9 +6,10 @@
  * own icon, name, and description, grouped by category. Used both when adding a
  * new node and when changing an existing node's type.
  *
- * Controlled by the parent via `open`; emits `select(type)` and `close`.
+ * Controlled by the parent via `open`; emits `select(type, templateId?)` and `close`.
+ * 卡片下方的虚线胶囊是该任务的**模板**(预填配置),不是独立类型。
  */
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { groupedJobTypes } from './jobConfigSchema'
 import { listCustomNodes, type CustomNode } from '../../api/customNodes'
@@ -23,14 +24,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'select', type: string): void
+  (e: 'select', type: string, templateId?: string): void
   (e: 'select-custom', node: CustomNode): void
   (e: 'close'): void
 }>()
 
 const { t } = useI18n()
 
-const groups = groupedJobTypes()
+// 模板文案走 i18n getter:spec 里的 label 是 computed getter,模块顶层求值会拿到未就绪的实例。
+const groups = computed(() => groupedJobTypes())
 const dialogRef = ref<HTMLElement | null>(null)
 let focusedBeforeOpen: HTMLElement | null = null
 
@@ -50,8 +52,8 @@ async function loadCustomNodes(): Promise<void> {
   }
 }
 
-function choose(type: string): void {
-  emit('select', type)
+function choose(type: string, templateId?: string): void {
+  emit('select', type, templateId)
 }
 
 function chooseCustom(node: CustomNode): void {
@@ -112,7 +114,7 @@ watch(
             <section v-if="customLoading || customNodes.length" class="jtp-group">
               <h3 class="jtp-group-label">{{ t('pipelineCanvas.myCustomNodes') }}</h3>
               <p v-if="customLoading" class="jtp-custom-hint">{{ t('pipelineCanvas.loading') }}</p>
-              <div v-else class="jtp-grid">
+              <div v-else class="jtp-grid jtp-grid--plain">
                 <button
                   v-for="node in customNodes"
                   :key="node.id"
@@ -135,23 +137,35 @@ watch(
             <section v-for="group in groups" :key="group.id" class="jtp-group">
               <h3 class="jtp-group-label">{{ group.label }}</h3>
               <div class="jtp-grid">
-                <button
-                  v-for="spec in group.specs"
-                  :key="spec.type"
-                  class="type-card"
-                  :class="{ 'type-card--current': spec.type === current }"
-                  @click="choose(spec.type)"
-                >
-                  <JobTypeIcon :type="spec.type" :size="38" />
-                  <span class="type-card-body">
-                    <span class="type-card-name">
-                      {{ spec.label }}
-                      <span v-if="spec.type === current" class="type-card-badge">{{ t('pipelineCanvas.currentBadge') }}</span>
+                <div v-for="spec in group.specs" :key="spec.type" class="type-slot">
+                  <button
+                    class="type-card"
+                    :class="{ 'type-card--current': spec.type === current }"
+                    @click="choose(spec.type)"
+                  >
+                    <JobTypeIcon :type="spec.type" :size="38" />
+                    <span class="type-card-body">
+                      <span class="type-card-name">
+                        {{ spec.label }}
+                        <span v-if="spec.type === current" class="type-card-badge">{{ t('pipelineCanvas.currentBadge') }}</span>
+                      </span>
+                      <span class="type-card-desc">{{ spec.description }}</span>
+                      <code class="type-card-token">{{ spec.type }}</code>
                     </span>
-                    <span class="type-card-desc">{{ spec.description }}</span>
-                    <code class="type-card-token">{{ spec.type }}</code>
-                  </span>
-                </button>
+                  </button>
+                  <!-- 任务模板:点模板 = 插入该类型 + 预填配置(模板不是类型,见 jobConfigSchema.JobTemplate) -->
+                  <div v-if="spec.templates?.length" class="type-tpl-row">
+                    <button
+                      v-for="tpl in spec.templates"
+                      :key="tpl.id"
+                      class="type-tpl-chip"
+                      :title="tpl.description"
+                      @click="choose(spec.type, tpl.id)"
+                    >
+                      {{ tpl.label }}
+                    </button>
+                  </div>
+                </div>
               </div>
             </section>
           </div>
@@ -242,6 +256,46 @@ watch(
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
   gap: 10px;
+}
+
+/* 自定义节点那一栏没有模板行,让按钮本身继续做 grid item。 */
+.jtp-grid--plain { display: contents; }
+
+.type-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.type-tpl-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.type-tpl-chip {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  padding: 3px 9px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-dim);
+  cursor: pointer;
+  transition: color var(--duration-fast), border-color var(--duration-fast), background-color var(--duration-fast);
+}
+
+.type-tpl-chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+  border-style: solid;
+  background: var(--color-primary-soft);
+}
+
+.type-tpl-chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .type-card {

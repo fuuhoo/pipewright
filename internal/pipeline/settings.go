@@ -145,13 +145,24 @@ type Environment struct {
 // 非 secret 存明文 Value;secret 只存 CredentialID 引用(明文绝不入库),执行时经 vault.Reveal
 // 即取即注入容器,命令回显/出网/落库前一律脱敏。
 type PipelineStep struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Type     string     `json:"type"`              // 枚举:本期仅 "script"
-	Image    string     `json:"image"`             // 构建镜像(如 node:20 / golang:1.23),script 必填
-	Commands []string   `json:"commands"`          // 多行命令(顺序执行),script 必填且至少一条非空
-	Env      []BuildVar `json:"env,omitempty"`     // 步骤级环境变量(非 secret 明文 + secret 引用 CredentialID)
-	WorkDir  string     `json:"workDir,omitempty"` // 容器内相对工作目录(相对克隆工作区根;空=工作区根)
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Type 是步骤类型枚举(本期仅 "script")。
+	Type string `json:"type"`
+	// Image 是运行镜像。**R4 起不再由用户手填**:它由 BuildEnvID 经预置目录在执行侧解析后填入,
+	// 旧配置里残留的镜像地址会被保存校验(#8)与运行解析(#9)拒绝并要求重选环境。
+	Image string `json:"image"`
+	// ImageCredentialID 是拉取 Image 所需的镜像仓库凭据引用(保险库),空=公开镜像。
+	// **执行期由预置目录解析填入,不经 API**(json:"-"):用户只在节点上选构建环境,
+	// 私有镜像的登录凭据跟着环境走,不在流水线配置里重复配一份。
+	ImageCredentialID string `json:"-"`
+	// BuildEnvID 是预置构建环境引用(R4,见 buildenvref.go)——镜像地址的唯一来源。
+	BuildEnvID string `json:"buildEnvId,omitempty"`
+	// ConfigProfileIDs 是该步要注入容器的配置资源引用(R6,如 .npmrc / settings.xml)。
+	ConfigProfileIDs []string   `json:"configProfileIds,omitempty"`
+	Commands         []string   `json:"commands"` // 多行命令(顺序执行),script 必填且至少一条非空
+	Env              []BuildVar `json:"env,omitempty"`     // 步骤级环境变量(非 secret 明文 + secret 引用 CredentialID)
+	WorkDir          string     `json:"workDir,omitempty"` // 容器内相对工作目录(相对克隆工作区根;空=工作区根)
 	// TimeoutSeconds 是该步整步执行超时(秒);>0 时执行侧以 context.WithTimeout 套,超时即 kill 容器并判失败。
 	// 零值=不限(沿用旧行为,向后兼容)。
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
@@ -175,11 +186,24 @@ type Resource struct {
 	// Network 是容器加入的 docker 网络名:由执行器在「旁挂服务(services)」阶段运行时设置,
 	// 让脚本容器与服务容器同网、按服务名互访。**非用户配置项**(用户只配 cpu/memory),空=默认网络。
 	Network string `json:"network,omitempty"`
+	// Mounts 是执行器在运行时追加的只读文件挂载(配置资源注入 R6):用户在节点上勾的是
+	// configProfileIds 引用,执行侧按预置目录解析成「宿主文件 → 容器内目标路径」。
+	// **非用户配置项、不过 API**(json:"-"),故不改动本 DTO 的冻结契约。
+	Mounts []ContainerMount `json:"-"`
 }
 
-// IsZero 判断资源规格是否为空(cpu/memory/network 都未配)。
+// ContainerMount 是一条「宿主文件 → 容器内路径」的挂载(配置资源注入用)。
+// ReadOnly 为 true 时容器内不可写(配置文件注入的默认语义,防构建脚本改宿主文件)。
+type ContainerMount struct {
+	HostPath      string
+	ContainerPath string
+	ReadOnly      bool
+}
+
+// IsZero 判断资源规格是否为空(cpu/memory/network/mounts 都未配)。
 func (r Resource) IsZero() bool {
-	return strings.TrimSpace(r.CPU) == "" && strings.TrimSpace(r.Memory) == "" && strings.TrimSpace(r.Network) == ""
+	return strings.TrimSpace(r.CPU) == "" && strings.TrimSpace(r.Memory) == "" &&
+		strings.TrimSpace(r.Network) == "" && len(r.Mounts) == 0
 }
 
 // Settings 是构建/部署配置领域模型(冻结 DTO 外层形状)。

@@ -315,9 +315,9 @@ func scanDeterministic(steps []ScriptStep) []RiskFinding {
 				Level:      RiskLow,
 				StepName:   st.Name,
 				Line:       0,
-				Title:      "部署前后缺少健康检查",
+				Title:      "部署未配健康探测",
 				Why:        "存在部署动作(kubectl/helm/docker/systemctl)但未见健康/就绪探测,故障可能静默发布。",
-				Suggestion: "部署后加就绪检查(如 curl /healthz、kubectl rollout status),失败即中止。",
+				Suggestion: "流水线里的「部署」任务把 healthProbe 设为 http 或 command(探测不通该任务即失败);库内脚本步骤则自行加 curl /healthz、kubectl rollout status 并失败即中止。",
 				Source:     "rule",
 			})
 		}

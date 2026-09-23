@@ -76,6 +76,16 @@ func (d *shellDriver) RunToolchain(ctx context.Context, image, hostDir, workdir 
 		args = append(args, "--network", net)
 		display = append(display, "--network", net)
 	}
+	// 配置资源注入(R6):res.Mounts 由预置目录把 configProfileIds 解析而来(宿主只读文件 → 容器路径)。
+	// 路径经 pipeline 侧安全收口(绝对、无 ..);值原样作 array 实参,不拼 shell。
+	for _, m := range res.Mounts {
+		bind := m.HostPath + ":" + m.ContainerPath
+		if m.ReadOnly {
+			bind += ":ro"
+		}
+		args = append(args, "-v", bind)
+		display = append(display, "-v", bind)
+	}
 	for _, kv := range env {
 		args = append(args, "-e", kv)
 		display = append(display, "-e", maskKV(kv)) // 环境变量可能含 secret:回显只列 key

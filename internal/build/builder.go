@@ -68,6 +68,10 @@ type Builder struct {
 	// artifactLister 列出本 run 已产出的产物(供跨阶段产物传递:下游阶段把上游归档的 jar/dist
 	// 真字节恢复到自身工作区)。nil 则不做跨阶段恢复(向后兼容)。由 main 注入 runSvc.ListArtifacts。
 	artifactLister func(ctx context.Context, runID string) ([]run.Artifact, error)
+	// envGate 是预置构建环境目录的快照来源(R4/R6):执行期的镜像地址、拉取凭据、配置资源挂载
+	// **只**从这里解析,不再读 job 配置里的镜像字符串。nil(未装配目录服务)时脚本节点直接失败
+	// 要求选环境 —— 不回退到旧的手填镜像通路。由 main 注入(WithBuildEnvGate)。
+	envGate pipeline.BuildEnvGate
 }
 
 // buildCacheStore 抽象「按 key 恢复/保存工作区缓存路径」的能力(便于 fake 单测注入)。
@@ -118,6 +122,12 @@ func WithArtifactStore(s *artifactstore.Store) BuilderOption {
 // WithImageGC 开关「构建后清悬空镜像」(Story 8-17);默认开。传 false 关闭(如宿主另有镜像 GC 策略)。
 func WithImageGC(enabled bool) BuilderOption {
 	return func(b *Builder) { b.disableImageGC = !enabled }
+}
+
+// WithBuildEnvGate 注入预置构建环境目录快照来源(R4/R6):脚本节点与工具链构建的镜像、
+// 私有镜像登录凭据、配置资源挂载全部由它解析。nil 不注入(脚本节点会诚实报「未选环境」)。
+func WithBuildEnvGate(g pipeline.BuildEnvGate) BuilderOption {
+	return func(b *Builder) { b.envGate = g }
 }
 
 // WithCommitRecorder 注入「回写实际检出 commit 到 run」的回调(由 main 接 run.Service.SetCommit)。
@@ -426,14 +436,21 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 		return localTag, art, nil
 
 	case pipeline.ArtifactJAR, pipeline.ArtifactDist:
-		// 模型 B:工具链镜像挂载工作区跑构建命令。
-		image := toolchainImage(cfg.Toolchain)
-		if image == "" {
-			return "", nil, fmt.Errorf("未指定工具链镜像(toolchain.language/version)")
+		// 模型 B:工具链镜像挂载工作区跑构建命令。镜像来自预置目录(#9)——
+		// toolchainLanguage/Version 只是查目录的键,平台不再自己拼 `语言:版本` 当镜像跑。
+		resolved, rerr := b.toolchainRuntime(cfg.Toolchain, "构建配置", slug)
+		if rerr != nil {
+			return "", nil, rerr
 		}
+		b.loginForImage(ctx, resolved.Image, resolved.CredentialID, onLine)
 		env := append(buildArgs, secretArgs...) // 工具链构建经 -e 注入(secret 回显只列 key)
 		buildCmd := toolchainBuildCmd(cfg.ArtifactType)
-		code, err := b.driver.RunToolchain(ctx, image, workspace, "/src", env, buildCmd, pipeline.Resource{}, onLine)
+		mounts, merr := b.checkMountFiles(resolved.Mounts)
+		if merr != nil {
+			return "", nil, merr
+		}
+		res := pipeline.Resource{Mounts: mounts}
+		code, err := b.driver.RunToolchain(ctx, resolved.Image, workspace, "/src", env, buildCmd, res, onLine)
 		if err != nil && code < 0 {
 			return "", nil, fmt.Errorf("构建器无法启动")
 		}
@@ -631,19 +648,6 @@ func canceled(ctx context.Context) bool {
 }
 
 // ---- 纯函数辅助 ----
-
-// toolchainImage 据工具链(language/version)推容器镜像名(language:version);language 空 → ""。
-func toolchainImage(tc pipeline.Toolchain) string {
-	lang := strings.TrimSpace(tc.Language)
-	if lang == "" {
-		return ""
-	}
-	ver := strings.TrimSpace(tc.Version)
-	if ver == "" {
-		ver = "latest"
-	}
-	return lang + ":" + ver
-}
 
 // toolchainBuildCmd 据产物类型给一个保守的默认构建命令(模型 B)。真实构建命令未来可由配置驱动;
 // 本期按产物类型给业界最常见命令(jar=mvn package;dist=npm run build),容器内执行。

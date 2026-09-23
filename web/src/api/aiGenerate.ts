@@ -29,7 +29,8 @@ export interface AIProposalJob {
   name: string
   type: string
   summary: string
-  /** LLM 据仓库分析填好的可执行配置(命令/镜像/Dockerfile 路径/端口等);apply 时原样回传。 */
+  /** LLM 据仓库分析填好的可执行配置(命令/buildEnvId/Dockerfile 路径/端口等);apply 时原样回传。
+   *  镜像不在此列 —— 只能以 buildEnvId 引用预置构建环境(#14),手写镜像会被保存校验挡下。 */
   config?: Record<string, unknown>
   /** 同阶段依赖的 job name(串行;如镜像依赖后端构建);空=并行。apply 时按 name 映射为 id。 */
   needs?: string[]
