@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/storetest"
 	"github.com/huangchengsir/pipewright/internal/vault"
 )
@@ -98,7 +99,7 @@ func TestCreateAndList(t *testing.T) {
 		t.Fatalf("prober 未收到 vault 取出的明文 token")
 	}
 
-	list, err := svc.List(context.Background())
+	list, err := svc.List(context.Background(), access.ListFilter{Unrestricted: true})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

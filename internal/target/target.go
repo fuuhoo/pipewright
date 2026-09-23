@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/store"
 	"github.com/huangchengsir/pipewright/internal/vault"
 )
@@ -50,6 +51,9 @@ var (
 	ErrUnreachable = errors.New("target: server unreachable")
 	// ErrInvalidCredential 表示凭据明文不是可用的 SSH 私钥/口令(解析失败)。
 	ErrInvalidCredential = errors.New("target: credential is not a usable ssh key or password")
+	// ErrGroupNotFound 表示 group_id 指向的分组不存在。servers.group_id 刻意不建外键
+	// (见 0057 注释),故归组合法性由这里校验,否则悬挂引用会被 access 按最私有一档挡死。
+	ErrGroupNotFound = errors.New("target: group not found")
 )
 
 // DefaultPort 是未显式给定端口时的 SSH 默认端口。
@@ -68,8 +72,10 @@ type Server struct {
 	CredentialID string
 	// CredentialName 是冗余只读展示名(join credentials),便于列表展示;非持久列。
 	CredentialName string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// GroupID 是所属资源分组(servers.group_id);'' = 未归组 = 全员可见可操作。
+	GroupID   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // CreateInput 是登记服务器的入参。
@@ -79,6 +85,8 @@ type CreateInput struct {
 	Port         int // <=0 时归一为 DefaultPort
 	User         string
 	CredentialID string
+	// GroupID 可空('' = 未归组)。能否放进这个组由 HTTP 层判定(access.ActManage)。
+	GroupID string
 }
 
 // UpdateInput 是更新服务器的入参;指针字段为 nil 表示不修改。
@@ -88,6 +96,16 @@ type UpdateInput struct {
 	Port         *int
 	User         *string
 	CredentialID *string
+	// GroupID 改归属;nil = 不动,指向 '' = 移出分组。两侧 Manage 由 HTTP 层把关。
+	GroupID *string
+}
+
+// ListFilter 是列表的分组可见性过滤。
+//
+// Visible 是零值 ListFilter{} 时表示「只见未归组」(fail closed),不是「不受限」;
+// 内部系统调用方(部署、代理、异常检测)请走 List,它等价于 Unrestricted。
+type ListFilter struct {
+	Visible access.ListFilter
 }
 
 // ExecResult 是通用 Exec 的结果(冻结契约;Epic 4/6 消费)。
@@ -111,7 +129,11 @@ type Service interface {
 	// Get 返回单个服务器视图(无明文)。
 	Get(ctx context.Context, id string) (*Server, error)
 	// List 返回所有服务器(join credentials 取展示名;无明文)。
+	// 这是「系统视角」的全量列表,供部署/代理/异常检测等内部调用方使用;
+	// 面向已登录用户的列表请用 ListScoped,否则会绕过分组可见性。
 	List(ctx context.Context) ([]*Server, error)
+	// ListScoped 按分组可见性返回服务器(同 join;无明文)。
+	ListScoped(ctx context.Context, f ListFilter) ([]*Server, error)
 	// Create 校验入参后入库;返回服务器视图(无明文)。不在此触网(纯登记)。
 	Create(ctx context.Context, in CreateInput) (*Server, error)
 	// Update 改名/改 host/port/user/改绑凭据;返回更新后视图。
@@ -237,10 +259,21 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Server, error) {
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
+	groupID := strings.TrimSpace(in.GroupID)
+	if groupID != "" {
+		ok, err := s.groupExists(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrGroupNotFound
+		}
+	}
+
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Name, in.Host, port, in.User, in.CredentialID, nowStr, nowStr,
+		`INSERT INTO servers (id, name, host, port, user, credential_id, group_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Name, in.Host, port, in.User, in.CredentialID, groupID, nowStr, nowStr,
 	)
 	if err != nil {
 		if isForeignKeyErr(err) {
@@ -251,14 +284,25 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Server, error) {
 	return s.Get(ctx, id)
 }
 
+// List 是全量视角(内部调用方);等价于 ListScoped{Unrestricted}。
 func (s *service) List(ctx context.Context) ([]*Server, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.name, s.host, s.port, s.user, s.credential_id,
-		        COALESCE(c.name, ''), s.created_at, s.updated_at
+	return s.ListScoped(ctx, ListFilter{Visible: access.ListFilter{Unrestricted: true}})
+}
+
+func (s *service) ListScoped(ctx context.Context, f ListFilter) ([]*Server, error) {
+	query := `SELECT s.id, s.name, s.host, s.port, s.user, s.credential_id,
+		        COALESCE(c.name, ''), s.group_id, s.created_at, s.updated_at
 		 FROM servers s
-		 LEFT JOIN credentials c ON c.id = s.credential_id
-		 ORDER BY s.created_at DESC, s.id`,
-	)
+		 LEFT JOIN credentials c ON c.id = s.credential_id`
+	var args []any
+	// 别名前缀必须是 s.:可见分组 ID 里有空串(未归组),裸列名 group_id 在 join 里会歧义。
+	if clause, clauseArgs := f.Visible.Clause("s.group_id"); clause != "" {
+		query += " WHERE " + clause
+		args = clauseArgs
+	}
+	query += " ORDER BY s.created_at DESC, s.id"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("target: list: %w", err)
 	}
@@ -278,10 +322,23 @@ func (s *service) List(ctx context.Context) ([]*Server, error) {
 	return out, nil
 }
 
+// groupExists 校验分组存在(servers.group_id 无外键,故在此挡悬挂引用)。
+func (s *service) groupExists(ctx context.Context, groupID string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM resource_groups WHERE id = ?`, groupID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("target: check group: %w", err)
+	}
+	return true, nil
+}
+
 func (s *service) Get(ctx context.Context, id string) (*Server, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT s.id, s.name, s.host, s.port, s.user, s.credential_id,
-		        COALESCE(c.name, ''), s.created_at, s.updated_at
+		        COALESCE(c.name, ''), s.group_id, s.created_at, s.updated_at
 		 FROM servers s
 		 LEFT JOIN credentials c ON c.id = s.credential_id
 		 WHERE s.id = ?`, id,
@@ -298,11 +355,11 @@ func (s *service) Get(ctx context.Context, id string) (*Server, error) {
 
 func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Server, error) {
 	// 先取当前行。
-	var name, host, user, credentialID string
+	var name, host, user, credentialID, groupID string
 	var port int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, host, port, user, credential_id FROM servers WHERE id = ?`, id,
-	).Scan(&name, &host, &port, &user, &credentialID)
+		`SELECT name, host, port, user, credential_id, group_id FROM servers WHERE id = ?`, id,
+	).Scan(&name, &host, &port, &user, &credentialID, &groupID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -341,11 +398,24 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Serve
 		}
 		credentialID = *in.CredentialID
 	}
+	if in.GroupID != nil {
+		// 指针非 nil 才动归属:显式空串 = 移出分组,与「不传」区分开。
+		groupID = strings.TrimSpace(*in.GroupID)
+		if groupID != "" {
+			ok, gerr := s.groupExists(ctx, groupID)
+			if gerr != nil {
+				return nil, gerr
+			}
+			if !ok {
+				return nil, ErrGroupNotFound
+			}
+		}
+	}
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name = ?, host = ?, port = ?, user = ?, credential_id = ?, updated_at = ? WHERE id = ?`,
-		name, host, port, user, credentialID, nowStr, id,
+		`UPDATE servers SET name = ?, host = ?, port = ?, user = ?, credential_id = ?, group_id = ?, updated_at = ? WHERE id = ?`,
+		name, host, port, user, credentialID, groupID, nowStr, id,
 	)
 	if err != nil {
 		if isForeignKeyErr(err) {
@@ -642,7 +712,7 @@ func scanServer(sc scanner) (*Server, error) {
 	var createdStr, updatedStr string
 	if err := sc.Scan(
 		&srv.ID, &srv.Name, &srv.Host, &srv.Port, &srv.User, &srv.CredentialID,
-		&srv.CredentialName, &createdStr, &updatedStr,
+		&srv.CredentialName, &srv.GroupID, &createdStr, &updatedStr,
 	); err != nil {
 		return nil, err
 	}

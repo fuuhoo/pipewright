@@ -361,6 +361,68 @@ func (s *Service) ChangePassword(current, newPassword, currentToken string) erro
 	return nil
 }
 
+// ErrUserNotFound 表示按 id 找不到用户行(账号被删但会话仍在)。
+var ErrUserNotFound = errors.New("auth: user not found")
+
+// ChangeUserPassword 改「非 bootstrap 账号」自己的口令:普通用户 + 管理员建号建出来的
+// 额外管理员,口令都存在 users.password_hash。
+//
+// 与 ChangePassword 的区别不只是取哪张表:
+//   - bootstrap admin 的真身在 admin_user(它是唯一能被 SyncAdminPasswordChange 同步的行),
+//     所以那条路径必须走 ChangePassword,否则改了 users 也像没改。
+//   - 撤销其它会话按 user_id 收窄:改自己口令绝不能把别人的会话踢下线。
+//
+// current 错 → ErrInvalidCurrentPassword;new 太短 → ErrWeakPassword;
+// 账号不存在或已禁用 → ErrUserNotFound(禁用账号应先由管理员启用,不给自助改)。
+func (s *Service) ChangeUserPassword(userID, current, newPassword, currentToken string) error {
+	if currentToken == "" {
+		return ErrInvalidCurrentPassword
+	}
+	if userID == "" {
+		return ErrUserNotFound
+	}
+	if len(newPassword) < minPasswordLen {
+		return ErrWeakPassword
+	}
+
+	var storedHash string
+	var enabled int
+	err := s.db.QueryRow(`SELECT password_hash, enabled FROM users WHERE id = ?`, userID).Scan(&storedHash, &enabled)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("auth: query user hash: %w", err)
+	}
+	if enabled != 1 {
+		return ErrUserNotFound
+	}
+
+	ok, err := VerifyPassword(current, storedHash)
+	if err != nil {
+		return fmt.Errorf("auth: verify current password: %w", err)
+	}
+	if !ok {
+		return ErrInvalidCurrentPassword
+	}
+
+	newHash, err := HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("auth: hash new password: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.Exec(
+		`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`,
+		newHash, now, userID,
+	); err != nil {
+		return fmt.Errorf("auth: update user password hash: %w", err)
+	}
+	if _, err := s.sessions.DeleteOthersForUser(userID, currentToken); err != nil {
+		return fmt.Errorf("auth: revoke other sessions: %w", err)
+	}
+	return nil
+}
+
 // ListSessions 返回所有未过期会话元数据(不含原 token);currentToken 标识 current。
 func (s *Service) ListSessions(currentToken string) ([]SessionMeta, error) {
 	return s.sessions.List(currentToken)

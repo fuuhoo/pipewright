@@ -1,21 +1,26 @@
-// Package httpapi — 用户管理端点(v6.2 §3.5 + 阶段 9 最小骨架)。
+// Package httpapi — 用户管理端点(v6.2 §3.5 + 阶段 9)。
 //
 // 路由(均 admin-only,RequireAdmin + CSRF):
-//   GET    /api/admin/users            → List(阶段 9 最小集:含 enabled 列)
-//   GET    /api/admin/users/{id}       → GetByID
+//   GET    /api/admin/users                  → List(role/includeDisabled/limit/offset)
+//   GET    /api/admin/users/{id}             → GetByID
+//   POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色)
+//   POST   /api/admin/users/{id}/password    → 重置口令
+//   PATCH  /api/admin/users/{id}             → 改描述 / 启用禁用
 //
-// 完整用户管理(邀请/注册/启用禁用/密码重置)留到后续 story:
-//   POST   /api/admin/users/invitations → 创建邀请 token
-//   POST   /api/auth/register           → 邀请注册(公开端点)
-//   DELETE /api/admin/users/{id}        → 禁用(enabled=0)
+// 不在这里的:内置管理员(bootstrap admin)那一行——它的口令与启用状态由
+// admin_user + 「账户设置」管,上述写端点对它一律 409,理由见 isBootstrapAdminRow。
+// 邀请注册(邀请 token + 公开注册端点)仍是后续 story。
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/huangchengsir/pipewright/internal/auth"
 	"github.com/huangchengsir/pipewright/internal/users"
 )
 
@@ -107,6 +112,200 @@ func writeUsersError(w http.ResponseWriter, err error) {
 	case errors.Is(err, users.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		// 领域校验错误文案是中文可操作提示(可直接回传);其余(SQL/驱动)细节不外泄。
+		if errors.Is(err, users.ErrValidation) {
+			writeError(w, http.StatusBadRequest, "invalid_user", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+	}
+}
+
+// isBootstrapAdminRow 报告目标是否为 admin_user 在 users 表里的同步行。
+//
+// 这一行的口令/启用状态不由用户管理端点管:auth.Login 命中同名 admin_user 时优先走
+// admin_user 路径,只改 users 的 hash 或 enabled 看起来成功、实际不影响登录。所以
+// 重置口令与禁用都必须挡掉,否则管理员会以为已经停用了一个超管。
+func isBootstrapAdminRow(id string) bool {
+	return id == users.BootstrapAdminRegularUserID
+}
+
+// sessionUserID 取当前会话的 users.id;无会话返回 ""。
+func sessionUserID(r *http.Request) string {
+	if sess, ok := sessionFromContext(r.Context()); ok && sess != nil {
+		return sess.UserID
+	}
+	return ""
+}
+
+// makeCreateUserHandler 返回 POST /api/admin/users handler(管理员建号)。
+// body:{username, password, role, description}。审计只记用户名与角色,绝不含口令。
+func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if us == nil {
+			writeError(w, http.StatusServiceUnavailable, "users_unavailable", "用户服务未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			Username    string `json:"username"`
+			Password    string `json:"password"`
+			Role        string `json:"role"`
+			Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if len(req.Password) < users.MinPasswordLen {
+			writeError(w, http.StatusUnprocessableEntity, "weak_password", "口令至少 8 位")
+			return
+		}
+		hash, err := auth.HashPassword(req.Password)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+			return
+		}
+		u, err := us.Create(users.CreateInput{
+			Username:     req.Username,
+			PasswordHash: hash,
+			Role:         req.Role,
+			Description:  req.Description,
+		})
+		if err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionUserAdminCreate,
+			TargetType: audit.TargetUser,
+			TargetID:   u.ID,
+			Detail:     map[string]any{"username": u.Username, "role": u.Role},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusCreated, toUserDTO(u))
+	}
+}
+
+// makeResetUserPasswordHandler 返回 POST /api/admin/users/{id}/password handler。
+// 管理员重置他人口令;不改会话——「改了 hash 但别人会话还活着」是既有 admin 改密的
+// 同一取舍,这里保持一致而不自创半套撤销。
+func makeResetUserPasswordHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if us == nil {
+			writeError(w, http.StatusServiceUnavailable, "users_unavailable", "用户服务未初始化")
+			return
+		}
+		id := chi.URLParam(r, "id")
+		if isBootstrapAdminRow(id) {
+			writeError(w, http.StatusConflict, "bootstrap_admin_row",
+				"内置管理员的口令请在「账户设置」里改(会同步 admin_user),此处只管普通账号")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if len(req.Password) < users.MinPasswordLen {
+			writeError(w, http.StatusUnprocessableEntity, "weak_password", "口令至少 8 位")
+			return
+		}
+		target, err := us.GetByID(id)
+		if err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		hash, err := auth.HashPassword(req.Password)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+			return
+		}
+		if err := us.SetPassword(id, hash); err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionUserPasswordReset,
+			TargetType: audit.TargetUser,
+			TargetID:   target.ID,
+			Detail:     map[string]any{"username": target.Username},
+			IP:         clientIP(r),
+		})
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// makePatchUserHandler 返回 PATCH /api/admin/users/{id} handler。
+// 支持改描述与启用/禁用;改口令走 /password(审计动作不同)。
+func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if us == nil {
+			writeError(w, http.StatusServiceUnavailable, "users_unavailable", "用户服务未初始化")
+			return
+		}
+		id := chi.URLParam(r, "id")
+		if isBootstrapAdminRow(id) {
+			writeError(w, http.StatusConflict, "bootstrap_admin_row",
+				"内置管理员不可在此禁用(口令也用「账户设置」改)")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			Description *string `json:"description"`
+			Enabled     *bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if req.Description == nil && req.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "至少提供 description 或 enabled")
+			return
+		}
+		// 禁用自己在写库前拦下:把唯一的管理员账号禁用掉之后再没人能改回来。
+		if req.Enabled != nil && !*req.Enabled && id == sessionUserID(r) {
+			writeError(w, http.StatusConflict, "self_disable", "不能禁用自己的账号")
+			return
+		}
+		if _, err := us.GetByID(id); err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		if req.Description != nil {
+			if err := us.SetDescription(id, *req.Description); err != nil {
+				writeUsersError(w, err)
+				return
+			}
+		}
+		if req.Enabled != nil {
+			if err := us.SetEnabled(id, *req.Enabled); err != nil {
+				writeUsersError(w, err)
+				return
+			}
+		}
+		fresh, err := us.GetByID(id)
+		if err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		action := audit.ActionUserUpdate
+		if req.Enabled != nil {
+			action = audit.ActionUserEnabled
+			if !*req.Enabled {
+				action = audit.ActionUserDisabled
+			}
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     action,
+			TargetType: audit.TargetUser,
+			TargetID:   fresh.ID,
+			Detail:     map[string]any{"username": fresh.Username, "role": fresh.Role, "enabled": fresh.Enabled},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, toUserDTO(fresh))
 	}
 }

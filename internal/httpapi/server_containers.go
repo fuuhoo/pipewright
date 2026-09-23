@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/target"
 )
 
@@ -225,13 +226,19 @@ func makeServerContainersHandler(svc target.Service) http.HandlerFunc {
 
 // makeAllServerContainersHandler 返回 GET /api/servers/containers(认证,只读;批量聚合)。
 // 逐台并行采集(有界并发),各自独立:某台失败仅该台 reachable:false,不连累其它台、不 500。
-func makeAllServerContainersHandler(svc target.Service) http.HandlerFunc {
+// 聚合范围 = actor 可见分组内的服务器(否则私有组的机器会借这个总览漏出去)。
+func makeAllServerContainersHandler(svc target.Service, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
 			return
 		}
-		servers, err := svc.List(r.Context())
+		visible, err := visibleGroups(r, acc)
+		if err != nil {
+			writeAccessError(w, err)
+			return
+		}
+		servers, err := svc.ListScoped(r.Context(), target.ListFilter{Visible: visible})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return

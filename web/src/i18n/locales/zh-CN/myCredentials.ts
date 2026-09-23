@@ -18,6 +18,9 @@ export default {
   scopeGlobal: '全局',
   scopePersonal: '个人',
 
+  stateDisabled: '已禁用',
+  disabledHint: '管理员已禁用该凭据,引用它的流水线会失败,需管理员启用。',
+
   vaultUnconfigured: '未配置 master key,凭据保险库不可用。请设置 PIPEWRIGHT_MASTER_KEY 后重启。',
   errLoad: '加载凭据失败',
   errConn: '无法连接服务器',

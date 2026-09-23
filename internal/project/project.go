@@ -14,9 +14,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/store"
 	"github.com/huangchengsir/pipewright/internal/vault"
 )
@@ -41,6 +43,10 @@ var (
 	ErrCredentialNotFound = errors.New("project: referenced credential not found")
 	// ErrProjectHasActiveRuns 表示项目有进行中的运行(queued/running),不可删除。
 	ErrProjectHasActiveRuns = errors.New("project: has active runs")
+	// ErrGroupNotFound 表示 group_id 指向的分组不存在。projects.group_id 有意不建外键
+	// (见迁移 0056),所以这里必须自己挡:悬挂引用会让 access 按最私有一档收敛,
+	// 结果是全组人都打不开这个项目。
+	ErrGroupNotFound = errors.New("project: group not found")
 )
 
 // 分页上限常量:防全量返回拖垮内存/响应。
@@ -66,8 +72,11 @@ type Project struct {
 	// PRStatusEnabled 是「PR 状态检查」开关(Story 8-9 / FR-8-9):开启后 run 终态据项目仓库识别
 	// GitHub/Gitee,经项目凭据回写该 commit 的提交状态(PR 检查)。默认 false。
 	PRStatusEnabled bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// GroupID 是所属资源分组(resource_groups.id);'' = 未归组 = 全员可见可操作(存量即此态)。
+	// 权限判定见 internal/access + internal/group。
+	GroupID   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // CreateInput 是创建项目的入参。
@@ -76,6 +85,9 @@ type CreateInput struct {
 	RepoURL       string
 	CredentialID  string
 	DefaultBranch string // 可空;为空时由 ls-remote 探测远端 HEAD 填充
+	// GroupID 可空('' = 未归组)。归组权限(能否放进这个组)由 HTTP 层校验,
+	// 本包只管落库——分组是否存在不该由仓库连通性校验来回答。
+	GroupID string
 }
 
 // UpdateInput 是更新项目的入参;指针字段为 nil 表示不修改。
@@ -87,6 +99,9 @@ type UpdateInput struct {
 	PacEnabled *bool
 	// PRStatusEnabled 切换「PR 状态检查」开关;nil 表示不修改。
 	PRStatusEnabled *bool
+	// GroupID 改归属;nil = 不动,指向 '' = 移出分组。归组要求两侧的 Manage,
+	// 由 HTTP 层把关(access.ActManage on 旧组与新组)。
+	GroupID *string
 }
 
 // TestCloneResult 是测试连接的结果(成功时携探测到的默认分支与远端引用列表)。
@@ -126,11 +141,13 @@ type Service interface {
 	// Create 先用引用凭据做 ls-remote 校验,成功才入库;返回项目视图(无明文)。
 	Create(ctx context.Context, in CreateInput) (*Project, error)
 	// List 返回第 1 页项目(硬上限 MaxPageSize;join credentials 取展示名;无明文)。
-	// 保留此签名以兼容既有调用;需要分页/总数时用 ListPaged。
-	List(ctx context.Context) ([]Project, error)
+	// visible 是分组可见性过滤(access.Service.VisibleGroups 的产物);
+	// 传零值 ListFilter{} 即「GroupIDs=[未归组]」,会把已归组项目挡在列表外,
+	// 管理员/不受限请传 ListFilter{Unrestricted: true}。
+	List(ctx context.Context, visible access.ListFilter) ([]Project, error)
 	// ListPaged 按页返回项目(page 从 1 起;pageSize<=0 用默认;超过 MaxPageSize 收敛),
-	// 并返回总数供前端分页。
-	ListPaged(ctx context.Context, page, pageSize int) (*ListResult, error)
+	// 并返回总数供前端分页。total 同样受 visible 约束——否则前端会按全量算页数。
+	ListPaged(ctx context.Context, page, pageSize int, visible access.ListFilter) (*ListResult, error)
 	// Get 返回单个项目(无明文)。
 	Get(ctx context.Context, id string) (*Project, error)
 	// Update 改名/改默认分支/改绑凭据;改绑凭据时重做 ls-remote 校验。
@@ -173,6 +190,20 @@ func validateCreate(in CreateInput) error {
 		return ErrEmptyCredentialID
 	}
 	return nil
+}
+
+// groupExists 校验 resource_groups.id 存在。projects.group_id 没有外键(迁移 0056 说明了
+// 为什么不建),所以写入前必须自己挡一次,否则会留下悬挂引用。
+func (s *service) groupExists(ctx context.Context, groupID string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM resource_groups WHERE id = ?`, groupID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("project: check group: %w", err)
+	}
+	return true, nil
 }
 
 // gitAuthOrErr 取凭据明文并映射干净领域错误;token 仅进程内存在。
@@ -230,6 +261,17 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 		return nil, err
 	}
 
+	// 归组标记先归一化空白,校验与入库用同一个值。
+	groupID := strings.TrimSpace(in.GroupID)
+	if groupID != "" {
+		ok, err := s.groupExists(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrGroupNotFound
+		}
+	}
 	branch, err := s.probe(ctx, in.RepoURL, in.CredentialID)
 	if err != nil {
 		return nil, err
@@ -244,9 +286,9 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 	nowStr := now.Format(time.RFC3339)
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Name, in.RepoURL, defaultBranch, in.CredentialID, nowStr, nowStr,
+		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, group_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Name, in.RepoURL, defaultBranch, in.CredentialID, groupID, nowStr, nowStr,
 	)
 	if err != nil {
 		// 外键失败(凭据在校验后被删等竞态)归为凭据不存在;其余为内部错误。
@@ -259,8 +301,8 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 	return s.Get(ctx, id)
 }
 
-func (s *service) List(ctx context.Context) ([]Project, error) {
-	res, err := s.ListPaged(ctx, 1, MaxPageSize)
+func (s *service) List(ctx context.Context, visible access.ListFilter) ([]Project, error) {
+	res, err := s.ListPaged(ctx, 1, MaxPageSize, visible)
 	if err != nil {
 		return nil, err
 	}
@@ -281,24 +323,32 @@ func normalizePage(page, pageSize int) (int, int) {
 	return page, pageSize
 }
 
-func (s *service) ListPaged(ctx context.Context, page, pageSize int) (*ListResult, error) {
+func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible access.ListFilter) (*ListResult, error) {
 	page, pageSize = normalizePage(page, pageSize)
 
+	// 分组可见性条件同时作用于 COUNT 与列表,否则分页总数会把别人的项目算进来。
+	where, whereArgs := visible.Clause("p.group_id")
+
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM projects`).Scan(&total); err != nil {
+	countSQL := `SELECT COUNT(1) FROM projects p`
+	if where != "" {
+		countSQL += " WHERE " + where
+	}
+	if err := s.db.QueryRowContext(ctx, countSQL, whereArgs...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("project: count: %w", err)
 	}
 
 	offset := (page - 1) * pageSize
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT p.id, p.name, p.repo_url, p.default_branch, p.credential_id,
-		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.created_at, p.updated_at
+	listSQL := `SELECT p.id, p.name, p.repo_url, p.default_branch, p.credential_id,
+	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.created_at, p.updated_at
 		 FROM projects p
-		 LEFT JOIN credentials c ON c.id = p.credential_id
-		 ORDER BY p.created_at DESC, p.id
-		 LIMIT ? OFFSET ?`,
-		pageSize, offset,
-	)
+		 LEFT JOIN credentials c ON c.id = p.credential_id`
+	if where != "" {
+		listSQL += " WHERE " + where
+	}
+	listSQL += " ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?"
+	listArgs := append(append([]any{}, whereArgs...), pageSize, offset)
+	rows, err := s.db.QueryContext(ctx, listSQL, listArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("project: list: %w", err)
 	}
@@ -321,7 +371,7 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int) (*ListResul
 func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT p.id, p.name, p.repo_url, p.default_branch, p.credential_id,
-		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.created_at, p.updated_at
+		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.created_at, p.updated_at
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
 		 WHERE p.id = ?`, id,
@@ -338,11 +388,11 @@ func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 
 func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Project, error) {
 	// 先取当前行(需 repo_url + credential_id 以便在改绑凭据时重做校验)。
-	var name, repoURL, defaultBranch, credentialID string
+	var name, repoURL, defaultBranch, credentialID, groupID string
 	var pacInt, prStatusInt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, repo_url, default_branch, credential_id, pac_enabled, pr_status_enabled FROM projects WHERE id = ?`, id,
-	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt)
+		`SELECT name, repo_url, default_branch, credential_id, pac_enabled, pr_status_enabled, group_id FROM projects WHERE id = ?`, id,
+	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt, &groupID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -377,6 +427,18 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 	if in.PRStatusEnabled != nil {
 		prStatusEnabled = *in.PRStatusEnabled
 	}
+	if in.GroupID != nil {
+		groupID = strings.TrimSpace(*in.GroupID)
+		if groupID != "" {
+			ok, err := s.groupExists(ctx, groupID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrGroupNotFound
+			}
+		}
+	}
 
 	pacInt = 0
 	if pacEnabled {
@@ -388,8 +450,8 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 	}
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE projects SET name = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, updated_at = ? WHERE id = ?`,
-		name, defaultBranch, credentialID, pacInt, prStatusInt, nowStr, id,
+		`UPDATE projects SET name = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, updated_at = ? WHERE id = ?`,
+		name, defaultBranch, credentialID, pacInt, prStatusInt, groupID, nowStr, id,
 	)
 	if err != nil {
 		if isForeignKeyErr(err) {
@@ -450,7 +512,7 @@ func scanProject(sc scanner) (*Project, error) {
 	var pacInt, prStatusInt int
 	if err := sc.Scan(
 		&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.CredentialID,
-		&p.CredentialName, &pacInt, &prStatusInt, &createdStr, &updatedStr,
+		&p.CredentialName, &pacInt, &prStatusInt, &p.GroupID, &createdStr, &updatedStr,
 	); err != nil {
 		return nil, err
 	}

@@ -1,19 +1,24 @@
 /**
- * Users API — v6.2 §3.5 / §5.2(阶段 9 最小骨架).
+ * Users API — v6.2 §3.5 / §5.2 用户管理(admin-only)。
  *
- *   GET /api/admin/users       → { items: User[] }
- *   GET /api/admin/users/:id   → User
+ *   GET    /api/admin/users              → { items: User[] }(默认不含已禁用)
+ *   GET    /api/admin/users/:id          → User
+ *   POST   /api/admin/users              → User   建号(用户名 + 初始口令 + 角色)
+ *   POST   /api/admin/users/:id/password → 204    重置口令
+ *   PATCH  /api/admin/users/:id          → User   改描述 / 启用禁用
  *
- * 完整用户管理(邀请 token / 注册 / 启用禁用 / 改角色)是后续 story;当前后端
- * 只暴露只读列表与单查,页面据此展示。响应体绝不含 password_hash。
+ * 响应体绝不含 password_hash;口令只在请求里出现一次。
+ * 内置管理员那一行(id 尾号 …0001)的口令/启停由「账户设置」管,上述写端点对它 409。
  */
 
 import { http } from './http'
 
+export type UserRole = 'admin' | 'user'
+
 export interface User {
   id: string
   username: string
-  role: 'admin' | 'user'
+  role: UserRole
   enabled: boolean
   description: string
   createdAt: string
@@ -26,11 +31,49 @@ interface ListEnvelope {
   items: User[]
 }
 
-export async function listUsers(): Promise<User[]> {
-  const res = await http.get<ListEnvelope>('/api/admin/users')
+export interface ListUsersParams {
+  role?: UserRole
+  /** 列出已禁用账号(默认 false)。 */
+  includeDisabled?: boolean
+}
+
+export interface CreateUserInput {
+  username: string
+  password: string
+  role: UserRole
+  description?: string
+}
+
+export interface UpdateUserInput {
+  description?: string
+  enabled?: boolean
+}
+
+export async function listUsers(params: ListUsersParams = {}): Promise<User[]> {
+  const qs = new URLSearchParams()
+  if (params.role) qs.set('role', params.role)
+  if (params.includeDisabled) qs.set('includeDisabled', '1')
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await http.get<ListEnvelope>(`/api/admin/users${suffix}`)
   return res.items ?? []
 }
 
 export async function getUser(id: string): Promise<User> {
   return http.get<User>(`/api/admin/users/${id}`)
 }
+
+export async function createUser(input: CreateUserInput): Promise<User> {
+  return http.post<User>('/api/admin/users', input)
+}
+
+/** 重置他人口令(204;不改会话,与管理员改自己口令同一取舍)。 */
+export async function resetUserPassword(id: string, password: string): Promise<void> {
+  return http.post<void>(`/api/admin/users/${id}/password`, { password })
+}
+
+export async function updateUser(id: string, input: UpdateUserInput): Promise<User> {
+  return http.patch<User>(`/api/admin/users/${id}`, input)
+}
+
+/** 后端 users.MinPasswordLen;前端据此提前拦下过短口令。 */
+export const MIN_PASSWORD_LEN = 8

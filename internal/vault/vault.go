@@ -66,6 +66,7 @@ type Credential struct {
 	Description string // v6.2 阶段 5:admin 备注
 	Enabled     bool   // v6.2 阶段 5:软禁用开关
 	DisabledBy  string // v6.2 阶段 5:禁用操作者 users.id
+	DisabledAt  *time.Time
 	CreatedBy   string // v6.2 阶段 5:创建者 users.id
 	LastUsedAt  *time.Time
 	CreatedAt   time.Time
@@ -73,22 +74,24 @@ type Credential struct {
 
 // CreateInput 是创建凭据的入参(含明文 secret,不被持久化为明文)。
 type CreateInput struct {
-	Name     string
-	Type     string
-	Scope    string
-	Username string
-	Secret   string
-	OwnerID  string // v6.2 阶段 5:personal 凭据必填 users.id
+	Name      string
+	Type      string
+	Scope     string
+	Username  string
+	Secret    string
+	OwnerID   string // v6.2 阶段 5:personal 凭据必填 users.id
+	CreatedBy string // v6.2 阶段 5:创建者 users.id;global 凭据即管理员行 id
 }
 
 // UpdateInput 是更新凭据的入参;指针字段为 nil 表示不修改。
 // 给 Secret 即轮换密钥(重新加密)。
 type UpdateInput struct {
-	Name     *string
-	Scope    *string
-	Username *string
-	Secret   *string
-	OwnerID  *string // v6.2 阶段 5:personal 必填
+	Name        *string
+	Scope       *string
+	Username    *string
+	Description *string // admin 备注
+	Secret      *string
+	OwnerID     *string // v6.2 阶段 5:personal 必填
 }
 
 type GitAuth struct {
@@ -133,9 +136,13 @@ type Vault interface {
 	RevealWithActor(actor *Actor, id string) (string, error)
 	// DeleteWithActor 仅 admin 或凭据 owner 可删。
 	DeleteWithActor(actor *Actor, id string) error
+	// UpdateWithActor 仅 admin 或凭据 owner 可改;非 admin 不能把 personal 升成 global。
+	UpdateWithActor(actor *Actor, id string, in UpdateInput) (*Credential, error)
 	// DisableWithActor admin 禁用 personal 凭据(enabled=0+disabled_by+disabled_at);
 	// user 调 → ErrForbidden;global 凭据 → ErrForbidden。
 	DisableWithActor(actor *Actor, id string) error
+	// EnableWithActor admin 恢复被禁用的 personal 凭据。
+	EnableWithActor(actor *Actor, id string) error
 }
 
 // service 是 store 支撑的 Vault 实现。master key 为 nil 时为「未配置」态。
@@ -193,6 +200,10 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 	if in.Secret == "" {
 		return nil, ErrEmptySecret
 	}
+	// personal 凭据没有归属就等于没人能再看见它,故在入库前拒掉,而不是静默落成全局。
+	if in.Scope == "personal" && in.OwnerID == "" {
+		return nil, ErrOwnerRequired
+	}
 	if err := validateSecret(in.Type, in.Secret); err != nil {
 		return nil, err
 	}
@@ -206,11 +217,14 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
+	ownerID, createdBy := strings.TrimSpace(in.OwnerID), strings.TrimSpace(in.CreatedBy)
 
 	_, err = s.db.Exec(
-		`INSERT INTO credentials (id, name, type, scope, username, ciphertext, masked_value, last_used_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-		id, in.Name, in.Type, in.Scope, strings.TrimSpace(in.Username), sealed, masked, nowStr, nowStr,
+		`INSERT INTO credentials (id, name, type, scope, username, owner_id, created_by, enabled,
+		                         ciphertext, masked_value, last_used_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?)`,
+		id, in.Name, in.Type, in.Scope, strings.TrimSpace(in.Username), ownerID, createdBy,
+		sealed, masked, nowStr, nowStr,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("vault: insert credential: %w", err)
@@ -221,8 +235,11 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 		Name:        in.Name,
 		Type:        in.Type,
 		Scope:       in.Scope,
+		OwnerID:     ownerID,
 		Username:    strings.TrimSpace(in.Username),
 		MaskedValue: masked,
+		Enabled:     true,
+		CreatedBy:   createdBy,
 		LastUsedAt:  nil,
 		CreatedAt:   now,
 	}, nil
@@ -233,8 +250,7 @@ func (s *service) List() ([]Credential, error) {
 		return nil, ErrVaultUnconfigured
 	}
 	rows, err := s.db.Query(
-		`SELECT id, name, type, scope, username, masked_value, last_used_at, created_at
-		 FROM credentials ORDER BY created_at DESC, id`,
+		"SELECT " + credentialViewCols + " FROM credentials ORDER BY created_at DESC, id",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("vault: list credentials: %w", err)
@@ -260,12 +276,16 @@ func (s *service) Get(id string) (string, error) {
 		return "", ErrVaultUnconfigured
 	}
 	var sealed []byte
-	err := s.db.QueryRow(`SELECT ciphertext FROM credentials WHERE id = ?`, id).Scan(&sealed)
+	var enabled int
+	err := s.db.QueryRow(`SELECT ciphertext, enabled FROM credentials WHERE id = ?`, id).Scan(&sealed, &enabled)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
 		}
 		return "", fmt.Errorf("vault: get credential: %w", err)
+	}
+	if enabled != 1 {
+		return "", ErrDisabledCredential
 	}
 	plaintext, err := open(s.key, sealed)
 	if err != nil {
@@ -284,12 +304,16 @@ func (s *service) GetGitAuth(id string) (GitAuth, error) {
 	}
 	var username string
 	var sealed []byte
-	err := s.db.QueryRow(`SELECT username, ciphertext FROM credentials WHERE id = ?`, id).Scan(&username, &sealed)
+	var enabled int
+	err := s.db.QueryRow(`SELECT username, ciphertext, enabled FROM credentials WHERE id = ?`, id).Scan(&username, &sealed, &enabled)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return GitAuth{}, ErrNotFound
 		}
 		return GitAuth{}, fmt.Errorf("vault: get git auth: %w", err)
+	}
+	if enabled != 1 {
+		return GitAuth{}, ErrDisabledCredential
 	}
 	plaintext, err := open(s.key, sealed)
 	if err != nil {
@@ -305,12 +329,16 @@ func (s *service) Reveal(id string) (string, error) {
 		return "", ErrVaultUnconfigured
 	}
 	var sealed []byte
-	err := s.db.QueryRow(`SELECT ciphertext FROM credentials WHERE id = ?`, id).Scan(&sealed)
+	var enabled int
+	err := s.db.QueryRow(`SELECT ciphertext, enabled FROM credentials WHERE id = ?`, id).Scan(&sealed, &enabled)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
 		}
 		return "", fmt.Errorf("vault: reveal credential: %w", err)
+	}
+	if enabled != 1 {
+		return "", ErrDisabledCredential
 	}
 	plaintext, err := open(s.key, sealed)
 	if err != nil {
@@ -340,10 +368,10 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 	}
 
 	// 先取出当前行(需 type 以便在轮换 secret 时重算掩码)。
-	var name, credType, scope, username, masked string
+	var name, credType, scope, username, masked, description string
 	err := s.db.QueryRow(
-		`SELECT name, type, scope, username, masked_value FROM credentials WHERE id = ?`, id,
-	).Scan(&name, &credType, &scope, &username, &masked)
+		`SELECT name, type, scope, username, masked_value, description FROM credentials WHERE id = ?`, id,
+	).Scan(&name, &credType, &scope, &username, &masked, &description)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -365,6 +393,9 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 	if in.Username != nil {
 		username = strings.TrimSpace(*in.Username)
 	}
+	if in.Description != nil {
+		description = strings.TrimSpace(*in.Description)
+	}
 	if in.Secret != nil {
 		if *in.Secret == "" {
 			return nil, ErrEmptySecret
@@ -384,13 +415,13 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	if rotate {
 		_, err = s.db.Exec(
-			`UPDATE credentials SET name = ?, scope = ?, username = ?, ciphertext = ?, masked_value = ?, updated_at = ? WHERE id = ?`,
-			name, scope, username, newSealed, masked, nowStr, id,
+			`UPDATE credentials SET name = ?, scope = ?, username = ?, description = ?, ciphertext = ?, masked_value = ?, updated_at = ? WHERE id = ?`,
+			name, scope, username, description, newSealed, masked, nowStr, id,
 		)
 	} else {
 		_, err = s.db.Exec(
-			`UPDATE credentials SET name = ?, scope = ?, username = ?, updated_at = ? WHERE id = ?`,
-			name, scope, username, nowStr, id,
+			`UPDATE credentials SET name = ?, scope = ?, username = ?, description = ?, updated_at = ? WHERE id = ?`,
+			name, scope, username, description, nowStr, id,
 		)
 	}
 	if err != nil {
@@ -455,10 +486,7 @@ func (s *service) OpenSecret(sealed []byte) ([]byte, error) {
 
 // getView 回读单条凭据的掩码视图。
 func (s *service) getView(id string) (*Credential, error) {
-	row := s.db.QueryRow(
-		`SELECT id, name, type, scope, username, masked_value, last_used_at, created_at
-		 FROM credentials WHERE id = ?`, id,
-	)
+	row := s.db.QueryRow("SELECT "+credentialViewCols+" FROM credentials WHERE id = ?", id)
 	c, err := scanCredential(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -474,14 +502,24 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+// credentialViewCols 是掩码视图的统一列序;所有读视图的 SELECT 与 scanCredential 必须同序。
+// 刻意不含 ciphertext:密文只由 Get/GetGitAuth/Reveal 单独取。
+const credentialViewCols = `id, name, type, scope, owner_id, username, masked_value, description,
+		                    enabled, disabled_by, disabled_at, created_by, last_used_at, created_at`
+
 // scanCredential 把一行扫描为 Credential 掩码视图(永不读 ciphertext)。
 func scanCredential(sc scanner) (*Credential, error) {
 	var c Credential
-	var lastUsedStr sql.NullString
+	var lastUsedStr, disabledAtStr sql.NullString
 	var createdStr string
-	if err := sc.Scan(&c.ID, &c.Name, &c.Type, &c.Scope, &c.Username, &c.MaskedValue, &lastUsedStr, &createdStr); err != nil {
+	var enabled int
+	if err := sc.Scan(
+		&c.ID, &c.Name, &c.Type, &c.Scope, &c.OwnerID, &c.Username, &c.MaskedValue, &c.Description,
+		&enabled, &c.DisabledBy, &disabledAtStr, &c.CreatedBy, &lastUsedStr, &createdStr,
+	); err != nil {
 		return nil, err
 	}
+	c.Enabled = enabled == 1
 	created, err := time.Parse(time.RFC3339, createdStr)
 	if err != nil {
 		return nil, fmt.Errorf("vault: parse created_at: %w", err)
@@ -494,41 +532,60 @@ func scanCredential(sc scanner) (*Credential, error) {
 		}
 		c.LastUsedAt = &t
 	}
+	if disabledAtStr.Valid && disabledAtStr.String != "" {
+		t, err := time.Parse(time.RFC3339, disabledAtStr.String)
+		if err != nil {
+			return nil, fmt.Errorf("vault: parse disabled_at: %w", err)
+		}
+		c.DisabledAt = &t
+	}
 	return &c, nil
 }
 
 // ---- v6.2 阶段 5:Actor-aware 凭据访问方法 ----
 // ListWithActor 按 Actor 推导的 ListFilter 列凭据。
 //   - Actor=nil 或 Role="admin" → 按请求的 f 过滤(可见 global+所有 personal)
-//   - Role="user"             → 仅自己的 personal(强制覆盖 f.OwnerID)
+//   - Role="user"             → global + 自己的 personal(强制覆盖 f.OwnerID)
 //
-// 兼容版本:当前阶段 credentials 表尚未落地 0053_credentials_owner 迁移(不含
-// owner_id/description/disabled_by/created_by/enabled 列),因此 SQL 只按 scope
-// 过滤,OwnerID 等元数据在视图层填空。0053 重做后切换为 scanCredentialRBAC +
-// 含新列的 SELECT(逻辑分支已在单元测试中覆盖)。
+// 两个 scope 开关都关 → 返回空集(不是「不过滤」)。默认值 fail open 会让一个忘了
+// 填 filter 的调用点把全部凭据列出来,这里把它堵在 SQL 生成之前。
 func (s *service) ListWithActor(actor *Actor, f ListFilter) ([]Credential, error) {
 	if !s.configured() {
 		return nil, ErrVaultUnconfigured
 	}
 	ef := effectiveFilter(actor, f)
+	if !ef.IncludeGlobal && !ef.IncludePersonal {
+		return []Credential{}, nil
+	}
 
 	conds := []string{"1=1"}
-	var scopeCond string
+	var args []any
+	// 「共享」判定用 `scope <> 'personal'` 而不是 `scope = 'global'`:0058 之前建的老凭据
+	// scope 是空串(那时没有 scope 概念),按等值判定会让它们在列表里凭空消失。
+	const sharedCond = "scope <> 'personal'"
 	switch {
-	case ef.IncludeGlobal && !ef.IncludePersonal:
-		scopeCond = "scope = 'global'"
-	case !ef.IncludeGlobal && ef.IncludePersonal:
-		scopeCond = "scope = 'personal'"
-	default:
-		// 全开:global + personal,无需 scope 条件
+	case ef.IncludeGlobal && ef.IncludePersonal && ef.OwnerID != "":
+		// 普通用户视角:共享的 + 自己的 personal。两者的并集必须写在同一条 SQL 里,
+		// 否则「both + owner」会被误当成「不过滤 owner」而泄漏他人 personal。
+		conds = append(conds, "("+sharedCond+" OR (scope = 'personal' AND owner_id = ?))")
+		args = append(args, ef.OwnerID)
+	case ef.IncludeGlobal && ef.IncludePersonal:
+		// 两个 scope 都要且不限归属:admin / 系统调用。
+	case ef.IncludeGlobal:
+		conds = append(conds, sharedCond)
+	case ef.IncludePersonal:
+		conds = append(conds, "scope = 'personal'")
+		if ef.OwnerID != "" {
+			conds = append(conds, "owner_id = ?")
+			args = append(args, ef.OwnerID)
+		}
 	}
-	if scopeCond != "" {
-		conds = append(conds, scopeCond)
+	if !ef.IncludeDisabled {
+		conds = append(conds, "enabled = 1")
 	}
-	query := "SELECT id, name, type, scope, username, masked_value, " +
-		"last_used_at, created_at FROM credentials WHERE " +
+	query := "SELECT " + credentialViewCols + " FROM credentials WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY created_at DESC, id"
-	rows, err := s.db.Query(query)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("vault: list with actor: %w", err)
 	}
@@ -590,10 +647,19 @@ func (s *service) DeleteWithActor(actor *Actor, id string) error {
 //   - Actor.Role != "admin" → ErrForbidden
 //   - 凭据 scope != "personal" → ErrForbidden(global 凭据不应被个别 disable)
 //
-// 兼容版本:0053_credentials_owner 迁移尚未落地,credentials 表不含 enabled/
-// disabled_by/disabled_at 列。当前实现仅校验 actor 权限 + scope;真正的 UPDATE
-// 待 0053 重做后再启用(逻辑分支已在单元测试中覆盖 authorizeWrite)。
+// 禁用只改元数据:密文原样留着,重新启用即可恢复。取用路径(Get/GetGitAuth/Reveal)
+// 对 enabled=0 直接报 ErrDisabledCredential,所以禁用会立刻让引用它的流水线失败——
+// 这正是「立刻停用一把可疑令牌」想要的效果。
 func (s *service) DisableWithActor(actor *Actor, id string) error {
+	return s.setEnabledWithActor(actor, id, false)
+}
+
+// EnableWithActor admin 恢复被禁用的 personal 凭据。
+func (s *service) EnableWithActor(actor *Actor, id string) error {
+	return s.setEnabledWithActor(actor, id, true)
+}
+
+func (s *service) setEnabledWithActor(actor *Actor, id string, enabled bool) error {
 	if !actor.IsAdmin() {
 		return ErrForbidden
 	}
@@ -605,8 +671,39 @@ func (s *service) DisableWithActor(actor *Actor, id string) error {
 		// 用 ErrForbidden 而非裸 error:HTTP 层据此返回 403 而不是 500。
 		return ErrForbidden
 	}
-	// 0053 未落地:enabled 列不存在,跳过 UPDATE,等迁移重做后启用。
+	// 写的是 enabled 列:1=可用。别把「disable」当成 1 写进去。
+	n := 1
+	disabledBy, disabledAt := "", ""
+	if !enabled {
+		n = 0
+		disabledBy = actor.UserID
+		disabledAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.Exec(
+		`UPDATE credentials SET enabled = ?, disabled_by = ?, disabled_at = ?, updated_at = ? WHERE id = ?`,
+		n, disabledBy, disabledAt, now, id,
+	); err != nil {
+		return fmt.Errorf("vault: set credential enabled: %w", err)
+	}
 	return nil
+}
+
+// UpdateWithActor 改凭据元数据/轮换密钥,非 admin 仅可改自己的 personal。
+// 归属与开关不走本方法:owner_id 只由 admin 通过 disable/enable 与建号路径改动。
+func (s *service) UpdateWithActor(actor *Actor, id string, in UpdateInput) (*Credential, error) {
+	cred, err := s.getView(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeWrite(actor, cred); err != nil {
+		return nil, err
+	}
+	if !actor.IsAdmin() && in.Scope != nil && *in.Scope != "personal" {
+		// 普通用户把自己的凭据升成 global = 把私钥共享给全站,必须拒绝。
+		return nil, ErrForbidden
+	}
+	return s.Update(id, in)
 }
 
 // authorizeRead 校验 actor 可读该凭据。

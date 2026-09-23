@@ -13,7 +13,8 @@ import {
   type CreateProjectInput,
   type UpdateProjectInput,
 } from '../api/projects'
-import { listCredentials, createCredential, type Credential, type CredentialType } from '../api/credentials'
+import { listCredentials, usableCredentials, createCredential, type Credential, type CredentialType } from '../api/credentials'
+import { listGroups, type Group } from '../api/groups'
 import { triggerManual, type RunDetail, type TriggerManualInput } from '../api/runs'
 import { listRefs, listCommits, type GitCommit } from '../api/refs'
 import RunParamsEditor from '../components/RunParamsEditor.vue'
@@ -22,11 +23,13 @@ import CredentialSelect from '../components/projects/CredentialSelect.vue'
 import RefPicker from '../components/projects/RefPicker.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { HttpError } from '../api/http'
+import { useSessionStore } from '../stores/session'
 import { isSupportedRepoUrl } from '../lib/gitUrl'
 
 // ─── i18n ─────────────────────────────────────────────────────────────────────
 
 const { t } = useI18n()
+const sessionStore = useSessionStore()
 
 // Map the Chinese-keyed project RunStatus to the shared `runStatus.*` i18n keys.
 const RUN_STATUS_KEY: Record<RunStatus, string> = {
@@ -95,8 +98,43 @@ const filteredProjects = computed(() => {
   return list
 })
 
-// ─── credentials for dropdown ─────────────────────────────────────────────────
+// ─── 分组(v6.2 分组权限)─────────────────────────────────────────────────────
+//
+// 后端已按可见范围过滤列表,所以这里只关心两件事:展示组名,以及「我能不能改它的归属」。
+// 归属改动要求对**旧组**有 Manage(未归组的 Manage 只有管理员有),故 canRegroup 与
+// 后端判定同构 —— 组名与 canManage 都来自 GET /api/groups,页面不重推权限规则。
 
+const groups = ref<Group[]>([])
+/** 可见分组(含 public):归组下拉的候选来自这里的 canManage 子集。 */
+const groupById = computed<Record<string, Group>>(() => {
+  const out: Record<string, Group> = {}
+  for (const g of groups.value) out[g.id] = g
+  return out
+})
+const manageableGroups = computed(() => groups.value.filter((g) => g.canManage))
+
+function groupName(id: string): string {
+  return id ? (groupById.value[id]?.name ?? t('groups.groupMissing')) : t('groups.ungrouped')
+}
+
+/** 能否改这个项目的归属:未归组只有管理员能挪,组内则看对该组的 canManage。 */
+function canRegroup(p: Project): boolean {
+  if (!p.groupId) return isAdminUser.value
+  return groupById.value[p.groupId]?.canManage === true
+}
+
+const isAdminUser = computed(() => sessionStore.user?.role === 'admin')
+
+async function loadGroups(): Promise<void> {
+  try {
+    groups.value = await listGroups()
+  } catch {
+    // 分组读不到不影响项目列表本身:归属列退化成「未归组」,不弹错误横幅。
+    groups.value = []
+  }
+}
+
+// ─── credentials for dropdown ─────────────────────────────────────────────────
 const credentials = ref<Credential[]>([])
 const credentialsLoading = ref(false)
 
@@ -119,7 +157,7 @@ const inlineCredTypeLabels = computed<Record<CredentialType, string>>(() => ({
 async function loadCredentials(): Promise<void> {
   credentialsLoading.value = true
   try {
-    credentials.value = await listCredentials()
+    credentials.value = usableCredentials(await listCredentials())
   } catch {
     // non-fatal; user will see empty dropdown with helper text
   } finally {
@@ -150,7 +188,7 @@ async function loadProjects(): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProjects(), loadCredentials()])
+  await Promise.all([loadProjects(), loadCredentials(), loadGroups()])
 })
 
 // ─── new project modal ────────────────────────────────────────────────────────
@@ -162,6 +200,7 @@ const createForm = ref({
   repoUrl: '',
   credentialId: '',
   defaultBranch: '',
+  groupId: '',
 })
 
 const createErrors = ref({
@@ -189,7 +228,7 @@ const remoteBranches = ref<string[]>([])
 const remoteTags = ref<string[]>([])
 
 function openCreateModal(): void {
-  createForm.value = { name: '', repoUrl: '', credentialId: '', defaultBranch: '' }
+  createForm.value = { name: '', repoUrl: '', credentialId: '', defaultBranch: '', groupId: '' }
   clearCreateErrors()
   createBanner.value = ''
   testState.value = 'idle'
@@ -347,6 +386,10 @@ async function handleCreateSubmit(): Promise<void> {
   if (createForm.value.defaultBranch.trim()) {
     input.defaultBranch = createForm.value.defaultBranch.trim()
   }
+  // 未归组是零值,不必发送;发出去反而让后端按「放进某个组」做 Manage 校验。
+  if (createForm.value.groupId) {
+    input.groupId = createForm.value.groupId
+  }
 
   try {
     const created = await createProject(input)
@@ -427,6 +470,74 @@ async function handleRenameSubmit(): Promise<void> {
     }
   } finally {
     renameSubmitting.value = false
+  }
+}
+
+// ─── 归组 modal ───────────────────────────────────────────────────────────────
+//
+// 与改名的区别:归属改动是权限边界变更(谁能看、谁能跑),所以候选只列「我管得动的组」,
+// 且选「移出到未归组」时对旧组的 Manage 由后端判定,这里只负责把 403 的原因说清楚。
+
+const groupModalOpen = ref(false)
+const groupingProject = ref<Project | null>(null)
+const groupValue = ref('')
+const groupBanner = ref('')
+const groupSubmitting = ref(false)
+
+/** 候选:未归组 + 我有 Manage 权的组;当前所在组即使不可管也要能显示。 */
+const groupOptions = computed<Group[]>(() => {
+  const cur = groupingProject.value?.groupId
+  if (!cur) return manageableGroups.value
+  const g = groupById.value[cur]
+  if (!g || g.canManage) return manageableGroups.value
+  return [g, ...manageableGroups.value]
+})
+
+function openGroupModal(p: Project): void {
+  groupingProject.value = p
+  groupValue.value = p.groupId
+  groupBanner.value = ''
+  groupModalOpen.value = true
+}
+
+function closeGroupModal(): void {
+  if (groupSubmitting.value) return
+  groupModalOpen.value = false
+  groupingProject.value = null
+}
+
+async function handleGroupSubmit(): Promise<void> {
+  if (!groupingProject.value) return
+  const origin = groupingProject.value
+  if (groupValue.value === origin.groupId) {
+    closeGroupModal()
+    return
+  }
+  groupSubmitting.value = true
+  groupBanner.value = ''
+  try {
+    const updated = await updateProject(origin.id, { groupId: groupValue.value })
+    projects.value = projects.value.map((p) => (p.id === updated.id ? updated : p))
+    groupModalOpen.value = false
+    groupingProject.value = null
+    // 把项目挪出可见范围后,列表要重新按新可见范围取一次(它可能不再属于我可见的组)。
+    if (!groupValue.value || !groupById.value[groupValue.value]?.canManage) {
+      await loadProjects()
+    }
+  } catch (err) {
+    if (err instanceof HttpError) {
+      if (err.status === 0) {
+        groupBanner.value = t('projects.errNetworkRetry')
+      } else if (err.status === 403) {
+        groupBanner.value = err.apiError?.message ?? t('groups.errForbidden')
+      } else {
+        groupBanner.value = err.apiError?.message ?? t('groups.errStatus', { status: err.status })
+      }
+    } else {
+      groupBanner.value = t('groups.errRetry')
+    }
+  } finally {
+    groupSubmitting.value = false
   }
 }
 
@@ -850,6 +961,24 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             <span class="meta-value meta-value--mono" :title="t('projects.credentialRefTitle')">
               {{ project.credentialName || '—' }}
             </span>
+          </div>
+
+          <!-- 分组:决定谁能看/能操作;有归属管理权时可直接点组名改组 -->
+          <div class="card-meta-row">
+            <span class="meta-label">{{ t('groups.fieldGroup') }}</span>
+            <button
+              v-if="canRegroup(project)"
+              class="meta-value group-link"
+              :title="t('groups.assignAction', { name: project.name })"
+              @click="openGroupModal(project)"
+            >
+              {{ groupName(project.groupId) }}
+            </button>
+            <span
+              v-else
+              class="meta-value"
+              :title="t('groups.lockedHint')"
+            >{{ groupName(project.groupId) }}</span>
           </div>
 
           <!-- Card footer: updatedAt + actions -->
@@ -1316,6 +1445,21 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             <span v-if="remoteBranches.length" class="field-hint">{{ t('projects.fieldDefaultBranchListed', { n: remoteBranches.length + remoteTags.length }) }}</span>
           </div>
 
+          <!-- 分组:决定谁能看/谁能操作;未归组 = 全员可见可操作 -->
+          <div class="field">
+            <label class="field-label" for="proj-group">
+              {{ t('groups.fieldGroup') }}
+              <span class="field-hint-inline">{{ t('groups.fieldGroupHint') }}</span>
+            </label>
+            <select id="proj-group" v-model="createForm.groupId" class="field-input" :disabled="createSubmitting">
+              <option value="">{{ t('groups.ungrouped') }}</option>
+              <option v-for="g in manageableGroups" :key="g.id" :value="g.id">
+                {{ g.name }} · {{ g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}
+              </option>
+            </select>
+            <span v-if="!manageableGroups.length" class="field-hint">{{ t('groups.noGroupsHint') }}</span>
+          </div>
+
           <!-- Test clone — left-bottom, separated from primary actions -->
           <div class="test-clone-row">
             <button
@@ -1470,6 +1614,81 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             >
               <span v-if="renameSubmitting" class="spinner" aria-hidden="true" />
               {{ renameSubmitting ? t('projects.saving') : t('projects.save') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 归组弹窗:改的是「谁能看、谁能操作」,所以候选只列我有管理权的组 -->
+  <Teleport to="body">
+    <div
+      v-if="groupModalOpen && groupingProject"
+      class="modal-scrim"
+      role="dialog"
+      :aria-label="t('groups.reassignTitle')"
+      aria-modal="true"
+      @keydown.esc="closeGroupModal"
+      @click.self="closeGroupModal"
+    >
+      <div class="modal modal--sm">
+        <div class="modal-head">
+          <div class="modal-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="modal-title">{{ t('groups.reassignTitle') }}</h3>
+            <p class="modal-sub">{{ t('groups.reassignSub', { name: groupingProject.name }) }}</p>
+          </div>
+          <button
+            class="modal-close"
+            :aria-label="t('projects.closeDialog')"
+            :disabled="groupSubmitting"
+            @click="closeGroupModal"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div v-if="groupBanner" class="banner banner--error modal-banner" role="alert">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {{ groupBanner }}
+        </div>
+
+        <form class="modal-form" novalidate @submit.prevent="handleGroupSubmit">
+          <div class="field">
+            <label class="field-label" for="group-select">{{ t('groups.fieldGroup') }}</label>
+            <select id="group-select" v-model="groupValue" class="field-input" :disabled="groupSubmitting">
+              <option value="">{{ t('groups.ungrouped') }}</option>
+              <option v-for="g in groupOptions" :key="g.id" :value="g.id">
+                {{ g.name }} · {{ g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}
+              </option>
+            </select>
+            <span class="field-hint">{{ t('groups.fieldGroupHint') }}</span>
+          </div>
+
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="groupSubmitting"
+              @click="closeGroupModal"
+            >{{ t('projects.cancel') }}</button>
+            <button
+              type="submit"
+              class="btn-primary"
+              :disabled="groupSubmitting"
+              :aria-busy="groupSubmitting"
+            >
+              <span v-if="groupSubmitting" class="spinner" aria-hidden="true" />
+              {{ groupSubmitting ? t('projects.saving') : t('projects.save') }}
             </button>
           </div>
         </form>
@@ -1895,6 +2114,20 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   font-size: 0.72rem;
   letter-spacing: 0.02em;
   user-select: none;
+}
+
+/* 分组值可点:只有对该资源归属有管理权时才渲染成按钮(见 canRegroup)。 */
+.group-link {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 0 auto;
+  font: inherit;
+  color: var(--color-primary);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 /* card footer */

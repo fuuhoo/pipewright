@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import SettingsVault from './SettingsVault.vue'
 
 // ─── stub the OAuth-callback collaborators ───────────────────────────────────
@@ -39,7 +40,8 @@ vi.mock('vue-router', () => ({
 
 function mountVault() {
   return mount(SettingsVault, {
-    global: { stubs: { Teleport: true, 'router-link': true } },
+    // 组件按 role 决定「查看明文 / 审计流」入口(均 admin-only),需要 pinia。
+    global: { plugins: [createPinia()], stubs: { Teleport: true, 'router-link': true } },
   })
 }
 

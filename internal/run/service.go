@@ -412,6 +412,11 @@ func (s *service) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		where = append(where, "pr.status = ?")
 		args = append(args, f.Status)
 	}
+	// 分组收敛:条件挂在上文 LEFT JOIN 的 projects 上(见 ListFilter.VisibleGroups)。
+	if gcond, gargs := f.VisibleGroups.Clause("p.group_id"); gcond != "" {
+		where = append(where, gcond)
+		args = append(args, gargs...)
+	}
 	clause := ""
 	if len(where) > 0 {
 		clause = " WHERE " + strings.Join(where, " AND ")
@@ -419,7 +424,7 @@ func (s *service) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 
 	var total int
 	if err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM pipeline_runs pr"+clause, args...,
+		"SELECT COUNT(1) FROM pipeline_runs pr LEFT JOIN projects p ON p.id = pr.project_id"+clause, args...,
 	).Scan(&total); err != nil {
 		return nil, fmt.Errorf("run: count runs: %w", err)
 	}

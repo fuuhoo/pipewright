@@ -89,12 +89,19 @@ function goVault(): void {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in credentials" :key="c.id">
-          <td class="cell-strong">{{ c.name }}</td>
+        <tr v-for="c in credentials" :key="c.id" :class="{ 'row--off': c.enabled === false }">
+          <td class="cell-strong">
+            {{ c.name }}
+            <span
+              v-if="c.enabled === false"
+              class="tag tag--off"
+              :title="t('myCredentials.disabledHint')"
+            >{{ t('myCredentials.stateDisabled') }}</span>
+          </td>
           <td><code class="mono">{{ c.type }}</code></td>
           <td>
-            <span class="tag" :class="c.scope === 'global' ? 'tag--global' : 'tag--personal'">
-              {{ c.scope === 'global' ? t('myCredentials.scopeGlobal') : t('myCredentials.scopePersonal') }}
+            <span class="tag" :class="c.scope === 'personal' ? 'tag--personal' : 'tag--global'">
+              {{ c.scope === 'personal' ? t('myCredentials.scopePersonal') : t('myCredentials.scopeGlobal') }}
             </span>
           </td>
           <td class="mono mono--sm">{{ c.maskedValue }}</td>
@@ -178,6 +185,14 @@ function goVault(): void {
 .tag--personal {
   background: rgba(168, 85, 247, 0.15);
   color: #9333ea;
+}
+.tag--off {
+  background: rgba(107, 114, 128, 0.18);
+  color: var(--color-faint);
+  margin-left: 6px;
+}
+.row--off .cell-strong {
+  opacity: 0.6;
 }
 .btn {
   padding: 7px 14px;

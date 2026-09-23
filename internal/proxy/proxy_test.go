@@ -86,6 +86,9 @@ func (f *fakeTarget) Upload(_ context.Context, _ string, content io.Reader, remo
 // 以下方法满足 target.Service 接口但 proxy 不调用(返回零值即可)。
 func (f *fakeTarget) Get(context.Context, string) (*target.Server, error) { return nil, nil }
 func (f *fakeTarget) List(context.Context) ([]*target.Server, error)      { return nil, nil }
+func (f *fakeTarget) ListScoped(context.Context, target.ListFilter) ([]*target.Server, error) {
+	return nil, nil
+}
 func (f *fakeTarget) Create(context.Context, target.CreateInput) (*target.Server, error) {
 	return nil, nil
 }
@@ -417,6 +420,9 @@ func (e *errTarget) Exec(context.Context, string, []string) (*target.ExecResult,
 func (e *errTarget) Upload(context.Context, string, io.Reader, string) error { return e.err }
 func (e *errTarget) Get(context.Context, string) (*target.Server, error)     { return nil, nil }
 func (e *errTarget) List(context.Context) ([]*target.Server, error)          { return nil, nil }
+func (e *errTarget) ListScoped(context.Context, target.ListFilter) ([]*target.Server, error) {
+	return nil, nil
+}
 func (e *errTarget) Create(context.Context, target.CreateInput) (*target.Server, error) {
 	return nil, nil
 }

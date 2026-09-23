@@ -21,6 +21,7 @@ import {
   Logout,
   Package,
   FileCode,
+  Users,
 } from '@vicons/tabler'
 import { NIcon } from 'naive-ui'
 import ThemeToggle from '../components/ThemeToggle.vue'
@@ -97,6 +98,8 @@ const navItems: NavItem[] = [
   // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(仅管理员;一级页面)。
   { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', adminOnly: true },
   { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', adminOnly: true },
+  // v6.2 分组权限:分组与权限页(组长也要进得来,故非 adminOnly)。
+  { name: 'groups', to: '/groups', icon: Users, labelKey: 'nav.groups', ariaKey: 'nav.groups' },
 ]
 
 // v6.2 §3.6:非管理员隐藏 adminOnly 入口(后端 RequireAdmin 仍是权威校验)。

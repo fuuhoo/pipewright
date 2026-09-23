@@ -1,14 +1,21 @@
 <script setup lang="ts">
 /**
- * v6.2 用户管理(admin-only)—— 阶段 9 最小骨架的只读视图。
+ * v6.2 用户管理(admin-only)。
  *
- * 后端当前只暴露 list / get(邀请注册、启用禁用是后续 story),页面据此展示
- * 两类用户:管理员(可与 admin_user 表双向同步)与普通用户。
+ * 两类行分开对待:内置管理员那一行是 admin_user 的同步行,口令与启停在「账户设置」里改,
+ * 写端点对它一律 409 —— 所以这里直接禁用按钮,而不是等报错。
+ * 默认列表不含已禁用账号(后端的 includeDisabled 取舍),要看到被停用的账号得勾上开关。
  */
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { listUsers } from '../../api/users'
-import type { User } from '../../api/users'
+import {
+  listUsers,
+  createUser,
+  updateUser,
+  resetUserPassword,
+  MIN_PASSWORD_LEN,
+} from '../../api/users'
+import type { User, UserRole } from '../../api/users'
 import { HttpError } from '../../api/http'
 
 const { t } = useI18n()
@@ -16,12 +23,15 @@ const { t } = useI18n()
 const loadState = ref<'idle' | 'loading' | 'error'>('idle')
 const loadError = ref('')
 const users = ref<User[]>([])
+const includeDisabled = ref(false)
+// 行内改描述失败的提示:它不属于「整页加载失败」,所以单独一条横幅而不是复用 loadError。
+const rowError = ref('')
 
 async function load(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    users.value = await listUsers()
+    users.value = await listUsers({ includeDisabled: includeDisabled.value })
     loadState.value = 'idle'
   } catch (err) {
     loadError.value =
@@ -47,6 +57,159 @@ const BOOTSTRAP_ADMIN_ID = '00000000-0000-0000-0000-000000000001'
 function isBootstrapAdmin(u: User): boolean {
   return u.id === BOOTSTRAP_ADMIN_ID
 }
+
+/** 校验失败时用后端原文,其余按状态码给一句人话。 */
+function errText(err: unknown, key: string): string {
+  if (err instanceof HttpError) {
+    if (err.status === 0) return t('adminUsers.errUsersLoadConn')
+    return err.apiError?.message ?? t(key, { status: err.status })
+  }
+  return t('adminUsers.errRetry')
+}
+
+// ─── 新建账号 ─────────────────────────────────────────────────────────────────
+
+const createOpen = ref(false)
+const createBusy = ref(false)
+const createBanner = ref('')
+const createForm = ref({ username: '', password: '', role: 'user' as UserRole, description: '' })
+const createErrors = ref({ username: '', password: '' })
+
+function openCreate(): void {
+  createForm.value = { username: '', password: '', role: 'user', description: '' }
+  createErrors.value = { username: '', password: '' }
+  createBanner.value = ''
+  createOpen.value = true
+}
+
+function closeCreate(): void {
+  if (createBusy.value) return
+  createOpen.value = false
+}
+
+function validateCreate(): boolean {
+  createErrors.value = { username: '', password: '' }
+  let ok = true
+  if (!createForm.value.username.trim()) {
+    createErrors.value.username = t('adminUsers.errUsernameRequired')
+    ok = false
+  }
+  if (createForm.value.password.length < MIN_PASSWORD_LEN) {
+    createErrors.value.password = t('adminUsers.errPasswordShort', { n: MIN_PASSWORD_LEN })
+    ok = false
+  }
+  return ok
+}
+
+async function submitCreate(): Promise<void> {
+  if (!validateCreate()) return
+  createBusy.value = true
+  createBanner.value = ''
+  try {
+    const u = await createUser({
+      username: createForm.value.username.trim(),
+      password: createForm.value.password,
+      role: createForm.value.role,
+      description: createForm.value.description.trim(),
+    })
+    users.value = [...users.value, u].sort((a, b) => a.username.localeCompare(b.username))
+    createOpen.value = false
+  } catch (err) {
+    createBanner.value = errText(err, 'adminUsers.errCreate')
+  } finally {
+    createBusy.value = false
+  }
+}
+
+// ─── 重置口令 ─────────────────────────────────────────────────────────────────
+
+const resetOpen = ref(false)
+const resetTarget = ref<User | null>(null)
+const resetPasswordValue = ref('')
+const resetBusy = ref(false)
+const resetBanner = ref('')
+
+function openReset(u: User): void {
+  resetTarget.value = u
+  resetPasswordValue.value = ''
+  resetBanner.value = ''
+  resetOpen.value = true
+}
+
+function closeReset(): void {
+  if (resetBusy.value) return
+  resetOpen.value = false
+  resetTarget.value = null
+}
+
+async function submitReset(): Promise<void> {
+  const target = resetTarget.value
+  if (!target) return
+  if (resetPasswordValue.value.length < MIN_PASSWORD_LEN) {
+    resetBanner.value = t('adminUsers.errPasswordShort', { n: MIN_PASSWORD_LEN })
+    return
+  }
+  resetBusy.value = true
+  resetBanner.value = ''
+  try {
+    await resetUserPassword(target.id, resetPasswordValue.value)
+    // 204:响应没有 body,列表里的这一行本来就不展示口令,无需回填。
+    resetOpen.value = false
+    resetTarget.value = null
+  } catch (err) {
+    resetBanner.value = errText(err, 'adminUsers.errReset')
+  } finally {
+    resetBusy.value = false
+  }
+}
+
+// ─── 启用 / 禁用 ──────────────────────────────────────────────────────────────
+
+const toggleTarget = ref<User | null>(null)
+const toggleBusy = ref(false)
+const toggleBanner = ref('')
+
+const toggleIsDisabling = computed(() => toggleTarget.value?.enabled === true)
+
+function openToggle(u: User): void {
+  toggleTarget.value = u
+  toggleBanner.value = ''
+}
+
+function closeToggle(): void {
+  if (toggleBusy.value) return
+  toggleTarget.value = null
+}
+
+async function submitToggle(): Promise<void> {
+  const target = toggleTarget.value
+  if (!target) return
+  toggleBusy.value = true
+  toggleBanner.value = ''
+  try {
+    const fresh = await updateUser(target.id, { enabled: !target.enabled })
+    users.value = users.value.map((u) => (u.id === fresh.id ? fresh : u))
+    // 取消勾选「显示已禁用」后,刚被停用的账号就不该继续留在列表里。
+    if (!includeDisabled.value && !fresh.enabled) {
+      users.value = users.value.filter((u) => u.id !== fresh.id)
+    }
+    toggleTarget.value = null
+  } catch (err) {
+    toggleBanner.value = errText(err, 'adminUsers.errToggle')
+  } finally {
+    toggleBusy.value = false
+  }
+}
+
+async function saveDescription(u: User, value: string): Promise<void> {
+  rowError.value = ''
+  try {
+    const fresh = await updateUser(u.id, { description: value.trim() })
+    users.value = users.value.map((x) => (x.id === fresh.id ? fresh : x))
+  } catch (err) {
+    rowError.value = errText(err, 'adminUsers.errToggle')
+  }
+}
 </script>
 
 <template>
@@ -56,7 +219,19 @@ function isBootstrapAdmin(u: User): boolean {
         <h1 class="view-title">{{ t('adminUsers.usersTitle') }}</h1>
         <p class="view-sub">{{ t('adminUsers.usersDesc') }}</p>
       </div>
+      <div class="header-actions">
+        <label class="check">
+          <input v-model="includeDisabled" type="checkbox" @change="load" />
+          <span>{{ t('adminUsers.showDisabled') }}</span>
+        </label>
+        <button class="btn btn--primary" @click="openCreate">+ {{ t('adminUsers.addUser') }}</button>
+      </div>
     </header>
+
+    <div v-if="rowError" class="banner banner--row" role="alert">
+      <span>{{ rowError }}</span>
+      <button class="banner-close" type="button" aria-label="×" @click="rowError = ''">×</button>
+    </div>
 
     <p v-if="loadState === 'loading'" class="state">{{ t('common.refresh') }}…</p>
     <div v-else-if="loadState === 'error'" class="state state--error">
@@ -73,22 +248,28 @@ function isBootstrapAdmin(u: User): boolean {
           <th>{{ t('adminUsers.colEnabled') }}</th>
           <th>{{ t('adminUsers.colLastLogin') }}</th>
           <th>{{ t('adminUsers.colCreated') }}</th>
+          <th class="th-actions">{{ t('adminUsers.colActions') }}</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="u in users" :key="u.id">
           <td>
             <div class="cell-strong">{{ u.username }}</div>
+            <input
+              v-if="!isBootstrapAdmin(u)"
+              class="desc-input"
+              type="text"
+              :value="u.description"
+              :placeholder="t('adminUsers.fieldDesc')"
+              @change="saveDescription(u, ($event.target as HTMLInputElement).value)"
+            />
             <div v-if="isBootstrapAdmin(u)" class="cell-dim">
               {{ t('adminUsers.bootstrapAdmin') }} · {{ t('adminUsers.bootstrapAdminHint') }}
             </div>
-            <div v-else-if="u.description" class="cell-dim">{{ u.description }}</div>
           </td>
           <td>
             <span class="tag" :class="u.role === 'admin' ? 'tag--admin' : 'tag--user'">
-              {{
-                u.role === 'admin' ? t('adminUsers.roleAdmin') : t('adminUsers.roleUser')
-              }}
+              {{ u.role === 'admin' ? t('adminUsers.roleAdmin') : t('adminUsers.roleUser') }}
             </span>
           </td>
           <td>
@@ -98,14 +279,125 @@ function isBootstrapAdmin(u: User): boolean {
           </td>
           <td>{{ fmtTime(u.lastLoginAt) }}</td>
           <td>{{ fmtTime(u.createdAt) }}</td>
+          <td class="cell-actions">
+            <button
+              class="btn btn--ghost"
+              :disabled="isBootstrapAdmin(u)"
+              :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
+              @click="openReset(u)"
+            >
+              {{ t('adminUsers.resetPassword') }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              :class="{ 'btn--danger': u.enabled }"
+              :disabled="isBootstrapAdmin(u)"
+              :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
+              @click="openToggle(u)"
+            >
+              {{ u.enabled ? t('adminUsers.disable') : t('adminUsers.enable') }}
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>
+
+    <!-- ─── 新建账号 ─── -->
+    <div v-if="createOpen" class="backdrop" @click.self="closeCreate">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-create-title">
+        <h3 id="user-create-title" class="modal-title">{{ t('adminUsers.createTitle') }}</h3>
+        <div v-if="createBanner" class="banner" role="alert">{{ createBanner }}</div>
+        <form @submit.prevent="submitCreate">
+          <label class="field">
+            <span class="field-label">{{ t('adminUsers.fieldUsername') }}</span>
+            <input v-model="createForm.username" class="field-input" type="text" autocomplete="off" :disabled="createBusy" />
+            <span v-if="createErrors.username" class="field-error">{{ createErrors.username }}</span>
+          </label>
+          <label class="field">
+            <span class="field-label">{{ t('adminUsers.fieldPassword') }}</span>
+            <input v-model="createForm.password" class="field-input" type="password" autocomplete="new-password" :disabled="createBusy" />
+            <span v-if="createErrors.password" class="field-error">{{ createErrors.password }}</span>
+            <span v-else class="field-hint">{{ t('adminUsers.passwordHint', { n: MIN_PASSWORD_LEN }) }}</span>
+          </label>
+          <label class="field">
+            <span class="field-label">{{ t('adminUsers.fieldRole') }}</span>
+            <select v-model="createForm.role" class="field-input" :disabled="createBusy">
+              <option value="user">{{ t('adminUsers.roleUser') }}</option>
+              <option value="admin">{{ t('adminUsers.roleAdmin') }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">{{ t('adminUsers.fieldDesc') }}</span>
+            <input v-model="createForm.description" class="field-input" type="text" autocomplete="off" :disabled="createBusy" />
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="btn" :disabled="createBusy" @click="closeCreate">{{ t('adminUsers.cancel') }}</button>
+            <button type="submit" class="btn btn--primary" :disabled="createBusy">
+              {{ createBusy ? t('adminUsers.saving') : t('adminUsers.create') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ─── 重置口令 ─── -->
+    <div v-if="resetOpen" class="backdrop" @click.self="closeReset">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-reset-title">
+        <h3 id="user-reset-title" class="modal-title">{{ t('adminUsers.resetTitle', { name: resetTarget?.username }) }}</h3>
+        <div v-if="resetBanner" class="banner" role="alert">{{ resetBanner }}</div>
+        <form @submit.prevent="submitReset">
+          <label class="field">
+            <span class="field-label">{{ t('adminUsers.fieldPassword') }}</span>
+            <input v-model="resetPasswordValue" class="field-input" type="password" autocomplete="new-password" :disabled="resetBusy" />
+            <span class="field-hint">{{ t('adminUsers.passwordHint', { n: MIN_PASSWORD_LEN }) }}</span>
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="btn" :disabled="resetBusy" @click="closeReset">{{ t('adminUsers.cancel') }}</button>
+            <button type="submit" class="btn btn--primary" :disabled="resetBusy">
+              {{ resetBusy ? t('adminUsers.saving') : t('adminUsers.reset') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ─── 启用 / 禁用确认 ─── -->
+    <div v-if="toggleTarget" class="backdrop" @click.self="closeToggle">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-toggle-title">
+        <h3 id="user-toggle-title" class="modal-title">
+          {{ toggleIsDisabling ? t('adminUsers.disableTitle') : t('adminUsers.enable') }}
+        </h3>
+        <div v-if="toggleBanner" class="banner" role="alert">{{ toggleBanner }}</div>
+        <p class="modal-text">
+          {{
+            toggleIsDisabling
+              ? t('adminUsers.disableBody', { name: toggleTarget.username })
+              : t('adminUsers.enableBody', { name: toggleTarget.username })
+          }}
+        </p>
+        <div class="modal-actions">
+          <button type="button" class="btn" :disabled="toggleBusy" @click="closeToggle">{{ t('adminUsers.cancel') }}</button>
+          <button
+            type="button"
+            class="btn btn--primary"
+            :class="{ 'btn--danger': toggleIsDisabling }"
+            :disabled="toggleBusy"
+            @click="submitToggle"
+          >
+            {{ toggleBusy ? t('adminUsers.saving') : t('adminUsers.save') }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 16px;
 }
 .view-title {
@@ -118,6 +410,20 @@ function isBootstrapAdmin(u: User): boolean {
   color: var(--color-faint);
   margin-top: 4px;
   max-width: 76ch;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-label);
+  color: var(--color-dim);
+  cursor: pointer;
 }
 .state {
   padding: 32px;
@@ -140,6 +446,9 @@ function isBootstrapAdmin(u: User): boolean {
   font-weight: 600;
   white-space: nowrap;
 }
+.th-actions {
+  text-align: right;
+}
 .grid td {
   padding: 12px;
   border-bottom: 1px solid var(--color-border);
@@ -153,6 +462,29 @@ function isBootstrapAdmin(u: User): boolean {
   font-size: var(--text-small, 0.85em);
   color: var(--color-faint);
   margin-top: 2px;
+}
+.cell-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
+}
+.desc-input {
+  width: 100%;
+  max-width: 280px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-size: var(--text-small, 0.85em);
+  color: var(--color-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+}
+.desc-input:hover,
+.desc-input:focus {
+  border-color: var(--color-border);
+  background: var(--color-bg, #fff);
+  outline: none;
 }
 .tag {
   display: inline-block;
@@ -176,13 +508,117 @@ function isBootstrapAdmin(u: User): boolean {
   color: var(--color-faint);
 }
 .btn {
-  margin-top: 12px;
   padding: 7px 14px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg, #fff);
   color: var(--color-text);
   font-size: var(--text-label);
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn--primary {
+  background: var(--color-primary, #2563eb);
+  border-color: var(--color-primary, #2563eb);
+  color: #fff;
+}
+.btn--ghost {
+  background: transparent;
+}
+.btn--danger {
+  background: var(--color-danger, #dc2626);
+  border-color: var(--color-danger, #dc2626);
+  color: #fff;
+}
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in oklch, var(--color-text) 40%, transparent);
+}
+.modal {
+  width: 100%;
+  max-width: 420px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--color-surface, #fff);
+}
+.modal-title {
+  margin-bottom: 12px;
+  font-size: var(--text-body);
+  font-weight: 700;
+  color: var(--color-text);
+}
+.modal-text {
+  margin-bottom: 16px;
+  font-size: var(--text-label);
+  line-height: 1.5;
+  color: var(--color-dim);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.field-label {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--color-dim);
+}
+.field-input {
+  padding: 8px 12px;
+  font-size: var(--text-body);
+  color: var(--color-text);
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+}
+.field-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.field-hint {
+  font-size: var(--text-small, 0.85em);
+  color: var(--color-faint);
+}
+.field-error {
+  font-size: var(--text-small, 0.85em);
+  color: var(--color-danger, #dc2626);
+}
+.banner {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-danger, #dc2626);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--text-label);
+  color: var(--color-danger, #dc2626);
+}
+.banner--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.banner-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
   cursor: pointer;
 }
 </style>

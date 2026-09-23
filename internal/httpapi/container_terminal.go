@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/audit"
 	"github.com/huangchengsir/pipewright/internal/i18n"
 	"github.com/huangchengsir/pipewright/internal/target"
@@ -87,7 +88,7 @@ func buildContainerExecCmd(containerID, shell string) []string {
 // **唯一的 WS 升级点**。已由 /api 组套了 requireAuth(未登录 → 401,不会升级)。本 handler 再做
 // 同源(Origin)校验,然后 WS↔SSH(PTY)双向泵:WS 文本帧 → stdin;PTY 输出 → WS 二进制帧;
 // resize 控制帧(JSON {type:"resize",cols,rows})→ WindowChange。
-func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder) http.HandlerFunc {
+func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
@@ -98,6 +99,11 @@ func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder) http.H
 		shell, err := validateContainerTarget(containerID, r.URL.Query().Get("shell"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_container_target", "容器或 shell 非法:"+err.Error())
+			return
+		}
+
+		// 终端 = 在目标机上执行任意命令,按 ActOperate 把关(GET 在中间件里只判到 ActView)。
+		if !requireTerminalOperate(w, r, acc, id) {
 			return
 		}
 
@@ -164,7 +170,7 @@ func validateHostShell(shell string) (string, error) {
 // cmd array 化(仅 [shell],无拼接);凭据 vault 即用即弃;握手成功写审计(server_terminal)。
 // 注意:服务器注册的 SSH 凭据本就具宿主机权限(容器模式的 docker exec 亦在宿主跑),主机 shell
 // 不扩大信任边界,只是把既有权限诚实暴露。
-func makeServerTerminalHandler(svc target.Service, aud audit.Recorder) http.HandlerFunc {
+func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
@@ -174,6 +180,10 @@ func makeServerTerminalHandler(svc target.Service, aud audit.Recorder) http.Hand
 		shell, err := validateHostShell(r.URL.Query().Get("shell"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_shell", "shell 非法:"+err.Error())
+			return
+		}
+		// 主机 shell 是最宽的写通道,同样按 ActOperate 把关(见 requireTerminalOperate)。
+		if !requireTerminalOperate(w, r, acc, id) {
 			return
 		}
 		if _, err := svc.Get(r.Context(), id); err != nil {

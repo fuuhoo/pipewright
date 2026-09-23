@@ -38,6 +38,7 @@ export default {
     // v6.2:构建环境 / 配置资源(仅管理员入口)
     buildEnvs: '构建环境',
     configProfiles: '配置资源',
+    groups: '分组',
   },
 
   shell: {

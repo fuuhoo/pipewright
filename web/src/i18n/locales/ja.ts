@@ -38,6 +38,7 @@ const ja: typeof zhCN = {
     collapse: 'サイドバーを折りたたむ',
     buildEnvs: 'ビルド環境',
     configProfiles: '構成プロファイル',
+    groups: 'グループ',
   },
 
   shell: {

@@ -29,12 +29,15 @@ import (
 
 // Action 操作枚举(snake_case;DB 存字串)。只增不改语义。
 const (
-	ActionCredentialCreate   = "credential_create"
-	ActionCredentialUpdate   = "credential_update"
-	ActionCredentialDelete   = "credential_delete"
-	ActionCredentialReveal   = "credential_reveal"
+	ActionCredentialCreate = "credential_create"
+	ActionCredentialUpdate = "credential_update"
+	ActionCredentialDelete = "credential_delete"
+	ActionCredentialReveal = "credential_reveal"
 	// v6.2 阶段 7:admin 禁用 personal 凭据(enabled=0);不改密、不删。
-	ActionCredentialDisable  = "credential_disable"
+	ActionCredentialDisable = "credential_disable"
+	// v6.2 阶段 9:恢复被禁用的 personal 凭据。与 disable 分两个动作,是为了在审计里
+	// 能还原「谁停用过、后来又谁放开的」——只记一个 toggle 会丢掉方向。
+	ActionCredentialEnable   = "credential_enable"
 	ActionTriggerSecretReset = "trigger_secret_reset"
 	ActionProjectCreate      = "project_create"
 	ActionProjectUpdate      = "project_update"
@@ -79,25 +82,47 @@ const (
 	ActionUserCreate = "user_create" // 邀请注册落地
 	ActionUserUpdate = "user_update" // 改描述/启用禁用
 	ActionUserLogin  = "user_login"  // 普通用户登录成功(与 admin 区分)
+	// v6.2 阶段 9:管理员直接建号 + 重置他人口令。与 password_change(改自己的)分开,
+	// 因为「谁改的」和「被改的人有没有在场」完全不同。
+	ActionUserAdminCreate   = "user_admin_create"
+	ActionUserPasswordReset = "user_password_reset"
+	ActionUserDisabled      = "user_disabled"
+	ActionUserEnabled       = "user_enabled"
+
+	// v6.2 分组权限:分组本身 + 「项目/服务器归到哪个组」都要留痕。
+	// 归组动作单独一个(而非并进 project_update),因为它是权限边界的变化,
+	// 事后追查「谁把这个项目藏起来的」时是第一条要看的记录。
+	ActionGroupCreate       = "group_create"
+	ActionGroupUpdate       = "group_update"
+	ActionGroupDelete       = "group_delete"
+	ActionGroupMemberAdd    = "group_member_add"
+	ActionGroupMemberRemove = "group_member_remove"
+	ActionProjectReassign   = "project_reassign"
+	// 服务器登记的是一台带 SSH 私钥的目标机,高危程度与项目归组同级,故同样留痕。
+	ActionServerCreate   = "server_create"
+	ActionServerUpdate   = "server_update"
+	ActionServerDelete   = "server_delete"
+	ActionServerReassign = "server_reassign"
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
 const (
-	TargetCredential    = "credential"
-	TargetProject       = "project"
-	TargetTrigger       = "trigger"
-	TargetRun           = "run"
-	TargetAccount       = "account"
-	TargetSession       = "session"
-	TargetServer        = "server"
-	TargetTemplate      = "template"
-	TargetVarGroup      = "variable_group"
-	TargetCustomNode    = "custom_node"
+	TargetCredential = "credential"
+	TargetProject    = "project"
+	TargetTrigger    = "trigger"
+	TargetRun        = "run"
+	TargetAccount    = "account"
+	TargetSession    = "session"
+	TargetServer     = "server"
+	TargetTemplate   = "template"
+	TargetVarGroup   = "variable_group"
+	TargetCustomNode = "custom_node"
 	// v6.2 阶段 7:新增 target 类型。
 	TargetBuildEnv       = "build_env"
 	TargetConfigProfile  = "config_profile"
 	TargetUser           = "user"
 	TargetUserInvitation = "user_invitation"
+	TargetResourceGroup  = "resource_group"
 )
 
 // Entry 是一条审计写入入参(冻结契约)。Detail 写库前过 Masker,绝不含明文 secret。

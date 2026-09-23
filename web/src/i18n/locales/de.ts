@@ -38,6 +38,7 @@ const de: typeof zhCN = {
     collapse: 'Seitenleiste einklappen',
     buildEnvs: 'Build-Umgebungen',
     configProfiles: 'Konfigurationsprofile',
+    groups: 'Gruppen',
   },
 
   shell: {

@@ -13,6 +13,7 @@ import AuditTimeline from '../../components/AuditTimeline.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '../../composables/useToast'
+import { useSessionStore } from '../../stores/session'
 import {
   getOAuthApps,
   authorizeUrl,
@@ -37,10 +38,14 @@ const editingId = ref<string | null>(null)
 const form = ref({
   name: '',
   type: 'git_token' as CredentialType,
-  scope: '',
+  scope: 'global',
   username: '',
   secret: '',
 })
+
+// 编辑时记住原可见性:未改动就不回传 scope,免得普通用户改个名字就被
+// 「global 凭据仅管理员可写」判 403。
+const originalScope = ref('global')
 
 const formErrors = ref({
   name: '',
@@ -71,6 +76,11 @@ const { t } = useI18n()
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
+const sessionStore = useSessionStore()
+
+// 明文的读回与审计流都收到管理员了(RequireAdmin / POST /credentials/:id/reveal);
+// 非管理员在这页只做自己 personal 凭据的写入。
+const isAdmin = computed(() => sessionStore.user?.role === 'admin')
 
 const oauthApps = ref<OAuthApp[]>([])
 
@@ -213,7 +223,8 @@ onMounted(() => {
 function openAddModal(): void {
   modalMode.value = 'add'
   editingId.value = null
-  form.value = { name: '', type: 'git_token', scope: '', username: '', secret: '' }
+  form.value = { name: '', type: 'git_token', scope: isAdmin.value ? 'global' : 'personal', username: '', secret: '' }
+  originalScope.value = form.value.scope
   clearFormErrors()
   formBanner.value = ''
   modalOpen.value = true
@@ -223,7 +234,8 @@ function openEditModal(c: Credential): void {
   modalMode.value = 'edit'
   editingId.value = c.id
   // secret is intentionally blank — user must re-enter to rotate
-  form.value = { name: c.name, type: c.type, scope: c.scope, username: c.username, secret: '' }
+  form.value = { name: c.name, type: c.type, scope: c.scope === 'personal' ? 'personal' : 'global', username: c.username, secret: '' }
+  originalScope.value = form.value.scope
   editRevealed.value = null
   clearFormErrors()
   formBanner.value = ''
@@ -273,7 +285,7 @@ async function handleFormSubmit(): Promise<void> {
       const payload: CreateCredentialInput = {
         name: form.value.name.trim(),
         type: form.value.type,
-        scope: form.value.scope.trim(),
+        scope: form.value.scope,
         username: form.value.username.trim(),
         secret: form.value.secret,
       }
@@ -282,8 +294,10 @@ async function handleFormSubmit(): Promise<void> {
     } else if (editingId.value) {
       const payload: UpdateCredentialInput = {
         name: form.value.name.trim(),
-        scope: form.value.scope.trim(),
         username: form.value.username.trim(),
+      }
+      if (form.value.scope !== originalScope.value) {
+        payload.scope = form.value.scope
       }
       // Only include secret if user typed something (rotation)
       if (form.value.secret) {
@@ -530,14 +544,12 @@ async function toggleEditReveal(): Promise<void> {
           <!-- Type label -->
           <span class="cred-type">{{ typeLabels[cred.type] }}</span>
 
-          <!-- Scope -->
+          <!-- Visibility: 只有 'personal' 是私有;其余(含存量的 '')都按共享展示 -->
           <div class="cred-scope">
             <span
-              v-if="cred.scope"
               class="scope-tag"
-              :class="{ 'scope-tag--all': cred.scope === '*' || cred.scope.toLowerCase() === '全部' }"
-            >{{ cred.scope === '*' ? t('settingsVault.allProjects') : cred.scope }}</span>
-            <span v-else class="cred-dim">—</span>
+              :class="{ 'scope-tag--personal': cred.scope === 'personal' }"
+            >{{ cred.scope === 'personal' ? t('settingsVault.visibilityPersonal') : t('settingsVault.visibilityGlobal') }}</span>
           </div>
 
           <!-- Last used -->
@@ -581,8 +593,8 @@ async function toggleEditReveal(): Promise<void> {
       </template>
     </div>
 
-    <!-- ─── Audit timeline (Story 1.4) ──────────────────────────────────── -->
-    <AuditTimeline />
+    <!-- ─── Audit timeline (Story 1.4;GET /api/audit 已收 admin,普通用户不渲染)─── -->
+    <AuditTimeline v-if="isAdmin" />
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -681,21 +693,26 @@ async function toggleEditReveal(): Promise<void> {
             <span v-if="formErrors.type" class="field-error" role="alert">{{ formErrors.type }}</span>
           </div>
 
-          <!-- Scope -->
+          <!-- Visibility -->
           <div class="field">
-            <label class="field-label" for="cred-scope">
-              {{ t('settingsVault.fieldScope') }}
-              <span class="field-optional">{{ t('settingsVault.optional') }}</span>
-            </label>
-            <input
-              id="cred-scope"
-              v-model="form.scope"
-              class="field-input"
-              type="text"
-              :placeholder="t('settingsVault.scopePlaceholder')"
-              :disabled="formSubmitting"
-              autocomplete="off"
-            />
+            <label class="field-label">{{ t('settingsVault.fieldVisibility') }}</label>
+            <div class="segmented" role="group" :aria-label="t('settingsVault.fieldVisibility')">
+              <button
+                type="button"
+                class="seg-item"
+                :class="{ 'seg-item--active': form.scope === 'global' }"
+                :disabled="!isAdmin || formSubmitting || form.scope === 'global'"
+                @click="form.scope = 'global'"
+              >{{ t('settingsVault.visibilityGlobal') }}</button>
+              <button
+                type="button"
+                class="seg-item"
+                :class="{ 'seg-item--active': form.scope === 'personal' }"
+                :disabled="formSubmitting || form.scope === 'personal'"
+                @click="form.scope = 'personal'"
+              >{{ t('settingsVault.visibilityPersonal') }}</button>
+            </div>
+            <span class="field-hint">{{ isAdmin ? t('settingsVault.visibilityHintAdmin') : t('settingsVault.visibilityHintUser') }}</span>
           </div>
 
           <!-- Secret — password type, never echoed back -->
@@ -722,9 +739,10 @@ async function toggleEditReveal(): Promise<void> {
                 {{ modalMode === 'add' && form.type === 'git_http' ? t('settingsVault.fieldSecretGitHttp') : modalMode === 'add' && form.type === 'git_ssh' ? t('settingsVault.fieldSecretGitSSH') : (modalMode === 'add' ? t('settingsVault.fieldSecret') : t('settingsVault.fieldSecretNew')) }}
                 <span v-if="modalMode === 'edit'" class="field-optional">{{ t('settingsVault.secretOptionalEdit') }}</span>
               </label>
-              <!-- Reveal current plaintext (edit only; audited server-side) -->
+              <!-- Reveal current plaintext (edit only; audited server-side).
+                   后端 reveal 已收 admin:非管理员看不到明文入口,而非点了吃 403。 -->
               <button
-                v-if="modalMode === 'edit'"
+                v-if="modalMode === 'edit' && isAdmin"
                 type="button"
                 class="reveal-current-btn"
                 :class="{ 'reveal-current-btn--active': editRevealed !== null }"
@@ -1258,14 +1276,16 @@ async function toggleEditReveal(): Promise<void> {
   white-space: nowrap;
 }
 
-.scope-tag--all {
-  color: var(--color-cyan);
-  border-color: var(--color-cyan-line);
+.scope-tag--personal {
+  color: var(--color-amber);
+  border-color: var(--color-amber-line);
+  background: var(--color-amber-soft);
 }
 
-.cred-dim {
-  color: var(--color-faint);
-  font-size: 0.8rem;
+.field-hint {
+  font-size: 0.72rem;
+  color: var(--color-dim);
+  line-height: 1.5;
 }
 
 .cred-time {

@@ -38,6 +38,10 @@ func (s *stubTarget) Get(_ context.Context, id string) (*target.Server, error) {
 	return srv, nil
 }
 func (s *stubTarget) List(context.Context) ([]*target.Server, error) { return nil, nil }
+
+func (s *stubTarget) ListScoped(ctx context.Context, _ target.ListFilter) ([]*target.Server, error) {
+	return s.List(ctx)
+}
 func (s *stubTarget) Create(context.Context, target.CreateInput) (*target.Server, error) {
 	return nil, nil
 }

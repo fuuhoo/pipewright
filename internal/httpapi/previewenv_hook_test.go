@@ -180,6 +180,9 @@ type fakeHookTarget struct{}
 
 func (fakeHookTarget) Get(context.Context, string) (*target.Server, error) { return nil, nil }
 func (fakeHookTarget) List(context.Context) ([]*target.Server, error)      { return nil, nil }
+func (fakeHookTarget) ListScoped(context.Context, target.ListFilter) ([]*target.Server, error) {
+	return nil, nil
+}
 func (fakeHookTarget) Create(context.Context, target.CreateInput) (*target.Server, error) {
 	return nil, nil
 }

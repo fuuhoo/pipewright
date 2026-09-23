@@ -18,6 +18,7 @@ import (
 	"time"
 
 	root "github.com/huangchengsir/pipewright"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/ai"
 	"github.com/huangchengsir/pipewright/internal/anomaly"
 	"github.com/huangchengsir/pipewright/internal/approval"
@@ -33,9 +34,10 @@ import (
 	"github.com/huangchengsir/pipewright/internal/cron"
 	"github.com/huangchengsir/pipewright/internal/dagrun"
 	"github.com/huangchengsir/pipewright/internal/deploy"
-	"github.com/huangchengsir/pipewright/internal/dnsprovider"
 	"github.com/huangchengsir/pipewright/internal/deployenv"
+	"github.com/huangchengsir/pipewright/internal/dnsprovider"
 	"github.com/huangchengsir/pipewright/internal/gitauth"
+	"github.com/huangchengsir/pipewright/internal/group"
 	"github.com/huangchengsir/pipewright/internal/httpapi"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/mask"
@@ -55,8 +57,8 @@ import (
 	"github.com/huangchengsir/pipewright/internal/runner"
 	"github.com/huangchengsir/pipewright/internal/store"
 	"github.com/huangchengsir/pipewright/internal/target"
-	"github.com/huangchengsir/pipewright/internal/users"
 	"github.com/huangchengsir/pipewright/internal/trigger"
+	"github.com/huangchengsir/pipewright/internal/users"
 	"github.com/huangchengsir/pipewright/internal/vault"
 	"github.com/huangchengsir/pipewright/internal/version"
 )
@@ -103,6 +105,11 @@ func main() {
 	// 装配认证服务(nil clock → RealClock);userSyncer 注入 users 包,实现
 	// Bootstrap/ChangePassword 时 admin_user 与 users 表双向同步。
 	usersSvc := users.NewService(st.DB)
+
+	// 装配资源分组(v6.2 分组权限):group.Service 既是 /api/groups 的领域服务,
+	// 也充当 access 判定的归属仓储;两者共用一个实例,避免同一份名册两处缓存。
+	groupSvc := group.New(st.DB)
+	accessSvc := access.NewService(groupSvc)
 	authSvc := auth.NewService(st.DB, nil, usersSvc)
 	if err := authSvc.Bootstrap(cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		log.Fatalf("auth bootstrap: %v", err)
@@ -145,8 +152,28 @@ func main() {
 	// master key 未配置时,涉及密钥的读取/重置降级为明确错误(不 panic)。
 	triggerSvc := trigger.New(st.DB, credVault)
 
+	// 装配预置目录:构建环境(v6.2 §3.1)+ 配置资源(§3.2),并在空库时 seed 内置条目。
+	// 位置在流水线服务之前 —— 流水线保存期的构建环境白名单(#8)要读这两个服务。
+	buildEnvRepo := buildenv.NewSQLiteRepo(st.DB)
+	buildEnvSvc := buildenv.NewService(buildEnvRepo)
+	if n, err := buildenv.SeedIfEmpty(buildEnvSvc); err != nil {
+		log.Printf("[seed] 警告:buildenv seed 失败: %v", err)
+	} else if n > 0 {
+		log.Printf("[seed] buildenv 新增 %d 条", n)
+	}
+	cpRepo := configprofile.NewSQLiteRepo(st.DB)
+	cpSvc := configprofile.NewService(cpRepo, cfg.DataDir)
+	if n, err := configprofile.SeedIfEmpty(cpRepo, cfg.DataDir); err != nil {
+		log.Printf("[seed] 警告:configprofile seed 失败: %v", err)
+	} else if n > 0 {
+		log.Printf("[seed] configprofile 新增 %d 条", n)
+	}
+
 	// 装配流水线配置服务(Story 2.2):经 store 触库,惰性默认 + spec 校验 + YAML 渲染。
-	pipelineSvc := pipeline.New(st.DB)
+	// 同一个目录快照来源既给流水线保存期白名单(R4,见 internal/pipeline/buildenv_validate.go),
+	// 也给执行期镜像/凭据/配置资源解析(#9/#10,见 internal/pipeline/buildenv_runtime.go)。
+	buildEnvGate := httpapi.NewBuildEnvGate(buildEnvSvc, cpSvc)
+	pipelineSvc := pipeline.New(st.DB, pipeline.WithBuildEnvGate(buildEnvGate))
 
 	// 装配构建/部署配置服务(Story 2.4):独立于 2-2 spec;经 vault 校验 secret 引用存在性 +
 	// 回算掩码。master key 未配置时,涉及 secret 引用的保存降级为明确错误(不 panic)。
@@ -346,7 +373,7 @@ func main() {
 	// DAG 模式探测不到容器 CLI(docker)时优雅回退 stub(现有逻辑,NFR-10)。
 	var runnerOpts []run.PoolOption
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PIPEWRIGHT_RUNNER")), "legacy") {
-		runnerOpts = buildRunnerOption(projectSvc, pipelineSettingsSvc, credVault, artStore, repoCache)
+		runnerOpts = buildRunnerOption(projectSvc, pipelineSettingsSvc, credVault, artStore, repoCache, buildEnvGate)
 		log.Printf("[run] PIPEWRIGHT_RUNNER=legacy:旧版固定流程运行器已启用(clone→对仓库根 docker build→deploy,⚠ 不执行 UI 可视化流水线 stages;如需真按流水线跑请去掉该 env)")
 	} else {
 		// 阶段执行体(Story 8-2):探测到容器 CLI → 注入真实阶段执行器(script 类型 job 在隔离
@@ -356,7 +383,7 @@ func main() {
 		// 「需要审批」通知 + 签名审批链接(signer/PUBLIC_URL 未配则跳过通知,门行为不变)。
 		approvalNotifier := httpapi.NewApprovalNotifier(notifySvc, approvalSigner, strings.TrimSpace(os.Getenv("PIPEWRIGHT_PUBLIC_URL")), runSvc)
 		dagOpts = append(dagOpts, dagrun.WithGate(httpapi.NewApprovalGate(runSvc, approvalCoord, approvalStore, approvalNotifier)))
-		if b, berr := build.NewBuilder(projectSvc, pipelineSettingsSvc, credVault, build.WithArtifactStore(artStore), build.WithArtifactLister(runSvc.ListArtifacts), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithCommitRecorder(func(ctx context.Context, runID, commit string) { _ = runSvc.SetCommit(ctx, runID, commit) }), build.WithStageDeployer(deploySvc), build.WithStageNotifier(notifySvc), clonerOpt, buildCacheOpt); berr == nil {
+		if b, berr := build.NewBuilder(projectSvc, pipelineSettingsSvc, credVault, build.WithArtifactStore(artStore), build.WithArtifactLister(runSvc.ListArtifacts), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithCommitRecorder(func(ctx context.Context, runID, commit string) { _ = runSvc.SetCommit(ctx, runID, commit) }), build.WithStageDeployer(deploySvc), build.WithStageNotifier(notifySvc), build.WithBuildEnvGate(buildEnvGate), clonerOpt, buildCacheOpt); berr == nil {
 			// runSvc 作测试报告持久层注入(Story 8-6 / FR-8-6):script 步骤产报告 → 解析 →
 			// 落库 → 质量门禁裁决(不过则阶段失败,阻断下游部署)。
 			dagOpts = append(dagOpts, dagrun.WithStageExecutor(build.NewStageExecutorWithRunner(b, runSvc, runnerSvc, targetSvc)))
@@ -576,15 +603,7 @@ func main() {
 	// state CSRF 短期内存绑会话。master key 未配置时涉及密钥的操作降级为明确错误(不 panic)。
 	oauthSvc := oauth.New(st.DB, credVault, &http.Client{Timeout: 10 * time.Second})
 
-	// v6.2 阶段 15:装配构建环境服务(v6.2 §3.1)+ 镜像检查器。
-	buildEnvRepo := buildenv.NewSQLiteRepo(st.DB)
-	buildEnvSvc := buildenv.NewService(buildEnvRepo)
-	// v6.2 阶段 16:首次启动时空 DB 时预置 11 个常用构建环境。
-	if n, err := buildenv.SeedIfEmpty(buildEnvSvc); err != nil {
-		log.Printf("[seed] 警告:buildenv seed 失败: %v", err)
-	} else if n > 0 {
-		log.Printf("[seed] buildenv 新增 %d 条", n)
-	}
+	// v6.2 阶段 15:镜像检查器(构建环境服务本身在上方与预置目录一起装配)。
 	// credRef 让 Checker 在 ManualPull 时按 credential_id 取凭据做 docker login。
 	credRef := buildenv.NewVaultCredentialRefetch(credVault)
 	bin := strings.TrimSpace(strings.ToLower(os.Getenv("PIPEWRIGHT_BUILDER")))
@@ -599,19 +618,9 @@ func main() {
 		checker.StartAutoCheck(context.Background())
 	}
 
-	// v6.2 阶段 15:装配配置资源服务(v6.2 §3.2)。
-	cpRepo := configprofile.NewSQLiteRepo(st.DB)
-	cpSvc := configprofile.NewService(cpRepo, cfg.DataDir)
-	// v6.2 阶段 16:首次启动时空 DB 时预置 4 个常用配置资源。
-	if n, err := configprofile.SeedIfEmpty(cpRepo, cfg.DataDir); err != nil {
-		log.Printf("[seed] 警告:configprofile seed 失败: %v", err)
-	} else if n > 0 {
-		log.Printf("[seed] configprofile 新增 %d 条", n)
-	}
-
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithArtifactStore(artStore), httpapi.WithServers(targetSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc)),
+		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithArtifactStore(artStore), httpapi.WithServers(targetSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithGroups(groupSvc), httpapi.WithAccess(accessSvc)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// WriteTimeout 置 0:SSE 长连接(/api/runs/{id}/events)不可被写超时切断;
@@ -780,7 +789,7 @@ func (l pacSpecLoader) Get(ctx context.Context, projectID, branch string) (*pipe
 //   - 其它/缺省 auto:尝试构造真实 Builder,探测不到容器 CLI 时回退桩(优雅降级,NFR-10)。
 //
 // 返回 []run.PoolOption(可能为空):空 ⇒ 用 pool 默认 StubRunner。
-func buildRunnerOption(projectSvc project.Service, settingsSvc pipeline.SettingsService, v vault.Vault, artStore *artifactstore.Store, repoCache *repocache.Cache) []run.PoolOption {
+func buildRunnerOption(projectSvc project.Service, settingsSvc pipeline.SettingsService, v vault.Vault, artStore *artifactstore.Store, repoCache *repocache.Cache, envGate pipeline.BuildEnvGate) []run.PoolOption {
 	clonerOpt := func(*build.Builder) {}
 	if repoCache != nil {
 		clonerOpt = build.WithCloner(repoCache)
@@ -791,14 +800,14 @@ func buildRunnerOption(projectSvc project.Service, settingsSvc pipeline.Settings
 		log.Printf("[build] PIPEWRIGHT_BUILDER=stub:使用桩 runner(合成日志,不碰容器)")
 		return nil
 	case "real":
-		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), clonerOpt)
+		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithBuildEnvGate(envGate), clonerOpt)
 		if err != nil {
 			log.Fatalf("[build] PIPEWRIGHT_BUILDER=real 但构建器不可用:%v", err)
 		}
 		log.Printf("[build] 真实隔离构建器已启用(容器 CLI=%s)", b.DriverBinary())
 		return []run.PoolOption{run.WithRunner(b)}
 	default:
-		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), clonerOpt)
+		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithBuildEnvGate(envGate), clonerOpt)
 		if err != nil {
 			log.Printf("[build] 未探测到容器 CLI(docker/nerdctl/podman),回退桩 runner(PIPEWRIGHT_BUILDER=real 可强制要求真实):%v", err)
 			return nil

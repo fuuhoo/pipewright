@@ -9,12 +9,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/audit"
 	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/huangchengsir/pipewright/internal/users"
 )
 
 // accountService 是账户设置 handler 依赖的窄接口(改口令 / 会话列表 / 撤销)。
 // 由 *auth.Service 实现;窄接口便于测试替身。
 type accountService interface {
 	ChangePassword(current, newPassword, currentToken string) error
+	// ChangeUserPassword 改 users 表账号(普通用户 / 额外管理员)自己的口令。
+	ChangeUserPassword(userID, current, newPassword, currentToken string) error
 	ListSessions(currentToken string) ([]auth.SessionMeta, error)
 	RevokeSession(id string) error
 }
@@ -72,7 +75,15 @@ func makeChangePasswordHandler(svc accountService, aud audit.Recorder) http.Hand
 		}
 
 		token := currentSessionToken(r)
-		err := svc.ChangePassword(req.CurrentPassword, req.NewPassword, token)
+		// 分两条改密路径:bootstrap admin 的真身在 admin_user(只改 users 同步行不生效),
+		// 其余账号(普通用户 + 管理员建出来的额外管理员)口令只在 users 里。
+		var err error
+		if sess, ok := sessionFromContext(r.Context()); ok && sess != nil &&
+			sess.UserID != "" && sess.UserID != users.BootstrapAdminRegularUserID {
+			err = svc.ChangeUserPassword(sess.UserID, req.CurrentPassword, req.NewPassword, token)
+		} else {
+			err = svc.ChangePassword(req.CurrentPassword, req.NewPassword, token)
+		}
 		switch {
 		case err == nil:
 			// continue
@@ -81,6 +92,9 @@ func makeChangePasswordHandler(svc accountService, aud audit.Recorder) http.Hand
 			return
 		case errors.Is(err, auth.ErrWeakPassword):
 			writeError(w, http.StatusUnprocessableEntity, "weak_password", "新口令至少 8 位")
+			return
+		case errors.Is(err, auth.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, "user_not_found", "账号不存在或已被禁用")
 			return
 		default:
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")

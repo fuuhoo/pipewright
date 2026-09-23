@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/run"
 )
 
@@ -192,10 +193,16 @@ func writeRunError(w http.ResponseWriter, err error) {
 }
 
 // makeListRunsHandler 返回 GET /api/runs handler(筛选 projectId/status + 分页 page）。
-func makeListRunsHandler(svc run.Service) http.HandlerFunc {
+// 运行信息随所属项目走:列表按项目的分组可见性收敛,普通用户不会看到他人私有组的运行。
+func makeListRunsHandler(svc run.Service, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "运行服务未初始化")
+			return
+		}
+		visible, err := visibleGroups(r, acc)
+		if err != nil {
+			writeAccessError(w, err)
 			return
 		}
 		q := r.URL.Query()
@@ -213,9 +220,10 @@ func makeListRunsHandler(svc run.Service) http.HandlerFunc {
 			page = p
 		}
 		res, err := svc.List(r.Context(), run.ListFilter{
-			ProjectID: q.Get("projectId"),
-			Status:    q.Get("status"),
-			Page:      page,
+			ProjectID:     q.Get("projectId"),
+			Status:        q.Get("status"),
+			Page:          page,
+			VisibleGroups: visible,
 		})
 		if err != nil {
 			writeRunError(w, err)

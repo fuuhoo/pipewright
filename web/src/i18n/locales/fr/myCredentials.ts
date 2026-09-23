@@ -15,6 +15,8 @@ export default {
   colLastUsed: 'Last used',
   scopeGlobal: 'Global',
   scopePersonal: 'Personal',
+  stateDisabled: 'Disabled',
+  disabledHint: 'An admin disabled this credential; pipelines using it will fail until it is re-enabled.',
   vaultUnconfigured: 'Master key not configured — the credential vault is unavailable. Set PIPEWRIGHT_MASTER_KEY and restart.',
   errLoad: 'Failed to load credentials',
   errConn: 'Cannot reach the server',

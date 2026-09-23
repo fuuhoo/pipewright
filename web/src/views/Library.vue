@@ -26,7 +26,7 @@ import {
   type VariableGroup,
   type VariableGroupVarInput,
 } from '../api/variableGroups'
-import { listCredentials, type Credential } from '../api/credentials'
+import { listCredentials, usableCredentials, type Credential } from '../api/credentials'
 import {
   listCustomNodes,
   updateCustomNode,
@@ -100,7 +100,7 @@ async function loadVariableGroups(): Promise<void> {
 /** 凭据列表用于 secret 变量挑选;保险库未配置不阻断变量组加载。 */
 async function loadCredentialsSafe(): Promise<Credential[]> {
   try {
-    return await listCredentials()
+    return usableCredentials(await listCredentials())
   } catch {
     return []
   }

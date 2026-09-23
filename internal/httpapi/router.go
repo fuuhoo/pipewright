@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/ai"
 	"github.com/huangchengsir/pipewright/internal/anomaly"
 	"github.com/huangchengsir/pipewright/internal/approval"
@@ -25,8 +26,9 @@ import (
 	"github.com/huangchengsir/pipewright/internal/configprofile"
 	"github.com/huangchengsir/pipewright/internal/cron"
 	"github.com/huangchengsir/pipewright/internal/deploy"
-	"github.com/huangchengsir/pipewright/internal/dnsprovider"
 	"github.com/huangchengsir/pipewright/internal/deployenv"
+	"github.com/huangchengsir/pipewright/internal/dnsprovider"
+	"github.com/huangchengsir/pipewright/internal/group"
 	"github.com/huangchengsir/pipewright/internal/i18n"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/metrics"
@@ -110,6 +112,20 @@ type options struct {
 	buildEnvCheck *buildenv.Checker
 	cpSvc         *configprofile.Service
 	usersSvc      *users.Service
+	// v6.2 分组权限:分组领域服务 + 判定服务。access 为 nil 时中间件直通(见 access_guard.go)。
+	groupSvc *group.Service
+	access   *access.Service
+}
+
+// WithGroups 注入资源分组领域服务(挂载 /api/groups CRUD 与名册端点)。nil → 端点 503。
+func WithGroups(gs *group.Service) Option {
+	return func(o *options) { o.groupSvc = gs }
+}
+
+// WithAccess 注入分组权限判定服务:它同时是 /api/projects/{id}*、/api/runs/{id}*
+// 的收口中间件。nil → 中间件直通(仅用于未接权限的演示装配)。
+func WithAccess(as *access.Service) Option {
+	return func(o *options) { o.access = as }
 }
 
 // WithArtifactStore 注入制品库(Story 8-16):挂载产物下载端点
@@ -473,6 +489,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Use(func(next http.Handler) http.Handler {
 			return requireCSRF(next)
 		})
+		// 分组权限收口:按 URL 形态识别 projects/{id}、runs/{id} 并判定 View/Operate。
+		ar.Use(accessGuardMiddleware(o.access))
 
 		// 审计 Recorder(Story 1.4):传给既有敏感操作 handler,业务成功后追加审计行。
 		// 为 nil 时 handler 跳过审计(不阻断业务)。
@@ -483,21 +501,24 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 一键自动更新:鉴权 + CSRF(写操作);binary 自替换+重启,docker 返回升级命令。
 		ar.Post("/version/update", makeSelfUpdateHandler(updateChecker, updateInflight))
 
-		// 审计查询(Story 1.4):只读 + 认证保护 + 分页 + 过滤。
-		ar.Get("/audit", makeListAuditHandler(aud))
+		// 审计查询(Story 1.4):只读 + 分页 + 过滤。v6.2 阶段 9:仅管理员可查——
+		// 审计里是全站行为流水(含他人凭据的 reveal 记录),不是普通用户的自查工具。
+		ar.With(RequireAdmin).Get("/audit", makeListAuditHandler(aud))
 
 		// 凭据保险库(Story 1.3)。v 为 nil 时 handler 返回 vault_unconfigured。
+		// 可见范围按会话收敛:admin 全量,user 仅自己的 personal(见 ListWithActor)。
 		v := o.vault
 		ar.Get("/credentials", makeListCredentialsHandler(v))
 		ar.Post("/credentials", makeCreateCredentialHandler(v, aud, authn))
 		ar.Patch("/credentials/{id}", makeUpdateCredentialHandler(v, aud, authn))
 		ar.Delete("/credentials/{id}", makeDeleteCredentialHandler(v, aud, authn))
 		// 查看明文(POST + auth + CSRF;每次留 credential_reveal 审计)。
-		ar.Post("/credentials/{id}/reveal", makeRevealCredentialHandler(v, aud, authn))
+		// 仅管理员:这是全平台唯一回传明文的端点,普通用户可用自己的凭据,但不该读出明文。
+		ar.With(RequireAdmin).Post("/credentials/{id}/reveal", makeRevealCredentialHandler(v, aud, authn))
 
 		// v6.2 阶段 9:admin 子组 + 普通用户可见端点。
 		//   /api/admin/*  → RequireAdmin(非 admin → 403)
-		//   /api/build-envs/languages, /api/config-profiles → RequireUser(admin/user 都可)
+		//   /api/build-envs, /api/build-envs/languages, /api/config-profiles → RequireUser(admin/user 都可)
 		ar.Route("/admin", func(adminR chi.Router) {
 			adminR.Use(RequireAdmin)
 
@@ -523,29 +544,48 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			adminR.Delete("/config-profiles/{id}", makeDeleteConfigProfileHandler(cpSvc, aud, authn))
 			adminR.Post("/config-profiles/upload", makeUploadConfigProfileHandler(cpSvc, aud, authn))
 
-			// users 最小集(完整邀请注册留到后续 story)
+			// users 管理(建号 / 重置口令 / 改描述与启停;完整邀请注册留到后续 story)
 			adminR.Get("/users", makeListUsersHandler(o.usersSvc))
 			adminR.Get("/users/{id}", makeGetUserHandler(o.usersSvc))
+			adminR.Post("/users", makeCreateUserHandler(o.usersSvc, aud, authn))
+			adminR.Post("/users/{id}/password", makeResetUserPasswordHandler(o.usersSvc, aud, authn))
+			adminR.Patch("/users/{id}", makePatchUserHandler(o.usersSvc, aud, authn))
 
-			// admin 禁用 personal 凭据(v6.2 §3.4 矩阵)
-			adminR.Post("/credentials/{id}/disable", makeDisableCredentialHandler(v, aud, authn))
+			// admin 切换 personal 凭据可用性(v6.2 §3.4 矩阵);禁用只改元数据,可逆
+			adminR.Post("/credentials/{id}/disable", makeSetCredentialEnabledHandler(v, aud, authn, true))
+			adminR.Post("/credentials/{id}/enable", makeSetCredentialEnabledHandler(v, aud, authn, false))
 		})
 
 		// 普通用户可访问的端点(挂在 /api/ 平级,RequireUser)
 		ar.Route("/", func(userR chi.Router) {
 			userR.Use(RequireUser)
 			// 注:已经在 ar.Post("/credentials", ...) 等处定义;此处只放新增的「普通用户可见」端点。
+			userR.Get("/build-envs", makeListEnabledBuildEnvsHandler(o.buildEnvSvc))
 			userR.Get("/build-envs/languages", makeListBuildEnvLanguagesHandler(o.buildEnvSvc))
 			userR.Get("/config-profiles", makeListEnabledConfigProfilesHandler(o.cpSvc))
+
+			// 资源分组(v6.2 分组权限)。列表/详情/改名册走 handler 内的 access.Decide,
+			// 建组与删组是「设置类」动作,只在路由层收 admin。
+			// assignable 是静态段,chi 优先于 /groups/{id},注册顺序无所谓但放在一起更好读。
+			gs := o.groupSvc
+			userR.Get("/groups", makeListGroupsHandler(gs, o.usersSvc))
+			userR.Get("/groups/assignable", makeGroupAssignableUsersHandler(o.usersSvc))
+			userR.Get("/groups/{id}", makeGetGroupHandler(gs, o.usersSvc))
+			userR.Patch("/groups/{id}", makeUpdateGroupHandler(gs, aud, authn))
+			userR.Post("/groups/{id}/members", makeGroupMemberHandler(gs, aud, authn, true))
+			userR.Delete("/groups/{id}/members/{userId}", makeGroupMemberHandler(gs, aud, authn, false))
+			adminR2 := ar.With(RequireAdmin)
+			adminR2.Post("/groups", makeCreateGroupHandler(gs, aud, authn))
+			adminR2.Delete("/groups/{id}", makeDeleteGroupHandler(gs, aud, authn))
 		})
 
 		// 项目接入与列表(Story 2.1)。p 为 nil 时 handler 返回 503。
 		// test-clone 须在 {id} 路由之前注册,否则被 /projects/{id} 吞掉。
 		p := o.projects
-		ar.Get("/projects", makeListProjectsHandler(p))
-		ar.Post("/projects", makeCreateProjectHandler(p, aud, authn))
+		ar.Get("/projects", makeListProjectsHandler(p, o.access))
+		ar.Post("/projects", makeCreateProjectHandler(p, o.access, aud, authn))
 		ar.Post("/projects/test-clone", makeTestCloneHandler(p))
-		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, aud, authn))
+		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, o.access, aud, authn))
 		ar.Delete("/projects/{id}", makeDeleteProjectHandler(p, aud, authn))
 
 		// 触发设置与分支映射(Story 2.3)。t 为 nil 时 handler 返回 503。
@@ -614,7 +654,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 运行模型 + 列表 + 详情 + 取消 + SSE 状态流(Story 3.1)。rs 为 nil 时返回 503。
 		// SSE events 为 GET,豁免 CSRF;cancel 为写方法,过 CSRF。均过 requireAuth。
 		rs := o.runs
-		ar.Get("/runs", makeListRunsHandler(rs))
+		ar.Get("/runs", makeListRunsHandler(rs, o.access))
 		ar.Get("/runs/{id}", makeGetRunHandler(rs))
 		ar.Get("/runs/{id}/events", makeRunEventsHandler(rs, o.runSub))
 		// 历史日志拉取 / 分页(Story 3.6):只读 + 认证;sinceSeq 分页;complete=终态。
@@ -708,6 +748,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			triggers:    t,
 			vault:       v,
 			customNodes: o.customNodes,
+			buildEnvs:   o.buildEnvSvc,
 		}
 		ar.Post("/projects/{id}/pipeline/ai-generate", makeAIGenerateHandler(aiGenDeps))
 		ar.Post("/projects/{id}/pipeline/ai-apply", makeAIApplyHandler(aiGenDeps))
@@ -754,11 +795,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 过 auth + CSRF。/servers/{id}/test 比 /servers/{id} 多一段,不会被吞。
 		// SSH 私钥/口令经 vault 即用即弃,响应/错误绝无明文(AC-SEC-01/02)。
 		sv := o.servers
-		ar.Get("/servers", makeListServersHandler(sv))
-		ar.Post("/servers", makeCreateServerHandler(sv))
+		ar.Get("/servers", makeListServersHandler(sv, o.access))
+		ar.Post("/servers", makeCreateServerHandler(sv, o.access, aud, authn))
 		ar.Get("/servers/{id}", makeGetServerHandler(sv))
-		ar.Put("/servers/{id}", makeUpdateServerHandler(sv))
-		ar.Delete("/servers/{id}", makeDeleteServerHandler(sv))
+		ar.Put("/servers/{id}", makeUpdateServerHandler(sv, o.access, aud, authn))
+		ar.Delete("/servers/{id}", makeDeleteServerHandler(sv, o.access, aud, authn))
 		ar.Post("/servers/{id}/test", makeTestServerHandler(sv))
 		// 服务日志查看(Story 6.2;FR-16,经 SSH 取目标服务器日志)。复用 sv(4-1 装配,无新服务)。
 		// 均为 GET 只读 → 过 auth、豁免 CSRF。source/target 严格白名单校验(AC-SEC-02);
@@ -771,14 +812,14 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 采集命令纯静态 array、不接受任何用户输入(AC-SEC-02);某台不可达/某指标缺失 →
 		// reachable:false / 该指标 null,不 500。批量端点逐台并行有界、各自独立。
 		// chi 字面段优先于 {id},/servers/metrics 不会被 /servers/{id} 吞。
-		ar.Get("/servers/metrics", makeAllServerMetricsHandler(sv))
+		ar.Get("/servers/metrics", makeAllServerMetricsHandler(sv, o.access))
 		ar.Get("/servers/{id}/metrics", makeServerMetricsHandler(sv))
 		// 容器管理列表/聚合(Portainer 式总览)——经 SSH 跑 `docker ps -a --format {{json .}}`
 		// 采集容器清单。复用 sv(4-1 装配,无新服务)。GET 只读 → 过 auth、豁免 CSRF。命令纯静态
 		// array、不接受任何用户输入(AC-SEC-02);某台不可达/无运行时 → reachable:false / runtime:""
 		// ,不 500。批量端点逐台并行有界、各自独立。容器**生命周期**写操作复用上面的 /service/action
 		// (type=docker)。chi 字面段 /servers/containers 优先于 {id},不会被吞。
-		ar.Get("/servers/containers", makeAllServerContainersHandler(sv))
+		ar.Get("/servers/containers", makeAllServerContainersHandler(sv, o.access))
 		ar.Get("/servers/{id}/containers", makeServerContainersHandler(sv))
 		// 容器实时资源 stats(docker stats --no-stream)。字面段 stats 不与 {id}/containers 冲突。
 		ar.Get("/servers/{id}/containers/stats", makeServerContainerStatsHandler(sv))
@@ -828,11 +869,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// containerId 严格白名单(首字符非 `-` 防 flag 注入、无 shell 元字符)+ shell 枚举白名单;
 		// 命令 array 化经 target.ExecInteractive 不拼 shell。握手成功(PTY 建立)后写审计(detail 脱敏)。
 		// 比 /servers/{id} 多两段,不会被吞。
-		ar.Get("/servers/{id}/containers/{containerId}/terminal", makeContainerTerminalHandler(sv, aud))
+		ar.Get("/servers/{id}/containers/{containerId}/terminal", makeContainerTerminalHandler(sv, aud, o.access))
 		// 主机 shell 终端(「连服务器终端」的目标:SSH 直起交互 shell)。进容器留给用户在 shell 里
 		// 自己 docker exec 自由探索(不绑死容器;很多服务器没 docker)。WS 升级,同源校验 + shell
 		// 白名单;审计 server_terminal。比 /servers/{id} 多一段,不会被吞。
-		ar.Get("/servers/{id}/terminal", makeServerTerminalHandler(sv, aud))
+		ar.Get("/servers/{id}/terminal", makeServerTerminalHandler(sv, aud, o.access))
 		// 通知渠道(Story 5.1;FR-19)。nf 为 nil 时 handler 返回 503。
 		// GET(列表/详情)过 auth;POST/PUT/DELETE/test 为写方法,过 auth + CSRF。
 		// 敏感字段(SMTP 密码)加密入库、响应仅 hasPassword。test 须在 {id} 路由内单独注册。

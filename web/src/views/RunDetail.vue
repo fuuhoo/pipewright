@@ -410,9 +410,14 @@ async function loadRun(): Promise<void> {
     if (run.value.status === 'waiting_approval') void loadApprovals()
   } catch (err) {
     if (err instanceof HttpError) {
-      loadError.value = err.status === 404
-        ? t('runDetail.runNotFound', { id: runId.value })
-        : (err.apiError?.message ?? t('runDetail.loadFailed', { status: err.status }))
+      // 分组权限:别人的私有组里的 run 明确回 403(不伪装 404),文案与其余页面一致。
+      if (err.status === 403) {
+        loadError.value = err.apiError?.message ?? t('groups.errForbidden')
+      } else {
+        loadError.value = err.status === 404
+          ? t('runDetail.runNotFound', { id: runId.value })
+          : (err.apiError?.message ?? t('runDetail.loadFailed', { status: err.status }))
+      }
     } else {
       loadError.value = t('runDetail.loadRequestFailed')
     }
@@ -1142,6 +1147,10 @@ function nodeClass(status: StepStatus): string {
                 <span class="failed-step-dur mono" v-if="step.durationMs !== null">{{ formatDuration(step.durationMs) }}</span>
               </div>
             </div>
+
+            <!-- 测试报告 + 门禁裁决:门禁阻断的运行,这份计数就是失败原因本身,必须可见
+                 (否则失败点只剩一行日志)。组件自取数据,无报告时不渲染。 -->
+            <TestReportPanel :run-id="run.id" />
 
             <!-- 失败日志证据(只读历史回放,Story 3-6)。在 AI 诊断面板之上;
                  不属于 7-2 的 DiagnosisPanel slot,二者共存。 -->

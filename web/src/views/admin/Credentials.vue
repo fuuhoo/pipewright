@@ -4,18 +4,19 @@
  *
  * 与「设置 → 凭据保险库」的分工:那边管**创建/轮换/删除/查看明文**(密文操作),
  * 本页聚焦 v6.2 §3.4 的管理面:
- *   - 列出全部凭据的元数据(含 personal 的 owner 视角,后端当前未返回 owner_id,
- *     故只显示 scope 与创建/使用时间)
- *   - 禁用违规的 personal 凭据(POST /api/admin/credentials/:id/disable)
+ *   - 列出全部凭据的元数据(personal 显示归属人用户名)
+ *   - 禁用/启用违规的 personal 凭据(POST /api/admin/credentials/:id/{disable,enable})
  *   - 快速跳转到保险库做密文级操作
  *
  * 约束:禁用只改元数据(enabled=0),不动密文、不删除;global 凭据不可被 disable。
+ * 后端取用路径(Get/GetGitAuth/Reveal)对已禁用凭据直接报错,所以禁用即刻生效。
  */
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { listCredentials, disableCredential } from '../../api/credentials'
+import { listCredentials, disableCredential, enableCredential } from '../../api/credentials'
 import type { Credential } from '../../api/credentials'
+import { listUsers } from '../../api/users'
 import { HttpError } from '../../api/http'
 
 const { t } = useI18n()
@@ -24,6 +25,8 @@ const router = useRouter()
 const loadState = ref<'idle' | 'loading' | 'error'>('idle')
 const loadError = ref('')
 const credentials = ref<Credential[]>([])
+/** users.id → username;归属/创建者列显示人名而非 UUID。取不到时回落到 id 前 8 位。 */
+const userNames = ref<Record<string, string>>({})
 const banner = ref('')
 const busyId = ref<string | null>(null)
 
@@ -31,7 +34,11 @@ async function load(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    credentials.value = await listCredentials()
+    const [creds, users] = await Promise.all([listCredentials(), listUsers().catch(() => [])])
+    credentials.value = creds
+    const map: Record<string, string> = {}
+    for (const u of users) map[u.id] = u.username
+    userNames.value = map
     loadState.value = 'idle'
   } catch (err) {
     // vault 未配置(无 master key)是合法状态:页面给出引导而非报错。
@@ -56,18 +63,31 @@ function fmtTime(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-async function onDisable(c: Credential): Promise<void> {
+/** 把 users.id 换成人能读的用户名;未知归属显示空,自己的行标「本人」。 */
+function userName(id: string): string {
+  if (!id) return ''
+  return userNames.value[id] ?? id.slice(0, 8)
+}
+
+async function onToggle(c: Credential): Promise<void> {
   busyId.value = c.id
   banner.value = ''
+  const disabling = c.enabled
   try {
-    await disableCredential(c.id)
-    banner.value = t('adminCredentials.disableOk', { name: c.name })
+    if (disabling) await disableCredential(c.id)
+    else await enableCredential(c.id)
+    banner.value = disabling
+      ? t('adminCredentials.disableOk', { name: c.name })
+      : t('adminCredentials.enableOk', { name: c.name })
     await load()
   } catch (err) {
     banner.value =
       err instanceof HttpError
-        ? (err.apiError?.message ?? t('adminCredentials.errDisable'))
-        : t('adminCredentials.errDisable')
+        ? (err.apiError?.message ??
+            (disabling ? t('adminCredentials.errDisable') : t('adminCredentials.errEnable')))
+        : disabling
+          ? t('adminCredentials.errDisable')
+          : t('adminCredentials.errEnable')
   } finally {
     busyId.value = null
   }
@@ -108,6 +128,7 @@ function goVault(): void {
           <th>{{ t('adminCredentials.colName') }}</th>
           <th>{{ t('adminCredentials.colType') }}</th>
           <th>{{ t('adminCredentials.colScope') }}</th>
+          <th>{{ t('adminCredentials.colOwner') }}</th>
           <th>{{ t('adminCredentials.colMasked') }}</th>
           <th>{{ t('adminCredentials.colLastUsed') }}</th>
           <th>{{ t('adminCredentials.colCreated') }}</th>
@@ -115,27 +136,34 @@ function goVault(): void {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in credentials" :key="c.id">
-          <td class="cell-strong">{{ c.name }}</td>
+        <tr v-for="c in credentials" :key="c.id" :class="{ 'row--off': !c.enabled }">
+          <td class="cell-strong">
+            {{ c.name }}
+            <span v-if="!c.enabled" class="tag tag--off">{{ t('adminCredentials.stateDisabled') }}</span>
+          </td>
           <td><code class="mono">{{ c.type }}</code></td>
           <td>
-            <span class="tag" :class="c.scope === 'global' ? 'tag--global' : 'tag--personal'">
-              {{ c.scope === 'global' ? t('adminCredentials.scopeGlobal') : t('adminCredentials.scopePersonal') }}
+            <span class="tag" :class="c.scope === 'personal' ? 'tag--personal' : 'tag--global'">
+              {{ c.scope === 'personal' ? t('adminCredentials.scopePersonal') : t('adminCredentials.scopeGlobal') }}
             </span>
           </td>
+          <td class="mono mono--sm">{{ c.scope === 'personal' ? userName(c.ownerId) : '—' }}</td>
           <td class="mono mono--sm">{{ c.maskedValue }}</td>
           <td class="nowrap">{{ fmtTime(c.lastUsedAt) }}</td>
           <td class="nowrap">{{ fmtTime(c.createdAt) }}</td>
           <td>
             <button
-              class="btn btn--sm btn--danger"
-              :disabled="busyId === c.id || c.scope !== 'personal'"
+              class="btn btn--sm"
+              :class="c.enabled ? 'btn--danger' : 'btn--primary'"
+              :disabled="busyId === c.id || (c.scope !== 'personal' && c.enabled)"
               :title="
-                c.scope !== 'personal' ? t('adminCredentials.globalNotDisableable') : ''
+                c.scope !== 'personal' && c.enabled
+                  ? t('adminCredentials.globalNotDisableable')
+                  : ''
               "
-              @click="onDisable(c)"
+              @click="onToggle(c)"
             >
-              {{ t('adminCredentials.disable') }}
+              {{ c.enabled ? t('adminCredentials.disable') : t('adminCredentials.enable') }}
             </button>
           </td>
         </tr>
@@ -234,6 +262,15 @@ function goVault(): void {
   background: rgba(168, 85, 247, 0.15);
   color: #9333ea;
 }
+.tag--off {
+  background: rgba(107, 114, 128, 0.18);
+  color: var(--color-faint);
+  margin-left: 6px;
+}
+.row--off .cell-strong,
+.row--off .mono {
+  opacity: 0.6;
+}
 .btn {
   padding: 7px 14px;
   border: 1px solid var(--color-border);
@@ -253,6 +290,11 @@ function goVault(): void {
 .btn--danger {
   color: var(--color-danger, #dc2626);
   border-color: var(--color-danger, #dc2626);
+}
+.btn--primary {
+  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
 }
 .btn--sm {
   padding: 4px 10px;

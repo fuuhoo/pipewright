@@ -5,12 +5,12 @@ import type { Credential } from '../../api/credentials'
 
 const credentials: Credential[] = [
   {
-    id: 'cred-1', name: '部署账号', type: 'git_http', scope: '', username: 'deploy',
-    maskedValue: '••••1234', lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z',
+    id: 'cred-1', ownerId: '', name: '部署账号', type: 'git_http', scope: '', username: 'deploy',
+    maskedValue: '••••1234', description: '', enabled: true, disabledBy: '', disabledAt: null, createdBy: '', lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z',
   },
   {
-    id: 'cred-2', name: '备用账号', type: 'git_token', scope: '', username: 'backup',
-    maskedValue: 'ghp_••••5678', lastUsedAt: null, createdAt: '2026-01-02T00:00:00Z',
+    id: 'cred-2', ownerId: '', name: '备用账号', type: 'git_token', scope: '', username: 'backup',
+    maskedValue: 'ghp_••••5678', description: '', enabled: true, disabledBy: '', disabledAt: null, createdBy: '', lastUsedAt: null, createdAt: '2026-01-02T00:00:00Z',
   },
 ]
 

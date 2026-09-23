@@ -23,6 +23,7 @@ import { listChannels, type NotificationChannel } from '../api/notifications'
 import { getValidation, type ValidationDTO, type IssueScope } from '../api/pipelineValidation'
 import { HttpError } from '../api/http'
 import PipelineCanvas from '../components/pipeline/PipelineCanvas.vue'
+import { canonicalJobType } from '../components/pipeline/jobConfigSchema'
 import VarsCacheTab from '../components/pipeline/VarsCacheTab.vue'
 import EnvCredsTab from '../components/pipeline/EnvCredsTab.vue'
 import TriggersPanel from '../components/TriggersPanel.vue'
@@ -96,6 +97,10 @@ async function loadPipeline(): Promise<void> {
         loadError.value = t('projectPipeline.errNoServer')
       } else if (err.status === 404) {
         loadError.value = t('projectPipeline.errProjectNotFound')
+      } else if (err.status === 403) {
+        // 分组权限:项目在别人的私有组里时后端明确回 403(不伪装 404)。
+        // 文案复用 groups 命名空间 —— 同一概念在各页面说法保持一致。
+        loadError.value = err.apiError?.message ?? t('groups.errForbidden')
       } else {
         loadError.value = err.apiError?.message ?? t('projectPipeline.errLoadFailedStatus', { status: err.status })
       }
@@ -240,7 +245,12 @@ async function handleSave(): Promise<void> {
         credentials.value = await listCredentials().catch(() => credentials.value)
       }
     } else {
-      const dto = await savePipeline(projectId.value, { stages: editStages.value })
+      // 别名类型在写回前收敛成规范类型(custom → script);后端仍认别名,存量流水线照跑。
+      const stages = editStages.value.map((s) => ({
+        ...s,
+        jobs: s.jobs.map((j) => ({ ...j, type: canonicalJobType(j.type) })),
+      }))
+      const dto = await savePipeline(projectId.value, { stages })
       applyPipeline(dto)
     }
     showSaveSuccess()
@@ -665,6 +675,7 @@ async function togglePrStatus(next: boolean): Promise<void> {
             :credentials="credentials"
             :servers="servers"
             :channels="channels"
+            :environments="editEnvs"
             @update="handleCanvasUpdate"
           />
 

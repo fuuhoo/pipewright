@@ -354,6 +354,11 @@ func (f *fakeTargetWithServers) List(context.Context) ([]*target.Server, error) 
 	return f.servers, nil
 }
 
+// ListScoped 走同一份夹具:分组可见性不是 proxy 域的关注点。
+func (f *fakeTargetWithServers) ListScoped(ctx context.Context, _ target.ListFilter) ([]*target.Server, error) {
+	return f.List(ctx)
+}
+
 func TestOverviewJoinsServerName(t *testing.T) {
 	ctx := context.Background()
 	st := storetest.OpenDB(t)

@@ -295,6 +295,25 @@ func (ss *SessionStore) DeleteOthers(keepToken string) (int64, error) {
 	return n, nil
 }
 
+// DeleteOthersForUser 只删「同一个用户」名下除 keepToken 外的会话。
+//
+// 普通用户改口令绝不能复用 DeleteOthers:那条 SQL 没有 user 条件,会把别人的会话一起
+// 踢掉。userID 为空同样拒绝——旧部署的会话行 user_id 就是空串,空值会误伤一批无主会话。
+func (ss *SessionStore) DeleteOthersForUser(userID, keepToken string) (int64, error) {
+	if keepToken == "" {
+		return 0, errors.New("auth: DeleteOthersForUser 拒绝空 keepToken(避免误删该用户全部会话)")
+	}
+	if userID == "" {
+		return 0, errors.New("auth: DeleteOthersForUser 拒绝空 userID(避免命中所有无主旧会话)")
+	}
+	res, err := ss.db.Exec(`DELETE FROM sessions WHERE user_id = ? AND token != ?`, userID, keepToken)
+	if err != nil {
+		return 0, fmt.Errorf("auth: delete other sessions for user: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // randHex 生成 n 字节随机数并返回 hex 编码字串。
 func randHex(n int) (string, error) {
 	b := make([]byte, n)

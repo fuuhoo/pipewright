@@ -13,8 +13,10 @@ import type {
   UpdateServerInput,
   ServerTestResult,
 } from '../../api/servers'
-import { listCredentials } from '../../api/credentials'
+import { listCredentials, usableCredentials } from '../../api/credentials'
 import type { Credential } from '../../api/credentials'
+import { listGroups, type Group } from '../../api/groups'
+import { useSessionStore } from '../../stores/session'
 import { HttpError } from '../../api/http'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -23,6 +25,7 @@ import ServiceOpsPanel from '../../components/ops/ServiceOpsPanel.vue'
 
 const router = useRouter()
 const { t } = useI18n()
+const sessionStore = useSessionStore()
 
 // ─── state ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +37,43 @@ const servers = ref<Server[]>([])
 
 // SSH credentials available to bind (ssh_key private key, or ssh_password login password).
 const sshCredentials = ref<Credential[]>([])
+
+// ─── 分组(v6.2 分组权限)─────────────────────────────────────────────────────
+//
+// 与项目的差别在「登记」这一步:未归组的主机全员可操作(含终端/服务运维),所以登记一台
+// 不归属任何组的目标机本身就是管理员级别的设置。后端在 POST /api/servers 判这条,这里只是
+// 把候选与按钮按同一口径收拢 —— 判定结论仍然只来自 GET /api/groups 的 canManage。
+
+const groups = ref<Group[]>([])
+const groupById = computed<Record<string, Group>>(() => {
+  const out: Record<string, Group> = {}
+  for (const g of groups.value) out[g.id] = g
+  return out
+})
+const manageableGroups = computed(() => groups.value.filter((g) => g.canManage))
+const isAdminUser = computed(() => sessionStore.user?.role === 'admin')
+
+function groupName(id: string): string {
+  return id ? (groupById.value[id]?.name ?? t('groups.groupMissing')) : t('groups.ungrouped')
+}
+
+/** 能否改这台主机的归属:未归组的主机只有管理员能动,组内的看对该组的 canManage。 */
+function canChangeGroup(s: Server): boolean {
+  if (!s.groupId) return isAdminUser.value
+  return groupById.value[s.groupId]?.canManage === true
+}
+
+/** 谁能登记新主机:管理员(可登记为未归组)或至少管着一个组(必须归入自己的组)。 */
+const canAddServer = computed(() => isAdminUser.value || manageableGroups.value.length > 0)
+
+async function loadGroups(): Promise<void> {
+  try {
+    groups.value = await listGroups()
+  } catch {
+    // 分组读不到不影响主机列表本身:归属列退化成「未归组」,不弹错误横幅。
+    groups.value = []
+  }
+}
 
 // ─── add / edit modal ───────────────────────────────────────────────────────
 
@@ -47,6 +87,7 @@ const form = ref({
   port: 22,
   user: '',
   credentialId: '',
+  groupId: '',
 })
 
 const formErrors = ref({
@@ -55,6 +96,7 @@ const formErrors = ref({
   port: '',
   user: '',
   credentialId: '',
+  groupId: '',
 })
 
 const formBanner = ref('')
@@ -126,9 +168,11 @@ async function loadServers(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    const [srv, creds] = await Promise.all([listServers(), listCredentials()])
+    const [srv, creds] = await Promise.all([listServers(), listCredentials(), loadGroups()])
     servers.value = srv
-    sshCredentials.value = creds.filter((c) => c.type === 'ssh_key' || c.type === 'ssh_password')
+    sshCredentials.value = usableCredentials(creds).filter(
+      (c) => c.type === 'ssh_key' || c.type === 'ssh_password',
+    )
     loadState.value = 'idle'
   } catch (err) {
     if (err instanceof HttpError) {
@@ -159,6 +203,8 @@ function openAddModal(): void {
     port: 22,
     user: '',
     credentialId: sshCredentials.value[0]?.id ?? '',
+    // 非管理员登记的主机必须归入自己管得动的组(未归组 = 管理员专属),所以默认落在首个候选组。
+    groupId: isAdminUser.value ? '' : (manageableGroups.value[0]?.id ?? ''),
   }
   clearFormErrors()
   formBanner.value = ''
@@ -174,6 +220,7 @@ function openEditModal(s: Server): void {
     port: s.port,
     user: s.user,
     credentialId: s.credentialId,
+    groupId: s.groupId,
   }
   clearFormErrors()
   formBanner.value = ''
@@ -188,8 +235,32 @@ function closeModal(): void {
 // ─── form validation ─────────────────────────────────────────────────────────
 
 function clearFormErrors(): void {
-  formErrors.value = { name: '', host: '', port: '', user: '', credentialId: '' }
+  formErrors.value = { name: '', host: '', port: '', user: '', credentialId: '', groupId: '' }
 }
+
+/** 正在编辑的主机(归属候选要能显示它当前所在、即使我已管不动的组)。 */
+const editingServer = computed(() =>
+  editingId.value ? (servers.value.find((s) => s.id === editingId.value) ?? null) : null,
+)
+
+/** 弹窗里的归属候选:我有 Manage 权的组;当前所在组即使管不动也要能显示出来。 */
+const groupOptions = computed<Group[]>(() => {
+  const cur = editingServer.value?.groupId
+  if (!cur) return manageableGroups.value
+  const g = groupById.value[cur]
+  if (!g || g.canManage) return manageableGroups.value
+  return [g, ...manageableGroups.value]
+})
+
+/** 「未归组」选项何时可选:新建只有管理员(登记未归组主机=对全员开放操作权);编辑时看对该主机的 Manage 权。 */
+const ungroupedSelectable = computed(() =>
+  modalMode.value === 'add' ? isAdminUser.value : groupFieldEditable.value,
+)
+
+/** 归属字段是否可改:编辑时取决于对这个资源的 Manage 权(未归组主机只有管理员能挪)。 */
+const groupFieldEditable = computed(() =>
+  modalMode.value === 'add' ? canAddServer.value : (editingServer.value ? canChangeGroup(editingServer.value) : false),
+)
 
 function validateForm(): boolean {
   clearFormErrors()
@@ -214,6 +285,11 @@ function validateForm(): boolean {
     formErrors.value.credentialId = t('settingsServers.errCredentialRequired')
     ok = false
   }
+  if (modalMode.value === 'add' && !isAdminUser.value && !form.value.groupId) {
+    // 后端同样会拒:非管理员登记的未归组主机等于对全员开放操作权。
+    formErrors.value.groupId = t('settingsServers.errGroupRequired')
+    ok = false
+  }
   return ok
 }
 
@@ -231,6 +307,7 @@ async function handleFormSubmit(): Promise<void> {
         port: form.value.port,
         user: form.value.user.trim(),
         credentialId: form.value.credentialId,
+        groupId: form.value.groupId,
       }
       const created = await createServer(payload)
       servers.value = [created, ...servers.value]
@@ -242,9 +319,15 @@ async function handleFormSubmit(): Promise<void> {
         user: form.value.user.trim(),
         credentialId: form.value.credentialId,
       }
+      // 只在归属真的变了才带上:PUT 用指针区分「不改」,把 groupId:'' 原样发回去等于
+      // 试图把主机挪到未归组,组长会吃到 403。
+      const origin = editingServer.value
+      if (origin && form.value.groupId !== origin.groupId) payload.groupId = form.value.groupId
       const updated = await updateServer(editingId.value, payload)
       servers.value = servers.value.map((s) => (s.id === updated.id ? updated : s))
       delete testResults.value[updated.id]
+      // 挪出我的可见范围后列表要按新范围重取(它可能不再对我可见)。
+      if (payload.groupId !== undefined && !groupById.value[payload.groupId]?.canManage) await loadServers()
     }
     modalOpen.value = false
   } catch (err) {
@@ -336,8 +419,8 @@ async function handleTest(s: Server): Promise<void> {
       </div>
       <button
         class="btn-primary"
-        :disabled="loadState === 'loading' || !hasSSHCredentials"
-        :title="!hasSSHCredentials ? t('settingsServers.addDisabledHint') : ''"
+        :disabled="loadState === 'loading' || !hasSSHCredentials || !canAddServer"
+        :title="!canAddServer ? t('settingsServers.noManageGroupHint') : (!hasSSHCredentials ? t('settingsServers.addDisabledHint') : '')"
         @click="openAddModal"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
@@ -385,6 +468,7 @@ async function handleTest(s: Server): Promise<void> {
             <div class="server-addr">
               <span class="mono">{{ s.user }}@{{ s.host }}:{{ s.port }}</span>
               <span class="cred-tag">🔑 {{ credentialLabel(s.credentialId) }}</span>
+              <span class="group-tag" :title="t('groups.fieldGroupHint')">{{ groupName(s.groupId) }}</span>
             </div>
             <!-- test result -->
             <div
@@ -458,6 +542,25 @@ async function handleTest(s: Server): Promise<void> {
               <option v-for="c in sshCredentials" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
             <span v-if="formErrors.credentialId" class="field-error">{{ formErrors.credentialId }}</span>
+          </label>
+
+          <!-- 分组:决定谁能看/谁能操作这台主机(含终端与服务运维) -->
+          <label class="field">
+            <span class="field-label">
+              {{ t('groups.fieldGroup') }}
+              <span class="field-hint-inline">{{ t('groups.fieldGroupHint') }}</span>
+            </span>
+            <select v-model="form.groupId" class="field-input" :disabled="formSubmitting || !groupFieldEditable">
+              <option v-if="ungroupedSelectable" value="">{{ t('groups.ungrouped') }}</option>
+              <option v-for="g in groupOptions" :key="g.id" :value="g.id">
+                {{ g.name }} · {{ g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}
+              </option>
+            </select>
+            <span v-if="formErrors.groupId" class="field-error">{{ formErrors.groupId }}</span>
+            <span v-else-if="groupFieldEditable && !groupOptions.length" class="field-hint">
+              {{ t('groups.noGroupsHint') }}
+            </span>
+            <span v-else-if="!groupFieldEditable" class="field-hint">{{ t('groups.lockedHint') }}</span>
           </label>
 
           <div class="modal-actions">
@@ -729,6 +832,16 @@ async function handleTest(s: Server): Promise<void> {
 .cred-tag {
   color: var(--color-dim);
 }
+.group-tag {
+  padding: 1px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.9em;
+  line-height: 1.6;
+  color: var(--color-dim);
+  background: color-mix(in oklch, var(--color-text) 4%, transparent);
+  white-space: nowrap;
+}
 .test-result {
   margin-top: 6px;
   font-size: var(--text-label);
@@ -825,6 +938,10 @@ async function handleTest(s: Server): Promise<void> {
   width: 96px;
 }
 .field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
   font-size: var(--text-label);
   font-weight: 500;
   color: var(--color-dim);
@@ -841,6 +958,19 @@ async function handleTest(s: Server): Promise<void> {
 .field-input:focus {
   outline: none;
   border-color: var(--color-primary);
+}
+.field-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.field-hint-inline {
+  font-weight: 400;
+  color: var(--color-faint);
+}
+.field-hint {
+  font-size: var(--text-label);
+  color: var(--color-faint);
+  line-height: 1.45;
 }
 .field-error {
   font-size: var(--text-label);

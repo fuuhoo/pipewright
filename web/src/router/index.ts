@@ -50,6 +50,8 @@ const AdminConfigProfiles = () => import('../views/admin/ConfigProfiles.vue')
 const AdminCredentials = () => import('../views/admin/Credentials.vue')
 // 用户管理(admin-only;§3.5)
 const AdminUsers = () => import('../views/admin/Users.vue')
+// 分组与权限(v6.2 分组权限):组长也要能管自己组的成员,故不设为 adminOnly。
+const Groups = () => import('../views/Groups.vue')
 // 审计日志(admin-only,只读)
 const AdminAudit = () => import('../views/admin/Audit.vue')
 // 我的凭据(所有登录用户;§3.4)
@@ -147,6 +149,9 @@ const router = createRouter({
         // ─── v6.2 §3.1/§3.3:构建环境 / 配置资源(一级入口,仅管理员;侧栏 adminOnly 过滤)───
         { path: 'build-envs', name: 'build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', adminOnly: true } },
         { path: 'config-profiles', name: 'config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', adminOnly: true } },
+        // v6.2 分组权限:分组名册页。所有登录用户可进(看到自己有权限的组),
+        // 建组/删组与「未归组资源」的登记仍由后端按 admin 收口,UI 据 canManage 开关按钮。
+        { path: 'groups', name: 'groups', component: Groups, meta: { title: '分组与权限' } },
         // 顶层「通知」占位页 → 重定向到真实的通知配置页。
         { path: 'notifications', name: 'notifications', redirect: { name: 'settings-notifications' } },
         {

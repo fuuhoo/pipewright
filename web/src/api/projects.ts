@@ -42,6 +42,12 @@ export interface Project {
    * back the commit status (PR check) using the project credential. Best-effort.
    */
   prStatusEnabled: boolean
+  /**
+   * 所属资源分组(v6.2 分组权限)。'' = 未归组 = 全员可见可操作;
+   * 私有分组下的项目只有组长/成员/管理员能列出与操作。
+   * 分组名称由前端用 GET /api/groups 映射,后端只给 ID。
+   */
+  groupId: string
   /** null until pipeline runs exist (Story 2.x). */
   lastRunStatus: RunStatus | null
   /** Empty until servers are bound (Story 2.x). */
@@ -56,6 +62,8 @@ export interface CreateProjectInput {
   credentialId: string
   /** Optional — server auto-detects from ls-remote HEAD if omitted. */
   defaultBranch?: string
+  /** Optional group id; omitted or '' = 未归组(仅管理员可登记未归组项目)。 */
+  groupId?: string
 }
 
 export interface UpdateProjectInput {
@@ -66,6 +74,8 @@ export interface UpdateProjectInput {
   pacEnabled?: boolean
   /** Toggle PR status checks (commit status writeback) for this project. */
   prStatusEnabled?: boolean
+  /** 归组/改组;传 '' 表示移出分组。需要对该组(含原组)有 Manage 权。 */
+  groupId?: string
 }
 
 export interface TestCloneResult {
