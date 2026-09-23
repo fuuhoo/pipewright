@@ -55,6 +55,7 @@ const (
 
 // reportSpec 是从一个阶段的 job 配置里抽取的报告采集声明。
 type reportSpec struct {
+	jobID        string // 声明报告的 job(门禁阻断时把它的 step 改判为失败)
 	reportPath   string
 	coveragePath string // 为空 = 不采集覆盖率
 	thresholds   qualitygate.Thresholds
@@ -72,6 +73,7 @@ func reportSpecFromStage(stage pipeline.Stage) *reportSpec {
 			continue
 		}
 		spec := &reportSpec{
+			jobID:      jb.ID,
 			reportPath: rp,
 			thresholds: qualitygate.Thresholds{
 				MaxFailures: cfgIntDefault(jb.Config, cfgGateMaxFailures, qualitygate.NoCheck),
@@ -84,6 +86,17 @@ func reportSpecFromStage(stage pipeline.Stage) *reportSpec {
 		return spec
 	}
 	return nil
+}
+
+// markGateBlocked 把声明门禁的 job step 改判为失败。
+//
+// 测试命令常常自己吞掉退出码(报告文件才是结论),于是 job 已上报成功;此后只有运行整体失败、
+// DAG 上却全绿,用户找不到失败点。门禁裁决才是这一阶段的真正结论,故用它覆盖该 step。
+func markGateBlocked(ctx context.Context, rep dagrun.StageReporter, spec *reportSpec) {
+	if rep == nil || spec.jobID == "" {
+		return
+	}
+	_ = rep.JobDone(ctx, spec.jobID, run.StepFailed)
 }
 
 // collectStageReport 在阶段 script job 成功执行后采集/解析/持久化测试报告并裁决门禁。
@@ -107,6 +120,7 @@ func collectStageReport(ctx context.Context, sink TestReportSink, r *run.Run, st
 		_ = rep.Log(ctx, streamStderr, msg)
 		if gated {
 			_ = rep.Log(ctx, streamStderr, "⛔ 已声明质量门禁但缺测试报告,阻断后续阶段")
+			markGateBlocked(ctx, rep, spec)
 			return ErrQualityGate
 		}
 		return nil // 仅展示:软失败
@@ -116,6 +130,7 @@ func collectStageReport(ctx context.Context, sink TestReportSink, r *run.Run, st
 		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("测试报告解析失败:%v", perr))
 		if gated {
 			_ = rep.Log(ctx, streamStderr, "⛔ 已声明质量门禁但报告无法解析,阻断后续阶段")
+			markGateBlocked(ctx, rep, spec)
 			return ErrQualityGate
 		}
 		return nil
@@ -172,6 +187,7 @@ func collectStageReport(ctx context.Context, sink TestReportSink, r *run.Run, st
 	if gated && !verdict.Passed {
 		_ = rep.Log(ctx, streamStderr, "⛔ 质量门禁未通过:"+verdict.Reason())
 		_ = rep.Log(ctx, streamStderr, "已阻断后续阶段(含部署)")
+		markGateBlocked(ctx, rep, spec)
 		return ErrQualityGate
 	}
 	if gated {

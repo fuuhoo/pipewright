@@ -49,16 +49,27 @@ type junitTestSuites struct {
 	Skipped  *int             `xml:"skipped,attr"`
 	Time     string           `xml:"time,attr"`
 	Suites   []junitTestSuite `xml:"testsuite"`
+	Cases    []junitTestCase  `xml:"testcase"`
 }
 
 // junitTestSuite 对应单个 <testsuite>。
 type junitTestSuite struct {
-	XMLName  xml.Name `xml:"testsuite"`
-	Tests    int      `xml:"tests,attr"`
-	Failures int      `xml:"failures,attr"`
-	Errors   int      `xml:"errors,attr"`
-	Skipped  int      `xml:"skipped,attr"`
-	Time     string   `xml:"time,attr"`
+	XMLName  xml.Name        `xml:"testsuite"`
+	Tests    int             `xml:"tests,attr"`
+	Failures int             `xml:"failures,attr"`
+	Errors   int             `xml:"errors,attr"`
+	Skipped  int             `xml:"skipped,attr"`
+	Time     string          `xml:"time,attr"`
+	Cases    []junitTestCase `xml:"testcase"`
+}
+
+// junitTestCase 对应单条 <testcase>:失败/跳过以子元素表达而非计数属性。
+type junitTestCase struct {
+	XMLName xml.Name  `xml:"testcase"`
+	Time    string    `xml:"time,attr"`
+	Failure *struct{} `xml:"failure"`
+	Error   *struct{} `xml:"error"`
+	Skipped *struct{} `xml:"skipped"`
 }
 
 // ParseJUnit 解析 JUnit XML 字节流为 Summary(不含覆盖率;Coverage = CoverageUnknown)。
@@ -66,10 +77,12 @@ type junitTestSuite struct {
 // 兼容两种根形态:<testsuites> 聚合根、或直接 <testsuite> 单套件根。
 // 聚合规则:
 //   - 优先用 <testsuites> 根属性的 tests/failures/errors/skipped(若产物给了);
-//   - 否则把各 <testsuite> 的计数逐项相加。
+//   - 否则把各 <testsuite> 的计数逐项相加;
+//   - 两者都没给计数时按 <testcase> 逐条兜底计数(node:test 的 junit reporter 就是这种
+//     形态:计数只写在 XML 注释里,套件属性上什么都没有)。
 //   - failures + errors 统一计入 Failed(errors = 异常/未捕获失败,门禁同等看待)。
 //
-// 无任何 testsuite → ErrEmptyReport;XML 非法 → 解析错误。
+// 既无计数又无用例 → ErrEmptyReport;XML 非法 → 解析错误。
 func ParseJUnit(data []byte) (Summary, error) {
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
@@ -102,7 +115,7 @@ func ParseJUnit(data []byte) (Summary, error) {
 
 // summarizeSuites 把 <testsuites> 聚合为 Summary。
 func summarizeSuites(s junitTestSuites) (Summary, error) {
-	if len(s.Suites) == 0 && s.Tests == nil {
+	if len(s.Suites) == 0 && s.Tests == nil && len(s.Cases) == 0 {
 		return Summary{}, ErrEmptyReport
 	}
 
@@ -122,8 +135,22 @@ func summarizeSuites(s junitTestSuites) (Summary, error) {
 			skipped = *s.Skipped
 		}
 		duration = parseSeconds(s.Time)
+	} else if len(s.Suites) == 0 {
+		// 无套件、无计数:按根下的 <testcase> 逐条兜底。
+		total, failures, errs, skipped, duration = countCases(s.Cases)
 	} else {
 		for _, sub := range s.Suites {
+			// 套件自身没给计数却带用例(maven-surefire 的缺省形态之一、以及 node 的产物)
+			// → 按该套件的 testcase 计数,否则一条用例都统计不到。
+			if sub.Tests == 0 && len(sub.Cases) > 0 {
+				t, f, e, k, d := countCases(sub.Cases)
+				total += t
+				failures += f
+				errs += e
+				skipped += k
+				duration += d
+				continue
+			}
 			total += sub.Tests
 			failures += sub.Failures
 			errs += sub.Errors
@@ -145,6 +172,23 @@ func summarizeSuites(s junitTestSuites) (Summary, error) {
 		DurationSeconds: duration,
 		Coverage:        CoverageUnknown,
 	}, nil
+}
+
+// countCases 按 <testcase> 逐条兜底计数:failure/error 子元素各计一件,skipped 子元素计跳过。
+func countCases(cases []junitTestCase) (total, failures, errs, skipped int, duration float64) {
+	for _, c := range cases {
+		total++
+		duration += parseSeconds(c.Time)
+		switch {
+		case c.Failure != nil:
+			failures++
+		case c.Error != nil:
+			errs++
+		case c.Skipped != nil:
+			skipped++
+		}
+	}
+	return total, failures, errs, skipped, duration
 }
 
 // parseSeconds 把 time 属性(秒,可空/非法)解析为 float(失败 → 0)。

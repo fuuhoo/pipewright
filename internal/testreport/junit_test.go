@@ -34,6 +34,48 @@ const junitSingleSuite = `<?xml version="1.0"?>
 
 func almostEqual(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
 
+// node:test 的内置 junit reporter:计数只写在注释里,根下直接挂 testcase(带 failure/skipped 子元素)。
+const junitCasesOnly = `<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testcase name="pass" time="0.001" classname="test"/>
+  <testcase name="fail" time="0.002" classname="test"><failure type="testCodeFailure">1 == 2</failure></testcase>
+  <testcase name="boom" time="0.003" classname="test"><error type="exception">panic</error></testcase>
+  <testcase name="skip" time="0.004" classname="test"><skipped type="skipped" message="true"/></testcase>
+  <!-- tests 4 -->
+</testsuites>`
+
+// 套件带 testcase 但不带计数属性 → 同样按用例计数。
+const junitSuiteWithoutCounts = `<testsuites>
+  <testsuite name="solo" time="0.5">
+    <testcase name="a"><failure/></testcase>
+    <testcase name="b"/>
+  </testsuite>
+</testsuites>`
+
+func TestParseJUnit_CasesOnlyFallback(t *testing.T) {
+	s, err := ParseJUnit([]byte(junitCasesOnly))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 4 条用例:1 failure + 1 error = failed 2,1 skipped,passed = 4-2-1 = 1。
+	if s.Total != 4 || s.Failed != 2 || s.Skipped != 1 || s.Passed != 1 {
+		t.Errorf("counts = %+v, want total=4 failed=2 skipped=1 passed=1", s)
+	}
+	if !almostEqual(s.DurationSeconds, 0.010) {
+		t.Errorf("duration = %v, want 0.010", s.DurationSeconds)
+	}
+}
+
+func TestParseJUnit_SuiteWithoutCounts(t *testing.T) {
+	s, err := ParseJUnit([]byte(junitSuiteWithoutCounts))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Total != 2 || s.Failed != 1 || s.Passed != 1 {
+		t.Errorf("counts = %+v, want total=2 failed=1 passed=1", s)
+	}
+}
+
 func TestParseJUnit_AllPass(t *testing.T) {
 	s, err := ParseJUnit([]byte(junitAllPass))
 	if err != nil {

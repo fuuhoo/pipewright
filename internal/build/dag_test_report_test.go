@@ -88,6 +88,9 @@ func TestCollectStageReport_PassPersists(t *testing.T) {
 	if !got.GateEnabled || !got.GatePassed {
 		t.Errorf("gate = enabled=%v passed=%v, want both true", got.GateEnabled, got.GatePassed)
 	}
+	if len(rep.jobDone) != 0 {
+		t.Errorf("jobDone = %v, want none (门禁放行不得改判节点状态)", rep.jobDone)
+	}
 }
 
 func TestCollectStageReport_GateBlocks(t *testing.T) {
@@ -106,6 +109,21 @@ func TestCollectStageReport_GateBlocks(t *testing.T) {
 	if len(sink.saved) != 1 || sink.saved[0].GatePassed {
 		t.Errorf("saved = %+v, want 1 report with GatePassed=false", sink.saved)
 	}
+	// 门禁阻断必须把声明报告的 job step 改判失败:命令吞掉退出码时 step 停在 success,
+	// DAG 上就成了「全绿但整体失败」,用户找不到失败点。
+	assertStepFailed(t, rep, "j1")
+}
+
+// assertStepFailed 断言 fake reporter 收到过把该 job 标为失败的终态上报。
+func assertStepFailed(t *testing.T, rep *fakeReporter, jobID string) {
+	t.Helper()
+	want := jobID + "=" + run.StepFailed
+	for i := len(rep.jobDone) - 1; i >= 0; i-- {
+		if rep.jobDone[i] == want {
+			return
+		}
+	}
+	t.Errorf("jobDone = %v, want last terminal %q", rep.jobDone, want)
 }
 
 func TestCollectStageReport_MissingFileWithGateBlocks(t *testing.T) {
@@ -118,6 +136,7 @@ func TestCollectStageReport_MissingFileWithGateBlocks(t *testing.T) {
 	if !errors.Is(err, ErrQualityGate) {
 		t.Fatalf("err = %v, want ErrQualityGate (gate declared but no report)", err)
 	}
+	assertStepFailed(t, rep, "j1")
 }
 
 func TestCollectStageReport_MissingFileNoGateSoftSkip(t *testing.T) {
