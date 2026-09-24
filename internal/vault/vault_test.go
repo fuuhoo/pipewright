@@ -166,6 +166,77 @@ func TestGitHTTPCredentialStoresUsernameAndSecretEncrypted(t *testing.T) {
 	}
 }
 
+// 镜像仓库凭据:用户名与密码分开录入(ACR / Nexus / Harbor 都是账号 + 密码)。
+// 用户名栏非空时整串明文都算密码 —— 密码里带冒号也不会再被从中间截断。
+func TestRegistryAuthPrefersUsernameColumn(t *testing.T) {
+	v := New(testDB(t), testKey())
+	cred, err := v.Create(CreateInput{
+		Name: "acr", Type: TypeRegistry, Username: "aliyun-account", Secret: "p@ss:with:colons",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if want := "aliyun-account " + maskDots; cred.MaskedValue != want {
+		t.Fatalf("masked = %q, want %q", cred.MaskedValue, want)
+	}
+	auth, err := v.GetRegistryAuth(cred.ID)
+	if err != nil {
+		t.Fatalf("GetRegistryAuth: %v", err)
+	}
+	if auth.Username != "aliyun-account" || auth.Password != "p@ss:with:colons" {
+		t.Fatalf("RegistryAuth = %+v", auth)
+	}
+}
+
+// 存量凭据只有口令一栏,当时唯一的表达方式是把 "user:password" 整串写进去。
+// 这类凭据不迁移:用户名栏空着时按首个冒号切,老流水线照常登录。
+func TestRegistryAuthFallsBackToLegacyPair(t *testing.T) {
+	v := New(testDB(t), testKey())
+	cred, err := v.Create(CreateInput{Name: "harbor", Type: TypeRegistry, Secret: "robot$ci:legacy-pw"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	auth, err := v.GetRegistryAuth(cred.ID)
+	if err != nil {
+		t.Fatalf("GetRegistryAuth: %v", err)
+	}
+	if auth.Username != "robot$ci" || auth.Password != "legacy-pw" {
+		t.Fatalf("RegistryAuth = %+v", auth)
+	}
+}
+
+// 既没有用户名栏也切不出冒号 = 匿名库或纯 token 场景:用户名为空,调用方据此跳过登录。
+func TestRegistryAuthWithoutUserStaysAnonymous(t *testing.T) {
+	auth := ResolveRegistryAuth("", "just-a-bearer-token")
+	if auth.Username != "" || auth.Password != "just-a-bearer-token" {
+		t.Fatalf("RegistryAuth = %+v", auth)
+	}
+	if leading := ResolveRegistryAuth("", ":pw-only"); leading.Username != "" || leading.Password != ":pw-only" {
+		t.Fatalf("首冒号在 0 位时不该切: %+v", leading)
+	}
+}
+
+// 只改用户名、不轮换口令:掩码里的账号名得跟着换(否则列表挂着上一个账号)。
+func TestUpdateRegistryUsernameRefreshesMask(t *testing.T) {
+	v := New(testDB(t), testKey())
+	cred, err := v.Create(CreateInput{Name: "nexus", Type: TypeRegistry, Username: "alice", Secret: "pw111111"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	user := "bob"
+	updated, err := v.Update(cred.ID, UpdateInput{Username: &user})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if want := "bob " + maskDots; updated.MaskedValue != want {
+		t.Fatalf("masked = %q, want %q", updated.MaskedValue, want)
+	}
+	auth, err := v.GetRegistryAuth(cred.ID)
+	if err != nil || auth.Username != "bob" || auth.Password != "pw111111" {
+		t.Fatalf("口令未轮换却变了: %+v err=%v", auth, err)
+	}
+}
+
 // TestUpdateRotateSecret 验证轮换 secret 后旧密文换新、Get 返回新明文、掩码更新。
 func TestUpdateRotateSecret(t *testing.T) {
 	v := New(testDB(t), testKey())

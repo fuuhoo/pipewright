@@ -2,6 +2,7 @@ package buildenv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os/exec"
@@ -281,18 +282,33 @@ type CredentialLite struct {
 
 // dockerLogin / dockerLogout 是私有辅助;registry URL 从 image 字符串粗解析(取首个 / 之前的 host:port)。
 // 不处理全部边缘(私库如 mirror 域名),只在出现 [host] 时尝试 login。
+//
+// 口令一律经 stdin 注入(绝不进 argv,`ps` 与进程日志都看不到);失败原因截断后回给调用方,
+// 其中若意外含口令则整段替换为掩码。
 func (c *Checker) dockerLogin(ctx context.Context, image string, cred *CredentialLite) error {
 	host := parseRegistryHost(image)
 	if host == "" {
 		return nil // Docker Hub 公开镜像无需登录
 	}
+	if cred.Username == "" {
+		return errors.New("所选凭据没有用户名,无法登录镜像仓库(编辑凭据补上用户名)")
+	}
 	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(loginCtx, c.bin, "login", host, "-u", cred.Username, "--password-stdin")
-	cmd.Stdin = nil
-	// 简化:此处凭据 token 经 stdin;真实密码不暴露于 argv。
-	// 由调用方负责把 cred.Token 写入 stdin。阶段 9+ 由 main.go 装配时把 secret 写入。
-	return nil // 占位,实际实现阶段 14 完成
+	cmd.Stdin = strings.NewReader(cred.Token)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := truncate(strings.TrimSpace(string(out)), 512)
+		if msg == "" {
+			msg = err.Error()
+		}
+		if cred.Token != "" {
+			msg = strings.ReplaceAll(msg, cred.Token, "••••")
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
 }
 
 func (c *Checker) dockerLogout(ctx context.Context, image string) {

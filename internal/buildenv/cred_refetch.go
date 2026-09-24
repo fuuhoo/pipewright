@@ -19,8 +19,9 @@ type vaultCredentialRefetch struct {
 }
 
 // NewVaultCredentialRefetch 把 vault.Vault 适配为 buildenv.CredentialRefetch。
-// 用于 Checker.ManualPull:按 credential_id 取 username + secret(token/password)
-// 给 docker login 用。MasterKey 未配置时 GetByID 返回 ErrVaultUnconfigured,
+// 用于 Checker.ManualPull:按 credential_id 取镜像仓库的用户名 + 口令明文给 docker login 用
+// (用户名栏优先,读不到才按存量 "user:password" 约定切 —— 规则收口在 vault)。
+// MasterKey 未配置时 GetByID 返回 ErrVaultUnconfigured,
 // 调用方应将其映射为「无需登录即可 pull」或直接报错。
 func NewVaultCredentialRefetch(v vault.Vault) CredentialRefetch {
 	return &vaultCredentialRefetch{v: v}
@@ -32,9 +33,9 @@ func (r *vaultCredentialRefetch) GetByID(ctx context.Context, id string) (userna
 	if r.v == nil {
 		return "", "", errors.New("buildenv: vault not configured")
 	}
-	ga, err := r.v.GetGitAuth(id)
+	auth, err := r.v.GetRegistryAuth(id)
 	if err != nil {
 		return "", "", err
 	}
-	return ga.Username, ga.Token, nil
+	return auth.Username, auth.Password, nil
 }

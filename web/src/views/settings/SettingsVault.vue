@@ -188,6 +188,51 @@ const idleCount = computed(
   () => credentials.value.filter(idleWarning).length,
 )
 
+// 用户名栏:git 系与镜像仓库共用这一栏。registry 不标「可选」——
+// 仓库登录就是用户名 + 密码,缺用户名等于只能匿名。
+const USERNAME_FIELD_TYPES: CredentialType[] = ['git_token', 'git_http', 'git_ssh', 'registry']
+const showUsernameField = computed(() => USERNAME_FIELD_TYPES.includes(form.value.type))
+const usernamePlaceholder = computed(() => {
+  switch (form.value.type) {
+    case 'registry': return t('settingsVault.registryUsernamePlaceholder')
+    case 'git_ssh': return t('settingsVault.gitSSHUsernamePlaceholder')
+    default: return t('settingsVault.gitUsernamePlaceholder')
+  }
+})
+const usernameHint = computed(() => {
+  switch (form.value.type) {
+    case 'registry': return t('settingsVault.hintRegistryUsername')
+    case 'git_ssh': return t('settingsVault.hintGitSSHUsername')
+    default: return t('settingsVault.hintGitUsername')
+  }
+})
+// 口令栏文案:registry 是「密码」而非「密钥/token」,避免用户把用户名写进同一栏。
+const secretLabel = computed(() => {
+  if (modalMode.value === 'edit') return t('settingsVault.fieldSecretNew')
+  if (form.value.type === 'git_http') return t('settingsVault.fieldSecretGitHttp')
+  if (form.value.type === 'git_ssh') return t('settingsVault.fieldSecretGitSSH')
+  if (form.value.type === 'registry') return t('settingsVault.fieldSecretRegistry')
+  return t('settingsVault.fieldSecret')
+})
+const secretPlaceholder = computed(() => {
+  if (modalMode.value === 'edit') return t('settingsVault.secretPlaceholderKeep')
+  switch (form.value.type) {
+    case 'ssh_password': return t('settingsVault.secretPlaceholderSshPassword')
+    case 'git_http': return t('settingsVault.secretPlaceholderGitHttp')
+    case 'registry': return t('settingsVault.secretPlaceholderRegistry')
+    default: return t('settingsVault.secretPlaceholderToken')
+  }
+})
+const secretHint = computed(() => {
+  switch (form.value.type) {
+    case 'ssh_password': return t('settingsVault.hintSshPassword')
+    case 'git_http': return t('settingsVault.hintGitHttp')
+    case 'git_ssh': return t('settingsVault.hintGitSSH')
+    case 'registry': return t('settingsVault.hintRegistrySecret')
+    default: return t('settingsVault.hintSecret')
+  }
+})
+
 // ─── data loading ────────────────────────────────────────────────────────────
 
 async function loadCredentials(): Promise<void> {
@@ -716,27 +761,27 @@ async function toggleEditReveal(): Promise<void> {
           </div>
 
           <!-- Secret — password type, never echoed back -->
-          <div v-if="form.type === 'git_token' || form.type === 'git_http' || form.type === 'git_ssh'" class="field">
+          <div v-if="showUsernameField" class="field">
             <label class="field-label" for="cred-username">
-              {{ t('settingsVault.fieldGitUsername') }}
-              <span class="field-optional">{{ t('settingsVault.optional') }}</span>
+              {{ form.type === 'registry' ? t('settingsVault.fieldRegistryUsername') : t('settingsVault.fieldGitUsername') }}
+              <span v-if="form.type !== 'registry'" class="field-optional">{{ t('settingsVault.optional') }}</span>
             </label>
             <input
               id="cred-username"
               v-model="form.username"
               class="field-input"
               type="text"
-              :placeholder="form.type === 'git_ssh' ? t('settingsVault.gitSSHUsernamePlaceholder') : t('settingsVault.gitUsernamePlaceholder')"
+              :placeholder="usernamePlaceholder"
               :disabled="formSubmitting"
               autocomplete="username"
             />
-            <span class="field-hint">{{ form.type === 'git_ssh' ? t('settingsVault.hintGitSSHUsername') : t('settingsVault.hintGitUsername') }}</span>
+            <span class="field-hint">{{ usernameHint }}</span>
           </div>
 
           <div class="field">
             <div class="field-label-row">
               <label class="field-label" for="cred-secret">
-                {{ modalMode === 'add' && form.type === 'git_http' ? t('settingsVault.fieldSecretGitHttp') : modalMode === 'add' && form.type === 'git_ssh' ? t('settingsVault.fieldSecretGitSSH') : (modalMode === 'add' ? t('settingsVault.fieldSecret') : t('settingsVault.fieldSecretNew')) }}
+                {{ secretLabel }}
                 <span v-if="modalMode === 'edit'" class="field-optional">{{ t('settingsVault.secretOptionalEdit') }}</span>
               </label>
               <!-- Reveal current plaintext (edit only; audited server-side).
@@ -788,7 +833,7 @@ async function toggleEditReveal(): Promise<void> {
               class="field-input field-input--mono"
               :class="{ 'field-input--error': formErrors.secret }"
               type="password"
-              :placeholder="modalMode === 'add' ? (form.type === 'ssh_password' ? t('settingsVault.secretPlaceholderSshPassword') : (form.type === 'git_http' ? t('settingsVault.secretPlaceholderGitHttp') : t('settingsVault.secretPlaceholderToken'))) : t('settingsVault.secretPlaceholderKeep')"
+              :placeholder="secretPlaceholder"
               :disabled="formSubmitting"
               :aria-invalid="formErrors.secret ? 'true' : undefined"
               :aria-describedby="formErrors.secret ? 'cred-secret-err' : undefined"
@@ -796,10 +841,7 @@ async function toggleEditReveal(): Promise<void> {
               @input="formErrors.secret = ''"
             />
             <span v-if="formErrors.secret" id="cred-secret-err" class="field-error" role="alert">{{ formErrors.secret }}</span>
-            <span v-if="form.type === 'ssh_password'" class="field-hint">{{ t('settingsVault.hintSshPassword') }}</span>
-            <span v-else-if="form.type === 'git_http'" class="field-hint">{{ t('settingsVault.hintGitHttp') }}</span>
-            <span v-else-if="form.type === 'git_ssh'" class="field-hint">{{ t('settingsVault.hintGitSSH') }}</span>
-            <span v-else class="field-hint">{{ t('settingsVault.hintSecret') }}</span>
+            <span class="field-hint">{{ secretHint }}</span>
           </div>
 
           <!-- Footer -->

@@ -36,10 +36,11 @@ func (f fakeSettings) Get(_ context.Context, _ string) (*pipeline.Settings, erro
 	return f.settings, f.err
 }
 
-// fakeVault 只实现 Reveal(按 credID 返回明文);其余方法嵌入 nil 接口。
+// fakeVault 只实现 Reveal(按 credID 返回明文)与 users(该凭据的用户名列);其余方法嵌入 nil 接口。
 type fakeVault struct {
 	vault.Vault
 	secrets map[string]string
+	users   map[string]string
 }
 
 func (f fakeVault) Reveal(id string) (string, error) {
@@ -54,7 +55,15 @@ func (f fakeVault) GetGitAuth(id string) (vault.GitAuth, error) {
 	if err != nil {
 		return vault.GitAuth{}, err
 	}
-	return vault.GitAuth{Token: token}, nil
+	return vault.GitAuth{Username: f.users[id], Token: token}, nil
+}
+
+func (f fakeVault) GetRegistryAuth(id string) (vault.RegistryAuth, error) {
+	secret, err := f.Reveal(id)
+	if err != nil {
+		return vault.RegistryAuth{}, err
+	}
+	return vault.ResolveRegistryAuth(f.users[id], secret), nil
 }
 
 // recordedLog 是一条被 sink 记录的日志行。
@@ -472,6 +481,48 @@ func TestPushFlow(t *testing.T) {
 	}
 	if a.Metadata["digest"] != "sha256:deadbeef" {
 		t.Fatalf("expected pushed digest, got %v", a.Metadata["digest"])
+	}
+}
+
+// 凭据表单现在把用户名与密码分开录入(ACR / Nexus 的账号 + 密码)。此时整串明文都是密码:
+// 含冒号也不能被截断,否则私有仓 push 会得到「unauthorized」而用户看不出填错了什么。
+func TestPushFlowUsesCredentialUsernameColumn(t *testing.T) {
+	const regPass = "nexus:p@ss:with:colons"
+	cmdr := newFakeCommander()
+	cmdr.script("build", fakeCmd{stdoutLines: []string{"built"}, exitCode: 0})
+	cmdr.script("inspect", fakeCmd{stdoutLines: []string{`{"Id":"sha256:x","RepoDigests":["nexus.example.com/app@sha256:cafef00d"],"Size":100}`}, exitCode: 0})
+	cmdr.script("login", fakeCmd{stdoutLines: []string{"Login Succeeded"}, exitCode: 0})
+	cmdr.script("tag", fakeCmd{exitCode: 0})
+	cmdr.script("push", fakeCmd{stdoutLines: []string{"pushed"}, exitCode: 0})
+
+	registry := &pipeline.ImageRegistry{Type: pipeline.RegistryCustom, URL: "https://nexus.example.com", CredentialID: "cred-reg"}
+	proj := &project.Project{ID: "p1", Name: "app", RepoURL: "https://example.com/r.git"}
+	b := newTestBuilder(t, cmdr, proj, imageSettings(registry), map[string]string{"cred-reg": regPass})
+	b.vault = fakeVault{
+		secrets: map[string]string{"cred-reg": regPass},
+		users:   map[string]string{"cred-reg": "ci-deploy"},
+	}
+	b.cloner = newSuccessCloner("abc1234")
+
+	sink := newFakeSink()
+	r := &run.Run{ID: "run1", ProjectID: "p1", Trigger: run.Trigger{Commit: "abc1234", ResolvedEnvironment: "prod"}}
+	if err := b.Run(context.Background(), r, sink); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	var loginArgs, loginStdin string
+	for _, e := range cmdr.execs {
+		if len(e.args) > 0 && e.args[0] == "login" {
+			loginArgs, loginStdin = strings.Join(e.args, " "), e.stdin
+		}
+	}
+	if !strings.Contains(loginArgs, "-u ci-deploy") {
+		t.Fatalf("login argv = %q, want -u ci-deploy", loginArgs)
+	}
+	if loginStdin != regPass {
+		t.Fatalf("login stdin = %q, want 完整密码(整串含冒号)", loginStdin)
+	}
+	if strings.Contains(cmdr.allArgsText(), regPass) {
+		t.Fatalf("registry password leaked into argv")
 	}
 }
 

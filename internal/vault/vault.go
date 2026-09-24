@@ -99,6 +99,13 @@ type GitAuth struct {
 	Token    string
 }
 
+// RegistryAuth 是镜像仓库登录对(ACR / Nexus / Harbor 都是用户名 + 密码或访问凭证)。
+// Username 为空 = 匿名或纯 token 场景,调用方据此决定是否发起登录。
+type RegistryAuth struct {
+	Username string
+	Password string
+}
+
 // Vault 定义保险库领域对外接口。(-er 约定的同类:领域聚合用 Vault)
 type Vault interface {
 	// Create 加密并持久化新凭据,返回掩码视图(不含明文)。
@@ -108,6 +115,9 @@ type Vault interface {
 	// Get 解密并返回指定凭据的明文,**仅供进程内领域调用**;同时更新 last_used_at。
 	Get(id string) (string, error)
 	GetGitAuth(id string) (GitAuth, error)
+	// GetRegistryAuth 取镜像仓库凭据并折成 (用户名, 密码):用户名栏优先,读不到才按存量
+	// "user:password" 约定从明文里切(见 ResolveRegistryAuth)。同时更新 last_used_at。
+	GetRegistryAuth(id string) (RegistryAuth, error)
 	// Reveal 解密并返回指定凭据的明文,**不更新 last_used_at**(供脱敏登记等「只读取值、非真正使用」
 	// 的场景:把凭据明文登记进 Masker 以便日志/诊断/通知出网前替换为 [MASKED],不应算「最近使用」)。
 	// 未配置 master key → ErrVaultUnconfigured;不存在 → ErrNotFound;解密失败 → ErrDecrypt(不泄漏)。
@@ -212,7 +222,7 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 	if err != nil {
 		return nil, err
 	}
-	masked := mask(in.Type, in.Secret)
+	masked := maskWithUsername(in.Type, in.Username, in.Secret)
 
 	id := uuid.NewString()
 	now := time.Now().UTC()
@@ -297,31 +307,65 @@ func (s *service) Get(id string) (string, error) {
 	return string(plaintext), nil
 }
 
-// Reveal 同 Get 但**不更新 last_used_at**(供脱敏登记等只读取值场景)。
+// GetGitAuth 取克隆用凭据(用户名 + 令牌/私钥明文),同时算一次「最近使用」。
 func (s *service) GetGitAuth(id string) (GitAuth, error) {
-	if !s.configured() {
-		return GitAuth{}, ErrVaultUnconfigured
-	}
-	var username string
-	var sealed []byte
-	var enabled int
-	err := s.db.QueryRow(`SELECT username, ciphertext, enabled FROM credentials WHERE id = ?`, id).Scan(&username, &sealed, &enabled)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return GitAuth{}, ErrNotFound
-		}
-		return GitAuth{}, fmt.Errorf("vault: get git auth: %w", err)
-	}
-	if enabled != 1 {
-		return GitAuth{}, ErrDisabledCredential
-	}
-	plaintext, err := open(s.key, sealed)
+	username, secret, err := s.takePair(id)
 	if err != nil {
 		return GitAuth{}, err
 	}
+	return GitAuth{Username: username, Token: secret}, nil
+}
+
+// GetRegistryAuth 取镜像仓库凭据明文并折成登录对(规则见 ResolveRegistryAuth)。
+func (s *service) GetRegistryAuth(id string) (RegistryAuth, error) {
+	username, secret, err := s.takePair(id)
+	if err != nil {
+		return RegistryAuth{}, err
+	}
+	return ResolveRegistryAuth(username, secret), nil
+}
+
+// takePair 按 id 解密「用户名 + 明文」一对,并刷新 last_used_at(即真正用了一次)。
+// git 与镜像仓库两类凭据同表同存法,共用这一条取用路径。
+func (s *service) takePair(id string) (username, secret string, err error) {
+	if !s.configured() {
+		return "", "", ErrVaultUnconfigured
+	}
+	var sealed []byte
+	var enabled int
+	err = s.db.QueryRow(`SELECT username, ciphertext, enabled FROM credentials WHERE id = ?`, id).Scan(&username, &sealed, &enabled)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", ErrNotFound
+		}
+		return "", "", fmt.Errorf("vault: get credential: %w", err)
+	}
+	if enabled != 1 {
+		return "", "", ErrDisabledCredential
+	}
+	plaintext, err := open(s.key, sealed)
+	if err != nil {
+		return "", "", err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.Exec(`UPDATE credentials SET last_used_at = ? WHERE id = ?`, now, id)
-	return GitAuth{Username: username, Token: string(plaintext)}, nil
+	return username, string(plaintext), nil
+}
+
+// ResolveRegistryAuth 把凭据的用户名列 + 明文口令折成镜像仓库登录对:
+//   - 用户名栏非空 → 整串明文都是密码(含冒号的密码不再被从中间截断);
+//   - 用户名栏为空 → 回退到旧约定「把 user:password 整串写在口令栏里」,按首个冒号切。
+//     凭据表单曾经只有口令一栏,那是当时唯一能表达用户名的方式,存量凭据照此仍可用。
+//
+// 切不出用户名时 Username 为空,调用方据此跳过登录(匿名库 / 只需 token 的场景)。
+func ResolveRegistryAuth(username, secret string) RegistryAuth {
+	if u := strings.TrimSpace(username); u != "" {
+		return RegistryAuth{Username: u, Password: secret}
+	}
+	if i := strings.Index(secret, ":"); i > 0 {
+		return RegistryAuth{Username: secret[:i], Password: secret[i+1:]}
+	}
+	return RegistryAuth{Password: secret}
 }
 
 func (s *service) Reveal(id string) (string, error) {
@@ -408,8 +452,13 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 			return nil, err
 		}
 		newSealed = sealed
-		masked = mask(credType, *in.Secret)
+		masked = maskWithUsername(credType, username, *in.Secret)
 		rotate = true
+	}
+	// 只改用户名、不轮换口令的 registry 凭据:掩码里的账号名也得跟着换,
+	// 否则列表上挂着的是上一个账号名。用户名列空(存量 user:password 写法)时保留原掩码。
+	if !rotate && credType == TypeRegistry && username != "" {
+		masked = username + " " + maskDots
 	}
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
@@ -420,8 +469,8 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 		)
 	} else {
 		_, err = s.db.Exec(
-			`UPDATE credentials SET name = ?, scope = ?, username = ?, description = ?, updated_at = ? WHERE id = ?`,
-			name, scope, username, description, nowStr, id,
+			`UPDATE credentials SET name = ?, scope = ?, username = ?, description = ?, masked_value = ?, updated_at = ? WHERE id = ?`,
+			name, scope, username, description, masked, nowStr, id,
 		)
 	}
 	if err != nil {

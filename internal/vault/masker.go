@@ -38,6 +38,17 @@ func mask(credType, secret string) string {
 	}
 }
 
+// maskWithUsername 同 mask,但 registry 优先取**用户名列**:表单现在把用户名与密码分开录入,
+// 用户名是明文元数据,列里有就没必要再从口令里猜。其余类型与用户名无关。
+func maskWithUsername(credType, username, secret string) string {
+	if credType == TypeRegistry {
+		if u := strings.TrimSpace(username); u != "" {
+			return u + " " + maskDots
+		}
+	}
+	return mask(credType, secret)
+}
+
 // maskGitToken 仅暴露白名单服务前缀(ghp_/gho_/github_pat_)与末 4 位。
 // 明文短于阈值则全打点,不暴露任何前缀/尾部(短 token 掩码绝不等于明文)。
 func maskGitToken(secret string) string {

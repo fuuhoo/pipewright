@@ -544,20 +544,17 @@ func (b *Builder) revealGitAuth(credID string) vault.GitAuth {
 	return auth
 }
 
-// revealRegistryCred 取仓库凭据明文并解析为 user/password。凭据约定以 "user:password" 存储;
-// 无冒号时整串作为口令、user 空(匿名/token 场景由调用方处理)。失败返回空。
+// revealRegistryCred 取仓库凭据并折成 user/password(规则收口在 vault:用户名栏优先,
+// 读不到才按存量 "user:password" 约定切)。取不到或空 → 双双为空,调用方按匿名处理。
 func (b *Builder) revealRegistryCred(credID string) (string, string) {
 	if credID == "" || b.vault == nil {
 		return "", ""
 	}
-	pt, err := b.vault.Reveal(credID)
-	if err != nil || pt == "" {
+	auth, err := b.vault.GetRegistryAuth(credID)
+	if err != nil {
 		return "", ""
 	}
-	if i := strings.Index(pt, ":"); i >= 0 {
-		return pt[:i], pt[i+1:]
-	}
-	return "", pt
+	return auth.Username, auth.Password
 }
 
 // locateFileArtifact 在工作区定位「产物」档的文件/目录产物,算 size,构造产物。
