@@ -133,9 +133,11 @@ type Driver interface {
 	// 可见日志,命令回显里只列 key)。逐行日志经 onLine 回调。返回退出码。
 	Build(ctx context.Context, contextDir, dockerfile, localTag string, buildArgs, secretArgs []string, onLine func(stream, line string)) (int, error)
 	// RunToolchain 模型 B:用工具链镜像挂载工作区跑构建命令产 jar/dist。
-	// image=工具链镜像:版本;workdir=容器内挂载点;hostDir=宿主工作区;cmd=构建命令 array。
+	// image=工具链镜像:版本;hostDir 挂到**容器内 mountAt**,命令在 workdir 执行。
+	// 两个参数必须分开:workDir 是「仓库根下的相对子目录」,若拿它当挂载点,克隆出的仓库根
+	// 会被挂到那个子目录路径下 —— cd 进去其实是仓库根,子目录选择静默失效。
 	// res 为可选容器资源规格(cpu/memory → docker run --cpus/--memory);零值=不限(向后兼容)。
-	RunToolchain(ctx context.Context, image, hostDir, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error)
+	RunToolchain(ctx context.Context, image, hostDir, mountAt, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error)
 	// Tag 给 localTag 打远端 remoteTag(推送前)。
 	Tag(ctx context.Context, localTag, remoteTag string, onLine func(stream, line string)) (int, error)
 	// Login 经 --password-stdin 登录仓库(password 经 stdin,**绝不**进 argv/日志)。

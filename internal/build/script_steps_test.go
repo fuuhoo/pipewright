@@ -82,6 +82,54 @@ func TestScriptStepSuccessEmitsStepAndLogs(t *testing.T) {
 	}
 }
 
+// TestScriptStepWorkDirMountsRootNotSubdir 钉住 workDir 的语义:克隆出的**仓库根**挂到
+// /workspace,workDir 只决定 `-w` 落在挂载点下的哪个子目录。
+// 回归起因:曾把 workDir 直接当挂载点(`-v 宿主克隆目录:/workspace/app`),docker 会顺手把
+// 那个目录建出来,于是容器里 cd 到的其实是仓库根 —— 子目录选择静默失效,前端在根目录
+// 找不到 package.json 报 "Missing script: build",日志上完全看不出走错了目录。
+func TestScriptStepWorkDirMountsRootNotSubdir(t *testing.T) {
+	cmdr := newFakeCommander()
+	cmdr.script("build", fakeCmd{exitCode: 0})
+	cmdr.script("inspect", fakeCmd{stdoutLines: []string{`{"Id":"sha256:x","Size":1}`}, exitCode: 0})
+	cmdr.script("run", fakeCmd{exitCode: 0})
+
+	steps := []pipeline.PipelineStep{{
+		ID: "s1", Name: "前端构建", Type: pipeline.StepTypeScript,
+		Image: "node:24-alpine", Commands: []string{"pnpm run build"}, WorkDir: "reporter-ny/web/app",
+	}}
+	proj := &project.Project{ID: "p1", Name: "app", RepoURL: "https://example.com/r.git"}
+	b := newTestBuilder(t, cmdr, proj, imageSettingsWithSteps(steps), nil)
+	b.cloner = newSuccessCloner("abc1234")
+
+	sink := newFakeSink()
+	r := &run.Run{ID: "run1", ProjectID: "p1", Trigger: run.Trigger{Commit: "abc1234"}}
+	if err := b.Run(context.Background(), r, sink); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	runs := cmdr.scriptRunArgs()
+	if len(runs) != 1 {
+		t.Fatalf("应有 1 次 docker run, got %d", len(runs))
+	}
+	args := runs[0]
+	var binds, wd string
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "-v":
+			if binds == "" && wd == "" {
+				binds = args[i+1] // 第一条 -v 是工作区挂载(其余是配置资源)
+			}
+		case "-w":
+			wd = args[i+1]
+		}
+	}
+	if wd != scriptWorkspaceMount+"/reporter-ny/web/app" {
+		t.Errorf("-w = %q, want %q", wd, scriptWorkspaceMount+"/reporter-ny/web/app")
+	}
+	if _, containerSide, ok := strings.Cut(binds, ":"); !ok || containerSide != scriptWorkspaceMount {
+		t.Errorf("工作区应挂到 %s(仓库根整体),实际 bind = %q", scriptWorkspaceMount, binds)
+	}
+}
+
 // TestScriptStepFailureSetsFailureLog 验证脚本非零退出 → 步骤 failed + SetFailureLog + 返回错误。
 func TestScriptStepFailureSetsFailureLog(t *testing.T) {
 	cmdr := newFakeCommander()

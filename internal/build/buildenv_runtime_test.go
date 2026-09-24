@@ -144,7 +144,7 @@ func TestShellDriverEmitsProfileMounts(t *testing.T) {
 	cmdr.script("run", fakeCmd{exitCode: 0})
 	d := &shellDriver{bin: "docker", cmdr: cmdr}
 	var logged []string
-	_, err := d.RunToolchain(context.Background(), "node:20", "/ws", "/workspace", nil, []string{"sh", "-c", "npm ci"},
+	_, err := d.RunToolchain(context.Background(), "node:20", "/ws", "/workspace", "/workspace", nil, []string{"sh", "-c", "npm ci"},
 		pipeline.Resource{Mounts: []pipeline.ContainerMount{{HostPath: "/data/p-1/.npmrc", ContainerPath: "/root/.npmrc", ReadOnly: true}}},
 		func(_, line string) { logged = append(logged, line) })
 	if err != nil {
@@ -164,7 +164,7 @@ func TestShellDriverEmitsProfileMounts(t *testing.T) {
 func TestRemoteDriverStripsMounts(t *testing.T) {
 	ex := &fakeRemoteExecer{result: &target.ExecResult{ExitCode: 0}}
 	d := NewRemoteDriver(ex, "srv-1", "docker")
-	_, err := d.RunToolchain(context.Background(), "node:20", "/tmp/ws", "/workspace", nil, []string{"true"},
+	_, err := d.RunToolchain(context.Background(), "node:20", "/tmp/ws", "/workspace", "/workspace", nil, []string{"true"},
 		pipeline.Resource{Mounts: []pipeline.ContainerMount{{HostPath: "/data/p-1/.npmrc", ContainerPath: "/root/.npmrc", ReadOnly: true}}}, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)

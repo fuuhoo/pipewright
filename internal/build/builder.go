@@ -450,7 +450,7 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 			return "", nil, merr
 		}
 		res := pipeline.Resource{Mounts: mounts}
-		code, err := b.driver.RunToolchain(ctx, resolved.Image, workspace, "/src", env, buildCmd, res, onLine)
+		code, err := b.driver.RunToolchain(ctx, resolved.Image, workspace, "/src", "/src", env, buildCmd, res, onLine)
 		if err != nil && code < 0 {
 			return "", nil, fmt.Errorf("构建器无法启动")
 		}

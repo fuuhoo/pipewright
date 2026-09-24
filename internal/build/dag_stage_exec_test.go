@@ -56,7 +56,7 @@ type recordingDriver struct {
 }
 
 func (d *recordingDriver) Binary() string { return "fake" }
-func (d *recordingDriver) RunToolchain(_ context.Context, image, _, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
+func (d *recordingDriver) RunToolchain(_ context.Context, image, _, _, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
 	d.callCount++
 	d.gotImage = image
 	d.gotCmd = cmd
@@ -231,7 +231,7 @@ type flakyDriver struct {
 }
 
 func (d *flakyDriver) Binary() string { return "fake" }
-func (d *flakyDriver) RunToolchain(ctx context.Context, _, _, _ string, _ []string, _ []string, _ pipeline.Resource, _ func(string, string)) (int, error) {
+func (d *flakyDriver) RunToolchain(ctx context.Context, _, _, _, _ string, _ []string, _ []string, _ pipeline.Resource, _ func(string, string)) (int, error) {
 	d.calls++
 	if d.block > 0 {
 		select {
@@ -360,7 +360,7 @@ type imgDriver struct {
 }
 
 func (d *imgDriver) Binary() string { return "fake" }
-func (d *imgDriver) RunToolchain(context.Context, string, string, string, []string, []string, pipeline.Resource, func(string, string)) (int, error) {
+func (d *imgDriver) RunToolchain(context.Context, string, string, string, string, []string, []string, pipeline.Resource, func(string, string)) (int, error) {
 	d.runCalls++
 	return 0, nil
 }
@@ -807,7 +807,7 @@ type orderDriver struct {
 }
 
 func (d *orderDriver) Binary() string { return "fake" }
-func (d *orderDriver) RunToolchain(ctx context.Context, image, _, _ string, _ []string, _ []string, _ pipeline.Resource, onLine func(string, string)) (int, error) {
+func (d *orderDriver) RunToolchain(ctx context.Context, image, _, _, _ string, _ []string, _ []string, _ pipeline.Resource, onLine func(string, string)) (int, error) {
 	if d.block > 0 {
 		select {
 		case <-time.After(d.block):

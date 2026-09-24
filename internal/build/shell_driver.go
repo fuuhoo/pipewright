@@ -57,10 +57,10 @@ func (d *shellDriver) Build(ctx context.Context, contextDir, dockerfile, localTa
 	return d.cmdr.Stream(ctx, d.bin, args, "", onLine)
 }
 
-func (d *shellDriver) RunToolchain(ctx context.Context, image, hostDir, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
-	// docker run --rm -v hostDir:workdir -w workdir [--cpus N] [--memory M] [-e K=V...] image cmd...
-	args := []string{"run", "--rm", "-v", hostDir + ":" + workdir, "-w", workdir}
-	display := []string{"run", "--rm", "-v", hostDir + ":" + workdir, "-w", workdir}
+func (d *shellDriver) RunToolchain(ctx context.Context, image, hostDir, mountAt, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
+	// docker run --rm -v hostDir:mountAt -w workdir [--cpus N] [--memory M] [-e K=V...] image cmd...
+	args := []string{"run", "--rm", "-v", hostDir + ":" + mountAt, "-w", workdir}
+	display := []string{"run", "--rm", "-v", hostDir + ":" + mountAt, "-w", workdir}
 	// 资源规格(可选):cpu→--cpus、memory→--memory。值原样作 array 实参(不拼 shell;非法值由 docker 拒绝)。
 	// 资源 flag 非 secret,回显与真实参数一致。
 	if cpu := strings.TrimSpace(res.CPU); cpu != "" {

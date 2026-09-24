@@ -16,7 +16,7 @@ type postRecDriver struct {
 }
 
 func (d *postRecDriver) Binary() string { return "fake" }
-func (d *postRecDriver) RunToolchain(_ context.Context, image, _, _ string, _ []string, _ []string, _ pipeline.Resource, _ func(string, string)) (int, error) {
+func (d *postRecDriver) RunToolchain(_ context.Context, image, _, _, _ string, _ []string, _ []string, _ pipeline.Resource, _ func(string, string)) (int, error) {
 	d.images = append(d.images, image)
 	if image == d.failImage {
 		return 1, nil

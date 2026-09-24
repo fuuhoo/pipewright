@@ -73,7 +73,7 @@ func (b *Builder) runScriptStep(ctx context.Context, sink run.StepSink, ordinal 
 	// 私有构建镜像:先按环境绑定的凭据登录(#9),再 docker run(它负责按需拉取)。
 	b.loginForImage(ctx, step.Image, step.ImageCredentialID, onLine)
 
-	code, err := b.driver.RunToolchain(ctx, step.Image, workspace, workdir, env, cmd, step.Resource, onLine)
+	code, err := b.driver.RunToolchain(ctx, step.Image, workspace, scriptWorkspaceMount, workdir, env, cmd, step.Resource, onLine)
 	if err != nil && code < 0 {
 		// 容器无法启动(镜像拉取失败/CLI 不可用等);ctx 取消时 code<0 但 ctx.Err 命中,由调用方归一。
 		if errors.Is(ctx.Err(), context.Canceled) {

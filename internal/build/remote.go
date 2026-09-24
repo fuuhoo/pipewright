@@ -66,9 +66,9 @@ func NewRemoteDriver(execer RemoteExecer, serverID, bin string) Driver {
 // remoteDriver 只在 RunToolchain 上剥离宿主挂载,其余能力(登录/构建/推送)与 shellDriver 同语义。
 type remoteDriver struct{ shellDriver }
 
-func (d *remoteDriver) RunToolchain(ctx context.Context, image, hostDir, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
+func (d *remoteDriver) RunToolchain(ctx context.Context, image, hostDir, mountAt, workdir string, env []string, cmd []string, res pipeline.Resource, onLine func(stream, line string)) (int, error) {
 	res.Mounts = nil
-	return d.shellDriver.RunToolchain(ctx, image, hostDir, workdir, env, cmd, res, onLine)
+	return d.shellDriver.RunToolchain(ctx, image, hostDir, mountAt, workdir, env, cmd, res, onLine)
 }
 
 // Run 实现 Commander.Run:把 name+args 投到远程机同步执行,取回 stdout/stderr/退出码。
