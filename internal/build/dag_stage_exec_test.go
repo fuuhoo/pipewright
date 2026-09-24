@@ -392,7 +392,7 @@ func TestStageExecutorBuildImageReal(t *testing.T) {
 	rep := &fakeReporter{}
 
 	stage := pipeline.Stage{ID: "s", Name: "构建", Kind: pipeline.KindBuild,
-		Jobs: []pipeline.Job{{Name: "镜像", Type: "build_image", Config: map[string]any{
+		Jobs: []pipeline.Job{{ID: "jimg", Name: "镜像", Type: "build_image", Config: map[string]any{
 			"artifactType": "image", "buildModel": "dockerfile", "dockerfilePath": "Dockerfile",
 		}}}}
 	if err := exec(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep); err != nil {
@@ -403,6 +403,41 @@ func TestStageExecutorBuildImageReal(t *testing.T) {
 	}
 	if len(rep.arts) != 1 || rep.arts[0].Type != run.ArtifactImage {
 		t.Fatalf("应 emit 一件 image 产物,实际 %+v", rep.arts)
+	}
+	// 产物要带上来源任务(ID + 名字):并行构建时部署节点靠 ID 认领那一件产物。
+	meta := rep.arts[0].Metadata
+	if meta["sourceJobId"] != "jimg" || meta["sourceJob"] != "镜像" || meta["sourceStage"] != "构建" {
+		t.Errorf("产物来源 metadata 不齐:got %+v", meta)
+	}
+}
+
+// 文件产物同样带来源任务 ID;两个**同名**任务各产一件时,只有 ID 分得清谁是谁
+// (后端只对 ID 查唯一,任务名可以重复)。
+func TestCollectScriptArtifactsTagsSourceJob(t *testing.T) {
+	ws := t.TempDir()
+	for _, d := range []string{"web/dist", "api/dist"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	rep := &fakeReporter{}
+	b := &Builder{}
+	jobs := []pipeline.Job{
+		{ID: "jweb", Name: "构建产物", Type: "script", Config: map[string]any{"artifactPath": "web/dist"}},
+		{ID: "japi", Name: "构建产物", Type: "script", Config: map[string]any{"artifactPath": "api/dist"}},
+	}
+	b.collectScriptArtifacts(context.Background(), jobs, ws, "report", "构建", rep)
+	if len(rep.arts) != 2 {
+		t.Fatalf("两个任务各产一件,实际 %+v", rep.arts)
+	}
+	want := []string{"jweb", "japi"}
+	for i, art := range rep.arts {
+		if got := art.Metadata["sourceJobId"]; got != want[i] {
+			t.Errorf("arts[%d].sourceJobId = %v, want %s(完整 %+v)", i, got, want[i], art.Metadata)
+		}
+		if art.Metadata["sourceJob"] != "构建产物" || art.Metadata["sourceStage"] != "构建" {
+			t.Errorf("arts[%d] 来源标注缺失:got %+v", i, art.Metadata)
+		}
 	}
 }
 
@@ -657,7 +692,7 @@ func (d *stubStageDeployer) DeployForStage(_ context.Context, _ string, serverID
 }
 
 // TestRunDeployJobPassesImageParams 证 #55:部署节点把镜像产物参数
-// (artifactType/containerName/ports/runArgs)透传给 deploy.DeployForStage,
+// (artifactType/artifactFrom/containerName/ports/runArgs)透传给 deploy.DeployForStage,
 // 使流水线部署节点能部署 #51 的镜像产物(而非只透传 releaseBase/restartCommand)。
 func TestRunDeployJobPassesImageParams(t *testing.T) {
 	dep := &stubStageDeployer{}
@@ -666,6 +701,7 @@ func TestRunDeployJobPassesImageParams(t *testing.T) {
 	jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: map[string]any{
 		"serverId":      "srv-1",
 		"artifactType":  "image",
+		"artifactFrom":  "j-api", // 产物来源任务:并行构建下指明发哪一件
 		"containerName": "myapp",
 		"ports":         "8080:80,9000:9000",
 		"runArgs":       "-e KEY=v --restart always",
@@ -677,6 +713,7 @@ func TestRunDeployJobPassesImageParams(t *testing.T) {
 	}
 	for k, want := range map[string]string{
 		"artifactType":  "image",
+		"artifactFrom":  "j-api",
 		"containerName": "myapp",
 		"ports":         "8080:80,9000:9000",
 		"runArgs":       "-e KEY=v --restart always",

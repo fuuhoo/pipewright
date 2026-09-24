@@ -513,6 +513,11 @@ func normalizeSpec(in Spec) (Spec, error) {
 		return Spec{}, err
 	}
 
+	// 部署节点的「产物来源任务」引用:全图拓扑齐了才判得了「那个任务的产物此刻一定已就绪」。
+	if err := validateArtifactSources(out.Stages); err != nil {
+		return Spec{}, err
+	}
+
 	return out, nil
 }
 

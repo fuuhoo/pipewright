@@ -401,6 +401,7 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
       :servers="props.servers"
       :channels="props.channels"
       :environments="props.environments"
+      :all-stages="props.stages"
       @close="closeDrawer"
       @update="handleDrawerUpdate"
       @change-type="requestChangeType"

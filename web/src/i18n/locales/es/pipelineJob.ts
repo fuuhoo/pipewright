@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: 'Tipo de artefacto a desplegar',
   fieldArtifactTypeHint:
     'Cuál elegir cuando esta ejecución emite tanto una imagen como artefactos de archivo; una imagen va mediante docker pull en el destino → iniciar nuevo contenedor → comprobación de salud → revertir a la imagen anterior si falla',
+  fieldArtifactFromLabel: 'Tarea de origen del artefacto',
+  fieldArtifactFromHint:
+    'Cuando compilaciones paralelas generan varios artefactos del mismo tipo, indica cuál de qué tarea desplegar; vacío = el primer artefacto del tipo',
+  fieldArtifactFromAuto: 'Automático (primer artefacto del tipo)',
+  fieldArtifactFromMissing: 'La tarea de origen ya no existe, vuelve a elegir',
   fieldDeployPathLabel: 'Ruta de despliegue',
   fieldDeployPathHint:
     'Artefactos de archivo: se publican en <ruta de despliegue>/releases/<runId>/, el enlace simbólico current cambia de forma atómica a esta versión (sin tiempo de inactividad, las versiones antiguas se conservan para revertir)',

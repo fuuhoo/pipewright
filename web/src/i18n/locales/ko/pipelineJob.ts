@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: '배포 아티팩트 유형',
   fieldArtifactTypeHint:
     '이 run 이 이미지와 파일 아티팩트를 동시에 출력할 때 어느 것을 선택할지. 이미지는 대상 머신에서 docker pull → 새 컨테이너 시작 → 헬스 체크 → 실패 시 이전 이미지로 롤백',
+  fieldArtifactFromLabel: '아티팩트 출처 작업',
+  fieldArtifactFromHint:
+    '병렬 빌드가 같은 종류의 아티팩트를 여러 개 만들 때, 어느 작업이 만든 것을 배포할지 지정합니다. 비우면 = 유형별 첫 번째',
+  fieldArtifactFromAuto: '자동(유형별 첫 번째 아티팩트)',
+  fieldArtifactFromMissing: '원래 출처 작업이 없습니다. 다시 선택하세요',
   fieldDeployPathLabel: '배포 경로',
   fieldDeployPathHint:
     '파일 아티팩트: <배포 경로>/releases/<runId>/ 에 게시, current 심볼릭 링크가 이번 릴리스로 원자적 전환(무중단, 이전 릴리스는 롤백용으로 보존)',

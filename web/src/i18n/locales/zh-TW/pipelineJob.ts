@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: '部署產物類型',
   fieldArtifactTypeHint:
     '本 run 同時產出映像與檔案產物時挑哪件;映像走目標機 docker pull → 起新容器 → 健康檢查 → 失敗回復上一映像',
+  fieldArtifactFromLabel: '產物來源任務',
+  fieldArtifactFromHint:
+    '平行建置產出多件同類型產物時,指明部署哪個任務產的那件;留空 = 按類型自動取第一件',
+  fieldArtifactFromAuto: '自動(按產物類型取第一件)',
+  fieldArtifactFromMissing: '原來源任務已不存在,請重選',
   fieldDeployPathLabel: '部署路徑',
   fieldDeployPathHint:
     '檔案產物:發佈到 <部署路徑>/releases/<runId>/,current 軟連結原子切到本次發佈(零停機,舊發佈保留供回復)',

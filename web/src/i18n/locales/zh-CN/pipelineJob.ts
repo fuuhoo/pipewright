@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: '部署产物类型',
   fieldArtifactTypeHint:
     '本 run 同时产出镜像与文件产物时挑哪件;镜像走目标机 docker pull → 起新容器 → 健康检查 → 失败回滚上一镜像',
+  fieldArtifactFromLabel: '产物来源任务',
+  fieldArtifactFromHint:
+    '并行构建产出多件同类型产物时,指明部署哪个任务产的那件;留空 = 按类型自动取第一件',
+  fieldArtifactFromAuto: '自动(按产物类型取第一件)',
+  fieldArtifactFromMissing: '原来源任务已不存在,请重选',
   fieldDeployPathLabel: '部署路径',
   fieldDeployPathHint:
     '文件产物:发布到 <部署路径>/releases/<runId>/,current 软链原子切到本次发布(零停机,旧发布保留供回滚)',

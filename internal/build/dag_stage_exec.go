@@ -618,8 +618,9 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 	}
 	// 镜像产物部署参数(#51)透传:deploy.DeployForStage 经这些键挑镜像产物并组装
 	// `docker run`(artifactType=image 选镜像;containerName/ports/runArgs 驱动容器名与端口/运行参数)。
+	// artifactFrom = 产物来源任务 ID:并行构建出多件同类产物时,靠它锁定部署哪一件。
 	// 各值原样搬运(deploy 层 array 化、绝不拼 shell,守 AC-SEC-02);空值不入 cfg 保持默认。
-	for _, k := range []string{"artifactType", "containerName", "ports", "runArgs"} {
+	for _, k := range []string{"artifactType", pipeline.ConfigKeyArtifactFrom, "containerName", "ports", "runArgs"} {
 		if v := cfgString(jb.Config, k); v != "" {
 			cfg[k] = v
 		}
@@ -831,12 +832,14 @@ func (b *Builder) runBuildImageJob(ctx context.Context, sink run.StepSink, rep d
 		}
 	}
 
-	// 记来源节点(阶段 + job 名),供运行详情标注「哪个节点产的」。
+	// 记来源节点(阶段 + job 名 + job ID),供运行详情标注「哪个节点产的」;
+	// ID 是给部署节点按来源挑产物用的(名字可重复,不能当标识)。
 	if art.Metadata == nil {
 		art.Metadata = map[string]any{}
 	}
 	art.Metadata["sourceStage"] = stageName
 	art.Metadata["sourceJob"] = jb.Name
+	art.Metadata["sourceJobId"] = jb.ID
 
 	if err := rep.EmitArtifact(ctx, *art); err != nil {
 		_ = rep.Log(ctx, streamStderr, "登记产物失败:"+err.Error())
@@ -866,12 +869,12 @@ func (b *Builder) collectScriptArtifacts(ctx context.Context, jobs []pipeline.Jo
 				}
 				for _, m := range matches {
 					if relMatch, rerr := filepath.Rel(workspace, m); rerr == nil {
-						b.collectOneFileArtifact(ctx, workspace, relMatch, slug, jb.Name, stageName, rep, onLine)
+						b.collectOneFileArtifact(ctx, workspace, relMatch, slug, jb.ID, jb.Name, stageName, rep, onLine)
 					}
 				}
 				continue
 			}
-			b.collectOneFileArtifact(ctx, workspace, rel, slug, jb.Name, stageName, rep, onLine)
+			b.collectOneFileArtifact(ctx, workspace, rel, slug, jb.ID, jb.Name, stageName, rep, onLine)
 		}
 	}
 }
@@ -879,7 +882,7 @@ func (b *Builder) collectScriptArtifacts(ctx context.Context, jobs []pipeline.Jo
 // collectOneFileArtifact 收集单条文件产物路径:越界(.. / 绝对)拒绝;定位不到打日志跳过(不致命);
 // 类型按路径自动判(目录=dist、*.jar=jar、其它文件=archive)。产物 metadata 记来源节点(阶段 + job 名),
 // 供运行详情标注「哪个节点产的」。制品库未注入时 emit 占位引用,向后兼容。
-func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, slug, jobName, stageName string, rep dagrun.StageReporter, onLine func(stream, line string)) {
+func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, slug, jobID, jobName, stageName string, rep dagrun.StageReporter, onLine func(stream, line string)) {
 	clean := filepath.Clean(rel)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		onLine(streamStderr, "产物路径越界,已拒绝:"+rel)
@@ -894,9 +897,10 @@ func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, sl
 	// 产物名带上路径基名,避免一个 job 多产物同名(如多个 dist 目录)难以区分。
 	base := filepath.Base(full)
 	// metadata 记来源节点:sourceStage/sourceJob 供 UI 标注「哪个节点产的」(storeXxx 只补 stored/format,不清这些)。
+	// sourceJobId 供部署节点按来源任务精确挑产物(job 名可重复,不能当标识)。
 	// workspacePath 记原始工作区相对路径,供跨阶段产物传递:下游阶段据此把本产物真字节恢复回原位
 	// (如 backend/target/x.jar),使被拆到下游阶段的 build_image「COPY target/x.jar」仍能命中。
-	art := &run.Artifact{Name: slug + "-" + base, Reference: base, Metadata: map[string]any{"sourceStage": stageName, "sourceJob": jobName, "workspacePath": clean}}
+	art := &run.Artifact{Name: slug + "-" + base, Reference: base, Metadata: map[string]any{"sourceStage": stageName, "sourceJob": jobName, "sourceJobId": jobID, "workspacePath": clean}}
 	switch {
 	case fi.IsDir():
 		art.Type = run.ArtifactDist

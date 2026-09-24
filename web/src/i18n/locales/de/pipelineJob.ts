@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: 'Bereitzustellender Artefakttyp',
   fieldArtifactTypeHint:
     'Welches gewählt wird, wenn dieser Lauf sowohl ein Image als auch Datei-Artefakte ausgibt; ein Image geht per docker pull auf dem Ziel → neuen Container starten → Health-Check → bei Fehler Rollback auf das vorherige Image',
+  fieldArtifactFromLabel: 'Quellaufgabe des Artefakts',
+  fieldArtifactFromHint:
+    'Wenn parallele Builds mehrere Artefakte desselben Typs erzeugen: angeben, welches Artefakt welcher Aufgabe bereitgestellt wird; leer = erstes Artefakt des Typs',
+  fieldArtifactFromAuto: 'Automatisch (erstes Artefakt des Typs)',
+  fieldArtifactFromMissing: 'Quellaufgabe existiert nicht mehr, bitte neu wählen',
   fieldDeployPathLabel: 'Bereitstellungspfad',
   fieldDeployPathHint:
     'Datei-Artefakte: veröffentlicht unter <Bereitstellungspfad>/releases/<runId>/, der current-Symlink wechselt atomar auf diese Version (ohne Ausfallzeit, alte Versionen bleiben für Rollback erhalten)',

@@ -19,6 +19,9 @@ var ErrHealthProbeInvalid = errors.New("pipeline: health probe configuration inv
 // ErrBuildTaskInvalid 是「构建任务缺产物档位 / 档位非法」的哨兵错误(HTTP 映射 422)。
 var ErrBuildTaskInvalid = errors.New("pipeline: build task configuration invalid")
 
+// ErrArtifactSourceInvalid 是「部署节点的产物来源任务引用不成立」的哨兵错误(HTTP 映射 422)。
+var ErrArtifactSourceInvalid = errors.New("pipeline: deploy artifact source job invalid")
+
 // 合并后的「构建」任务与其相关键。
 const (
 	// JobTypeBuild 是唯一的构建任务类型:按产物档位决定跑脚本构建还是构建镜像。
@@ -31,6 +34,10 @@ const (
 	// ConfigKeyPushImage 是「构建后推送镜像」开关(仅 image 档位有意义):
 	// "false"/"0"/"no" = 只构建不推送,其余(含缺省)= 推送到运行所在环境绑定的镜像仓。
 	ConfigKeyPushImage = "pushImage"
+	// ConfigKeyArtifactFrom 是部署节点的「产物来源任务」:值 = 上游构建任务的 **job ID**
+	// (不是名字 —— ID 唯一、名字可重复,存名字会让两个同名任务互相顶掉)。
+	// 并行构建出多件同类产物时,部署节点靠它锁定要发那一条;留空 = 按类型挑首个(历史行为)。
+	ConfigKeyArtifactFrom = "artifactFrom"
 )
 
 // buildArtifactTiers 是构建任务可选的产物档位。jar / dist 是收敛前的历史档位,继续认:
@@ -162,4 +169,123 @@ func validateBuildTask(stageName, jobName, jobType string, cfg map[string]any) e
 		return nil
 	}
 	return issuef(ErrBuildTaskInvalid, "阶段「%s」任务「%s」要先选产物档位(镜像 / 产物)", stageName, jobName)
+}
+
+// nonProducingJobTypes 是本身不产出可部署产物的节点类型(与前端 artifactSources.ts 同一清单):
+// 它们的产物不会带 sourceJobId,选作「产物来源」必然在运行时落空,保存时就拒绝。
+var nonProducingJobTypes = map[string]bool{
+	"git_source":      true,
+	"push_image":      true,
+	"notify":          true,
+	"deploy_ssh":      true,
+	"deploy_frontend": true,
+}
+
+// producesArtifact 报告该类型任务是否可能产出可部署产物。
+func producesArtifact(jobType string) bool {
+	return !nonProducingJobTypes[strings.TrimSpace(jobType)]
+}
+
+// validateArtifactSources 校验部署节点的「产物来源任务」(artifactFrom)引用:
+//  1. 引用的任务要存在、不是本节点自己,且类型确实产产物;
+//  2. 要**一定在本节点开跑前已执行完**:同阶段需被本任务 needs 传递依赖,跨阶段需处于上游阶段
+//     (整个阶段图没声明 needs 时按数组顺序 = 线性执行序,与画布/执行侧同一口径)。
+//
+// 放在 normalizeSpec 末尾而非逐 job 校验:引用成立与否取决于全图拓扑,单看一个节点无从判断。
+// 不在这里拦,用户看到的就只是运行时「部署节点没有产物」,猜不到是来源任务选错了。
+func validateArtifactSources(stages []Stage) error {
+	stageOf := make(map[string]int, len(stages))
+	jobs := make(map[string]Job, len(stages))
+	linear := true
+	for i, st := range stages {
+		if len(st.Needs) > 0 {
+			linear = false
+		}
+		for _, jb := range st.Jobs {
+			stageOf[jb.ID] = i
+			jobs[jb.ID] = jb
+		}
+	}
+	for i, st := range stages {
+		// 本阶段的上游阶段下标集合(阶段 ID → 下标);线性回退 = 排在前面的所有阶段。
+		upstream := make(map[int]bool, i)
+		for j := 0; j < i; j++ {
+			if linear {
+				upstream[j] = true
+				continue
+			}
+			if stageNeedsTransitively(stages, st.Needs, stages[j].ID) {
+				upstream[j] = true
+			}
+		}
+		for _, jb := range st.Jobs {
+			ref := strings.TrimSpace(ConfigString(jb.Config, ConfigKeyArtifactFrom))
+			if ref == "" || !IsDeployJobType(jb.Type) {
+				continue
+			}
+			where := fmt.Sprintf("阶段「%s」任务「%s」的产物来源任务", st.Name, jb.Name)
+			srcStage, ok := stageOf[ref]
+			switch {
+			case !ok:
+				return issuef(ErrArtifactSourceInvalid, "%s「%s」已不存在,请重选", where, ref)
+			case ref == jb.ID:
+				return issuef(ErrArtifactSourceInvalid, "%s不能是本任务自己", where)
+			case !producesArtifact(jobs[ref].Type):
+				return issuef(ErrArtifactSourceInvalid, "%s「%s」不产出可部署产物(它不是构建任务)", where, jobs[ref].Name)
+			case srcStage == i:
+				if !jobNeedsTransitively(st.Jobs, jb.Needs, ref) {
+					return issuef(ErrArtifactSourceInvalid, "%s「%s」与本任务并行(未依赖它),产物可能还没产出:先给它加上依赖", where, jobs[ref].Name)
+				}
+			case !upstream[srcStage]:
+				return issuef(ErrArtifactSourceInvalid, "%s「%s」不在本任务的上游阶段,产物可能还没产出", where, jobs[ref].Name)
+			}
+		}
+	}
+	return nil
+}
+
+// stageNeedsTransitively 报告 `needs` 的传递闭包里是否含 targetID(阶段图已由 dag 校验过无环)。
+func stageNeedsTransitively(stages []Stage, needs []string, targetID string) bool {
+	byID := make(map[string][]string, len(stages))
+	for _, st := range stages {
+		byID[st.ID] = st.Needs
+	}
+	seen := map[string]bool{}
+	stack := append([]string(nil), needs...)
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if id == targetID {
+			return true
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		stack = append(stack, byID[id]...)
+	}
+	return false
+}
+
+// jobNeedsTransitively 报告同阶段内 `needs` 的传递闭包里是否含 targetID。
+func jobNeedsTransitively(jobs []Job, needs []string, targetID string) bool {
+	byID := make(map[string][]string, len(jobs))
+	for _, jb := range jobs {
+		byID[jb.ID] = jb.Needs
+	}
+	seen := map[string]bool{}
+	stack := append([]string(nil), needs...)
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if id == targetID {
+			return true
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		stack = append(stack, byID[id]...)
+	}
+	return false
 }

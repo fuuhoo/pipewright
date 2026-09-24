@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: 'Deploy artifact type',
   fieldArtifactTypeHint:
     'Which one to pick when this run emits both an image and file artifacts; an image goes via docker pull on the target → start new container → health check → roll back to the previous image on failure',
+  fieldArtifactFromLabel: 'Artifact source task',
+  fieldArtifactFromHint:
+    'When parallel builds emit several artifacts of the same type, pick which task produced the one to deploy; empty = first artifact of the preferred type',
+  fieldArtifactFromAuto: 'Auto (first artifact of the type)',
+  fieldArtifactFromMissing: 'Source task no longer exists, pick again',
   fieldDeployPathLabel: 'Deploy path',
   fieldDeployPathHint:
     'File artifacts: published to <deploy path>/releases/<runId>/, the current symlink atomically switches to this release (zero downtime, old releases kept for rollback)',

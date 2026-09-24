@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: 'デプロイ成果物タイプ',
   fieldArtifactTypeHint:
     'この run がイメージとファイル成果物を同時に出力する場合にどれを選ぶか。イメージはターゲットで docker pull → 新コンテナ起動 → ヘルスチェック → 失敗時に前のイメージへロールバック',
+  fieldArtifactFromLabel: '成果物の来源タスク',
+  fieldArtifactFromHint:
+    '並列ビルドが同タイプの成果物を複数出力する場合、どのタスクの成果物をデプロイするかを指定します。空 = タイプごとに最初の 1 件',
+  fieldArtifactFromAuto: '自動（タイプ別の最初の 1 件）',
+  fieldArtifactFromMissing: '来源タスクは存在しません。再選択してください',
   fieldDeployPathLabel: 'デプロイパス',
   fieldDeployPathHint:
     'ファイル成果物:<デプロイパス>/releases/<runId>/ に公開、current シンボリックリンクを今回のリリースへアトミックに切替(ゼロダウンタイム、旧リリースはロールバック用に保持)',

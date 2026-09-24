@@ -32,6 +32,9 @@ var (
 	ErrRunNotSuccessful = errors.New("deploy: run is not in a successful state")
 	// ErrArtifactNotFound 表示该 run 下无指定产物。
 	ErrArtifactNotFound = errors.New("deploy: artifact not found for run")
+	// ErrArtifactSourceNotFound 表示部署节点指定的「产物来源任务」本次没产出可部署产物
+	// (任务改名/删除,或那个任务本身不产产物)。与「没有任何产物」分开:前者是配置错了节点。
+	ErrArtifactSourceNotFound = errors.New("deploy: no deployable artifact from the specified source job")
 	// ErrServerNotFound 表示指定的目标服务器不存在。
 	ErrServerNotFound = errors.New("deploy: target server not found")
 	// ErrNoServers 表示未指定任何目标服务器。
@@ -332,9 +335,25 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 	if err != nil {
 		return nil, err
 	}
+	// 「产物来源任务」(artifactFrom):并行构建产出多件同类产物时,部署节点按来源任务先把范围
+	// 收窄到本节点该发的那一件,再在范围内按类型偏好挑(否则同类型产物只能靠建单顺序撞运气)。
+	// 指定了来源却一件都没有 → 明确报错,绝不退回"随便发一件":发错东西比不发更糟。
+	if ref := strings.TrimSpace(cfg[CfgKeyArtifactFrom]); ref != "" {
+		scoped := artifactsFromSource(arts, ref)
+		if len(scoped) == 0 {
+			return nil, fmt.Errorf("%w: 指定的来源任务 %q 本次没有产出可部署产物(任务被改名/删除,或该任务没有产物)", ErrArtifactSourceNotFound, ref)
+		}
+		arts = scoped
+	}
 	artifact := pickStageArtifact(arts, strings.TrimSpace(cfg["artifactType"]))
 	if artifact == nil {
 		return nil, ErrArtifactNotFound
+	}
+	// 回流一次"到底发了哪一件":并行构建下产物同名同类型,不写明来源就无从核对。
+	if src, ok := artifact.Metadata["sourceJob"].(string); ok && src != "" {
+		cmdLogFrom(ctx)(cmdStreamStdout, fmt.Sprintf("· 产物 %s(%s)← 来源任务「%s」", artifact.Name, artifact.Type, src))
+	} else {
+		cmdLogFrom(ctx)(cmdStreamStdout, fmt.Sprintf("· 产物 %s(%s)", artifact.Name, artifact.Type))
 	}
 
 	servers := make([]*target.Server, 0, len(serverIDs))
@@ -420,6 +439,30 @@ func (s *service) runCommandOnly(ctx context.Context, runID string, serverIDs []
 		return nil, err
 	}
 	return results, nil
+}
+
+// CfgKeyArtifactFrom 是部署节点 cfg 的「产物来源任务」键(值 = 上游构建任务的 job ID)。
+// 与 pipeline.ConfigKeyArtifactFrom 逐字一致(build 层原样透传;两侧键名不同就会静默失配)。
+const CfgKeyArtifactFrom = "artifactFrom"
+
+// artifactsFromSource 收窄产物到「指定来源任务」产出的那些。
+// 先比 metadata.sourceJobId(ID 唯一,配置存的就是它);再兜底比 sourceJob(任务名)——
+// 让手填/历史数据也能点中,名字重复时按顺序取第一个命中。
+func artifactsFromSource(arts []run.Artifact, ref string) []run.Artifact {
+	var out []run.Artifact
+	for _, a := range arts {
+		if !deployableStageArtifact(a) {
+			continue
+		}
+		if id, ok := a.Metadata["sourceJobId"].(string); ok && id != "" && id == ref {
+			out = append(out, a)
+			continue
+		}
+		if name, ok := a.Metadata["sourceJob"].(string); ok && name != "" && name == ref {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // deployableStageArtifact 判定产物在「流水线部署节点」可被部署:文件发布类(dist/jar/archive)

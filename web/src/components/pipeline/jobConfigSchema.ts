@@ -30,6 +30,8 @@ export type FieldKind =
   | 'channel'
   | 'buildenv'
   | 'configprofiles'
+  /** 产物来源任务:候选 = 本部署节点开跑前一定已产出产物的上游构建任务(值存 job ID) */
+  | 'artifactsource'
   /** 只读回显:推送目标 = 环境绑定的镜像仓(不可编辑,也不写进 config) */
   | 'pushTarget'
 
@@ -301,6 +303,15 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     kind: 'select',
     options: DEPLOY_ARTIFACT_OPTIONS,
     get hint() { return t('pipelineJob.fieldArtifactTypeHint') },
+  },
+  {
+    // 并行构建(如前端 + 后端同跑)会产出多件**同类型**产物,只靠类型偏好挑不定那一件;
+    // 这个字段按来源任务收窄。留空 = 老行为(同类型里取首个),不影响存量流水线。
+    key: 'artifactFrom',
+    get label() { return t('pipelineJob.fieldArtifactFromLabel') },
+    kind: 'artifactsource',
+    get hint() { return t('pipelineJob.fieldArtifactFromHint') },
+    when: (c) => c.artifactType !== 'command',
   },
   {
     key: 'deployPath',

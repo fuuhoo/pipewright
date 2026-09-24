@@ -166,3 +166,116 @@ func TestPushImageEnabled(t *testing.T) {
 		t.Error("缺省应推送(旧行为)")
 	}
 }
+
+// deploySpec 拼一条「源 + 若干自定义阶段」的 spec,供产物来源校验用例复用。
+func deploySpec(stages ...Stage) Spec {
+	return Spec{Stages: append([]Stage{
+		{ID: "src", Name: "流水线源", Kind: KindSource, Jobs: []Job{{ID: "jsrc", Name: "拉取源码", Type: "git_source", Config: map[string]any{}}}},
+	}, stages...)}
+}
+
+// 产物来源任务存的是 job ID:引用不存在的任务、引用自己、引用不产产物的节点、
+// 引用还没跑完的(并行 / 下游)任务,全都该在保存期报错 —— 拖到运行时只剩一句「没有产物」。
+func TestNormalizeSpecValidatesArtifactSource(t *testing.T) {
+	backend := Job{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{"commands": "go build"}}
+	frontend := Job{ID: "jweb", Name: "前端构建", Type: "script", Config: map[string]any{"commands": "npm run build"}}
+	deploy := func(cfg map[string]any) Job {
+		return Job{ID: "jdep", Name: "部署", Type: "deploy_ssh", Config: cfg}
+	}
+	cases := []struct {
+		name    string
+		stages  []Stage
+		wantErr bool
+	}{
+		{
+			name:   "留空 = 不校验",
+			stages: []Stage{{ID: "b", Name: "构建", Kind: KindBuild, Jobs: []Job{backend}}, {ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{deploy(map[string]any{})}}},
+		},
+		{
+			name:   "上游阶段的构建任务",
+			stages: []Stage{{ID: "b", Name: "构建", Kind: KindBuild, Jobs: []Job{backend}}, {ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "japi"})}}},
+		},
+		{
+			name:    "任务不存在",
+			stages:  []Stage{{ID: "b", Name: "构建", Kind: KindBuild, Jobs: []Job{backend}}, {ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "gone"})}}},
+			wantErr: true,
+		},
+		{
+			name:    "引用自己",
+			stages:  []Stage{{ID: "b", Name: "构建", Kind: KindBuild, Jobs: []Job{backend}}, {ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "jdep"})}}},
+			wantErr: true,
+		},
+		{
+			name:    "引用不产产物的源任务",
+			stages:  []Stage{{ID: "b", Name: "构建", Kind: KindBuild, Jobs: []Job{backend}}, {ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "jsrc"})}}},
+			wantErr: true,
+		},
+		{
+			name: "同阶段:被本任务依赖才算上游",
+			stages: []Stage{{ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{
+				{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{}},
+				{ID: "jdep", Name: "部署", Type: "deploy_ssh", Needs: []string{"japi"}, Config: map[string]any{ConfigKeyArtifactFrom: "japi"}},
+			}}},
+		},
+		{
+			name: "同阶段并行(无 needs)产物可能还没出",
+			stages: []Stage{{ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{
+				{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{}},
+				{ID: "jdep", Name: "部署", Type: "deploy_ssh", Config: map[string]any{ConfigKeyArtifactFrom: "japi"}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name: "并行分支:未依赖的那条阶段不能作来源",
+			stages: []Stage{
+				{ID: "api", Name: "后端", Kind: KindBuild, Jobs: []Job{backend}},
+				{ID: "web", Name: "前端", Kind: KindBuild, Jobs: []Job{frontend}},
+				{ID: "d", Name: "部署", Kind: KindDeploy, Needs: []string{"api"}, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "jweb"})}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "并行分支:依赖到的那条可以",
+			stages: []Stage{
+				{ID: "api", Name: "后端", Kind: KindBuild, Jobs: []Job{backend}},
+				{ID: "web", Name: "前端", Kind: KindBuild, Jobs: []Job{frontend}},
+				{ID: "d", Name: "部署", Kind: KindDeploy, Needs: []string{"api"}, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "japi"})}},
+			},
+		},
+		{
+			name: "跨两级上游阶段(传递闭包)",
+			stages: []Stage{
+				{ID: "api", Name: "后端", Kind: KindBuild, Jobs: []Job{backend}},
+				{ID: "mid", Name: "打包", Kind: KindBuild, Needs: []string{"api"}, Jobs: []Job{{ID: "jmid", Name: "打包", Type: "script", Config: map[string]any{}}}},
+				{ID: "d", Name: "部署", Kind: KindDeploy, Needs: []string{"mid"}, Jobs: []Job{deploy(map[string]any{ConfigKeyArtifactFrom: "japi"})}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeSpec(deploySpec(tc.stages...))
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("want no error, got %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrArtifactSourceInvalid) {
+				t.Fatalf("err = %v, want wraps ErrArtifactSourceInvalid", err)
+			}
+			if strings.Contains(err.Error(), "pipeline:") {
+				t.Errorf("报错不应含哨兵前缀,got %q", err.Error())
+			}
+		})
+	}
+}
+
+// 非部署节点带同名键是巧合(不是我们的配置),不该被这条校验管。
+func TestArtifactSourceOnlyAppliesToDeployJobs(t *testing.T) {
+	_, err := normalizeSpec(deploySpec(Stage{ID: "b", Name: "构建", Kind: KindBuild, Jobs: []Job{
+		{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{ConfigKeyArtifactFrom: "nope"}},
+	}}))
+	if err != nil {
+		t.Fatalf("脚本节点不该被产物来源校验拦下,got %v", err)
+	}
+}

@@ -22,6 +22,7 @@ import {
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
+import { artifactSourceGroups } from './artifactSources'
 import {
   isStudioNode,
   parsePromotedParams,
@@ -42,6 +43,8 @@ const props = defineProps<{
   channels?: NotificationChannel[]
   /** 项目的部署环境(含各自绑定的镜像仓)—— push_image 只读回显推送目标用。 */
   environments?: Environment[]
+  /** 整条流水线的阶段(含本阶段)—— 部署节点的「产物来源任务」按依赖关系算候选,故需要全图。 */
+  allStages?: PipelineStage[]
 }>()
 
 const emit = defineEmits<{
@@ -254,6 +257,21 @@ function credentialOptions(field: JobField): Credential[] {
   if (!field.credentialType) return all
   return all.filter((c) => c.type === field.credentialType)
 }
+
+// ─── 部署节点「产物来源任务」候选(按流水线依赖关系算,见 artifactSources.ts) ───────────
+// 只认整条流水线:同阶段的并行任务与本阶段之外的上游阶段都可能被本部署节点取产物。
+
+const artifactSources = computed(() =>
+  artifactSourceGroups(props.allStages ?? [], props.stage.id, props.job.id),
+)
+
+/** 当前值已不在候选里(来源任务被删/改名/改到下游):显式列出而不是静默变成「自动」。 */
+const staleArtifactSource = computed(() => {
+  const v = typedConfig.value.artifactFrom ?? ''
+  if (!v) return ''
+  for (const g of artifactSources.value) if (g.jobs.some((j) => j.id === v)) return ''
+  return v
+})
 
 onMounted(async () => {
   try {
@@ -694,6 +712,30 @@ async function confirmSave(): Promise<void> {
           <option v-for="srv in (servers ?? [])" :key="srv.id" :value="srv.id">
             {{ srv.name }} · {{ srv.host }}
           </option>
+        </select>
+
+        <!-- 产物来源任务(部署节点):按流水线依赖关系列出「此刻一定已产出产物」的构建任务。
+             并行构建出多件同类型产物时,这是唯一能指明「发哪一件」的入口。 -->
+        <select
+          v-else-if="field.kind === 'artifactsource'"
+          :value="fieldValue(field.key)"
+          class="drawer-select"
+          :aria-label="field.label"
+          @change="setField(field.key, ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ t('pipelineJob.fieldArtifactFromAuto') }}</option>
+          <option v-if="staleArtifactSource" :value="staleArtifactSource">
+            {{ t('pipelineJob.fieldArtifactFromMissing') }}
+          </option>
+          <optgroup
+            v-for="g in artifactSources"
+            :key="g.stageId"
+            :label="localizeName(g.stageName)"
+          >
+            <option v-for="j in g.jobs" :key="j.id" :value="j.id">
+              {{ localizeName(j.name) }}
+            </option>
+          </optgroup>
         </select>
 
         <!-- notification channel picker -->

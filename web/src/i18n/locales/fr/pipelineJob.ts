@@ -58,6 +58,11 @@ export default {
   fieldArtifactTypeLabel: 'Type d’artefact à déployer',
   fieldArtifactTypeHint:
     'Lequel choisir lorsque cette exécution produit à la fois une image et des artefacts fichiers ; une image passe par docker pull sur la cible → démarrage d’un nouveau conteneur → contrôle de santé → retour à l’image précédente en cas d’échec',
+  fieldArtifactFromLabel: 'Tâche source de l’artefact',
+  fieldArtifactFromHint:
+    'Quand des builds parallèles produisent plusieurs artefacts du même type, indique lequel déployer ; vide = premier artefact du type',
+  fieldArtifactFromAuto: 'Auto (premier artefact du type)',
+  fieldArtifactFromMissing: 'La tâche source n’existe plus, reselectionner',
   fieldDeployPathLabel: 'Chemin de déploiement',
   fieldDeployPathHint:
     'Artefacts fichiers : publiés dans <chemin de déploiement>/releases/<runId>/, le lien symbolique current bascule de façon atomique vers cette version (sans interruption, les anciennes versions sont conservées pour le retour arrière)',
