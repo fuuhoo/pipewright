@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: '컨테이너 이미지 (image)',
+  artifactFile: '산출물(파일 또는 디렉터리)',
   artifactJar: 'JAR 패키지 (jar)',
   artifactDist: '정적 자산 (dist)',
   buildModelDockerfile: '자체 Dockerfile',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: '빌드',
-  typeBuildDesc: '산출물 단계를 먼저 선택: 이미지 / JAR / 정적 리소스. 이미지는 환경에 연결된 레지스트리로 푸시할 수 있습니다',
+  typeBuildDesc: '산출물 단계를 먼저 선택: 이미지 / 산출물(파일 또는 디렉터리). 이미지는 환경에 연결된 레지스트리로 푸시할 수 있습니다',
   buildTierUnselected: '산출물 단계를 선택하세요',
-  fieldBuildTierHint: '단계가 실행 경로를 정합니다: 이미지 = Docker 이미지 빌드(푸시 선택), JAR / 정적 리소스 = 빌드 환경 컨테이너에서 명령 실행 후 경로로 산출물 수집',
+  fieldBuildTierHint: '단계가 실행 경로를 정합니다: 이미지 = Docker 이미지 빌드(푸시 선택), 산출물 = 빌드 환경 컨테이너에서 명령 실행 후 경로로 파일 또는 디렉터리 하나를 수집',
   fieldPushImageLabel: '빌드 후 푸시',
   fieldPushImageHint: '켜면: 빌드한 이미지를 이번 실행 환경에 연결된 레지스트리로 푸시합니다. 끄면: 빌드만 하고 이미지는 빌드 호스트에 남습니다',
   buildTemplateFrontendLabel: '프런트엔드 빌드',

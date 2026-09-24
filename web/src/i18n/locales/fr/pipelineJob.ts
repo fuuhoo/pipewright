@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: 'Image de conteneur (image)',
+  artifactFile: 'Artefact (fichier ou répertoire)',
   artifactJar: 'Paquet JAR (jar)',
   artifactDist: 'Ressources statiques (dist)',
   buildModelDockerfile: 'Dockerfile fourni',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: 'Construction',
-  typeBuildDesc: 'Choisissez d’abord le type d’artefact : image / JAR / ressources statiques ; l’image peut être poussée vers le registre de l’environnement',
+  typeBuildDesc: 'Choisissez d’abord le type d’artefact : image / artefact (fichier ou répertoire) ; l’image peut être poussée vers le registre de l’environnement',
   buildTierUnselected: 'Choisir le type d’artefact',
-  fieldBuildTierHint: 'Le type décide du chemin d’exécution : image = construire une image Docker (poussée optionnelle), JAR / ressources statiques = exécuter les commandes dans le conteneur d’environnement de build et collecter les artefacts par chemin',
+  fieldBuildTierHint: 'Le type décide du chemin d’exécution : image = construire une image Docker (poussée optionnelle), artefact = exécuter les commandes dans le conteneur d’environnement de build et collecter un fichier ou un répertoire par chemin',
   fieldPushImageLabel: 'Pousser après le build',
   fieldPushImageHint: 'Activé : pousser l’image construite vers le registre lié à l’environnement de cette exécution ; Désactivé : construire seulement, l’image reste sur l’hôte de build',
   buildTemplateFrontendLabel: 'Build frontend',

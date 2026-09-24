@@ -115,7 +115,7 @@ func TestSettingsSaveBuildModelToggleRoundTrip(t *testing.T) {
 	svc, _, _, _, projID := newSettingsSvc(t)
 	ctx := context.Background()
 
-	// 模型 B + 工具链 + 产物 jar + 明文变量 + 缓存。
+	// 模型 B + 工具链 + 产物档位(历史值 jar,应归一为 file)+ 明文变量 + 缓存。
 	in := SettingsInput{
 		Build: BuildConfig{
 			Model:        BuildModelToolchain,
@@ -134,8 +134,8 @@ func TestSettingsSaveBuildModelToggleRoundTrip(t *testing.T) {
 	if st.Build.Model != BuildModelToolchain || st.Build.Toolchain.Version != "22" {
 		t.Fatalf("模型 B 往返失败: %+v", st.Build)
 	}
-	if st.Build.ArtifactType != ArtifactJAR {
-		t.Fatalf("产物应为 jar, got %q", st.Build.ArtifactType)
+	if st.Build.ArtifactType != ArtifactFile {
+		t.Fatalf("历史档位 jar 应归一为 file, got %q", st.Build.ArtifactType)
 	}
 	if len(st.Build.Vars) != 1 || st.Build.Vars[0].Value != "production" || st.Build.Vars[0].ID == "" {
 		t.Fatalf("明文变量往返失败(应补 id): %+v", st.Build.Vars)

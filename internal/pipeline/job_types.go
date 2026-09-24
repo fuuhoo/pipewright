@@ -25,7 +25,7 @@ const (
 	JobTypeBuild = "build"
 	// JobTypeBuildImage 是旧的独立镜像构建类型(仍执行,不再出现在 picker)。
 	JobTypeBuildImage = "build_image"
-	// ConfigKeyArtifactType 是产物档位键(image | jar | dist)。
+	// ConfigKeyArtifactType 是产物档位键(image | file;jar / dist 为历史别名)。
 	// build_image / build / deploy 三处同名(执行侧按同一键读),故不另起名字。
 	ConfigKeyArtifactType = "artifactType"
 	// ConfigKeyPushImage 是「构建后推送镜像」开关(仅 image 档位有意义):
@@ -33,12 +33,18 @@ const (
 	ConfigKeyPushImage = "pushImage"
 )
 
-// buildArtifactTiers 是构建任务可选的产物档位。
-var buildArtifactTiers = map[string]bool{ArtifactImage: true, ArtifactJAR: true, ArtifactDist: true}
+// buildArtifactTiers 是构建任务可选的产物档位。jar / dist 是收敛前的历史档位,继续认:
+// 存量流水线与 .pipewright.yml 不迁移,但新配置一律写 file。
+var buildArtifactTiers = map[string]bool{
+	ArtifactImage: true,
+	ArtifactFile:  true,
+	ArtifactJAR:   true,
+	ArtifactDist:  true,
+}
 
 // EffectiveJobType 把「构建」任务映射到真正执行它的类型,让派发/校验只需认识 build_image 与 script:
 // 产物档位是镜像 → build_image(有 Dockerfile 走 docker build,否则按工具链容器构建);
-// 其余档位(jar/dist)→ script(在构建环境容器跑 commands,再按 artifactPath 收产物)。
+// 其余档位(file,含历史的 jar/dist)→ script(在构建环境容器跑 commands,再按 artifactPath 收产物)。
 // 其它类型原样返回。
 func EffectiveJobType(jobType string, cfg map[string]any) string {
 	if strings.TrimSpace(jobType) != JobTypeBuild {
@@ -155,5 +161,5 @@ func validateBuildTask(stageName, jobName, jobType string, cfg map[string]any) e
 	if buildArtifactTiers[strings.TrimSpace(ConfigString(cfg, ConfigKeyArtifactType))] {
 		return nil
 	}
-	return issuef(ErrBuildTaskInvalid, "阶段「%s」任务「%s」要先选产物档位(image / jar / dist)", stageName, jobName)
+	return issuef(ErrBuildTaskInvalid, "阶段「%s」任务「%s」要先选产物档位(镜像 / 产物)", stageName, jobName)
 }

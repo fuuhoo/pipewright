@@ -91,7 +91,8 @@ func TestSettingsBuildModelToggleRoundTripHTTP(t *testing.T) {
 	var dto map[string]any
 	_ = json.Unmarshal(raw, &dto)
 	build, _ := dto["build"].(map[string]any)
-	if build["model"] != "toolchain" || build["artifactType"] != "jar" {
+	// 历史档位 jar 由后端归一为 file(存量写入不报错,响应里只剩两档之一)。
+	if build["model"] != "toolchain" || build["artifactType"] != "file" {
 		t.Fatalf("模型 B 往返失败: %v", build)
 	}
 

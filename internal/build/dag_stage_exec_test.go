@@ -406,9 +406,31 @@ func TestStageExecutorBuildImageReal(t *testing.T) {
 	}
 }
 
-// 合并后的「构建」任务按产物档位派发:image → docker build,jar/dist → 构建环境容器里跑脚本。
+// 合并后的「构建」任务按产物档位派发:镜像 → docker build,产物 → 构建环境容器里跑脚本。
 // 断言两条路径互斥(不是一边调 Build 一边也调 RunToolchain),否则档位形同没生效。
 func TestStageExecutorBuildTaskTierDispatch(t *testing.T) {
+	runTier := func(t *testing.T, tier string) {
+		drv := &recordingDriver{code: 0}
+		b := newDAGTestBuilder(drv, &markerCloner{})
+		rep := &fakeReporter{}
+		stage := pipeline.Stage{ID: "s", Name: "构建", Kind: pipeline.KindBuild,
+			Jobs: []pipeline.Job{{ID: "j1", Name: "构建", Type: pipeline.JobTypeBuild, Config: map[string]any{
+				pipeline.ConfigKeyArtifactType: tier, "image": "node:20", "commands": "mvn -B package",
+			}}}}
+		if err := NewStageExecutor(b, nil)(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if drv.callCount != 1 {
+			t.Fatalf("档位 %s 应在构建容器里跑一次脚本,实际 %d", tier, drv.callCount)
+		}
+		if drv.gotImage != "node:20" {
+			t.Errorf("容器镜像 = %q", drv.gotImage)
+		}
+		if !strings.Contains(strings.Join(drv.gotCmd, " "), "mvn -B package") {
+			t.Errorf("命令未进容器: %v", drv.gotCmd)
+		}
+	}
+
 	t.Run("镜像档位走 docker build", func(t *testing.T) {
 		drv := &imgDriver{}
 		b := newDAGTestBuilder(drv, &markerCloner{file: "Dockerfile", content: "FROM scratch\n"})
@@ -425,27 +447,9 @@ func TestStageExecutorBuildTaskTierDispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("jar 档位走脚本容器", func(t *testing.T) {
-		drv := &recordingDriver{code: 0}
-		b := newDAGTestBuilder(drv, &markerCloner{})
-		rep := &fakeReporter{}
-		stage := pipeline.Stage{ID: "s", Name: "构建", Kind: pipeline.KindBuild,
-			Jobs: []pipeline.Job{{ID: "j1", Name: "构建", Type: pipeline.JobTypeBuild, Config: map[string]any{
-				pipeline.ConfigKeyArtifactType: pipeline.ArtifactJAR, "image": "node:20", "commands": "mvn -B package",
-			}}}}
-		if err := NewStageExecutor(b, nil)(context.Background(), &run.Run{ProjectID: "p1"}, stage, rep); err != nil {
-			t.Fatalf("exec: %v", err)
-		}
-		if drv.callCount != 1 {
-			t.Fatalf("jar 档位应在构建容器里跑一次脚本,实际 %d", drv.callCount)
-		}
-		if drv.gotImage != "node:20" {
-			t.Errorf("容器镜像 = %q", drv.gotImage)
-		}
-		if !strings.Contains(strings.Join(drv.gotCmd, " "), "mvn -B package") {
-			t.Errorf("命令未进容器: %v", drv.gotCmd)
-		}
-	})
+	// file 是当前档位;jar 是收敛前的历史取值 —— 存量流水线不改配置也要走同一条路。
+	t.Run("产物档位走脚本容器", func(t *testing.T) { runTier(t, pipeline.ArtifactFile) })
+	t.Run("历史 jar 档位仍走脚本容器", func(t *testing.T) { runTier(t, pipeline.ArtifactJAR) })
 }
 
 // 「构建后推送」开关必须真的决定推不推:关了就绝不碰 registry(只有 build_image 一路会推,

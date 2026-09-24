@@ -265,7 +265,7 @@ func (b *Builder) Run(ctx context.Context, r *run.Run, sink run.StepSink) error 
 		return err
 	}
 
-	// ---- 步骤 1:构建(image/jar/dist)----
+	// ---- 步骤 1:构建(镜像 / 产物)----
 	if canceled(ctx) {
 		return b.cancelAt(ctx, sink, 1)
 	}
@@ -385,7 +385,7 @@ func (b *Builder) resolveRegistry(settings *pipeline.Settings, envName string) *
 // build 执行构建步骤,逐行喂日志。返回 local-tag(image 产物)+ 待 emit 的产物。
 //
 //   - 模型 A(dockerfile)或产物=image:docker build -f <DockerfilePath> -t <local-tag> .
-//   - 模型 B(toolchain)产 jar/dist:docker run --rm -v ws:/src -w /src <toolchain:ver> <build-cmd>;
+//   - 模型 B(toolchain)产「产物」档(file):docker run --rm -v ws:/src -w /src <目录镜像> <构建命令>;
 //     对 image 产物退化为要求 Dockerfile(走模型 A 路径)。
 func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, proj *project.Project, cfg pipeline.BuildConfig, workspace, commitTag string) (string, *run.Artifact, error) {
 	onLine := b.lineSink(sink, ordinal)
@@ -435,7 +435,7 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 		}
 		return localTag, art, nil
 
-	case pipeline.ArtifactJAR, pipeline.ArtifactDist:
+	case pipeline.ArtifactFile:
 		// 模型 B:工具链镜像挂载工作区跑构建命令。镜像来自预置目录(#9)——
 		// toolchainLanguage/Version 只是查目录的键,平台不再自己拼 `语言:版本` 当镜像跑。
 		resolved, rerr := b.toolchainRuntime(cfg.Toolchain, "构建配置", slug)
@@ -444,7 +444,7 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 		}
 		b.loginForImage(ctx, resolved.Image, resolved.CredentialID, onLine)
 		env := append(buildArgs, secretArgs...) // 工具链构建经 -e 注入(secret 回显只列 key)
-		buildCmd := toolchainBuildCmd(cfg.ArtifactType)
+		buildCmd := toolchainBuildCmd(resolved.Env.Language)
 		mounts, merr := b.checkMountFiles(resolved.Mounts)
 		if merr != nil {
 			return "", nil, merr
@@ -457,7 +457,7 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 		if code != 0 {
 			return "", nil, ErrBuildFailed
 		}
-		art := b.locateFileArtifact(cfg.ArtifactType, slug, workspace, onLine)
+		art := b.locateFileArtifact(resolved.Env.Language, slug, workspace, onLine)
 		return "", art, nil
 
 	default:
@@ -560,11 +560,13 @@ func (b *Builder) revealRegistryCred(credID string) (string, string) {
 	return "", pt
 }
 
-// locateFileArtifact 在工作区定位 jar/dist 产物文件/目录,算 size,构造产物。定位不到时
-// 退化为工作区根引用、size=0(产物仍 emit,不致命)。
-func (b *Builder) locateFileArtifact(artifactType, slug, workspace string, onLine func(stream, line string)) *run.Artifact {
-	switch artifactType {
-	case pipeline.ArtifactJAR:
+// locateFileArtifact 在工作区定位「产物」档的文件/目录产物,算 size,构造产物。
+// 档位不再区分 jar 与静态资源,所以按工具链语言取该生态最常见的产物形态:
+// java 找首个 *.jar,其余找 dist/build/out 目录。定位不到时退化为工作区根引用、
+// size=0(产物仍 emit,不致命)。
+func (b *Builder) locateFileArtifact(lang, slug, workspace string, onLine func(stream, line string)) *run.Artifact {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "java":
 		if p := findFirst(workspace, ".jar"); p != "" {
 			size := fileSize(p)
 			onLine(streamStdout, "产物:"+filepath.Base(p)+"("+itoa(size)+" bytes)")
@@ -576,8 +578,8 @@ func (b *Builder) locateFileArtifact(artifactType, slug, workspace string, onLin
 			b.storeJarBytes(art, p, onLine)
 			return art
 		}
-	case pipeline.ArtifactDist:
-		// 常见 dist 输出目录:dist / build / out。
+	default:
+		// 常见静态资源输出目录:dist / build / out。
 		for _, d := range []string{"dist", "build", "out"} {
 			full := filepath.Join(workspace, d)
 			if isDir(full) {
@@ -587,19 +589,15 @@ func (b *Builder) locateFileArtifact(artifactType, slug, workspace string, onLin
 					Type: run.ArtifactDist, Name: slug + "-dist", Reference: d + "/", SizeBytes: size,
 					Metadata: map[string]any{"builder": b.driver.Binary(), "path": d + "/"},
 				}
-				// 制品库:把 dist 目录打 tar.gz 归档,reference 改存句柄;未配则保持占位。
+				// 制品库:把目录打 tar.gz 归档,reference 改存句柄;未配则保持占位。
 				b.storeDistDir(art, full, onLine)
 				return art
 			}
 		}
 	}
 	// 退化:未定位到产物(仍 emit 一条记录,metadata 标注 located=false 便于诊断)。
-	t := run.ArtifactJar
-	if artifactType == pipeline.ArtifactDist {
-		t = run.ArtifactDist
-	}
 	return &run.Artifact{
-		Type: t, Name: slug, Reference: slug, SizeBytes: 0,
+		Type: run.ArtifactArchive, Name: slug, Reference: slug, SizeBytes: 0,
 		Metadata: map[string]any{"builder": b.driver.Binary(), "located": false},
 	}
 }
@@ -649,13 +647,14 @@ func canceled(ctx context.Context) bool {
 
 // ---- 纯函数辅助 ----
 
-// toolchainBuildCmd 据产物类型给一个保守的默认构建命令(模型 B)。真实构建命令未来可由配置驱动;
-// 本期按产物类型给业界最常见命令(jar=mvn package;dist=npm run build),容器内执行。
-func toolchainBuildCmd(artifactType string) []string {
-	switch artifactType {
-	case pipeline.ArtifactJAR:
+// toolchainBuildCmd 按工具链语言给一个保守的默认构建命令(模型 B、「产物」档)。
+// 键从产物档位换成语言:档位收敛成「镜像 / 产物」两档后已不含语言信息,而这条命令要猜的
+// 恰恰是「这个仓库用什么构建」。取不到公认惯例的语言退化为 true(空跑,产物靠定位失败诊断)。
+func toolchainBuildCmd(language string) []string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "java":
 		return []string{"mvn", "-B", "-DskipTests", "package"}
-	case pipeline.ArtifactDist:
+	case "node":
 		return []string{"sh", "-c", "npm install && npm run build"}
 	default:
 		return []string{"true"}

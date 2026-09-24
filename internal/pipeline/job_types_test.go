@@ -85,7 +85,7 @@ func TestHealthProbeOnlyAppliesToDeployJobs(t *testing.T) {
 }
 
 // 「构建」任务按产物档位折算成真正执行它的类型:档位选错路径就完全不一样,
-// 派发/校验只认折算结果(image → build_image,jar/dist → script)。
+// 派发/校验只认折算结果(镜像 → build_image,产物 → script)。
 func TestEffectiveJobTypeByArtifactTier(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -94,8 +94,9 @@ func TestEffectiveJobTypeByArtifactTier(t *testing.T) {
 		want    string
 	}{
 		{"镜像档位", JobTypeBuild, map[string]any{ConfigKeyArtifactType: ArtifactImage}, JobTypeBuildImage},
-		{"jar 档位", JobTypeBuild, map[string]any{ConfigKeyArtifactType: ArtifactJAR}, StepTypeScript},
-		{"dist 档位", JobTypeBuild, map[string]any{ConfigKeyArtifactType: ArtifactDist}, StepTypeScript},
+		{"产物档位", JobTypeBuild, map[string]any{ConfigKeyArtifactType: ArtifactFile}, StepTypeScript},
+		{"历史 jar 档位", JobTypeBuild, map[string]any{ConfigKeyArtifactType: ArtifactJAR}, StepTypeScript},
+		{"历史 dist 档位", JobTypeBuild, map[string]any{ConfigKeyArtifactType: ArtifactDist}, StepTypeScript},
 		{"档位留空", JobTypeBuild, map[string]any{}, StepTypeScript},
 		{"旧镜像类型原样", JobTypeBuildImage, map[string]any{ConfigKeyArtifactType: ArtifactJAR}, JobTypeBuildImage},
 		{"脚本类型原样", "script", map[string]any{}, "script"},
@@ -118,7 +119,7 @@ func TestNormalizeSpecRequiresBuildArtifactTier(t *testing.T) {
 	if strings.Contains(err.Error(), "pipeline:") {
 		t.Errorf("报错不应含哨兵前缀,got %q", err.Error())
 	}
-	for _, tier := range []string{ArtifactImage, ArtifactJAR, ArtifactDist} {
+	for _, tier := range []string{ArtifactImage, ArtifactFile, ArtifactJAR, ArtifactDist} {
 		if _, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "构建", Type: JobTypeBuild, Config: map[string]any{ConfigKeyArtifactType: tier}})); err != nil {
 			t.Fatalf("档位 %s 应通过校验,got %v", tier, err)
 		}

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/huangchengsir/pipewright/internal/artifactstore"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
 	"github.com/huangchengsir/pipewright/internal/run"
 )
 
@@ -32,9 +31,12 @@ func TestLocateJarStoresRealBytes(t *testing.T) {
 		t.Fatalf("write jar: %v", err)
 	}
 
-	art := b.locateFileArtifact(pipeline.ArtifactJAR, "shop", ws, func(string, string) {})
+	art := b.locateFileArtifact("java", "shop", ws, func(string, string) {})
 
-	// 产物应是制品库支撑:reference=句柄,metadata.stored=true,filename 记原名。
+	// 产物应是制品库支撑:type=jar,reference=句柄,metadata.stored=true,filename 记原名。
+	if art.Type != run.ArtifactJar {
+		t.Fatalf("java 工具链的产物 type 应为 jar,got %q", art.Type)
+	}
 	if art.Metadata["stored"] != true {
 		t.Fatalf("jar 产物应 stored=true,metadata=%v", art.Metadata)
 	}
@@ -63,8 +65,11 @@ func TestLocateDistStoresTarGz(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(distDir, "index.html"), []byte("<html>hi</html>"), 0o644)
 	_ = os.WriteFile(filepath.Join(distDir, "assets", "app.js"), []byte("console.log(1)"), 0o644)
 
-	art := b.locateFileArtifact(pipeline.ArtifactDist, "shop", ws, func(string, string) {})
+	art := b.locateFileArtifact("node", "shop", ws, func(string, string) {})
 
+	if art.Type != run.ArtifactDist {
+		t.Fatalf("node 工具链的产物 type 应为 dist,got %q", art.Type)
+	}
 	if art.Metadata["stored"] != true || art.Metadata["format"] != "tar.gz" {
 		t.Fatalf("dist 产物应 stored=true format=tar.gz,metadata=%v", art.Metadata)
 	}
@@ -106,12 +111,21 @@ func TestLocateWithoutStoreKeepsPlaceholder(t *testing.T) {
 	b := &Builder{driver: &recordingDriver{}} // artStore=nil
 	ws := t.TempDir()
 	_ = os.WriteFile(filepath.Join(ws, "app.jar"), []byte("x"), 0o644)
-	art := b.locateFileArtifact(pipeline.ArtifactJAR, "shop", ws, func(string, string) {})
+	art := b.locateFileArtifact("java", "shop", ws, func(string, string) {})
 	if art.Reference != "app.jar" {
 		t.Fatalf("无制品库应保持 reference=文件名,got %q", art.Reference)
 	}
 	if _, ok := art.Metadata["stored"]; ok {
 		t.Fatalf("无制品库不应有 stored 标记")
 	}
-	_ = run.ArtifactJar
+}
+
+// 档位只剩「产物」一档后,定位不到产物时不再猜类型:统一 emit archive + located=false,
+// 让诊断页看得出「这一步没找到东西」。
+func TestLocateNothingEmitsUnlocatedArchive(t *testing.T) {
+	b := &Builder{driver: &recordingDriver{}}
+	art := b.locateFileArtifact("go", "shop", t.TempDir(), func(string, string) {})
+	if art.Type != run.ArtifactArchive || art.Metadata["located"] != false {
+		t.Fatalf("未定位到产物应 emit archive + located=false,got type=%q metadata=%v", art.Type, art.Metadata)
+	}
 }

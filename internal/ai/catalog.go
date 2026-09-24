@@ -25,9 +25,9 @@ func BuiltinNodeCatalog() []NodeKind {
 		{Type: "build", Label: "构建", Category: "build",
 			Description: "唯一的构建任务,config.artifactType 必须先选档位:" +
 				"image = 构建 Docker 镜像(buildModel=dockerfile 时给 dockerfilePath/context;toolchain 时选 buildEnvId + buildCommand)," +
-				"jar / dist = 在预置构建环境容器里跑 commands(多行),用 artifactPath 收文件产物。" +
+				"file = 产物(工作区里的一个文件或目录):在预置构建环境容器里跑 commands(多行),用 artifactPath 收产物。" +
 				"档位=image 时 pushImage=false 表示只构建不推送(缺省推送到运行环境绑定的镜像仓,不需要单独的推送节点)。" +
-				"需要镜像部署就用 artifactType=image;前端/后端项目用档位 dist/jar 并预填各自构建命令。"},
+				"需要镜像部署就用 artifactType=image;前端/后端项目用档位 file 并预填各自构建命令。"},
 		{Type: "script", Label: "自定义脚本", Category: "build",
 			Description: "隔离容器内执行任意命令(跑测试、lint、代码扫描、自定义步骤等)。"},
 		{Type: "deploy_ssh", Label: "部署", Category: "deploy",

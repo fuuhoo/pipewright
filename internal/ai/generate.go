@@ -430,11 +430,11 @@ needs 填「本阶段内它所依赖的其它 job 的 name」(数组)。**凡有
 
 ## 每个节点的 config(关键!尽量据仓库分析填满,让流水线直接可用)
 为每个 job 填 "config" 对象,**凡能从仓库分析推断的都填**;只有环境相关项(serverId/channel/credentialId)留空给用户选。各类型 config 字段:
-- build:artifactType(**必填档位**:"image" | "jar" | "dist")。
-  - 档位 jar/dist(在构建环境容器里跑命令收文件产物):buildEnvId(运行镜像,**只能填「可用构建环境」里的 ID**,按分析出的语言/版本挑最贴近的一条;写 image 键或自造镜像名会被拦截)、commands(多行命令,据构建工具写,如 "cd <子目录>\nmvn -B -DskipTests package")、artifactPath(产物路径,如 "backend/target/*.jar"、"frontend/dist")。命令里的子目录要用分析里检测到的真实路径(如 backend/、frontend/)。
+- build:artifactType(**必填档位**:"image" | "file";file 就是「产物」——工作区里的一个文件或目录)。
+  - 档位 file(在构建环境容器里跑命令收产物):buildEnvId(运行镜像,**只能填「可用构建环境」里的 ID**,按分析出的语言/版本挑最贴近的一条;写 image 键或自造镜像名会被拦截)、commands(多行命令,据构建工具写,如 "cd <子目录>\nmvn -B -DskipTests package")、artifactPath(产物路径,如 "backend/target/*.jar"、"frontend/dist")。命令里的子目录要用分析里检测到的真实路径(如 backend/、frontend/)。
   - 档位 image:buildModel("dockerfile" 有 Dockerfile 否则 "toolchain")、dockerfilePath(检测到的 Dockerfile 路径,如 "backend/Dockerfile")、context(Dockerfile 所在目录,如 "backend");buildModel 为 "toolchain" 时同样必须给 buildEnvId 并填 buildCommand。pushImage 只在「只构建不推送」时才写 "false"。
 - deploy_ssh:artifactType("image"|"dist"|"jar"|"archive"|不填=按产物自动判断)、containerName(image 档位时据项目名取,如 "<proj>-app")、ports(如 "8080:8080")、strategy("recreate"|"rolling"|"blue-green")、deployPath(非 image 档位的发布目录)、restartCommand(非 image 档位的重启命令);serverId 留空(用户选目标机)。前端静态站点用同一类型:artifactType="dist" + strategy="rolling" + restartCommand="nginx -s reload"。健康门控写在本节点:healthProbe("http"|"command"|不填=不探测)、healthUrl(探测地址,据服务端口/框架填,Spring Boot 用 "http://localhost:<宿主端口>/actuator/health",其它用 "http://localhost:<端口>/healthz")、healthCommand(command 方式时在目标机跑的命令)、healthRetries(如 "10")、healthInterval(间隔秒,如 "3")、healthTimeout(单次超时秒)。
-- script:同 build 的 jar/dist 档位那套键(buildEnvId/commands/artifactPath…)。
+- script:同 build 的 file 档位那套键(buildEnvId/commands/artifactPath…)。
 - notify:titleTemplate/bodyTemplate(可用 {{project}} {{branch}} {{status}});channel 留空(用户选渠道)。
 - git_source:config 留空 {}。
 
@@ -444,13 +444,13 @@ needs 填「本阶段内它所依赖的其它 job 的 name」(数组)。**凡有
   "stages": [
     { "name": "流水线源", "kind": "source", "jobs": [ { "name": "拉取源码", "type": "git_source", "summary": "...", "config": {} } ] },
     { "name": "构建", "kind": "build", "jobs": [
-        { "name": "后端构建", "type": "build", "summary": "...", "config": { "artifactType": "jar", "buildEnvId": "<可用构建环境的 ID>", "commands": "cd backend\nmvn -B -DskipTests package", "artifactPath": "backend/target/*.jar" } },
-        { "name": "前端构建", "type": "build", "summary": "...", "config": { "artifactType": "dist", "buildEnvId": "<可用构建环境的 ID>", "commands": "cd frontend\nnpm install\nnpm run build", "artifactPath": "frontend/dist" } },
+        { "name": "后端构建", "type": "build", "summary": "...", "config": { "artifactType": "file", "buildEnvId": "<可用构建环境的 ID>", "commands": "cd backend\nmvn -B -DskipTests package", "artifactPath": "backend/target/*.jar" } },
+        { "name": "前端构建", "type": "build", "summary": "...", "config": { "artifactType": "file", "buildEnvId": "<可用构建环境的 ID>", "commands": "cd frontend\nnpm install\nnpm run build", "artifactPath": "frontend/dist" } },
         { "name": "构建镜像", "type": "build", "summary": "...", "needs": ["后端构建", "前端构建"], "config": { "artifactType": "image", "buildModel": "dockerfile", "dockerfilePath": "backend/Dockerfile", "context": "backend" } } ] },
     { "name": "部署", "kind": "deploy", "jobs": [
         { "name": "SSH 部署", "type": "deploy_ssh", "summary": "...", "config": { "artifactType": "image", "containerName": "app", "ports": "8080:8080", "strategy": "recreate", "healthProbe": "http", "healthUrl": "http://localhost:8080/actuator/health", "healthRetries": "10", "healthInterval": "3" } } ] }
   ],
-  "build": { "model": "toolchain|dockerfile", "toolchain": { "language": "node|go|java|python", "version": "..." }, "artifactType": "image|jar|dist", "dockerfilePath": "" },
+  "build": { "model": "toolchain|dockerfile", "toolchain": { "language": "node|go|java|python", "version": "..." }, "artifactType": "image|file", "dockerfilePath": "" },
   "branchMappings": [ { "branchPattern": "main", "environment": "生产" } ],
   "rationale": "一句话说明推荐依据"
 }

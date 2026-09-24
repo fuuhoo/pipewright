@@ -39,15 +39,30 @@ const (
 	BuildModelToolchain = "toolchain"
 )
 
-// 产物类型枚举。
+// 产物档位枚举(构建任务声明「这一步产出什么形态」)。
+// 只有两档:产物要么是镜像,要么是工作区里的一个目录或文件 —— 后者再按语言分档既穷举不完
+// (go 二进制、python wheel、archive…)也不是执行侧的判断依据,类型由产物路径自动判。
 const (
 	// ArtifactImage 表示产物为容器镜像。
 	ArtifactImage = "image"
-	// ArtifactJAR 表示产物为 JAR 包。
-	ArtifactJAR = "jar"
-	// ArtifactDist 表示产物为静态资源 dist。
+	// ArtifactFile 表示产物为工作区内的一个文件或目录(dist、jar、二进制…)。
+	ArtifactFile = "file"
+	// ArtifactJAR / ArtifactDist 是 ArtifactFile 之前的两档,已从档位选择里撤销:
+	// 存量配置仍按同一档读取(见 NormalizeArtifactTier),不迁移、不报错。
+	ArtifactJAR  = "jar"
 	ArtifactDist = "dist"
 )
+
+// NormalizeArtifactTier 把历史档位收敛为当前两档之一(jar / dist → file,其余原样)。
+// 读取与保存两侧都过一遍:存量项目/流水线不改配置也能在新 UI 里显示、执行。
+func NormalizeArtifactTier(tier string) string {
+	switch strings.TrimSpace(tier) {
+	case ArtifactJAR, ArtifactDist:
+		return ArtifactFile
+	default:
+		return strings.TrimSpace(tier)
+	}
+}
 
 // 镜像仓库类型枚举。
 const (
@@ -360,6 +375,8 @@ func (s *settingsService) load(ctx context.Context, projectID string) (*Settings
 			return nil, fmt.Errorf("pipeline: parse build: %w", err)
 		}
 	}
+	// 存量档位收敛:库里可能仍写着 jar / dist,读出来一律当作「产物」档(不迁移数据)。
+	build.ArtifactType = NormalizeArtifactTier(build.ArtifactType)
 	var envs []Environment
 	if strings.TrimSpace(envsJSON) != "" {
 		if err := json.Unmarshal([]byte(envsJSON), &envs); err != nil {
@@ -439,11 +456,11 @@ func (s *settingsService) normalizeBuild(in BuildConfig) (BuildConfig, error) {
 	if model != BuildModelDockerfile && model != BuildModelToolchain {
 		return BuildConfig{}, fmt.Errorf("%w: invalid model %q", ErrInvalidBuild, in.Model)
 	}
-	artifact := strings.TrimSpace(in.ArtifactType)
+	artifact := NormalizeArtifactTier(in.ArtifactType)
 	if artifact == "" {
 		artifact = ArtifactImage
 	}
-	if artifact != ArtifactImage && artifact != ArtifactJAR && artifact != ArtifactDist {
+	if artifact != ArtifactImage && artifact != ArtifactFile {
 		return BuildConfig{}, fmt.Errorf("%w: invalid artifactType %q", ErrInvalidBuild, in.ArtifactType)
 	}
 

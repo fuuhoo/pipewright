@@ -17,6 +17,8 @@ import {
   jobTypeLabel,
   isScriptClassType,
   effectiveJobType,
+  normalizeArtifactTier,
+  usesBuildTierField,
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
@@ -98,6 +100,11 @@ function splitOnType(type: string, config: Record<string, string>, repickView = 
     }
     if (!extras.some(([ek]) => ek === k)) typed[k] = v
   }
+  // 产物档位收敛为「镜像 / 产物」两档:存量的 jar / dist 在读入时归到「产物」
+  // (仅内存,下次 flush 才落库),否则下拉框会显示成一个既不选也认不出的值。
+  if (typed.artifactType && usesBuildTierField(type)) {
+    typed.artifactType = normalizeArtifactTier(typed.artifactType)
+  }
   // 旧配置收敛:有镜像/toolchain 但无 buildEnvId 时,按预置目录反查预填(仅内存,
   // 下次 flush 才落库)。查不到就留给 buildenv 控件显示「未匹配」告警项。
   if (!typed.buildEnvId) {
@@ -147,7 +154,7 @@ const ADVANCED_FIELD_KEYS = new Set(['timeoutSeconds', 'retries', 'cpu', 'memory
 
 /** 该类型能用可视化步骤构建器吗(脚本类 + 有 commands/artifactPath 字段;但 script/custom 除外)。 */
 const canUseStepBuilder = computed<boolean>(() => {
-  // 构建任务按产物档位折算:只有 jar/dist 档走脚本路径,才有步骤可编;镜像档是 docker 构建。
+  // 构建任务按产物档位折算:只有「产物」档走脚本路径,才有步骤可编;镜像档是 docker 构建。
   if (!isScriptClassType(localType.value, liveConfig.value)) return false
   if (RAW_ONLY_SCRIPT_TYPES.has(localType.value)) return false
   if (!spec.value) return false

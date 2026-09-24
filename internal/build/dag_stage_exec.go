@@ -93,7 +93,7 @@ func isBuildImageJob(jobType string) bool {
 }
 
 // effectiveJobType 把合并后的「构建」任务按产物档位折算成真正执行它的类型
-// (image → build_image 路径,jar/dist → script 路径)。派发处只认折算结果。
+// (镜像 → build_image 路径,产物 → script 路径)。派发处只认折算结果。
 func effectiveJobType(jb pipeline.Job) string {
 	return pipeline.EffectiveJobType(jb.Type, jb.Config)
 }

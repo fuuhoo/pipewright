@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: '容器映像 (image)',
+  artifactFile: '產物(檔案或目錄)',
   artifactJar: 'JAR 包 (jar)',
   artifactDist: '靜態資源 (dist)',
   buildModelDockerfile: '自帶 Dockerfile',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: '構建',
-  typeBuildDesc: '先選產物檔位:映像 / JAR / 靜態資源;映像可順帶推送到環境綁定的映像倉',
+  typeBuildDesc: '先選產物檔位:映像 / 產物(檔案或目錄);映像可順帶推送到環境綁定的映像倉',
   buildTierUnselected: '請選擇產物檔位',
-  fieldBuildTierHint: '檔位決定這一步走哪條路徑:映像 = 構建 Docker 映像(可選推送),JAR / 靜態資源 = 在構建環境容器裡跑命令並按路徑收產物',
+  fieldBuildTierHint: '檔位決定這一步走哪條路徑:映像 = 構建 Docker 映像(可選推送),產物 = 在構建環境容器裡跑命令並按路徑收一個檔案或目錄',
   fieldPushImageLabel: '構建後推送',
   fieldPushImageHint: '開啟:映像構建完推送到本次執行環境綁定的映像倉;關閉:只構建,映像留在構建機',
   buildTemplateFrontendLabel: '前端構建',

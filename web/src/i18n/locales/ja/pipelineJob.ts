@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: 'コンテナイメージ (image)',
+  artifactFile: '成果物(ファイルまたはディレクトリ)',
   artifactJar: 'JAR パッケージ (jar)',
   artifactDist: '静的アセット (dist)',
   buildModelDockerfile: '自前の Dockerfile',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: 'ビルド',
-  typeBuildDesc: 'まず成果物の種類を選択:イメージ / JAR / 静的リソース。イメージは環境に紐づくレジストリへプッシュできます',
+  typeBuildDesc: 'まず成果物の種類を選択:イメージ / 成果物(ファイルまたはディレクトリ)。イメージは環境に紐づくレジストリへプッシュできます',
   buildTierUnselected: '成果物の種類を選択してください',
-  fieldBuildTierHint: '種類が実行経路を決めます:イメージ = Docker イメージをビルド(プッシュ選択可)、JAR / 静的リソース = ビルド環境のコンテナでコマンドを実行しパスから成果物を収集',
+  fieldBuildTierHint: '種類が実行経路を決めます:イメージ = Docker イメージをビルド(プッシュ選択可)、成果物 = ビルド環境のコンテナでコマンドを実行しパスからファイルまたはディレクトリを収集',
   fieldPushImageLabel: 'ビルド後にプッシュ',
   fieldPushImageHint: 'オン:ビルドしたイメージを今回の実行環境に紐づくレジストリへプッシュ。オフ:ビルドのみでイメージはビルドホストに残ります',
   buildTemplateFrontendLabel: 'フロントエンドビルド',

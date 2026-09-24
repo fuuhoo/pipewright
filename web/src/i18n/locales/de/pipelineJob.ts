@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: 'Container-Image (image)',
+  artifactFile: 'Artefakt (Datei oder Verzeichnis)',
   artifactJar: 'JAR-Paket (jar)',
   artifactDist: 'Statische Assets (dist)',
   buildModelDockerfile: 'Eigenes Dockerfile',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: 'Build',
-  typeBuildDesc: 'Zuerst die Artefaktart wählen: Image / JAR / statische Assets; Images lassen sich an die Registry der Umgebung pushen',
+  typeBuildDesc: 'Zuerst die Artefaktart wählen: Image / Artefakt (Datei oder Verzeichnis); Images lassen sich an die Registry der Umgebung pushen',
   buildTierUnselected: 'Artefaktart wählen',
-  fieldBuildTierHint: 'Die Artefaktart bestimmt den Ausführungspfad: Image = Docker-Image bauen (optional pushen), JAR / statische Assets = Befehle im Build-Umgebungscontainer ausführen und Artefakte per Pfad einsammeln',
+  fieldBuildTierHint: 'Die Artefaktart bestimmt den Ausführungspfad: Image = Docker-Image bauen (optional pushen), Artefakt = Befehle im Build-Umgebungscontainer ausführen und eine Datei oder ein Verzeichnis per Pfad einsammeln',
   fieldPushImageLabel: 'Nach Build pushen',
   fieldPushImageHint: 'Ein: das gebaute Image an die Registry der aktuellen Umgebung pushen; Aus: nur bauen, das Image bleibt auf dem Build-Host',
   buildTemplateFrontendLabel: 'Frontend-Build',

@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: '容器镜像 (image)',
+  artifactFile: '产物(文件或目录)',
   artifactJar: 'JAR 包 (jar)',
   artifactDist: '静态资源 (dist)',
   buildModelDockerfile: '自带 Dockerfile',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: '构建',
-  typeBuildDesc: '先选产物档位:镜像 / JAR / 静态资源;镜像可顺带推送到环境绑定的镜像仓',
+  typeBuildDesc: '先选产物档位:镜像 / 产物(文件或目录);镜像可顺带推送到环境绑定的镜像仓',
   buildTierUnselected: '请选择产物档位',
-  fieldBuildTierHint: '档位决定这一步走哪条路径:镜像 = 构建 Docker 镜像(可选推送),JAR / 静态资源 = 在构建环境容器里跑命令并按路径收产物',
+  fieldBuildTierHint: '档位决定这一步走哪条路径:镜像 = 构建 Docker 镜像(可选推送),产物 = 在构建环境容器里跑命令并按路径收一个文件或目录',
   fieldPushImageLabel: '构建后推送',
   fieldPushImageHint: '打开:镜像构建完推送到本次运行环境绑定的镜像仓;关闭:只构建,镜像留在构建机',
   buildTemplateFrontendLabel: '前端构建',

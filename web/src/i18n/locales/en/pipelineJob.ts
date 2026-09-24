@@ -1,6 +1,7 @@
 export default {
   // ─── jobConfigSchema · shared option sets ──────────────────────────────
   artifactImage: 'Container image (image)',
+  artifactFile: 'Artifact (file or directory)',
   artifactJar: 'JAR package (jar)',
   artifactDist: 'Static assets (dist)',
   buildModelDockerfile: 'Bring your own Dockerfile',
@@ -107,9 +108,9 @@ export default {
 
   // ─── jobConfigSchema · build (产物档位优先的合并构建任务) ────────
   typeBuildLabel: 'Build',
-  typeBuildDesc: 'Pick the artifact tier first: image / JAR / static assets; images can be pushed to the registry bound to the environment',
+  typeBuildDesc: 'Pick the artifact tier first: image / artifact (file or directory); images can be pushed to the registry bound to the environment',
   buildTierUnselected: 'Choose an artifact tier',
-  fieldBuildTierHint: 'The tier decides which path this task takes: image = build a Docker image (push optional), JAR / static assets = run commands in the build environment and collect artifacts by path',
+  fieldBuildTierHint: 'The tier decides which path this task takes: image = build a Docker image (push optional), artifact = run commands in the build environment and collect one file or directory by path',
   fieldPushImageLabel: 'Push after build',
   fieldPushImageHint: 'On: push the built image to the registry bound to the environment of this run; Off: build only, the image stays on the build host',
   buildTemplateFrontendLabel: 'Frontend build',

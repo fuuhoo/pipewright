@@ -15,7 +15,8 @@ import { http } from './http'
 // ─── Enums (frozen) ──────────────────────────────────────────────────────────
 
 export type BuildModel = 'dockerfile' | 'toolchain'
-export type ArtifactType = 'image' | 'jar' | 'dist'
+// 产物档位只有两档(镜像 / 产物):后端的 jar、dist 已在读取时归一为 'file',不会再出现在响应里。
+export type ArtifactType = 'image' | 'file'
 export type RegistryType = 'harbor' | 'acr' | 'dockerhub' | 'custom'
 
 // ─── Domain types (frozen DTO shape) ─────────────────────────────────────────

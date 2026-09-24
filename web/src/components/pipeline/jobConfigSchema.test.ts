@@ -11,6 +11,8 @@ import {
   jobTemplatePrefill,
   isScriptClassType,
   effectiveJobType,
+  normalizeArtifactTier,
+  usesBuildTierField,
   schemaKeys,
   splitConfig,
   droppedKeys,
@@ -224,17 +226,26 @@ describe('jobConfigSchema', () => {
       expect(keys).not.toContain('commands')
     })
 
-    it('jar / dist tiers are the script form (build env + commands + artifact paths)', () => {
-      for (const tier of ['jar', 'dist']) {
-        const keys = visible({ artifactType: tier })
-        expect(keys, tier).toContain('buildEnvId')
-        expect(keys, tier).toContain('commands')
-        expect(keys, tier).toContain('artifactPath')
-        expect(keys, tier).toContain('cachePaths')
-        expect(keys, tier).not.toContain('dockerfilePath')
-        expect(keys, tier).not.toContain('buildModel')
-        expect(keys, tier).not.toContain('pushImage')
+    it('产物档位只有两档:下拉里不再按语言分档,历史值仍走脚本表单', () => {
+      const tier = fields.find((f) => f.key === 'artifactType')
+      expect(tier?.options?.map((o) => o.value)).toEqual(['', 'image', 'file'])
+      // file 是新档位;jar / dist 是收敛前的取值 —— 存量节点不改配置也要展开同一套字段。
+      for (const t of ['file', 'jar', 'dist']) {
+        const keys = visible({ artifactType: t })
+        expect(keys, t).toContain('buildEnvId')
+        expect(keys, t).toContain('commands')
+        expect(keys, t).toContain('artifactPath')
+        expect(keys, t).toContain('cachePaths')
+        expect(keys, t).not.toContain('dockerfilePath')
+        expect(keys, t).not.toContain('buildModel')
+        expect(keys, t).not.toContain('pushImage')
       }
+      expect(normalizeArtifactTier('jar')).toBe('file')
+      expect(normalizeArtifactTier('dist')).toBe('file')
+      expect(normalizeArtifactTier('image')).toBe('image')
+      // 只有构建档位要收敛:部署节点的 artifactType 是「产物偏好」,取值是运行期产物类型。
+      expect(usesBuildTierField('build')).toBe(true)
+      expect(usesBuildTierField('deploy_ssh')).toBe(false)
     })
 
     // 跨端契约:artifactType / pushImage 的键名与 pipeline.ConfigKey* 逐字一致。
@@ -246,12 +257,13 @@ describe('jobConfigSchema', () => {
     })
 
     it('build templates prefill a tier plus its own fields', () => {
-      expect(jobTemplatePrefill('build', 'frontend')).toMatchObject({ artifactType: 'dist' })
-      expect(jobTemplatePrefill('build', 'backend')).toMatchObject({ artifactType: 'jar' })
+      expect(jobTemplatePrefill('build', 'frontend')).toMatchObject({ artifactType: 'file' })
+      expect(jobTemplatePrefill('build', 'backend')).toMatchObject({ artifactType: 'file' })
       expect(jobTemplatePrefill('build', 'docker_image')).toMatchObject({ artifactType: 'image', buildModel: 'dockerfile' })
-      expect(isScriptClassType('build', { artifactType: 'jar' })).toBe(true)
+      expect(isScriptClassType('build', { artifactType: 'file' })).toBe(true)
       expect(isScriptClassType('build', { artifactType: 'image' })).toBe(false)
       expect(effectiveJobType('build', { artifactType: 'image' })).toBe('build_image')
+      expect(effectiveJobType('build', { artifactType: 'file' })).toBe('script')
       expect(effectiveJobType('build', { artifactType: 'jar' })).toBe('script')
       expect(effectiveJobType('build', {})).toBe('build')
       expect(effectiveJobType('deploy_ssh', { artifactType: 'image' })).toBe('deploy_ssh')

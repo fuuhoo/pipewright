@@ -109,20 +109,30 @@ export interface JobTypeSpec {
 
 // ─── Shared option sets ─────────────────────────────────────────────────────────
 
+// 构建任务的产物档位只有两档:镜像,或「产物」(工作区里的一个文件/目录)。
+// jar / dist 曾各占一档,但产物本质就是文件或目录,具体类型由执行侧按路径自动判,所以按语言分档撤销。
 const ARTIFACT_OPTIONS: SelectOption[] = [
   { value: 'image', get label() { return t('pipelineJob.artifactImage') } },
-  { value: 'jar', get label() { return t('pipelineJob.artifactJar') } },
-  { value: 'dist', get label() { return t('pipelineJob.artifactDist') } },
+  { value: 'file', get label() { return t('pipelineJob.artifactFile') } },
 ]
 
 // 「构建」任务的产物档位 = 第一件事:它决定这同一份配置将来跑哪条路径
-// (镜像 → docker build / 工具链镜像;jar|dist → 构建环境容器里跑命令 + 收文件产物)。
+// (镜像 → docker build / 工具链镜像;产物 → 构建环境容器里跑命令 + 按路径收文件/目录)。
 // 空档位是**合法显示态**:后端保存校验会拒绝空档位,所以这里给一个明确的未选项,
 // 而不是让下拉框默认落在「镜像」上骗人(select 的取值回退到第一项)。
 const BUILD_TIER_OPTIONS: SelectOption[] = [
   { value: '', get label() { return t('pipelineJob.buildTierUnselected') } },
   ...ARTIFACT_OPTIONS,
 ]
+
+// 「产物」档的历史取值:jar / dist 曾各占一档,现收敛进 file(产物就是一个文件或目录)。
+// 存量流水线与 .pipewright.yml 不迁移,所以两处仍按这条路径执行。
+const BUILD_FILE_TIERS = new Set(['file', 'jar', 'dist'])
+
+/** 构建产物档位的收敛值:历史的 jar / dist 一律读成「产物」档。 */
+export function normalizeArtifactTier(tier: string): string {
+  return BUILD_FILE_TIERS.has(tier) ? 'file' : tier
+}
 
 const BUILD_MODEL_OPTIONS: SelectOption[] = [
   { value: 'dockerfile', get label() { return t('pipelineJob.buildModelDockerfile') } },
@@ -158,10 +168,11 @@ const modelIs = (v: string) => (c: Record<string, string>) =>
   (c.buildModel || 'dockerfile') === v
 const probeIs = (v: string) => (c: Record<string, string>) =>
   (c.healthProbe || 'none') === v
-// 构建任务的产物档位分派:镜像走 docker/工具链镜像构建,jar|dist 走脚本容器。
+// 构建任务的产物档位分派:镜像走 docker/工具链镜像构建,「产物」走脚本容器。
 // 档位未选时两边都不成立 —— 表单只剩「产物档位」一项,与后端的必填校验同一口径(不猜默认档)。
+// jar / dist 是收敛前的历史档位值:存量流水线不改配置也照原路径执行,所以这里继续认。
 const tierIsImage = (c: Record<string, string>) => c.artifactType === 'image'
-const tierIsFile  = (c: Record<string, string>) => c.artifactType === 'jar' || c.artifactType === 'dist'
+const tierIsFile  = (c: Record<string, string>) => BUILD_FILE_TIERS.has(c.artifactType)
 const imageNeedsBuildEnv = (c: Record<string, string>) => tierIsImage(c) && modelIs('toolchain')(c)
 const needsBuildEnvField = (c: Record<string, string>) => tierIsFile(c) || imageNeedsBuildEnv(c)
 
@@ -514,7 +525,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         get label() { return t('pipelineJob.buildTemplateFrontendLabel') },
         get description() { return t('pipelineJob.buildTemplateFrontendDesc') },
         prefill: {
-          artifactType: 'dist',
+          artifactType: 'file',
           commands: 'cd frontend\nnpm install --no-audit --no-fund\nnpm run build',
           artifactPath: 'frontend/dist',
         },
@@ -524,7 +535,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         get label() { return t('pipelineJob.buildTemplateBackendLabel') },
         get description() { return t('pipelineJob.buildTemplateBackendDesc') },
         prefill: {
-          artifactType: 'jar',
+          artifactType: 'file',
           commands: 'cd backend\nmvn -B -DskipTests package',
           artifactPath: 'backend/target/*.jar',
         },
@@ -935,9 +946,15 @@ const SCRIPT_CLASS_TYPES = new Set<string>([
   'templated',
 ])
 
+/** 该 type 的 `artifactType` 是「构建产物档位」而非部署的产物偏好?(只有前者要收敛历史值) */
+export function usesBuildTierField(type: string): boolean {
+  const field = getJobTypeSpec(type)?.fields.find((f) => f.key === 'artifactType')
+  return field?.options === BUILD_TIER_OPTIONS || field?.options === ARTIFACT_OPTIONS
+}
+
 /**
  * 「构建」任务按产物档位折算成真正执行它的类型(与后端 pipeline.EffectiveJobType 同语义):
- * 镜像 → build_image 路径,jar/dist → script 路径。派发与表单都只认折算结果。
+ * 镜像 → build_image 路径,产物(含历史的 jar/dist)→ script 路径。派发与表单都只认折算结果。
  *
  * 与后端的唯一差别:档位**未选**时这里返回 `build`(哪条路径都不是),让表单只剩「选档位」
  * 一件事;后端那侧的空档位会被保存校验直接拒绝,不存在两条路径之外的执行。
@@ -947,7 +964,7 @@ export function effectiveJobType(type: string, config: Record<string, string>): 
   if (t !== 'build') return t
   const tier = (config.artifactType ?? '').trim()
   if (tier === 'image') return 'build_image'
-  if (tier === 'jar' || tier === 'dist') return 'script'
+  if (BUILD_FILE_TIERS.has(tier)) return 'script'
   return 'build'
 }
 

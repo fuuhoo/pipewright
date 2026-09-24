@@ -66,7 +66,7 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 	}
 	scriptJobs := make([]pipeline.Job, 0, len(stage.Jobs))
 	for _, jb := range stage.Jobs {
-		// 按折算后的类型判定:构建任务的 jar/dist 档位进 runner,image 档位要本地 docker,不适用远程。
+		// 按折算后的类型判定:构建任务的「产物」档进 runner,镜像档要本地 docker,不适用远程。
 		if isScriptJob(pipeline.EffectiveJobType(jb.Type, jb.Config)) {
 			scriptJobs = append(scriptJobs, jb)
 		}
