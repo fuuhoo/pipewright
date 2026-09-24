@@ -1148,14 +1148,22 @@ function nodeClass(status: StepStatus): string {
               </div>
             </div>
 
+            <!-- 并行/串行任务的产物一并列出(部分成功时:成功那条节点的产物仍可下载) -->
+            <ArtifactList v-if="run.artifacts.length > 0" :artifacts="run.artifacts" :run-id="run.id" />
+
             <!-- 测试报告 + 门禁裁决:门禁阻断的运行,这份计数就是失败原因本身,必须可见
                  (否则失败点只剩一行日志)。组件自取数据,无报告时不渲染。 -->
             <TestReportPanel :run-id="run.id" />
 
             <!-- 失败日志证据(只读历史回放,Story 3-6)。在 AI 诊断面板之上;
-                 不属于 7-2 的 DiagnosisPanel slot,二者共存。 -->
-            <div class="log-history" role="region" :aria-label="t('runDetail.failedLogAria')">
-              <RunTerminal :run-id="run.id" :live="false" />
+                 不属于 7-2 的 DiagnosisPanel slot,二者共存。
+                 与运行中/成功态同一套「步骤列表 + 按步骤过滤」布局:并行任务的输出各存
+                 自己的 step_ordinal,不给选择器就等于混成一份看不出谁失败了。 -->
+            <div class="running-body">
+              <RunStepList :steps="run.steps" :selected="selectedStepOrdinal" @select="selectedStepOrdinal = $event" />
+              <div class="log-history" role="region" :aria-label="t('runDetail.failedLogAria')">
+                <RunTerminal :run-id="run.id" :live="false" :filter-ordinal="selectedStepOrdinal" />
+              </div>
             </div>
 
             <!--
@@ -1204,9 +1212,15 @@ function nodeClass(status: StepStatus): string {
               {{ t('runDetail.partialInfo') }}
             </div>
 
-            <!-- 历史日志回放(只读,Story 3-6) -->
-            <div class="log-history" role="region" :aria-label="t('runDetail.historyLogAria')">
-              <RunTerminal :run-id="run.id" :live="false" />
+            <!-- 一成一败时成功节点的产物照样要能看/能下载 -->
+            <ArtifactList v-if="run.artifacts.length > 0" :artifacts="run.artifacts" :run-id="run.id" />
+
+            <!-- 历史日志回放(只读,Story 3-6):同样按步骤过滤,并行节点的输出才分得开 -->
+            <div class="running-body">
+              <RunStepList :steps="run.steps" :selected="selectedStepOrdinal" @select="selectedStepOrdinal = $event" />
+              <div class="log-history" role="region" :aria-label="t('runDetail.historyLogAria')">
+                <RunTerminal :run-id="run.id" :live="false" :filter-ordinal="selectedStepOrdinal" />
+              </div>
             </div>
 
             <!--
@@ -1290,9 +1304,14 @@ function nodeClass(status: StepStatus): string {
               />
             </div>
 
-            <!-- 历史日志回放(只读,Story 3-6) -->
-            <div class="log-history" role="region" :aria-label="t('runDetail.historyLogAria')">
-              <RunTerminal :run-id="run.id" :live="false" />
+            <!-- 回滚/终止态同样要能按步骤看日志、看已产出的产物 -->
+            <ArtifactList v-if="run.artifacts.length > 0" :artifacts="run.artifacts" :run-id="run.id" />
+
+            <div class="running-body">
+              <RunStepList :steps="run.steps" :selected="selectedStepOrdinal" @select="selectedStepOrdinal = $event" />
+              <div class="log-history" role="region" :aria-label="t('runDetail.historyLogAria')">
+                <RunTerminal :run-id="run.id" :live="false" :filter-ordinal="selectedStepOrdinal" />
+              </div>
             </div>
 
           </div>
