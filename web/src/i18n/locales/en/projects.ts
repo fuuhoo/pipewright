@@ -11,6 +11,8 @@ export default {
   searchAria: 'Search projects',
   statusFilterAria: 'Filter by status',
   statusAll: 'All statuses',
+  groupAll: 'All groups',
+  groupFilterAria: 'Filter by group',
 
   // ─── list states ───────────────────────────────────────────────
   loading: 'Loading',

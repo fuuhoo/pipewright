@@ -11,6 +11,8 @@ export default {
   searchAria: '搜索项目',
   statusFilterAria: '状态筛选',
   statusAll: '全部状态',
+  groupAll: '全部分组',
+  groupFilterAria: '分组筛选',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '加载中',

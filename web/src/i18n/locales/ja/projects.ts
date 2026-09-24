@@ -11,6 +11,8 @@ export default {
   searchAria: 'プロジェクトを検索',
   statusFilterAria: 'ステータスで絞り込み',
   statusAll: 'すべてのステータス',
+  groupAll: 'すべてのグループ',
+  groupFilterAria: 'グループで絞り込み',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '読み込み中',

@@ -71,6 +71,12 @@ const projects = ref<Project[]>([])
 const searchQuery = ref('')
 const statusFilter = ref<RunStatus | 'all'>('all')
 
+// 分组筛选:候选是「可见分组」(后端已按名册收敛),未归组单列一档。
+// 用哨兵而不是空串:空串在这里是合法值(它就是「未归组」那一档的 groupId)。
+const GROUP_ALL = 'all'
+const GROUP_NONE = '__ungrouped__'
+const groupFilter = ref<string>(GROUP_ALL)
+
 const STATUS_OPTIONS = computed<Array<{ value: RunStatus | 'all'; label: string }>>(() => [
   { value: 'all',     label: t('projects.statusAll') },
   { value: '成功',     label: runStatusLabel('成功') },
@@ -95,6 +101,10 @@ const filteredProjects = computed(() => {
   if (statusFilter.value !== 'all') {
     list = list.filter((p) => p.lastRunStatus === statusFilter.value)
   }
+  if (groupFilter.value !== GROUP_ALL) {
+    const want = groupFilter.value === GROUP_NONE ? '' : groupFilter.value
+    list = list.filter((p) => p.groupId === want)
+  }
   return list
 })
 
@@ -112,6 +122,16 @@ const groupById = computed<Record<string, Group>>(() => {
   return out
 })
 const manageableGroups = computed(() => groups.value.filter((g) => g.canManage))
+
+/** 分组筛选下拉的候选:全部 / 未归组 / 每个可见分组(带可见性后缀,和归组弹窗同一说法)。 */
+const GROUP_OPTIONS = computed<Array<{ value: string; label: string }>>(() => [
+  { value: GROUP_ALL, label: t('projects.groupAll') },
+  { value: GROUP_NONE, label: t('groups.ungrouped') },
+  ...groups.value.map((g) => ({
+    value: g.id,
+    label: `${g.name} · ${g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate')}`,
+  })),
+])
 
 function groupName(id: string): string {
   return id ? (groupById.value[id]?.name ?? t('groups.groupMissing')) : t('groups.ungrouped')
@@ -789,6 +809,22 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
         />
       </div>
 
+      <!-- Group filter -->
+      <div class="select-wrap group-filter">
+        <select
+          v-model="groupFilter"
+          class="field-select"
+          :aria-label="t('projects.groupFilterAria')"
+        >
+          <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+        <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </div>
+
       <!-- Status filter -->
       <div class="filter-tabs" role="group" :aria-label="t('projects.statusFilterAria')">
         <button
@@ -853,7 +889,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
         <p class="empty-hint">{{ t('projects.noMatchHint') }}</p>
         <button
           class="btn-secondary"
-          @click="searchQuery = ''; statusFilter = 'all'"
+          @click="searchQuery = ''; statusFilter = 'all'; groupFilter = GROUP_ALL"
         >{{ t('projects.clearFilter') }}</button>
       </div>
     </template>
@@ -862,7 +898,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
     <template v-else-if="loadState === 'idle'">
       <p class="result-count" aria-live="polite">
         {{ t('projects.resultCount', { n: filteredProjects.length }) }}
-        <template v-if="searchQuery || statusFilter !== 'all'">
+        <template v-if="searchQuery || statusFilter !== 'all' || groupFilter !== GROUP_ALL">
           {{ t('projects.resultCountTotal', { total: projects.length }) }}
         </template>
       </p>
@@ -1859,6 +1895,16 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
 /* Clear the native "x" button on search inputs */
 .search-input::-webkit-search-cancel-button {
   -webkit-appearance: none;
+}
+
+.group-filter {
+  width: 186px;
+}
+
+/* 与搜索框同高同字号:工具栏里两个控件错位会比多一行还难看 */
+.group-filter .field-select {
+  height: 36px;
+  font-size: 0.83rem;
 }
 
 .filter-tabs {

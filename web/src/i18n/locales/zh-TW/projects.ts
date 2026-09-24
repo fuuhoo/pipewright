@@ -11,6 +11,8 @@ export default {
   searchAria: '搜尋專案',
   statusFilterAria: '狀態篩選',
   statusAll: '全部狀態',
+  groupAll: '全部分組',
+  groupFilterAria: '分組篩選',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '載入中',

@@ -11,6 +11,8 @@ export default {
   searchAria: 'Buscar proyectos',
   statusFilterAria: 'Filtrar por estado',
   statusAll: 'Todos los estados',
+  groupAll: 'Todos los grupos',
+  groupFilterAria: 'Filtrar por grupo',
 
   // ─── list states ───────────────────────────────────────────────
   loading: 'Cargando',
