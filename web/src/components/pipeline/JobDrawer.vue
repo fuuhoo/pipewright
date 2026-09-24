@@ -18,7 +18,9 @@ import {
   isScriptClassType,
   effectiveJobType,
   normalizeArtifactTier,
+  normalizeDeployArtifactPref,
   usesBuildTierField,
+  usesDeployPrefField,
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
@@ -107,6 +109,10 @@ function splitOnType(type: string, config: Record<string, string>, repickView = 
   // (仅内存,下次 flush 才落库),否则下拉框会显示成一个既不选也认不出的值。
   if (typed.artifactType && usesBuildTierField(type)) {
     typed.artifactType = normalizeArtifactTier(typed.artifactType)
+  }
+  // 部署节点的产物偏好同理:历史 dist/jar/archive 读成「产物」(与构建档位同一套词)。
+  if (typed.artifactType && usesDeployPrefField(type)) {
+    typed.artifactType = normalizeDeployArtifactPref(typed.artifactType)
   }
   // 旧配置收敛:有镜像/toolchain 但无 buildEnvId 时,按预置目录反查预填(仅内存,
   // 下次 flush 才落库)。查不到就留给 buildenv 控件显示「未匹配」告警项。

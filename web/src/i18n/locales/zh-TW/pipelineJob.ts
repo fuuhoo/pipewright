@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: '選擇已登記的伺服器(憑證按引用繫結)',
   fieldArtifactTypeLabel: '部署產物類型',
   fieldArtifactTypeHint:
-    '本 run 同時產出映像與檔案產物時挑哪件;映像走目標機 docker pull → 起新容器 → 健康檢查 → 失敗回復上一映像',
+    '與構建任務的產物檔位同一套詞:「映像」走目標機 docker pull → 起新容器 → 健康檢查 → 失敗回復上一映像;「產物」發檔案或目錄。同類型有多件時靠「產物來源任務」收窄',
   fieldArtifactFromLabel: '產物來源任務',
   fieldArtifactFromHint:
     '平行建置產出多件同類型產物時,指明部署哪個任務產的那件;留空 = 按類型自動取第一件',

@@ -11,6 +11,8 @@ import {
   jobTemplatePrefill,
   isScriptClassType,
   effectiveJobType,
+  normalizeDeployArtifactPref,
+  usesDeployPrefField,
   normalizeArtifactTier,
   usesBuildTierField,
   schemaKeys,
@@ -124,9 +126,10 @@ describe('jobConfigSchema', () => {
       }
     })
 
-    it('frontend static template prefills dist + rolling + nginx reload', () => {
+    // 部署的产物偏好与构建档位同一套词:前端静态站点预填「产物」档(file),不是历史的 dist。
+    it('frontend static template prefills the file tier + rolling + nginx reload', () => {
       expect(jobTemplatePrefill('deploy_ssh', 'frontend_static')).toEqual({
-        artifactType: 'dist',
+        artifactType: 'file',
         strategy: 'rolling',
         restartCommand: 'nginx -s reload',
       })
@@ -246,6 +249,21 @@ describe('jobConfigSchema', () => {
       // 只有构建档位要收敛:部署节点的 artifactType 是「产物偏好」,取值是运行期产物类型。
       expect(usesBuildTierField('build')).toBe(true)
       expect(usesBuildTierField('deploy_ssh')).toBe(false)
+    })
+
+    // 部署的产物偏好与构建档位说同一套词(镜像 / 产物):运行期具体类型由执行侧按路径判,
+    // 同类型并行产物靠「产物来源任务」收窄,不该再让用户去猜 jar/dist/archive。
+    it('部署产物偏好与构建档位对齐', () => {
+      const deployFields = getJobTypeSpec('deploy_ssh')!.fields
+      const pref = deployFields.find((f) => f.key === 'artifactType')
+      expect(pref?.options?.map((o) => o.value)).toEqual(['', 'image', 'file'])
+      expect(usesDeployPrefField('deploy_ssh')).toBe(true)
+      expect(usesDeployPrefField('build')).toBe(false)
+      for (const legacy of ['dist', 'jar', 'archive']) {
+        expect(normalizeDeployArtifactPref(legacy)).toBe('file')
+      }
+      expect(normalizeDeployArtifactPref('image')).toBe('image')
+      expect(normalizeDeployArtifactPref('command')).toBe('command')
     })
 
     // 跨端契约:artifactType / pushImage 的键名与 pipeline.ConfigKey* 逐字一致。

@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: '등록된 서버 선택(자격 증명은 참조로 바인딩)',
   fieldArtifactTypeLabel: '배포 아티팩트 유형',
   fieldArtifactTypeHint:
-    '이 run 이 이미지와 파일 아티팩트를 동시에 출력할 때 어느 것을 선택할지. 이미지는 대상 머신에서 docker pull → 새 컨테이너 시작 → 헬스 체크 → 실패 시 이전 이미지로 롤백',
+    '빌드 작업의 산출물 단계와 같은 용어입니다.「이미지」는 대상 머신에서 docker pull → 새 컨테이너 시작 → 헬스 체크 → 실패 시 이전 이미지로 롤백,「산출물」은 파일 또는 디렉터리를 배포합니다. 같은 종류의 산출물이 여러 개면「산출물 출처 작업」으로 좁히세요',
   fieldArtifactFromLabel: '아티팩트 출처 작업',
   fieldArtifactFromHint:
     '병렬 빌드가 같은 종류의 아티팩트를 여러 개 만들 때, 어느 작업이 만든 것을 배포할지 지정합니다. 비우면 = 유형별 첫 번째',

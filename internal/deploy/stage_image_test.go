@@ -135,6 +135,34 @@ func TestStageSelectsImageWhenConfigured(t *testing.T) {
 	}
 }
 
+// TestStageFileTierPrefersAnyFileArtifact 部署偏好与构建档位同一套词:"file" = 任一文件产物
+// (运行期具体类型是 dist/jar/archive,由执行侧按路径自动判),不要求用户再猜具体类型。
+// 历史值 dist/jar/archive 仍按精确类型优先命中,存量配置不改也照跑。
+func TestStageFileTierPrefersAnyFileArtifact(t *testing.T) {
+	db := testDB(t)
+	rsvc := run.New(db)
+	tgt := &stubTarget{}
+	srv := seedServer(t, tgt, "web-2")
+	runID, _ := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactArchive, "pkg/app.tar.gz")
+	addArtifact(t, rsvc, runID, run.ArtifactImage, "shop", "registry/shop:3.0")
+
+	svc := New(tgt, rsvc)
+	res, err := svc.DeployForStage(context.Background(), runID, []string{srv.ID},
+		map[string]string{"artifactType": "file"}, "")
+	if err != nil {
+		t.Fatalf("DeployForStage: %v", err)
+	}
+	if len(res) != 1 || res[0].Status != run.TargetSuccess {
+		t.Fatalf("want 1 success, got %+v", res)
+	}
+	if hasCmd(tgt.calls, "docker", "pull") {
+		t.Fatalf("「产物」偏好不应部署镜像: %v", tgt.calls)
+	}
+	if !hasCmd(tgt.calls, "mkdir", "-p") {
+		t.Fatalf("「产物」偏好应走文件发布(releases 目录): %v", tgt.calls)
+	}
+}
+
 // TestStageImageHonorsContainerNamePortsRunArgs 验证 cfg 的容器名 / 端口 / runArgs 原样进 docker run。
 func TestStageImageHonorsContainerNamePortsRunArgs(t *testing.T) {
 	db := testDB(t)

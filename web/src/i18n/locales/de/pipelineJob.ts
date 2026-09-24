@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: 'Einen registrierten Server auswählen (Anmeldedaten per Referenz gebunden)',
   fieldArtifactTypeLabel: 'Bereitzustellender Artefakttyp',
   fieldArtifactTypeHint:
-    'Welches gewählt wird, wenn dieser Lauf sowohl ein Image als auch Datei-Artefakte ausgibt; ein Image geht per docker pull auf dem Ziel → neuen Container starten → Health-Check → bei Fehler Rollback auf das vorherige Image',
+    'Dieselbe Begriffswie die Produkt-Stufe der Build-Aufgabe: ein Image geht per docker pull auf dem Ziel → neuen Container starten → Health-Check → bei Fehler Rollback auf das vorherige Image; ein Datei-Artefakt wird als Release-Verzeichnis veröffentlicht. Bei mehreren Artefakten derselben Art über die „Quellaufgabe des Artefakts“ eingrenzen',
   fieldArtifactFromLabel: 'Quellaufgabe des Artefakts',
   fieldArtifactFromHint:
     'Wenn parallele Builds mehrere Artefakte desselben Typs erzeugen: angeben, welches Artefakt welcher Aufgabe bereitgestellt wird; leer = erstes Artefakt des Typs',

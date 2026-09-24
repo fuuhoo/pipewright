@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: 'Pick a registered server (credentials bound by reference)',
   fieldArtifactTypeLabel: 'Deploy artifact type',
   fieldArtifactTypeHint:
-    'Which one to pick when this run emits both an image and file artifacts; an image goes via docker pull on the target → start new container → health check → roll back to the previous image on failure',
+    'Same vocabulary as the build task tier: an image goes via docker pull on the target → start new container → health check → roll back to the previous image on failure; a file artifact is published as a release directory. When several artifacts share a type, narrow it with the artifact source task',
   fieldArtifactFromLabel: 'Artifact source task',
   fieldArtifactFromHint:
     'When parallel builds emit several artifacts of the same type, pick which task produced the one to deploy; empty = first artifact of the preferred type',

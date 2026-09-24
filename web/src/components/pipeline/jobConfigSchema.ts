@@ -155,15 +155,21 @@ const PROBE_MODE_OPTIONS: SelectOption[] = [
   { value: 'command', get label() { return t('pipelineJob.probeModeCommand') } },
 ]
 
-// 部署节点的产物类型偏好(本 run 同时产出镜像与文件产物时,挑哪件部署)。
+// 部署节点的产物类型偏好 —— 取值与构建任务的「产物档位」一一对应(镜像 / 产物),
+// 不再各说各话:构建侧的 jar/dist 早已并进「产物」档,运行期具体类型由执行侧按路径自动判,
+// 让用户在部署侧再挑一次 jar/dist 既对不上、也挑不准(同类型并行产物更是没法靠类型区分),
+// 靠「产物来源任务」收窄才是正解。
 // 留空 = 自动:优先文件产物(dist/jar/archive),没有文件产物才用镜像。
 const DEPLOY_ARTIFACT_OPTIONS: SelectOption[] = [
   { value: '', get label() { return t('pipelineJob.deployArtifactAuto') } },
   { value: 'image', get label() { return t('pipelineJob.artifactImage') } },
-  { value: 'dist', get label() { return t('pipelineJob.artifactDist') } },
-  { value: 'jar', get label() { return t('pipelineJob.artifactJar') } },
-  { value: 'archive', get label() { return t('pipelineJob.deployArtifactArchive') } },
+  { value: 'file', get label() { return t('pipelineJob.artifactFile') } },
 ]
+
+/** 部署产物偏好的历史取值(dist/jar/archive)读成「产物」档;其余原样。 */
+export function normalizeDeployArtifactPref(pref: string): string {
+  return pref === 'dist' || pref === 'jar' || pref === 'archive' ? 'file' : pref
+}
 
 // `when` helpers
 const modelIs = (v: string) => (c: Record<string, string>) =>
@@ -648,7 +654,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
       id: 'frontend_static',
       get label() { return t('pipelineJob.deployTemplateFrontendLabel') },
       get description() { return t('pipelineJob.deployTemplateFrontendDesc') },
-      prefill: { artifactType: 'dist', strategy: 'rolling', restartCommand: 'nginx -s reload' },
+      prefill: { artifactType: 'file', strategy: 'rolling', restartCommand: 'nginx -s reload' },
     }],
   },
 
@@ -961,6 +967,12 @@ const SCRIPT_CLASS_TYPES = new Set<string>([
 export function usesBuildTierField(type: string): boolean {
   const field = getJobTypeSpec(type)?.fields.find((f) => f.key === 'artifactType')
   return field?.options === BUILD_TIER_OPTIONS || field?.options === ARTIFACT_OPTIONS
+}
+
+/** 该 type 的 `artifactType` 是部署节点的「产物偏好」?(历史 dist/jar/archive 取值读成「产物」) */
+export function usesDeployPrefField(type: string): boolean {
+  const field = getJobTypeSpec(type)?.fields.find((f) => f.key === 'artifactType')
+  return field?.options === DEPLOY_ARTIFACT_OPTIONS
 }
 
 /**

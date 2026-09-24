@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: 'Selecciona un servidor registrado (las credenciales se vinculan por referencia)',
   fieldArtifactTypeLabel: 'Tipo de artefacto a desplegar',
   fieldArtifactTypeHint:
-    'Cuál elegir cuando esta ejecución emite tanto una imagen como artefactos de archivo; una imagen va mediante docker pull en el destino → iniciar nuevo contenedor → comprobación de salud → revertir a la imagen anterior si falla',
+    'Mismo vocabulario que el nivel de artefacto de la tarea de compilación: una imagen va mediante docker pull en el destino → iniciar nuevo contenedor → comprobación de salud → revertir a la imagen anterior si falla; un artefacto de archivo se publica como directorio de versiones. Cuando hay varios artefactos del mismo tipo, acótalo con la tarea de origen',
   fieldArtifactFromLabel: 'Tarea de origen del artefacto',
   fieldArtifactFromHint:
     'Cuando compilaciones paralelas generan varios artefactos del mismo tipo, indica cuál de qué tarea desplegar; vacío = el primer artefacto del tipo',

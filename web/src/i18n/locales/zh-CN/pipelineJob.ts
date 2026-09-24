@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: '选择已登记的服务器(凭据按引用绑定)',
   fieldArtifactTypeLabel: '部署产物类型',
   fieldArtifactTypeHint:
-    '本 run 同时产出镜像与文件产物时挑哪件;镜像走目标机 docker pull → 起新容器 → 健康检查 → 失败回滚上一镜像',
+    '与构建任务的产物档位同一套词:「镜像」走目标机 docker pull → 起新容器 → 健康检查 → 失败回滚上一镜像;「产物」发文件或目录。同类型有多件时靠「产物来源任务」收窄',
   fieldArtifactFromLabel: '产物来源任务',
   fieldArtifactFromHint:
     '并行构建产出多件同类型产物时,指明部署哪个任务产的那件;留空 = 按类型自动取第一件',

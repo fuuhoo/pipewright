@@ -57,7 +57,7 @@ export default {
   fieldServerIdHint: 'Sélectionnez un serveur enregistré (les identifiants sont liés par référence)',
   fieldArtifactTypeLabel: 'Type d’artefact à déployer',
   fieldArtifactTypeHint:
-    'Lequel choisir lorsque cette exécution produit à la fois une image et des artefacts fichiers ; une image passe par docker pull sur la cible → démarrage d’un nouveau conteneur → contrôle de santé → retour à l’image précédente en cas d’échec',
+    'Les mêmes termes que le palier d’artefact de la tâche de build : une image passe par docker pull sur la cible → démarrage d’un nouveau conteneur → contrôle de santé → retour à l’image précédente en cas d’échec ; un artefact fichier est publié comme répertoire de versions. S’il y a plusieurs artefacts du même type, précise avec la tâche source',
   fieldArtifactFromLabel: 'Tâche source de l’artefact',
   fieldArtifactFromHint:
     'Quand des builds parallèles produisent plusieurs artefacts du même type, indique lequel déployer ; vide = premier artefact du type',
