@@ -69,7 +69,7 @@ func (s *service) deployInteractiveFirstBatch(ctx context.Context, servers []*ta
 
 	if allSuccess(firstRes) {
 		for i, srv := range rest {
-			results[n+i] = pendingResult(srv, fmt.Sprintf("首批 %d 台已部署成功,待确认:点「继续部署」发布其余 %d 台,或「中止」保留旧版本", n, len(rest)))
+			results[n+i] = pendingResult(srv, fmt.Sprintf("首批 %d 台已部署成功,等待人工确认后再发布其余 %d 台", n, len(rest)))
 		}
 		return results, true // 暂停,等人确认。
 	}

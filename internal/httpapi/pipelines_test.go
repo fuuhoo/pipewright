@@ -385,6 +385,10 @@ stages:
     jobs:
       - name: SSH 部署
         type: deploy_ssh
+        config:
+          serverIds: srv-001,srv-002
+          strategy: canary
+          canaryCount: "1"
 `
 
 func TestPipelineImportPreviewNoSave(t *testing.T) {

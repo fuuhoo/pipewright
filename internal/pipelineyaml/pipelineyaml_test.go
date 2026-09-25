@@ -55,6 +55,7 @@ stages:
         name: SSH 部署
         type: deploy_ssh
         config:
+          serverIds: srv-prod-1
           targetEnv: prod
   - id: stg_notify
     name: 通知

@@ -71,6 +71,11 @@ func (s *service) deployWithStrategy(ctx context.Context, servers []*target.Serv
 		default:
 			return s.deployFanout(ctx, servers, a, cfg, hc)
 		}
+	case StrategyInteractive:
+		// 首批后暂停:其余落点以 pending 返回,由调用方(DAG 层)拿人工决定后续发或中止。
+		// 与 canary 的唯一区别就是这里不自动铺其余 —— 首批的成败判定完全同构。
+		res, _ := s.deployInteractiveFirstBatch(ctx, servers, a, cfg, hc)
+		return res
 	default:
 		return s.deployFanout(ctx, servers, a, cfg, hc)
 	}

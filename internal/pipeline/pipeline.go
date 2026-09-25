@@ -521,6 +521,11 @@ func normalizeSpec(in Spec) (Spec, error) {
 			if err := validateDeployK8s(name, jobName, jobType, cfg); err != nil {
 				return Spec{}, err
 			}
+			// 发机器类节点:落到哪几台 + 这几台怎么发(策略/首批台数)。这些键过去只在执行期
+			// 报错或被引擎静默吞掉,认不出的策略还会照抄进日志,看起来像真按所选执行了。
+			if err := validateDeployTargets(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
+			}
 			jobs = append(jobs, Job{
 				ID:      jobID,
 				Name:    jobName,

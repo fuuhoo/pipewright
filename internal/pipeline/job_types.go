@@ -30,6 +30,9 @@ var ErrDockerDeployInvalid = errors.New("pipeline: docker deploy configuration i
 // ErrK8sDeployInvalid 是「K8s 发布节点的参数不成立」的哨兵错误(HTTP 映射 422)。
 var ErrK8sDeployInvalid = errors.New("pipeline: k8s release configuration invalid")
 
+// ErrDeployTargetInvalid 是「发机器类部署节点的落点或分批档位不成立」的哨兵错误(HTTP 映射 422)。
+var ErrDeployTargetInvalid = errors.New("pipeline: deploy target and batching configuration invalid")
+
 // 合并后的「构建」任务与其相关键。
 const (
 	// JobTypeBuild 是唯一的构建任务类型:按产物档位决定跑脚本构建还是构建镜像。
@@ -111,7 +114,7 @@ const (
 const (
 	// JobTypeDeployK8s 是「K8s 发布」节点:平台直连集群 API server 换镜像,不经任何跳板机。
 	JobTypeDeployK8s = "deploy_k8s"
-	// ConfigKeyClusterID 是目标集群(kube_clusters.id)。与 serverId 互斥:一个节点发机器或发集群。
+	// ConfigKeyClusterID 是目标集群(kube_clusters.id)。与目标主机(ConfigKeyServerIDs)互斥:一个节点发机器或发集群。
 	ConfigKeyClusterID = "clusterId"
 	// ConfigKeyNamespace 是目标负载所在命名空间。
 	ConfigKeyNamespace = "namespace"
@@ -172,6 +175,117 @@ const (
 	HealthProbeHTTP    = "http"
 	HealthProbeCommand = "command"
 )
+
+// 发机器类部署节点的「落点 + 分批」job.Config 键。
+const (
+	// ConfigKeyServerIDs 是目标主机多选,值为逗号分隔的服务器 ID(与 configProfileIds 同一形状)。
+	// **勾选顺序就是发布顺序**:分批时先勾的那批先铺。
+	ConfigKeyServerIDs = "serverIds"
+	// ConfigKeyServerID 是历史的单主机键。存量节点与旧 .pipewright.yml 只可能有它,
+	// 所以读的时候复数键优先、空则回落它;前端重存后会把单数键删掉(droppedKeys)。
+	ConfigKeyServerID = "serverId"
+	// ConfigKeyStrategy 是发布策略档位。空 = rolling。
+	// 之所以在保存期就判取值:引擎 NormalizeStrategy 对认不出的串一律静默走 rolling,
+	// 而部署日志照抄所选串 —— 「选了个不存在的档位」这件事过去没人拦得住。
+	ConfigKeyStrategy = "strategy"
+	// ConfigKeyCanaryCount 是分批发布的首批台数(空 = 1 台)。
+	ConfigKeyCanaryCount = "canaryCount"
+)
+
+// 发布策略档位取值。blue-green 与 blue_green 都认(前端选项写连字符,引擎归一后是下划线,
+// NormalizeStrategy 两种都收),校验侧没必要另立一套拼写。
+const (
+	DeployStrategyRolling     = "rolling"
+	DeployStrategyCanary      = "canary"
+	DeployStrategyBlueGreen   = "blue_green"
+	DeployStrategyInteractive = "interactive"
+)
+
+// deployStrategies 是 NormalizeStrategy 真正认得的档位集合(含它的连字符/驼峰容错写法)。
+var deployStrategies = map[string]string{
+	"rolling":     DeployStrategyRolling,
+	"canary":      DeployStrategyCanary,
+	"blue_green":  DeployStrategyBlueGreen,
+	"blue-green":  DeployStrategyBlueGreen,
+	"bluegreen":   DeployStrategyBlueGreen,
+	"blue green":  DeployStrategyBlueGreen,
+	"interactive": DeployStrategyInteractive,
+	"batch":       DeployStrategyInteractive,
+}
+
+// DeployServerIDs 取部署节点的目标主机列表:复数键优先,空则回落到历史的单值键。
+// 逐项 trim、去空、去重且**保持顺序** —— 分批把这份顺序当成先发顺序。
+func DeployServerIDs(cfg map[string]any) []string {
+	raw := strings.TrimSpace(ConfigString(cfg, ConfigKeyServerIDs))
+	if raw == "" {
+		raw = strings.TrimSpace(ConfigString(cfg, ConfigKeyServerID))
+	}
+	var out []string
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(raw, ",") {
+		if id := strings.TrimSpace(part); id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// validateDeployTargets 要求发机器的部署节点说清「发到哪几台」与「这几台怎么发」。
+//
+// 这三件事过去都是**看不见的错**:落点没选要等到执行期才报( dag_stage_exec 那句「未选目标」);
+// 策略串认不出则被引擎静默折成 rolling,日志还照抄所选档位;而单机时分批/蓝绿与一次性
+// 行为完全等价 —— 表单给了一个不会改变任何事的选项。保存期判掉,比事后猜便宜得多。
+func validateDeployTargets(stageName, jobName, jobType string, cfg map[string]any) error {
+	switch strings.TrimSpace(jobType) {
+	case "deploy_ssh", "deploy_frontend", JobTypeDeployDocker:
+	default:
+		return nil
+	}
+	where := fmt.Sprintf("阶段「%s」任务「%s」", stageName, jobName)
+	ids := DeployServerIDs(cfg)
+	if len(ids) == 0 {
+		return issuef(ErrDeployTargetInvalid, "%s:未选目标主机", where)
+	}
+
+	raw := strings.TrimSpace(ConfigString(cfg, ConfigKeyStrategy))
+	strategy := DeployStrategyRolling
+	if raw != "" {
+		norm, ok := deployStrategies[strings.ToLower(raw)]
+		if !ok {
+			return issuef(ErrDeployTargetInvalid,
+				"%s:发布策略 %q 不存在(引擎只实现了一次性 / 分批 / 蓝绿 / 分批暂停,选错的一档会被静默当成一次性发布)", where, raw)
+		}
+		strategy = norm
+	}
+
+	// 分批与整机切换都需要「多台之间」才有的事:一台机器时它们与一次性完全同义。
+	if len(ids) < 2 && strategy != DeployStrategyRolling {
+		return issuef(ErrDeployTargetInvalid,
+			"%s:只选了一台主机,分批/蓝绿/首批暂停与一次性发布没有任何差别(至少选两台,或把发布策略改回一次性)", where)
+	}
+	// compose 与命令型两条腿各自成一条链路,都不读策略(compose 交 CLI 编排,命令型逐机跑一条命令)。
+	if strategy != DeployStrategyRolling {
+		if strings.TrimSpace(ConfigString(cfg, ConfigKeyDockerMode)) == DockerModeCompose {
+			return issuef(ErrDeployTargetInvalid, "%s:Compose 部署由 docker compose 自己编排,分批/蓝绿不适用(改回一次性发布)", where)
+		}
+		if strings.TrimSpace(ConfigString(cfg, ConfigKeyArtifactType)) == "command" {
+			return issuef(ErrDeployTargetInvalid, "%s:命令型部署只是在每台机器跑一条命令,分批/蓝绿不适用(改回一次性发布)", where)
+		}
+	}
+
+	if raw := strings.TrimSpace(ConfigString(cfg, ConfigKeyCanaryCount)); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return issuef(ErrDeployTargetInvalid, "%s:首批台数 %q 不是正整数", where, raw)
+		}
+		// 只有一批的「分批」等于不分批,与其让用户等一个不会发生的门,不如当场说清。
+		if strategy != DeployStrategyRolling && n >= len(ids) {
+			return issuef(ErrDeployTargetInvalid, "%s:首批台数 %d 已覆盖全部 %d 台主机,后面没有可分批的机器", where, n, len(ids))
+		}
+	}
+	return nil
+}
 
 // deployJobTypes 是「把产物/命令发到目标机」的节点类型集合(唯一出处,执行侧与校验侧共用)。
 // deploy_frontend 是预填 nginx 重启命令的部署模板,与 deploy_ssh 同一条执行路径。
@@ -356,8 +470,8 @@ func validateDeployK8s(stageName, jobName, jobType string, cfg map[string]any) e
 		return nil
 	}
 	where := fmt.Sprintf("阶段「%s」任务「%s」", stageName, jobName)
-	if ConfigString(cfg, "serverId") != "" {
-		return issuef(ErrK8sDeployInvalid, "%s:同时配了目标服务器与集群 —— 一个节点只能发一种落点", where)
+	if len(DeployServerIDs(cfg)) > 0 {
+		return issuef(ErrK8sDeployInvalid, "%s:同时配了目标主机与集群 —— 一个节点只能发一种落点", where)
 	}
 	if ConfigString(cfg, ConfigKeyClusterID) == "" {
 		return issuef(ErrK8sDeployInvalid, "%s:K8s 发布未选目标集群", where)
@@ -402,8 +516,10 @@ func validateDeployK8s(stageName, jobName, jobType string, cfg map[string]any) e
 	} else if ns != "" && (len(ns) > 63 || !reK8sNamespace.MatchString(ns)) {
 		return issuef(ErrK8sDeployInvalid, "%s:命名空间 %q 非法(只允许小写字母、数字与 -,首尾须为字母或数字,最长 63)", where, ns)
 	}
-	// 负载名:无清单时必填(它是寻址的唯一依据)。有清单时可留空 = 清单里那个唯一负载;
-	// 有多份负载时执行侧会要求填上以指明门控哪一个滚动。
+	// 负载名:无清单时必填(它是寻址的唯一依据)。有清单时它整个不参与 —— 清单里每一份负载都会
+	// 被按序应用并各自等滚完(releaseByManifest 不读这格),所以不强制为空:残留值既然无害,
+	// 拦下来只会让用户在切档后重打一遍(与 compose 对另一路残留正文的态度同一口径)。
+	// 前端因此在清单档直接把这格收掉,而不是留一个填了没用的框。
 	if !manifestMode && ConfigString(cfg, ConfigKeyWorkloadName) == "" {
 		return issuef(ErrK8sDeployInvalid, "%s:K8s 发布未填负载名(如 api)", where)
 	}

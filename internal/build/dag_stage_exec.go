@@ -604,17 +604,22 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		_ = rep.Log(ctx, streamStdout, "· 部署节点:部署服务未注入,跳过")
 		return nil
 	}
-	// 落点二选一:集群 ID(k8s 发布)或服务器 ID(SSH / docker)。两条腿的落点表不同,
-	// 混着填在保存期就被 validateDeployK8s 拒掉了,这里只可能有一个非空。
+	// 落点二选一:集群 ID(k8s 发布,恒为一个)或目标主机(可多台 —— 分批/蓝绿就是在这几台之间发生)。
+	// 两条腿的落点表不同,混着填在保存期就被 validateDeployK8s 拒掉了,这里只可能有一边非空。
 	clusterID := cfgString(jb.Config, pipeline.ConfigKeyClusterID)
-	serverID := cfgString(jb.Config, "serverId")
-	targetID, targetKind := serverID, "服务器"
+	serverIDs := pipeline.DeployServerIDs(jb.Config)
+	targetIDs, targetKind := serverIDs, "主机"
 	if clusterID != "" {
-		targetID, targetKind = clusterID, "集群"
+		targetIDs, targetKind = []string{clusterID}, "集群"
 	}
-	if targetID == "" {
+	if len(targetIDs) == 0 {
 		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」未选目标%s", jb.Name, targetKind))
 		return ErrBuildFailed
+	}
+	// 只报台数,不报 ID 串:下面逐台的结果行会写主机名,这一行摆一串 UUID 只是噪音。
+	hostsLabel := fmt.Sprintf("%d 台主机", len(serverIDs))
+	if clusterID != "" {
+		hostsLabel = "集群 " + clusterID
 	}
 	cfg := map[string]string{}
 	// deployPath / restartCommand 支持 {{param}} 占位:用本次运行参数渲染(命令型部署据此让
@@ -636,6 +641,8 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		pipeline.ConfigKeyClusterID, pipeline.ConfigKeyWorkloadKind,
 		pipeline.ConfigKeyRolloutTimeout, pipeline.ConfigKeyAutoRollback,
 		pipeline.ConfigKeyManifestSource,
+		// 分批台数:引擎在 canaryCount(cfg, total) 里读它定首批,不透传就永远只发 1 台。
+		pipeline.ConfigKeyCanaryCount,
 	} {
 		if v := cfgString(jb.Config, k); v != "" {
 			cfg[k] = v
@@ -732,18 +739,22 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		}
 		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("· 部署后将探测健康(%s),探测不通则该节点失败", probe))
 	}
-	strategy := cfgString(jb.Config, "strategy")
+	strategy := cfgString(jb.Config, pipeline.ConfigKeyStrategy)
 	stratLabel := strategy
 	if stratLabel == "" {
 		stratLabel = "rolling(默认)"
+	}
+	// 分批档位首行就写清「先铺几台」:只看策略名的话,逐组动机器这件事在日志里没有依据。
+	if n := cfg[pipeline.ConfigKeyCanaryCount]; n != "" && (strategy == pipeline.DeployStrategyCanary || strategy == pipeline.DeployStrategyInteractive) {
+		stratLabel = fmt.Sprintf("%s,首批 %s 台", stratLabel, n)
 	}
 	// 日志首行说清走的是哪条链路:docker 两种方式在目标机上做的事完全不同,
 	// 都写成「SSH 部署本次产物」会让人以为 compose 节点也在发构建产物。
 	switch what := cfgString(jb.Config, pipeline.ConfigKeyDockerMode); what {
 	case pipeline.DockerModeCompose:
-		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ Compose 部署到服务器 %s(整份 YAML 交目标机 docker compose)…", serverID))
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ Compose 部署到 %s(整份 YAML 交目标机 docker compose)…", hostsLabel))
 	case pipeline.DockerModeRun:
-		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ Docker 部署本次镜像到服务器 %s(停旧起新,策略 %s)…", serverID, stratLabel))
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ Docker 部署本次镜像到 %s(停旧起新,策略 %s)…", hostsLabel, stratLabel))
 	default:
 		if clusterID != "" {
 			if manifestIsApplied(jb) {
@@ -756,29 +767,85 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 				clusterID, cfgString(jb.Config, pipeline.ConfigKeyNamespace), cfgString(jb.Config, pipeline.ConfigKeyWorkloadName)))
 			break
 		}
-		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ SSH 部署本次产物到服务器 %s(策略 %s)…", serverID, stratLabel))
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ SSH 部署本次产物到 %s(策略 %s)…", hostsLabel, stratLabel))
 	}
 	// 把目标机真实执行的命令 + stdout/stderr 实时回流到本部署步骤日志(脱敏由 sink 侧 Masker 兜底)。
 	dctx := deploy.WithCmdLog(ctx, func(stream, text string) { _ = rep.Log(ctx, stream, text) })
-	results, err := b.deployer.DeployForStage(dctx, runID, []string{targetID}, cfg, strategy)
+	results, err := b.deployer.DeployForStage(dctx, runID, targetIDs, cfg, strategy)
 	if err != nil {
 		_ = rep.Log(ctx, streamStderr, "部署失败:"+err.Error())
 		return ErrBuildFailed
 	}
+	if failed := logDeployResults(ctx, rep, results); failed {
+		return ErrBuildFailed
+	}
+	// 「首批后暂停」:引擎把其余落点登记成 pending 交回来,节点在这里真的停下等人。
+	// 暂停的是这个任务本身 —— 不是阶段结束后再来一道审批门,所以确认之前下游阶段一步都不该动。
+	paused := pendingServerIDs(results)
+	if len(paused) == 0 {
+		return nil
+	}
+	done := len(results) - len(paused)
+	if b.deployGate == nil {
+		// 没有审批服务就没有人能确认:其余一台都不能发(发了就等于没暂停),这一台也不能算成功。
+		_ = rep.Log(ctx, streamStderr, fmt.Sprintf(
+			"⛔ 首批 %d 台已发布,但平台未启用审批服务,其余 %d 台无法确认发布(本机未部署,仍运行旧版本)", done, len(paused)))
+		_, _ = b.deployer.AbortStageTargets(dctx, runID, paused)
+		return ErrBuildFailed
+	}
+	_ = rep.Log(ctx, streamStdout, fmt.Sprintf("⏸ 首批 %d 台已发布且全部通过,等待人工确认后继续发布其余 %d 台…", done, len(paused)))
+	approved, gerr := b.deployGate(ctx, r, jb.ID, jb.Name)
+	if gerr != nil {
+		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("分批确认中断:%v(其余 %d 台未部署)", gerr, len(paused)))
+		_, _ = b.deployer.AbortStageTargets(dctx, runID, paused)
+		return ErrBuildFailed
+	}
+	if !approved {
+		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("⛔ 分批确认被拒绝,其余 %d 台保留旧版本(首批已发的 %d 台不回滚)", len(paused), done))
+		_, _ = b.deployer.AbortStageTargets(dctx, runID, paused)
+		return ErrBuildFailed
+	}
+	_ = rep.Log(ctx, streamStdout, "✅ 已确认,继续发布其余主机…")
+	rest, rerr := b.deployer.ResumeStageTargets(dctx, runID, paused, cfg)
+	if rerr != nil {
+		_ = rep.Log(ctx, streamStderr, "续发其余主机失败:"+rerr.Error())
+		return ErrBuildFailed
+	}
+	if failed := logDeployResults(ctx, rep, rest); failed {
+		return ErrBuildFailed
+	}
+	return nil
+}
+
+// logDeployResults 逐台把落点结果回流向步骤日志,返回「是否有非成功的落点」。
+// 一台都没回来过(空结果)不算失败 —— 那是这条腿本来就没有落点(如纯清单变更)。
+func logDeployResults(ctx context.Context, rep dagrun.StageReporter, results []deploy.TargetResult) bool {
 	failed := false
 	for _, dr := range results {
 		line := fmt.Sprintf("· %s:%s — %s", dr.ServerName, dr.Status, dr.Message)
-		if dr.Status == "success" {
+		switch dr.Status {
+		case run.TargetSuccess:
 			_ = rep.Log(ctx, streamStdout, line)
-		} else {
+		case run.TargetPending:
+			// pending 不是失败,是「还没做」:它由调用方拿人的决定来收口。
+			_ = rep.Log(ctx, streamStdout, line)
+		default:
 			_ = rep.Log(ctx, streamStderr, line)
 			failed = true
 		}
 	}
-	if failed {
-		return ErrBuildFailed
+	return failed
+}
+
+// pendingServerIDs 取结果里等待人工确认的落点(顺序 = 原先后顺序,续发按它铺)。
+func pendingServerIDs(results []deploy.TargetResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, r := range results {
+		if r.Status == run.TargetPending {
+			ids = append(ids, r.ServerID)
+		}
 	}
-	return nil
+	return ids
 }
 
 // composeSourceIsRepo 报告这个 compose 节点的正文取自项目仓库,而不是节点里粘的那份。

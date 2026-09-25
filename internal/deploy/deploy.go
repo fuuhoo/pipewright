@@ -140,7 +140,17 @@ type Service interface {
 	// **不校验 run 状态**(流水线执行中 run 仍 running)、**不置 run 终态**(终态由 dag 调度器控制)。
 	// 无可发布产物 → ErrArtifactNotFound;服务器 / 集群不存在 → ErrServerNotFound / ErrClusterNotFound。
 	// targetIDs 是落点 ID:SSH / docker 节点填服务器 ID,k8s 节点填集群 ID(同记进 deploy_targets)。
+	// 策略 interactive 会在这里落地:首批铺完即把其余落点登记成 pending 并返回(调用方负责等人确认)。
 	DeployForStage(ctx context.Context, runID string, targetIDs []string, cfg map[string]string, strategy string) ([]TargetResult, error)
+
+	// ResumeStageTargets 续发流水线部署节点里「首批后暂停」剩下的落点:重新挑同一件产物、
+	// 按 rolling 铺完 → 按目标 upsert。**不置 run 终态、也不重算**(终态归 DAG 调度器,
+	// 与独立部署路径的 ContinueDeploy 的区别就在这里)。serverIDs 是调用方上一轮拿到的 pending 落点。
+	ResumeStageTargets(ctx context.Context, runID string, serverIDs []string, cfg map[string]string) ([]TargetResult, error)
+
+	// AbortStageTargets 中止流水线部署节点的剩余落点:把 serverIDs 标为「已中止,保留旧版本」(failed),
+	// 不触碰已发批次、不置 run 终态。
+	AbortStageTargets(ctx context.Context, runID string, serverIDs []string) ([]TargetResult, error)
 }
 
 // service 是 run + target 支撑的 Service 实现。
@@ -348,6 +358,46 @@ func (s *service) DeployForStage(ctx context.Context, runID string, targetIDs []
 	// 取该 run 已产出的可部署产物。dist/jar/archive 走文件发布;image 走容器 pull→停旧起新→
 	// 健康→回滚(复用 image_release.go)。二者都在时按节点 cfg["artifactType"] 选(空 → 默认优先
 	// 文件发布,保持既有行为;显式 image → 选镜像)。选定后由 deployWithStrategy 据产物类型自动路由。
+	artifact, err := s.pickStageArtifactFor(ctx, runID, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// 集群发布(deploy_k8s):落点不是机器而是一个 API server,整条链路没有 shell。
+	// 因此它不进 deployWithStrategy —— 逐机批次、切后探测、软链切换在这里既跑不了也不该跑,
+	// 滚动与就绪判定由集群控制器 + rollout 门控负责(见 k8s_deploy.go)。
+	if K8sRouteOf(cfg) {
+		results, err := s.deployToK8s(ctx, runID, targetIDs, cfg, *artifact)
+		if err != nil {
+			return nil, err
+		}
+		return results, s.saveStageTargets(ctx, runID, results)
+	}
+
+	servers := make([]*target.Server, 0, len(targetIDs))
+	for _, sid := range targetIDs {
+		srv, gerr := s.targets.Get(ctx, sid)
+		if gerr != nil {
+			if errors.Is(gerr, target.ErrNotFound) {
+				return nil, ErrServerNotFound
+			}
+			return nil, gerr
+		}
+		servers = append(servers, srv)
+	}
+
+	results := s.deployWithStrategy(ctx, servers, *artifact, cfg, hc, NormalizeStrategy(strategy))
+	if err := s.saveStageTargets(ctx, runID, results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// pickStageArtifactFor 从该 run 的产物里挑出这个部署节点该发的那一件(与 DeployForStage 同一口径:
+// 先按 artifactFrom 把范围收到来源任务,再按类型偏好挑)。
+// 单独成一个函数是为了「首批后暂停」:人工确认之后续发的必须还是确认之前那一件,
+// 不能重新在同类产物里撞一次运气。
+func (s *service) pickStageArtifactFor(ctx context.Context, runID string, cfg map[string]string) (*run.Artifact, error) {
 	arts, err := s.runs.ListArtifacts(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -379,35 +429,7 @@ func (s *service) DeployForStage(ctx context.Context, runID string, targetIDs []
 	} else {
 		cmdLogFrom(ctx)(cmdStreamStdout, fmt.Sprintf("· 产物 %s(%s)", artifact.Name, artifact.Type))
 	}
-
-	// 集群发布(deploy_k8s):落点不是机器而是一个 API server,整条链路没有 shell。
-	// 因此它不进 deployWithStrategy —— 逐机批次、切后探测、软链切换在这里既跑不了也不该跑,
-	// 滚动与就绪判定由集群控制器 + rollout 门控负责(见 k8s_deploy.go)。
-	if K8sRouteOf(cfg) {
-		results, err := s.deployToK8s(ctx, runID, targetIDs, cfg, *artifact)
-		if err != nil {
-			return nil, err
-		}
-		return results, s.saveStageTargets(ctx, runID, results)
-	}
-
-	servers := make([]*target.Server, 0, len(targetIDs))
-	for _, sid := range targetIDs {
-		srv, gerr := s.targets.Get(ctx, sid)
-		if gerr != nil {
-			if errors.Is(gerr, target.ErrNotFound) {
-				return nil, ErrServerNotFound
-			}
-			return nil, gerr
-		}
-		servers = append(servers, srv)
-	}
-
-	results := s.deployWithStrategy(ctx, servers, *artifact, cfg, hc, NormalizeStrategy(strategy))
-	if err := s.saveStageTargets(ctx, runID, results); err != nil {
-		return nil, err
-	}
-	return results, nil
+	return artifact, nil
 }
 
 // saveStageTargets 持久化每个落点的部署结果(填 run-detail targets slot);**不置 run 终态**

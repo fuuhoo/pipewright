@@ -670,6 +670,12 @@ type stubStageDeployer struct {
 	gotCfg      map[string]string
 	gotStrategy string
 	gotServers  []string
+	// stageResults 非 nil 时 DeployForStage 原样返回它(默认回一台成功)—— 用来造「首批后暂停」的 pending。
+	stageResults []deploy.TargetResult
+	// resumed / aborted 记下续发与中止各自收到的落点,便于断言暂停没被静默放过。
+	resumed  []string
+	aborted  []string
+	resumeOK []deploy.TargetResult
 }
 
 func (d *stubStageDeployer) Deploy(context.Context, deploy.DeployInput) ([]deploy.TargetResult, error) {
@@ -688,7 +694,29 @@ func (d *stubStageDeployer) DeployForStage(_ context.Context, _ string, serverID
 	d.gotCfg = cfg
 	d.gotStrategy = strategy
 	d.gotServers = serverIDs
+	if d.stageResults != nil {
+		return d.stageResults, nil
+	}
 	return []deploy.TargetResult{{ServerName: "srv", Status: run.TargetSuccess, Message: "ok"}}, nil
+}
+
+// ResumeStageTargets / AbortStageTargets 是「首批后暂停」的两条后腿:节点要么把 pending 落点交回续发,
+// 要么交回中止 —— 两边都没收到就是「暂停被吞掉」(其余机器悄悄不发了还报成功)。
+func (d *stubStageDeployer) ResumeStageTargets(_ context.Context, _ string, serverIDs []string, _ map[string]string) ([]deploy.TargetResult, error) {
+	d.resumed = serverIDs
+	if d.resumeOK != nil {
+		return d.resumeOK, nil
+	}
+	out := make([]deploy.TargetResult, 0, len(serverIDs))
+	for _, sid := range serverIDs {
+		out = append(out, deploy.TargetResult{ServerID: sid, ServerName: sid, Status: run.TargetSuccess, Message: "ok"})
+	}
+	return out, nil
+}
+
+func (d *stubStageDeployer) AbortStageTargets(_ context.Context, _ string, serverIDs []string) ([]deploy.TargetResult, error) {
+	d.aborted = serverIDs
+	return nil, nil
 }
 
 // TestRunDeployJobPassesImageParams 证 #55:部署节点把镜像产物参数
@@ -1242,5 +1270,148 @@ func TestStageExecutorDeployOnlyStageResolvesProject(t *testing.T) {
 	}
 	if !strings.Contains(dep.gotCfg["manifestYaml"], "kind: Deployment") {
 		t.Errorf("交下去的该是仓库里那份正文:%+v", dep.gotCfg)
+	}
+}
+
+// TestRunDeployJobPassesAllHostsAndBatchSize 是「节点只能发一台机器」这条限制的退出证明:
+// serverIds 里的每一台都要真的进 DeployForStage(顺序即先发顺序),首批台数要真的透到引擎 ——
+// 这两件任一件没做,分批就还是表单上的一个装饰。
+func TestRunDeployJobPassesAllHostsAndBatchSize(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep}
+	rep := &fakeReporter{}
+	jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: map[string]any{
+		"serverIds":   "srv-1, srv-2,srv-1,srv-3",
+		"strategy":    "canary",
+		"canaryCount": "2",
+	}}
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1"}, nil, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if got := strings.Join(dep.gotServers, ","); got != "srv-1,srv-2,srv-3" {
+		t.Errorf("落点 = %q, want srv-1,srv-2,srv-3(去重保序)", got)
+	}
+	if dep.gotStrategy != "canary" {
+		t.Errorf("strategy = %q, want canary", dep.gotStrategy)
+	}
+	if got := dep.gotCfg[pipeline.ConfigKeyCanaryCount]; got != "2" {
+		t.Errorf("canaryCount = %q, want 2(不透传则首批永远是 1 台)", got)
+	}
+}
+
+// 存量节点只有单值 serverId:必须继续当一个落点用,不能因为来了复数键就把它读没。
+func TestRunDeployJobReadsLegacySingleServerID(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep}
+	jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: map[string]any{"serverId": "srv-9"}}
+	if err := b.runDeployJob(context.Background(), &fakeReporter{}, jb, &run.Run{ID: "run-1"}, nil, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if got := strings.Join(dep.gotServers, ","); got != "srv-9" {
+		t.Errorf("落点 = %q, want srv-9", got)
+	}
+}
+
+// TestRunDeployJobPausesAfterFirstBatch 是「首批后暂停」的正面证据:引擎交回 pending 落点后,
+// 节点必须真的停下来问一次人(approved 拿到的是待确认的那批),确认之后再把**同一批**交回续发。
+// 少了中间那一步,「暂停」就只是日志里的一句话。
+func TestRunDeployJobPausesAfterFirstBatch(t *testing.T) {
+	dep := &stubStageDeployer{stageResults: []deploy.TargetResult{
+		{ServerID: "srv-1", ServerName: "srv-1", Status: run.TargetSuccess, Message: "ok"},
+		{ServerID: "srv-2", ServerName: "srv-2", Status: run.TargetPending},
+		{ServerID: "srv-3", ServerName: "srv-3", Status: run.TargetPending},
+	}}
+	var gateJob, gateRun string
+	b := &Builder{deployer: dep, deployGate: func(_ context.Context, r *run.Run, jobID, _ string) (bool, error) {
+		gateRun, gateJob = r.ID, jobID
+		return true, nil
+	}}
+	rep := &fakeReporter{}
+	jb := pipeline.Job{ID: "deploy-job", Name: "发布", Type: "deploy_ssh", Config: map[string]any{
+		"serverIds": "srv-1,srv-2,srv-3", "strategy": "interactive", "canaryCount": "1",
+	}}
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1"}, nil, nil); err != nil {
+		t.Fatalf("确认后续发应当成功,err=%v\n日志:%v", err, rep.logs)
+	}
+	if gateJob != "deploy-job" || gateRun != "run-1" {
+		t.Errorf("确认门收到 run=%q job=%q, want run-1 deploy-job", gateRun, gateJob)
+	}
+	if got := strings.Join(dep.resumed, ","); got != "srv-2,srv-3" {
+		t.Errorf("续发落点 = %q, want srv-2,srv-3(暂停后没把待确认的交回去续发)", got)
+	}
+	if dep.aborted != nil {
+		t.Errorf("已批准却中止了:aborted=%v", dep.aborted)
+	}
+
+	// 续发的日志必须逐台回流到本节点:审批人确认的是「这几台还没发」,看不到就没法确认。
+	joined := strings.Join(rep.logs, "\n")
+	for _, want := range []string{"srv-2", "srv-3"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("步骤日志缺少 %s:%v", want, rep.logs)
+		}
+	}
+}
+
+// TestRunDeployJobRejectedKeepsRestOnOldVersion:拒绝 = 其余一台都不能发(交回中止),且节点判失败。
+// 静默跳过其余主机还报成功,是最坏的一种「暂停」。
+func TestRunDeployJobRejectedKeepsRestOnOldVersion(t *testing.T) {
+	dep := &stubStageDeployer{stageResults: []deploy.TargetResult{
+		{ServerID: "srv-1", ServerName: "srv-1", Status: run.TargetSuccess, Message: "ok"},
+		{ServerID: "srv-2", ServerName: "srv-2", Status: run.TargetPending},
+	}}
+	b := &Builder{deployer: dep, deployGate: func(context.Context, *run.Run, string, string) (bool, error) {
+		return false, nil
+	}}
+	jb := pipeline.Job{ID: "d", Name: "发布", Type: "deploy_ssh", Config: map[string]any{"serverIds": "srv-1,srv-2"}}
+	err := b.runDeployJob(context.Background(), &fakeReporter{}, jb, &run.Run{ID: "run-1"}, nil, nil)
+	if !errors.Is(err, ErrBuildFailed) {
+		t.Fatalf("拒绝后该节点应判失败,err=%v", err)
+	}
+	if got := strings.Join(dep.aborted, ","); got != "srv-2" {
+		t.Errorf("中止落点 = %q, want srv-2", got)
+	}
+	if dep.resumed != nil {
+		t.Errorf("被拒绝还续发:resumed=%v", dep.resumed)
+	}
+}
+
+// 平台没装配审批服务时,没有人能确认这批:其余一台都不能发,节点也要失败 ——
+// 「静默当成一次性发完」正是这类降级最危险的形态。
+func TestRunDeployJobFailsWhenPauseUnavailable(t *testing.T) {
+	dep := &stubStageDeployer{stageResults: []deploy.TargetResult{
+		{ServerID: "srv-1", ServerName: "srv-1", Status: run.TargetSuccess, Message: "ok"},
+		{ServerID: "srv-2", ServerName: "srv-2", Status: run.TargetPending},
+	}}
+	b := &Builder{deployer: dep}
+	jb := pipeline.Job{ID: "d", Name: "发布", Type: "deploy_ssh", Config: map[string]any{"serverIds": "srv-1,srv-2"}}
+	rep := &fakeReporter{}
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1"}, nil, nil); !errors.Is(err, ErrBuildFailed) {
+		t.Fatalf("无审批服务时该失败,err=%v", err)
+	}
+	if got := strings.Join(dep.aborted, ","); got != "srv-2" {
+		t.Errorf("中止落点 = %q, want srv-2", got)
+	}
+	if !strings.Contains(strings.Join(rep.logs, "\n"), "未启用审批服务") {
+		t.Errorf("日志该说明为什么发不出去:%v", rep.logs)
+	}
+}
+
+// 续发里有机失败 → 节点失败:确认放行的只是「继续发」这件事,不是「一定发得成」。
+func TestRunDeployJobResumeFailurePropagates(t *testing.T) {
+	dep := &stubStageDeployer{
+		stageResults: []deploy.TargetResult{
+			{ServerID: "srv-1", ServerName: "srv-1", Status: run.TargetSuccess, Message: "ok"},
+			{ServerID: "srv-2", ServerName: "srv-2", Status: run.TargetPending},
+		},
+		resumeOK: []deploy.TargetResult{
+			{ServerID: "srv-2", ServerName: "srv-2", Status: run.TargetFailed, Message: "探测不通"},
+		},
+	}
+	b := &Builder{deployer: dep, deployGate: func(context.Context, *run.Run, string, string) (bool, error) {
+		return true, nil
+	}}
+	jb := pipeline.Job{ID: "d", Name: "发布", Type: "deploy_ssh", Config: map[string]any{"serverIds": "srv-1,srv-2"}}
+	if err := b.runDeployJob(context.Background(), &fakeReporter{}, jb, &run.Run{ID: "run-1"}, nil, nil); !errors.Is(err, ErrBuildFailed) {
+		t.Fatalf("续发失败该冒泡到节点,err=%v", err)
 	}
 }

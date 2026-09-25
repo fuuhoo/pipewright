@@ -57,7 +57,7 @@ func TestNormalizeSpecValidatesHealthProbe(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "SSH 部署", Type: "deploy_ssh", Config: tc.cfg}))
+			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "SSH 部署", Type: "deploy_ssh", Config: withHost(tc.cfg)}))
 			if tc.wantErr && !errors.Is(err, ErrHealthProbeInvalid) {
 				t.Fatalf("err = %v, want wraps ErrHealthProbeInvalid", err)
 			}
@@ -174,13 +174,23 @@ func deploySpec(stages ...Stage) Spec {
 	}, stages...)}
 }
 
+// withHost 给部署用例补上一个目标主机:validateDeployTargets 要求节点说清「发到哪台」,
+// 而这些表测的是别的哨兵 —— 落点只是让它们跑得下去的公共前提。
+func withHost(cfg map[string]any) map[string]any {
+	out := map[string]any{ConfigKeyServerIDs: "s1"}
+	for k, v := range cfg {
+		out[k] = v
+	}
+	return out
+}
+
 // 产物来源任务存的是 job ID:引用不存在的任务、引用自己、引用不产产物的节点、
 // 引用还没跑完的(并行 / 下游)任务,全都该在保存期报错 —— 拖到运行时只剩一句「没有产物」。
 func TestNormalizeSpecValidatesArtifactSource(t *testing.T) {
 	backend := Job{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{"commands": "go build"}}
 	frontend := Job{ID: "jweb", Name: "前端构建", Type: "script", Config: map[string]any{"commands": "npm run build"}}
 	deploy := func(cfg map[string]any) Job {
-		return Job{ID: "jdep", Name: "部署", Type: "deploy_ssh", Config: cfg}
+		return Job{ID: "jdep", Name: "部署", Type: "deploy_ssh", Config: withHost(cfg)}
 	}
 	cases := []struct {
 		name    string
@@ -214,14 +224,14 @@ func TestNormalizeSpecValidatesArtifactSource(t *testing.T) {
 			name: "同阶段:被本任务依赖才算上游",
 			stages: []Stage{{ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{
 				{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{}},
-				{ID: "jdep", Name: "部署", Type: "deploy_ssh", Needs: []string{"japi"}, Config: map[string]any{ConfigKeyArtifactFrom: "japi"}},
+				{ID: "jdep", Name: "部署", Type: "deploy_ssh", Needs: []string{"japi"}, Config: withHost(map[string]any{ConfigKeyArtifactFrom: "japi"})},
 			}}},
 		},
 		{
 			name: "同阶段并行(无 needs)产物可能还没出",
 			stages: []Stage{{ID: "d", Name: "部署", Kind: KindDeploy, Jobs: []Job{
 				{ID: "japi", Name: "后端构建", Type: "script", Config: map[string]any{}},
-				{ID: "jdep", Name: "部署", Type: "deploy_ssh", Config: map[string]any{ConfigKeyArtifactFrom: "japi"}},
+				{ID: "jdep", Name: "部署", Type: "deploy_ssh", Config: withHost(map[string]any{ConfigKeyArtifactFrom: "japi"})},
 			}}},
 			wantErr: true,
 		},
@@ -311,7 +321,7 @@ func TestNormalizeSpecValidatesDockerDeploy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "Docker 部署", Type: JobTypeDeployDocker, Config: tc.cfg}))
+			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "Docker 部署", Type: JobTypeDeployDocker, Config: withHost(tc.cfg)}))
 			if tc.wantErr {
 				if !errors.Is(err, ErrDockerDeployInvalid) {
 					t.Fatalf("err = %v, want wraps ErrDockerDeployInvalid", err)
@@ -386,7 +396,88 @@ func TestNormalizeSpecValidatesK8sDeploy(t *testing.T) {
 
 // 同名的键落在别的任务类型上不相干:deploy_ssh 不该被 docker 方式校验管。
 func TestDockerDeployValidationOnlyAppliesToItsJobType(t *testing.T) {
-	if _, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "SSH 部署", Type: "deploy_ssh", Config: map[string]any{ConfigKeyDockerMode: "compose"}})); err != nil {
+	if _, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "SSH 部署", Type: "deploy_ssh", Config: map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyDockerMode: "compose"}})); err != nil {
 		t.Fatalf("deploy_ssh 不该被 docker 方式校验拦下,got %v", err)
+	}
+}
+
+// DeployServerIDs 是落点的唯一读法:复数键优先、回落单数旧键,并保序去重 ——
+// 分批把这份顺序当先发顺序,顺序变了发的就是另一批机器。
+func TestDeployServerIDsPrecedenceAndOrder(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  map[string]any
+		want []string
+	}{
+		{"只填了历史单值键", map[string]any{ConfigKeyServerID: "s1"}, []string{"s1"}},
+		{"复数键优先", map[string]any{ConfigKeyServerIDs: "s2,s1", ConfigKeyServerID: "s9"}, []string{"s2", "s1"}},
+		{"去空白与空项", map[string]any{ConfigKeyServerIDs: " s1 , ,s2,"}, []string{"s1", "s2"}},
+		{"去重保序", map[string]any{ConfigKeyServerIDs: "s2,s1,s2"}, []string{"s2", "s1"}},
+		{"两键都空", map[string]any{ConfigKeyServerIDs: "  "}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DeployServerIDs(tc.cfg)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// 落点与分批档位必须在保存期判:这三件事过去都是**看不见的错** —— 没选机器要等到执行期,
+// 认不出的策略被引擎静默折成 rolling(日志还照抄所选串),而单机时分批/蓝绿与一次性毫无差别。
+func TestNormalizeSpecValidatesDeployTargetsAndBatching(t *testing.T) {
+	cases := []struct {
+		name    string
+		jobType string
+		cfg     map[string]any
+		wantErr bool
+	}{
+		{"单主机一次性", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1"}, false},
+		{"历史单值键仍认", "deploy_ssh", map[string]any{ConfigKeyServerID: "s1"}, false},
+		{"未选主机", "deploy_ssh", map[string]any{}, true},
+		{"策略串不存在(recreate 后端从未实现)", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyStrategy: "recreate"}, true},
+		{"多主机分批", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyStrategy: "canary"}, false},
+		{"多主机蓝绿(连字符写法)", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyStrategy: "blue-green"}, false},
+		{"单机分批与一次性无差别", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyStrategy: "canary"}, true},
+		{"单机蓝绿同样无差别", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyStrategy: "blue-green"}, true},
+		{"首批台数非法", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyStrategy: "canary", ConfigKeyCanaryCount: "0"}, true},
+		{"首批台数不是数字", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyStrategy: "canary", ConfigKeyCanaryCount: "abc"}, true},
+		{"首批台数覆盖全部主机", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyStrategy: "canary", ConfigKeyCanaryCount: "2"}, true},
+		{"分批台数对一次性无意义但不拦(旧节点残留)", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyCanaryCount: "3"}, false},
+		{"compose 不读策略", JobTypeDeployDocker, map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeYaml: "services: {}", ConfigKeyStrategy: "canary"}, true},
+		{"compose 一次性通过", JobTypeDeployDocker, map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeYaml: "services: {}"}, false},
+		{"命令型不读策略", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1,s2", ConfigKeyArtifactType: "command", ConfigKeyStrategy: "canary"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "部署", Type: tc.jobType, Config: tc.cfg}))
+			if tc.wantErr {
+				if !errors.Is(err, ErrDeployTargetInvalid) && !(tc.jobType == JobTypeDeployDocker && errors.Is(err, ErrDockerDeployInvalid)) {
+					t.Fatalf("err = %v, want 落点/分批或 docker 哨兵", err)
+				}
+				if strings.Contains(err.Error(), "pipeline:") {
+					t.Errorf("报错不应含哨兵前缀,got %q", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
+// K8s 节点的发机器落点也要按新键判:只认旧键的话,填了 serverIds 的节点会既「配了主机」又过了互斥检查。
+func TestValidateDeployK8sRejectsServerIDs(t *testing.T) {
+	cfg := map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyServerIDs: "s1,s2"}
+	if _, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "K8s 发布", Type: JobTypeDeployK8s, Config: cfg})); !errors.Is(err, ErrK8sDeployInvalid) {
+		t.Fatalf("err = %v, want ErrK8sDeployInvalid", err)
 	}
 }

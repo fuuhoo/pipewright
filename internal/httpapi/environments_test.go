@@ -48,6 +48,12 @@ func (s *stubDeploy) AbortDeploy(context.Context, deploy.AbortInput) ([]deploy.T
 func (s *stubDeploy) DeployForStage(context.Context, string, []string, map[string]string, string) ([]deploy.TargetResult, error) {
 	return nil, nil
 }
+func (s *stubDeploy) ResumeStageTargets(context.Context, string, []string, map[string]string) ([]deploy.TargetResult, error) {
+	return nil, nil
+}
+func (s *stubDeploy) AbortStageTargets(context.Context, string, []string) ([]deploy.TargetResult, error) {
+	return nil, nil
+}
 
 // setupEnvironmentsServer 构造带 auth + project + run + environments + (stub)deploy 的测试 server。
 func setupEnvironmentsServer(t *testing.T) (*httptest.Server, *http.Client, string, string, run.Service, *stubDeploy) {
