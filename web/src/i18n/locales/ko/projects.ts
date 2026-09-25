@@ -13,6 +13,10 @@ export default {
   statusAll: '모든 상태',
   groupAll: '모든 그룹',
   groupFilterAria: '그룹으로 필터',
+  viewModeAria: '프로젝트 목록 보기',
+  viewCards: '카드',
+  viewGroups: '그룹별',
+  groupEmpty: '이 그룹에는 프로젝트가 없습니다',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '불러오는 중',

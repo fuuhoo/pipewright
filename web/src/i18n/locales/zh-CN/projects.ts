@@ -13,6 +13,10 @@ export default {
   statusAll: '全部状态',
   groupAll: '全部分组',
   groupFilterAria: '分组筛选',
+  viewModeAria: '项目列表视图',
+  viewCards: '卡片',
+  viewGroups: '分组',
+  groupEmpty: '这个分组下还没有项目',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '加载中',

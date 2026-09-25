@@ -13,6 +13,10 @@ export default {
   statusAll: 'All statuses',
   groupAll: 'All groups',
   groupFilterAria: 'Filter by group',
+  viewModeAria: 'Project list view',
+  viewCards: 'Cards',
+  viewGroups: 'By group',
+  groupEmpty: 'No projects in this group yet',
 
   // ─── list states ───────────────────────────────────────────────
   loading: 'Loading',

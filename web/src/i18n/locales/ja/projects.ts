@@ -13,6 +13,10 @@ export default {
   statusAll: 'すべてのステータス',
   groupAll: 'すべてのグループ',
   groupFilterAria: 'グループで絞り込み',
+  viewModeAria: 'プロジェクト一覧の表示',
+  viewCards: 'カード',
+  viewGroups: 'グループ別',
+  groupEmpty: 'このグループにプロジェクトはありません',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '読み込み中',

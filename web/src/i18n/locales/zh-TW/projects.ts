@@ -13,6 +13,10 @@ export default {
   statusAll: '全部狀態',
   groupAll: '全部分組',
   groupFilterAria: '分組篩選',
+  viewModeAria: '項目清單檢視',
+  viewCards: '卡片',
+  viewGroups: '分組',
+  groupEmpty: '這個分組下還沒有項目',
 
   // ─── list states ───────────────────────────────────────────────
   loading: '載入中',

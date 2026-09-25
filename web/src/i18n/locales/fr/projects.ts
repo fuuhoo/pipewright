@@ -13,6 +13,10 @@ export default {
   statusAll: 'Tous les statuts',
   groupAll: 'Tous les groupes',
   groupFilterAria: 'Filtrer par groupe',
+  viewModeAria: 'Vue de la liste des projets',
+  viewCards: 'Cartes',
+  viewGroups: 'Par groupe',
+  groupEmpty: 'Aucun projet dans ce groupe',
 
   // ─── list states ───────────────────────────────────────────────
   loading: 'Chargement',
