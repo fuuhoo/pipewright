@@ -20,30 +20,24 @@ import { listRefs, listCommits, type GitCommit } from '../api/refs'
 import RunParamsEditor from '../components/RunParamsEditor.vue'
 import TypedRunParams from '../components/TypedRunParams.vue'
 import CredentialSelect from '../components/projects/CredentialSelect.vue'
+import ProjectCard from '../components/projects/ProjectCard.vue'
 import RefPicker from '../components/projects/RefPicker.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
 import { isSupportedRepoUrl } from '../lib/gitUrl'
+import { runStatusLabel } from '../lib/runStatus'
+import {
+  GROUP_ALL,
+  GROUP_NONE,
+  groupProjects,
+  type ProjectGroupSection,
+} from '../lib/projectGroups'
 
 // ─── i18n ─────────────────────────────────────────────────────────────────────
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
-
-// Map the Chinese-keyed project RunStatus to the shared `runStatus.*` i18n keys.
-const RUN_STATUS_KEY: Record<RunStatus, string> = {
-  '成功': 'success',
-  '失败': 'failed',
-  '进行中': 'running',
-  '部分失败': 'partial_failed',
-  '已回滚': 'rolled_back',
-  '排队中': 'queued',
-}
-
-function runStatusLabel(s: RunStatus): string {
-  return t(`runStatus.${RUN_STATUS_KEY[s]}`)
-}
 
 // ─── router ───────────────────────────────────────────────────────────────────
 
@@ -73,8 +67,6 @@ const statusFilter = ref<RunStatus | 'all'>('all')
 
 // 分组筛选:候选是「可见分组」(后端已按名册收敛),未归组单列一档。
 // 用哨兵而不是空串:空串在这里是合法值(它就是「未归组」那一档的 groupId)。
-const GROUP_ALL = 'all'
-const GROUP_NONE = '__ungrouped__'
 const groupFilter = ref<string>(GROUP_ALL)
 
 const STATUS_OPTIONS = computed<Array<{ value: RunStatus | 'all'; label: string }>>(() => [
@@ -152,6 +144,76 @@ async function loadGroups(): Promise<void> {
     // 分组读不到不影响项目列表本身:归属列退化成「未归组」,不弹错误横幅。
     groups.value = []
   }
+}
+
+// ─── 视图切换:卡片 / 分组 ─────────────────────────────────────────────────────
+//
+// 两种视图读的是同一份筛选结果,只有排布不同:卡片视图一把铺开,分组视图按组折叠、
+// 点开才列该组的项目。视图偏好写 localStorage(和主题、侧栏同一做法);折叠状态是
+// 一次浏览内的事,不落盘 —— 刷新后回到「收起」比记住半展开的组更符合预期。
+
+type ViewMode = 'cards' | 'groups'
+
+const VIEW_MODE_KEY = 'pipewright.projects.viewMode'
+
+function readViewMode(): ViewMode {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === 'groups' ? 'groups' : 'cards'
+  } catch {
+    // 隐私模式 / 安全策略下 localStorage 会抛:安静退回卡片视图。
+    return 'cards'
+  }
+}
+
+const viewMode = ref<ViewMode>(readViewMode())
+
+function setViewMode(mode: ViewMode): void {
+  viewMode.value = mode
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, mode === 'groups' ? 'groups' : 'cards')
+  } catch {
+    // 存不下不影响这次切换。
+  }
+}
+
+/** 展开的段(分组 ID;未归组那段是空串)。默认全收起 = 空集。 */
+const expandedSections = ref<Set<string>>(new Set())
+
+function isSectionOpen(key: string): boolean {
+  return expandedSections.value.has(key)
+}
+
+function toggleSection(key: string): void {
+  const next = new Set(expandedSections.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedSections.value = next
+}
+
+const groupSections = computed<ProjectGroupSection[]>(() =>
+  groupProjects(filteredProjects.value, groups.value, {
+    groupFilter: groupFilter.value,
+    // 搜索/状态条件生效时空组不占位;只看某一段时按段的真实情况摆。
+    hideEmptyGroups: searchQuery.value.trim() !== '' || statusFilter.value !== 'all',
+  }),
+)
+
+/** 段标题:未归组那段没有名字(它的 key 就是合法 groupId,不能用 key 当展示名)。 */
+function sectionLabel(section: ProjectGroupSection): string {
+  return section.name || t('groups.ungrouped')
+}
+
+/** 折叠区的 idref:指向常存的 <section>,这样收起时 aria-controls 也不会悬空。 */
+function sectionGridId(key: string): string {
+  return `project-group-${key || 'ungrouped'}`
+}
+
+function openCardCode(project: Project): void {
+  goToCode(project.id)
+}
+
+function openCardPipeline(project: Project): void {
+  goToPipeline(project.id)
 }
 
 // ─── credentials for dropdown ─────────────────────────────────────────────────
@@ -869,31 +931,6 @@ async function handleTriggerSubmit(): Promise<void> {
   }
 }
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
-function relativeTime(isoStr: string): string {
-  const diff = Date.now() - new Date(isoStr).getTime()
-  const s = Math.floor(diff / 1000)
-  if (s < 60) return t('time.justNow')
-  const m = Math.floor(s / 60)
-  if (m < 60) return t('time.minAgo', { n: m })
-  const h = Math.floor(m / 60)
-  if (h < 24) return t('time.hourAgo', { n: h })
-  const d = Math.floor(h / 24)
-  return t('time.dayAgo', { n: d })
-}
-
-// Status pill config — fixed six-word vocabulary, no substitutes
-type StatusConfig = { dot: string; bg: string; border: string; text: string; pulse: boolean }
-
-const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
-  '成功':   { dot: 'var(--color-green)',  bg: 'var(--color-green-soft)',  border: 'transparent',            text: 'var(--color-green)',  pulse: false },
-  '失败':   { dot: 'var(--color-red)',    bg: 'var(--color-red-soft)',    border: 'var(--color-red-line)',   text: 'var(--color-red)',    pulse: false },
-  '进行中': { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'transparent',            text: 'var(--color-amber)',  pulse: true  },
-  '部分失败': { dot: 'var(--color-red)',  bg: 'var(--color-red-soft)',    border: 'var(--color-red-line)',   text: 'var(--color-red)',    pulse: false },
-  '已回滚': { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'var(--color-amber-line)', text: 'var(--color-amber)',  pulse: false },
-  '排队中': { dot: 'var(--color-faint)',  bg: 'var(--color-card-2)',      border: 'var(--color-border-strong)', text: 'var(--color-dim)', pulse: false },
-}
 </script>
 
 <template>
@@ -979,6 +1016,35 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           {{ opt.label }}
         </button>
       </div>
+
+      <!-- 视图切换:卡片铺开 / 按组折叠。放在工具栏最右,和「这一页怎么看」的位置一致。 -->
+      <div class="filter-tabs view-toggle" role="group" :aria-label="t('projects.viewModeAria')">
+        <button
+          type="button"
+          class="filter-tab view-toggle-btn"
+          :class="{ 'filter-tab--active': viewMode === 'cards' }"
+          :aria-pressed="viewMode === 'cards'"
+          @click="setViewMode('cards')"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+          </svg>
+          {{ t('projects.viewCards') }}
+        </button>
+        <button
+          type="button"
+          class="filter-tab view-toggle-btn"
+          :class="{ 'filter-tab--active': viewMode === 'groups' }"
+          :aria-pressed="viewMode === 'groups'"
+          @click="setViewMode('groups')"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M3 5h18M3 12h18M3 19h11"/>
+          </svg>
+          {{ t('projects.viewGroups') }}
+        </button>
+      </div>
     </div>
 
     <!-- ─── Loading skeleton ─────────────────────────────────────────────── -->
@@ -1044,211 +1110,86 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
         </template>
       </p>
 
-      <ul class="project-grid" role="list">
-        <li
+      <!-- ─── 卡片视图:命中项目一把铺开 ──────────────────────────────────── -->
+      <ul v-if="viewMode === 'cards'" class="project-grid" role="list">
+        <ProjectCard
           v-for="project in filteredProjects"
           :key="project.id"
-          class="project-card"
-        >
-          <!-- Card header: name + status badge -->
-          <div class="card-header">
-            <div class="project-icon" aria-hidden="true">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
-                <path d="M14.5 9.5 21 3M21 3h-5M21 3v5"/>
-                <path d="M10 14a5 5 0 1 1-7 4.6"/>
-              </svg>
-            </div>
-            <h2 class="project-name" :title="project.name">{{ project.name }}</h2>
-
-            <!-- Status badge: only if we have a run status -->
-            <div
-              v-if="project.lastRunStatus"
-              class="status-pill"
-              :style="{
-                background: STATUS_CONFIG[project.lastRunStatus].bg,
-                border: `1px solid ${STATUS_CONFIG[project.lastRunStatus].border}`,
-                color: STATUS_CONFIG[project.lastRunStatus].text,
-              }"
-              :aria-label="t('projects.runStatusAria', { status: runStatusLabel(project.lastRunStatus) })"
-            >
-              <span
-                class="status-dot"
-                :class="{ 'status-dot--pulse': STATUS_CONFIG[project.lastRunStatus].pulse }"
-                :style="{ background: STATUS_CONFIG[project.lastRunStatus].dot }"
-                aria-hidden="true"
-              />
-              {{ runStatusLabel(project.lastRunStatus) }}
-            </div>
-          </div>
-
-          <!-- Repo + branch (equal-width columns);纯发布项目没有这两行,直接说明用途 -->
-          <div class="card-repo">
-            <div class="repo-url-row">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
-              </svg>
-              <a
-                v-if="project.repoUrl"
-                class="repo-url mono"
-                :href="project.repoUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                :title="project.repoUrl"
-              >{{ project.repoUrl.replace(/^https?:\/\//, '') }}</a>
-              <span v-else class="repo-url repo-url--unbound mono">{{ t('projects.repoNotBound') }}</span>
-            </div>
-            <div v-if="project.repoUrl" class="branch-row">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
-              </svg>
-              <span class="branch-name mono">{{ project.defaultBranch || '—' }}</span>
-            </div>
-          </div>
-
-          <!-- Divider -->
-          <div class="card-divider" aria-hidden="true" />
-
-          <!-- Last run: empty placeholder or status -->
-          <div class="card-meta-row">
-            <span class="meta-label">{{ t('projects.lastRun') }}</span>
-            <span
-              v-if="!project.lastRunStatus"
-              class="meta-empty"
-            >{{ t('projects.noRun') }}</span>
-            <span
-              v-else
-              class="meta-value"
-              :style="{ color: STATUS_CONFIG[project.lastRunStatus].text }"
-            >{{ runStatusLabel(project.lastRunStatus) }}</span>
-          </div>
-
-          <!-- Target servers: empty placeholder or list -->
-          <div class="card-meta-row">
-            <span class="meta-label">{{ t('projects.targetServers') }}</span>
-            <span
-              v-if="!project.targetServers || project.targetServers.length === 0"
-              class="meta-empty"
-            >{{ t('projects.notBound') }}</span>
-            <span v-else class="meta-value">
-              {{ project.targetServers.join(', ') }}
-            </span>
-          </div>
-
-          <!-- Credential reference: display name + masked, never plaintext -->
-          <div class="card-meta-row">
-            <span class="meta-label">{{ t('projects.credential') }}</span>
-            <span class="meta-value meta-value--mono" :title="t('projects.credentialRefTitle')">
-              {{ project.credentialName || '—' }}
-            </span>
-          </div>
-
-          <!-- 分组:决定谁能看/能操作;有归属管理权时可直接点组名改组 -->
-          <div class="card-meta-row">
-            <span class="meta-label">{{ t('groups.fieldGroup') }}</span>
-            <button
-              v-if="canRegroup(project)"
-              class="meta-value group-link"
-              :title="t('groups.assignAction', { name: project.name })"
-              @click="openGroupModal(project)"
-            >
-              {{ groupName(project.groupId) }}
-            </button>
-            <span
-              v-else
-              class="meta-value"
-              :title="t('groups.lockedHint')"
-            >{{ groupName(project.groupId) }}</span>
-          </div>
-
-          <!-- Card footer: updatedAt + actions -->
-          <div class="card-footer">
-            <span class="card-time" :title="project.updatedAt">
-              {{ t('projects.updatedAt', { time: relativeTime(project.updatedAt) }) }}
-            </span>
-
-            <div class="card-actions">
-              <!-- Manual trigger / Run -->
-              <button
-                class="action-btn action-btn--run"
-                :title="t('projects.actionRunTitle', { name: project.name })"
-                :aria-label="t('projects.actionRunAria', { name: project.name })"
-                @click.stop="openTriggerModal(project)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/>
-                </svg>
-              </button>
-
-              <!-- Rename -->
-              <button
-                class="action-btn"
-                :title="t('projects.actionRenameTitle', { name: project.name })"
-                :aria-label="t('projects.actionRenameAria', { name: project.name })"
-                @click="openRenameModal(project)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                </svg>
-              </button>
-
-              <!-- 仓库设置:绑定 / 改绑 / 解绑(解绑即退回「只发布」) -->
-              <button
-                class="action-btn"
-                :title="t('projects.actionRepoTitle', { name: project.name })"
-                :aria-label="t('projects.actionRepoAria', { name: project.name })"
-                @click="openRepoModal(project)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.72"/>
-                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                </svg>
-              </button>
-
-              <!-- Code browse (Story 7-4: read-only source viewer, FR-4) — 没仓库就无从浏览 -->
-              <button
-                v-if="project.repoUrl"
-                class="action-btn"
-                :title="t('projects.actionCodeTitle', { name: project.name })"
-                :aria-label="t('projects.actionCodeAria', { name: project.name })"
-                @click="goToCode(project.id)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="16 18 22 12 16 6"/>
-                  <polyline points="8 6 2 12 8 18"/>
-                </svg>
-              </button>
-
-              <!-- Configure → triggers page (Story 2.3; will be extended to 4-tab editor in 2-2) -->
-              <button
-                class="action-btn"
-                :title="t('projects.actionPipelineTitle', { name: project.name })"
-                :aria-label="t('projects.actionPipelineAria', { name: project.name })"
-                @click="goToPipeline(project.id)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M19.07 4.93a10 10 0 1 1-14.14 0"/>
-                  <path d="M12 2v4M12 18v4M4.93 4.93 7.76 7.76M16.24 16.24l2.83 2.83"/>
-                </svg>
-              </button>
-
-              <!-- Delete -->
-              <button
-                class="action-btn action-btn--danger"
-                :title="t('projects.actionDeleteTitle', { name: project.name })"
-                :aria-label="t('projects.actionDeleteAria', { name: project.name })"
-                @click="openDeleteModal(project)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
-                  <path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                  <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </li>
+          :project="project"
+          :group-label="groupName(project.groupId)"
+          :can-assign-group="canRegroup(project)"
+          @run="openTriggerModal"
+          @rename="openRenameModal"
+          @repo="openRepoModal"
+          @code="openCardCode"
+          @pipeline="openCardPipeline"
+          @remove="openDeleteModal"
+          @assign="openGroupModal"
+        />
       </ul>
+
+      <!-- ─── 分组视图:默认只看各个分组,点开某组才铺该组的卡 ─────────────── -->
+      <div v-else class="group-list">
+        <section
+          v-for="section in groupSections"
+          :id="sectionGridId(section.key)"
+          :key="section.key"
+          class="group-section"
+          :aria-label="sectionLabel(section)"
+        >
+          <button
+            type="button"
+            class="group-head"
+            :aria-expanded="isSectionOpen(section.key)"
+            :aria-controls="sectionGridId(section.key)"
+            @click="toggleSection(section.key)"
+          >
+            <svg
+              class="group-chevron"
+              :class="{ 'group-chevron--open': isSectionOpen(section.key) }"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+            <span class="group-name">{{ sectionLabel(section) }}</span>
+            <span
+              v-if="section.visibility"
+              class="group-visibility"
+              :class="{ 'group-visibility--private': section.visibility === 'private' }"
+            >{{ section.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}</span>
+            <span class="group-count">{{ t('projects.resultCount', { n: section.projects.length }) }}</span>
+            <span v-if="section.ownerName" class="group-owner">{{ t('groups.colOwner') }}:{{ section.ownerName }}</span>
+          </button>
+
+          <template v-if="isSectionOpen(section.key)">
+            <ul v-if="section.projects.length" class="project-grid group-projects" role="list">
+              <ProjectCard
+                v-for="project in section.projects"
+                :key="project.id"
+                :project="project"
+                :group-label="groupName(project.groupId)"
+                :can-assign-group="canRegroup(project)"
+                @run="openTriggerModal"
+                @rename="openRenameModal"
+                @repo="openRepoModal"
+                @code="openCardCode"
+                @pipeline="openCardPipeline"
+                @remove="openDeleteModal"
+                @assign="openGroupModal"
+              />
+            </ul>
+            <p v-else class="group-empty">{{ t('projects.groupEmpty') }}</p>
+          </template>
+        </section>
+      </div>
     </template>
   </div>
 
@@ -2311,287 +2252,130 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   list-style: none;
 }
 
-/* ─── project card ──────────────────────────────────────────────────────────── */
-.project-card {
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--rounded-card);
-  box-shadow: var(--shadow);
-  padding: 18px 20px 16px;
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* ─── 分组视图:折叠的组头 + 展开后的卡片网格 ─────────────────────────────────── */
+/* 视图切换按钮靠最右:它管的是「这一页怎么看」,和左边的筛选项不是一类。 */
+.view-toggle {
+  margin-left: auto;
+}
+
+.view-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-list {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  animation: card-in 0.4s var(--ease-out-expo) both;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast), transform var(--duration-fast);
+  gap: 10px;
 }
 
-.project-card:hover {
-  border-color: var(--color-border-strong);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow), 0 0 0 1px var(--color-border-strong);
+.group-section {
+  /* 凹下去一档:卡片本身是 --color-card,同色的容器会把卡「吞」进背景里,分组视图就没了层次。 */
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-card);
+  padding: 2px 16px;
 }
 
-@keyframes card-in {
-  from { opacity: 0; transform: translateY(13px); }
-  to   { opacity: 1; transform: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .project-card {
-    animation: none;
-  }
-  .project-card:hover {
-    transform: none;
-  }
-}
-
-/* card header: icon + name + status badge */
-.card-header {
+.group-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
-}
-
-.project-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--rounded);
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-
-.project-name {
-  flex: 1;
-  font-size: 0.95rem;
-  font-weight: 600;
+  width: 100%;
+  padding: 12px 2px;
+  appearance: none;
+  background: none;
+  border: none;
   color: var(--color-text);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.group-head:hover .group-name {
+  color: var(--color-primary);
+}
+
+.group-head:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  border-radius: var(--rounded-md);
+}
+
+.group-chevron {
+  color: var(--color-faint);
+  flex-shrink: 0;
+  transition: transform var(--duration-fast);
+}
+
+.group-chevron--open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group-chevron {
+    transition: none;
+  }
+}
+
+.group-name {
+  font-size: 0.9rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.3;
+  /* 不给 min-width:0,flex 项不肯缩到内容宽度以下,长组名会把整行顶宽而不是省略号。 */
+  min-width: 0;
 }
 
-/* status pill */
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
+.group-visibility {
+  padding: 1px 7px;
   border-radius: var(--rounded-md);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-dim);
   font-size: var(--text-micro);
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--rounded-full);
-  flex-shrink: 0;
+.group-visibility--private {
+  border-color: var(--color-amber-line);
+  background: var(--color-amber-soft);
+  color: var(--color-amber);
 }
 
-.status-dot--pulse {
-  animation: dot-pulse 1.1s ease-in-out infinite;
-}
-
-@keyframes dot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%       { opacity: 0.5; transform: scale(0.8); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .status-dot--pulse {
-    animation: none;
-  }
-}
-
-/* repo + branch */
-.card-repo {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-
-.repo-url-row,
-.branch-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.group-count {
+  font-size: 0.76rem;
   color: var(--color-faint);
-}
-
-.repo-url {
-  font-size: 0.74rem;
-  color: var(--color-dim);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-decoration: none;
-  flex: 1;
-  min-width: 0;
-}
-
-.repo-url:hover {
-  color: var(--color-primary);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.repo-url--unbound {
-  color: var(--color-faint);
-}
-
-.repo-url:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-.branch-name {
-  font-size: 0.72rem;
-  color: var(--color-dim);
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-/* divider */
-.card-divider {
-  height: 1px;
-  background: var(--color-border);
-  margin-bottom: 12px;
-}
-
-/* meta rows */
-.card-meta-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 7px;
-  min-height: 20px;
-}
-
-.card-meta-row:last-of-type {
-  margin-bottom: 14px;
-}
-
-.meta-label {
-  font-size: 0.71rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-faint);
   flex-shrink: 0;
 }
 
-.meta-empty {
+.group-owner {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--color-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.group-projects {
+  padding: 4px 0 16px;
+}
+
+.group-empty {
+  padding: 0 0 14px 22px;
   font-size: 0.78rem;
   color: var(--color-faint);
   font-style: italic;
-}
-
-.meta-value {
-  font-size: 0.78rem;
-  color: var(--color-dim);
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 60%;
-}
-
-.meta-value--mono {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  user-select: none;
-}
-
-/* 分组值可点:只有对该资源归属有管理权时才渲染成按钮(见 canRegroup)。 */
-.group-link {
-  appearance: none;
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0 0 0 auto;
-  font: inherit;
-  color: var(--color-primary);
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-/* card footer */
-.card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-border);
-}
-
-.card-time {
-  font-size: 0.72rem;
-  color: var(--color-faint);
-}
-
-.card-actions {
-  display: flex;
-  gap: 5px;
-}
-
-.action-btn {
-  width: 28px;
-  height: 26px;
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-faint);
-  border-radius: var(--rounded-md);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition:
-    color var(--duration-fast),
-    border-color var(--duration-fast),
-    background-color var(--duration-fast);
-}
-
-.action-btn:hover {
-  color: var(--color-text);
-  border-color: var(--color-faint);
-}
-
-.action-btn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.action-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.action-btn--danger:hover {
-  color: var(--color-red);
-  border-color: var(--color-red-line);
-  background: var(--color-red-soft);
-}
-
-.action-btn--run:hover {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
 }
 
 /* ─── skeleton ──────────────────────────────────────────────────────────────── */
