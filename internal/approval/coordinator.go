@@ -9,7 +9,10 @@
 // 等待者:重启时把残留 waiting_approval/running 运行清理为 failed(孤儿,无法恢复)。
 package approval
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // Decision 是一次审批结果。
 type Decision struct {
@@ -30,6 +33,17 @@ func New() *Coordinator {
 
 // Key 由 runID + stageID 组成审批门唯一键。
 func Key(runID, stageID string) string { return runID + "|" + stageID }
+
+// DeployGatePrefix 标出一条待批记录来自**部署节点的「首批后暂停」**,而不是阶段审批门。
+// 两类门共用同一套登记/投递/持久化机制,靠这个前缀分辨是「整个阶段等批」还是「这批机器发完等确认」
+// —— 前端据此决定按钮文案与落点列表,审计据此分清谁放行了一半的部署。
+const DeployGatePrefix = "deploy:"
+
+// DeployGateID 是部署节点分批确认的门 ID(jobID 在 run 内唯一)。
+func DeployGateID(jobID string) string { return DeployGatePrefix + jobID }
+
+// IsDeployGate 报告一个门 ID 是不是部署分批确认(阶段 ID 不会带这个前缀:它们由解析器生成)。
+func IsDeployGate(gateID string) bool { return strings.HasPrefix(gateID, DeployGatePrefix) }
 
 // Wait 为 key 注册一个等待,返回接收决定的只读 channel(缓冲 1,Resolve 不阻塞)。
 // 同 key 重复 Wait 覆盖旧等待者(旧 channel 永不收到决定;调用方应在 defer 里 Cancel 清理)。
@@ -70,6 +84,39 @@ func (c *Coordinator) IsWaiting(key string) bool {
 	_, ok := c.waiters[key]
 	c.mu.Unlock()
 	return ok
+}
+
+// HasWaiterFor 报告该 run 是否还有门在等人。一个 run 可以同时挂两道门(并行阶段的审批门,
+// 或部署节点的「首批后暂停」),运行状态该由**最后一道**决定才放回 running。
+func (c *Coordinator) HasWaiterFor(runID string) bool {
+	prefix := runID + "|"
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.waiters {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// BeginWait 注册 key 的等待,并报告注册**之前**该 run 是否已有别的门在等。
+// 判定与注册放在同一把锁里:两个并行门同时进来时,不会都以为自己是第一个、
+// 于是第二个把「running → waiting」的 CAS 失败当成自己出错。
+func (c *Coordinator) BeginWait(runID, key string) (<-chan Decision, bool) {
+	ch := make(chan Decision, 1)
+	prefix := runID + "|"
+	c.mu.Lock()
+	shared := false
+	for k := range c.waiters {
+		if strings.HasPrefix(k, prefix) {
+			shared = true
+			break
+		}
+	}
+	c.waiters[key] = ch
+	c.mu.Unlock()
+	return ch, shared
 }
 
 // PendingKeys 返回当前所有等待中的 key(调试/列举)。

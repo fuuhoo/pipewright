@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/huangchengsir/pipewright/internal/access"
+	"github.com/huangchengsir/pipewright/internal/approval"
 	"github.com/huangchengsir/pipewright/internal/audit"
 	"github.com/huangchengsir/pipewright/internal/auth"
 	"github.com/huangchengsir/pipewright/internal/group"
@@ -37,6 +38,10 @@ type guardEnv struct {
 	srv *httptest.Server
 	db  *sql.DB
 	gs  *group.Service
+
+	// 审批门装配:approve/reject 与列表同样归 runs/{id} 的权限管,测试要能真的挂上门。
+	coord  *approval.Coordinator
+	astore *approval.Store
 
 	admin    *http.Client
 	adminCS  string
@@ -149,6 +154,7 @@ func setupGuard(t *testing.T) *guardEnv {
 	srvInPrivate := mkSrv("secret-srv", priv.ID)
 	srvInPublic := mkSrv("open-srv", pub.ID)
 
+	approvalCoord, approvalStore := approval.New(), approval.NewStore(db)
 	srv := httptest.NewServer(New(testWebFSAuth(), authSvc,
 		WithVault(v),
 		WithProjects(project.New(db, v, nil)),
@@ -157,12 +163,14 @@ func setupGuard(t *testing.T) *guardEnv {
 		WithUsers(userSvc),
 		WithGroups(gs),
 		WithAccess(access.NewService(gs)),
+		WithApprovals(approvalCoord, approvalStore),
 		WithServers(target.New(db, v, stubDialer{res: &target.ExecResult{Stdout: "ok"}})),
 	))
 	t.Cleanup(srv.Close)
 
 	env := &guardEnv{
 		srv: srv, db: db, gs: gs, privateID: priv.ID, publicID: pub.ID,
+		coord: approvalCoord, astore: approvalStore,
 		memberUID: memberID, strangerUID: strangerID,
 		ungrouped: ungrouped, inPrivate: inPrivate, inPublic: inPublic, runInPriv: runID,
 		serverCredID: srvCredID.ID, srvUngrouped: srvUngrouped, srvInPrivate: srvInPrivate, srvInPublic: srvInPublic,

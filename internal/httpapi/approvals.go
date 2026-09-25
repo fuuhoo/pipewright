@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/approval"
 	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/huangchengsir/pipewright/internal/build"
 	"github.com/huangchengsir/pipewright/internal/dagrun"
 	"github.com/huangchengsir/pipewright/internal/pipeline"
 	"github.com/huangchengsir/pipewright/internal/run"
@@ -35,61 +37,112 @@ type ApprovalNotifier func(ctx context.Context, projectID, projectName, runID, s
 // 签名审批链接);为 nil(或签名/PUBLIC_URL 未配)则不发通知,门行为不变。
 func NewApprovalGate(runs run.Service, coord *approval.Coordinator, store *approval.Store, notifier ApprovalNotifier) dagrun.GateFunc {
 	return func(ctx context.Context, r *run.Run, stage pipeline.Stage) (bool, error) {
-		key := approval.Key(r.ID, stage.ID)
-		_ = store.CreatePending(ctx, r.ID, stage.ID, stage.Name)
-		ch := coord.Wait(key)
-		defer coord.Cancel(key)
-
-		// 先注册等待者再置 waiting,确保端点在状态切换后总能解析到该门。
-		if err := runs.MarkWaitingApproval(ctx, r.ID); err != nil {
-			// 已终态/被取消:无法进入等待,退化失败让 worker 收尾。
-			return false, err
-		}
-
-		// best-effort 通知:进入等待态后发「需要审批」+ 签名链接。绝不阻塞门、绝不冒泡错误。
-		if notifier != nil {
-			notifier(ctx, r.ProjectID, r.ProjectName, r.ID, stage.ID)
-		}
-
-		var (
-			approved bool
-			status   = approval.StatusRejected
-			by       string
-		)
-		select {
-		case d := <-ch:
-			approved = d.Approved
-			by = d.Actor
-			if approved {
-				status = approval.StatusApproved
-			}
-		case <-ctx.Done():
-			by = "canceled"
-			_ = store.Decide(context.Background(), r.ID, stage.ID, status, by)
-			_ = runs.ResumeFromApproval(context.Background(), r.ID)
-			return false, ctx.Err()
-		case <-time.After(defaultGateTimeout):
-			by = "timeout"
-			_ = store.Decide(context.Background(), r.ID, stage.ID, status, by)
-			_ = runs.ResumeFromApproval(context.Background(), r.ID)
-			return false, fmt.Errorf("approval gate timed out after %s", defaultGateTimeout)
-		}
-		_ = store.Decide(context.Background(), r.ID, stage.ID, status, by)
-		// 决定后置回 running,让 worker 在收尾时按 running→终态 落定。
-		_ = runs.ResumeFromApproval(context.Background(), r.ID)
-		return approved, nil
+		return awaitDecision(ctx, runs, coord, store, r.ID, stage.ID, stage.Name, "审批门",
+			func() {
+				if notifier != nil {
+					notifier(ctx, r.ProjectID, r.ProjectName, r.ID, stage.ID)
+				}
+			})
 	}
 }
 
+// NewDeployGate 构造注入 build 的「首批后暂停」确认 hook(供 main 装配)。
+//
+// 它和阶段审批门用的是同一套登记 + 阻塞 + 投递机制,只差两件事:门 ID 带 deploy: 前缀(一条记录
+// 说的是「这批机器发完了,要不要继续」而不是「这个阶段准不准跑」),以及通知文案走同一个 notifier。
+// 批准 → build 层续发其余主机;拒绝/超时/取消 → 其余主机标「已中止」,本节点判失败。
+func NewDeployGate(runs run.Service, coord *approval.Coordinator, store *approval.Store, notifier ApprovalNotifier) build.DeployPauseGate {
+	return func(ctx context.Context, r *run.Run, jobID, jobName string) (bool, error) {
+		gateID := approval.DeployGateID(jobID)
+		return awaitDecision(ctx, runs, coord, store, r.ID, gateID, jobName, "分批确认",
+			func() {
+				if notifier != nil {
+					notifier(ctx, r.ProjectID, r.ProjectName, r.ID, gateID)
+				}
+			})
+	}
+}
+
+// awaitDecision 是两类人工门(阶段审批门 / 部署首批后暂停)共用的等待体:登记待批 → 置 run 为
+// waiting_approval → 阻塞等决定 → 回写记录并放回 running。onWaiting 在进入等待态后调一次(通知)。
+//
+// 一个 run 可以同时挂着两道门(并行阶段的审批门、部署节点的分批确认)。状态翻转按「还有没有别的门
+// 在等」来做:第一道进时才置 waiting,最后一道决完才放回 running —— 否则一道门放行就把 run 报回
+// running,另一道门的审批人会看到一个「已经不在等待」的运行。
+func awaitDecision(
+	ctx context.Context,
+	runs run.Service,
+	coord *approval.Coordinator,
+	store *approval.Store,
+	runID, gateID, gateName, kind string,
+	onWaiting func(),
+) (bool, error) {
+	key := approval.Key(runID, gateID)
+	_ = store.CreatePending(ctx, runID, gateID, gateName)
+	ch, shared := coord.BeginWait(runID, key)
+	defer coord.Cancel(key)
+
+	// 已有人在等就别再翻状态(CAS 会从 running 失败),但仍要让自己出现在等待队列里。
+	if !shared {
+		if err := runs.MarkWaitingApproval(ctx, runID); err != nil {
+			// 已终态/被取消:无法进入等待,退化失败让 worker 收尾。
+			return false, err
+		}
+	}
+	onWaiting()
+
+	var (
+		approved bool
+		status   = approval.StatusRejected
+		by       string
+	)
+	select {
+	case d := <-ch:
+		approved = d.Approved
+		by = d.Actor
+		if approved {
+			status = approval.StatusApproved
+		}
+	case <-ctx.Done():
+		by = "canceled"
+		_ = store.Decide(context.Background(), runID, gateID, status, by)
+		leaveWaiting(context.Background(), runs, coord, runID)
+		return false, ctx.Err()
+	case <-time.After(defaultGateTimeout):
+		by = "timeout"
+		_ = store.Decide(context.Background(), runID, gateID, status, by)
+		leaveWaiting(context.Background(), runs, coord, runID)
+		return false, fmt.Errorf("%s timed out after %s", kind, defaultGateTimeout)
+	}
+	_ = store.Decide(context.Background(), runID, gateID, status, by)
+	// 决定后置回 running,让 worker 在收尾时按 running→终态 落定。
+	// Resolve 已把自己的等待摘掉,所以这里问的是「同 run 还有别的门吗」。
+	leaveWaiting(context.Background(), runs, coord, runID)
+	return approved, nil
+}
+
+// leaveWaiting 只在最后一个人决定完时才把 run 放回 running;还有别的门在等就维持 waiting 不动。
+func leaveWaiting(ctx context.Context, runs run.Service, coord *approval.Coordinator, runID string) {
+	if coord.HasWaiterFor(runID) {
+		return
+	}
+	_ = runs.ResumeFromApproval(ctx, runID)
+}
+
 // makeApprovalDecisionHandler 返回 approve(approve=true)/reject(false)端点 handler。
-// body {stageId};经协调器投递决定。该阶段当前不在等待 → 409。
-func makeApprovalDecisionHandler(coord *approval.Coordinator, store *approval.Store, rec audit.Recorder, approve bool) http.HandlerFunc {
+// body {stageId}(阶段门传阶段 ID,分批确认门传 "deploy:<jobId>");经协调器投递决定。
+// 该门当前不在等待 → 409。
+//
+// actor 取自当前会话而非写死 "admin":审批留痕的意义就在「谁点的」,归属校验由 /api 组的
+// accessGuardMiddleware 统一做(runs/{id} 写方法 → ActOperate),这里不重复判定。
+func makeApprovalDecisionHandler(coord *approval.Coordinator, store *approval.Store, rec audit.Recorder, ac auth.Authenticator, approve bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if coord == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "审批门服务未初始化")
 			return
 		}
 		id := chi.URLParam(r, "id")
+		actor := actorFromRequest(r, ac)
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<13)
 		var req struct {
 			StageID string `json:"stageId"`
@@ -104,7 +157,7 @@ func makeApprovalDecisionHandler(coord *approval.Coordinator, store *approval.St
 			return
 		}
 		key := approval.Key(id, stageID)
-		if !coord.Resolve(key, approval.Decision{Approved: approve, Actor: auditActor}) {
+		if !coord.Resolve(key, approval.Decision{Approved: approve, Actor: actor}) {
 			writeError(w, http.StatusConflict, "not_waiting", "该运行阶段当前不在等待审批")
 			return
 		}
@@ -113,7 +166,7 @@ func makeApprovalDecisionHandler(coord *approval.Coordinator, store *approval.St
 			action = "run.reject"
 		}
 		recordAudit(r.Context(), rec, audit.Entry{
-			Actor:      auditActor,
+			Actor:      actor,
 			Action:     action,
 			TargetType: "run",
 			TargetID:   id,

@@ -80,3 +80,44 @@ func TestPendingKeys(t *testing.T) {
 		t.Errorf("PendingKeys = %v", c.PendingKeys())
 	}
 }
+
+// TestBeginWaitRefCountsPerRun 是「一个运行同时挂两道门」的地基:第一道门进等待时才该把
+// run 置成 waiting_approval,第二道不该重复翻;最后一道决定完才该放回 running。
+func TestBeginWaitRefCountsPerRun(t *testing.T) {
+	c := New()
+	_, sharedFirst := c.BeginWait("r1", Key("r1", "s1"))
+	if sharedFirst {
+		t.Error("第一道门不该被认成「已有门在等」")
+	}
+	if !c.HasWaiterFor("r1") {
+		t.Error("有门在等时 HasWaiterFor 应为 true")
+	}
+	_, sharedSecond := c.BeginWait("r1", Key("r1", "deploy:job-1"))
+	if !sharedSecond {
+		t.Error("第二道门应看到别的门在等(否则会把状态重复翻一遍)")
+	}
+
+	// 决定掉一道:另一道还在等,run 就该留在 waiting。
+	c.Resolve(Key("r1", "s1"), Decision{Approved: true})
+	if !c.HasWaiterFor("r1") {
+		t.Error("还剩一道门在等,不该报「无等待者」")
+	}
+	c.Resolve(Key("r1", "deploy:job-1"), Decision{Approved: true})
+	if c.HasWaiterFor("r1") {
+		t.Error("两道门都决完才该报无等待者")
+	}
+	if c.HasWaiterFor("r2") {
+		t.Error("不该串到别的运行")
+	}
+}
+
+// 门 ID 前缀是前端分辨「阶段审批」还是「分批确认」的唯一依据。
+func TestDeployGateID(t *testing.T) {
+	id := DeployGateID("job-9")
+	if id != "deploy:job-9" || !IsDeployGate(id) {
+		t.Errorf("DeployGateID = %q (IsDeployGate=%v)", id, IsDeployGate(id))
+	}
+	if IsDeployGate("stage-1") {
+		t.Error("阶段门不该被认成分批确认门")
+	}
+}

@@ -677,9 +677,10 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/runs/{id}/test-report", makeRunTestReportHandler(rs))
 		ar.Post("/runs/{id}/cancel", makeCancelRunHandler(rs))
 		// 人工审批门(Story 8-4):批准/拒绝某运行的审批门阶段 + 列审批记录。
-		// approve/reject 为写方法,过 auth + CSRF;coord/store 为 nil → 503。
-		ar.Post("/runs/{id}/approve", makeApprovalDecisionHandler(o.approvalCoord, o.approvalStore, aud, true))
-		ar.Post("/runs/{id}/reject", makeApprovalDecisionHandler(o.approvalCoord, o.approvalStore, aud, false))
+		// approve/reject 为写方法,过 auth + CSRF + 分组权限(runs/{id} → ActOperate);
+		// actor 来自会话(谁点的地落到审计与 decided_by),coord/store 为 nil → 503。
+		ar.Post("/runs/{id}/approve", makeApprovalDecisionHandler(o.approvalCoord, o.approvalStore, aud, authn, true))
+		ar.Post("/runs/{id}/reject", makeApprovalDecisionHandler(o.approvalCoord, o.approvalStore, aud, authn, false))
 		ar.Get("/runs/{id}/approvals", makeListApprovalsHandler(o.approvalStore))
 		// 环境晋级流(Story 8-7 / FR-8-7):把成功运行晋级到下一环境(gated 复用审批门内核)+ 列晋级历史。
 		// promote 为写方法,过 auth + CSRF;o.promotionStore 为 nil → 503。

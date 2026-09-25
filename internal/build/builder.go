@@ -76,7 +76,15 @@ type Builder struct {
 	// nil(关了代码管理区)时该模式的部署节点直接失败并说明原因 —— 绝不静默改用别的正文来源。
 	// 由 main 注入(WithRepoFiles,实现是 *repocache.ReadFile;此处留接口避免 build↔repocache 成环)。
 	repoFiles repoFileReader
+	// deployGate 是部署节点「首批后暂停」用的人工确认 hook(nil = 平台未装配审批服务)。
+	// 少了它,选了「首批后暂停」的节点没人能放行其余主机 —— 那台一台都不该发出去(见 runDeployJob)。
+	deployGate DeployPauseGate
 }
+
+// DeployPauseGate 在部署节点铺完首批后阻塞,等人工决定要不要继续发其余主机。
+// 返回 approved=true → 续发;false 或 err → 其余标「已中止」,本节点判失败。
+// 实现在 httpapi(复用审批门那套登记 + 阻塞协调器),build 不 import run.Service/approval。
+type DeployPauseGate func(ctx context.Context, r *run.Run, jobID, jobName string) (bool, error)
 
 // repoFileReader 抽象「读仓库某 ref 上的一个文件」的能力(默认实现 *repocache.Cache)。
 type repoFileReader interface {
@@ -166,6 +174,11 @@ func WithArtifactLister(fn func(ctx context.Context, runID string) ([]run.Artifa
 // WithStageDeployer 注入部署服务,使 dag 里的 deploy_ssh 节点真实部署(中途部署,不动 run 终态)。
 func WithStageDeployer(d deploy.Service) BuilderOption {
 	return func(b *Builder) { b.deployer = d }
+}
+
+// WithDeployGate 注入「首批后暂停」的人工确认 hook(未注入时该策略的其余主机一律中止并判失败)。
+func WithDeployGate(g DeployPauseGate) BuilderOption {
+	return func(b *Builder) { b.deployGate = g }
 }
 
 // WithStageNotifier 注入通知服务,使 dag 里的 notify 节点真实发通知。
