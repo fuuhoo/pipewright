@@ -426,6 +426,7 @@ needs 填「本阶段内它所依赖的其它 job 的 name」(数组)。**凡有
 - 有 Dockerfile → 构建任务档位 image(buildModel=dockerfile);无 Dockerfile 但要发镜像 → 同一任务改 buildModel=toolchain 并选 buildEnvId。**不要再单独加推送节点**:推镜像由该任务的 pushImage 开关(缺省推送)完成。
 - 只要文件产物(前端 dist / 后端 jar)→ 构建任务给对应档位 + commands + artifactPath 即可。
 - 部署后的健康探测**不是独立节点**:写在部署任务的 healthProbe 等 config 键上(见下);关键阶段(部署成功/失败)可接 notify。
+- 交付方式是 docker(要容器起的镜像,或仓库里本就有 docker-compose.yml)→ 部署任务用 deploy_docker 并按上面选 dockerMode;只是往机器上铺文件再重启(jar/dist + nginx)→ 用 deploy_ssh;仓库面向 Kubernetes 部署(有 Helm chart / k8s 清单,或明确要求发集群)→ 用 deploy_k8s。
 - 仅在内置节点无法表达的步骤才用 script 或库中的自定义节点(templated)。
 
 ## 每个节点的 config(关键!尽量据仓库分析填满,让流水线直接可用)
@@ -434,6 +435,11 @@ needs 填「本阶段内它所依赖的其它 job 的 name」(数组)。**凡有
   - 档位 file(在构建环境容器里跑命令收产物):buildEnvId(运行镜像,**只能填「可用构建环境」里的 ID**,按分析出的语言/版本挑最贴近的一条;写 image 键或自造镜像名会被拦截)、commands(多行命令,据构建工具写,如 "cd <子目录>\nmvn -B -DskipTests package")、artifactPath(产物路径,如 "backend/target/*.jar"、"frontend/dist")。命令里的子目录要用分析里检测到的真实路径(如 backend/、frontend/)。
   - 档位 image:buildModel("dockerfile" 有 Dockerfile 否则 "toolchain")、dockerfilePath(检测到的 Dockerfile 路径,如 "backend/Dockerfile")、context(Dockerfile 所在目录,如 "backend");buildModel 为 "toolchain" 时同样必须给 buildEnvId 并填 buildCommand。pushImage 只在「只构建不推送」时才写 "false"。
 - deploy_ssh:artifactType("image"|"dist"|"jar"|"archive"|不填=按产物自动判断)、containerName(image 档位时据项目名取,如 "<proj>-app")、ports(如 "8080:8080")、strategy("recreate"|"rolling"|"blue-green")、deployPath(非 image 档位的发布目录)、restartCommand(非 image 档位的重启命令);serverId 留空(用户选目标机)。前端静态站点用同一类型:artifactType="dist" + strategy="rolling" + restartCommand="nginx -s reload"。健康门控写在本节点:healthProbe("http"|"command"|不填=不探测)、healthUrl(探测地址,据服务端口/框架填,Spring Boot 用 "http://localhost:<宿主端口>/actuator/health",其它用 "http://localhost:<端口>/healthz")、healthCommand(command 方式时在目标机跑的命令)、healthRetries(如 "10")、healthInterval(间隔秒,如 "3")、healthTimeout(单次超时秒)。
+- deploy_docker:以 docker 交付。**dockerMode 必填**,两选一:
+  - "run"(单容器):发的一定是上游构建出的镜像(artifactType 不用填),配 containerName(据项目名取,如 "<proj>-app")、ports(如 "8080:8080")、runArgs(可选,如 "--restart always");strategy 同 deploy_ssh。
+  - "compose":stackName(项目名,仅字母数字与 . _ -,不以 - 开头)+ 正文来源二选一:composeSource="repo" + composeFile(仓库里那份文件的相对路径,如 "docker-compose.yml" / "deploy/docker-compose.yml")—— **仓库里已有 compose 文件时用这个,正文随仓库演进,不用抄**;或 composeSource="paste"(缺省)+ composeYaml(整份正文,换行写成 \n,内容来自别处时用它)。仓库里有 docker-compose.yml 时优先 compose + composeSource="repo"。
+  两种方式都可选健康门控(healthProbe/healthUrl/healthCommand/healthRetries/healthInterval/healthTimeout,同上);serverId 留空(用户选目标机)。
+- deploy_k8s:交付到 Kubernetes 集群(平台直连集群 API,不选目标机)。**必填** clusterId(环境相关项,留空给用户选集群)与 workloadName;namespace 能据仓库清单推断就填(如清单里的 metadata.namespace),推不出就**留空** —— 留空表示用该平台集群登记里配的默认命名空间。workloadKind 填 "Deployment" 或 "StatefulSet"(缺省 Deployment);工作负载有多个容器时必须填 containerName(否则留空)。可选 rolloutTimeout(等滚完成的秒数,1..1800,缺省 300)。上游构建任务必须是档位 image。这类节点**不写** healthProbe/serverId/deployPath/strategy 等键(成败按集群滚动状态判定,只支持滚动)。注意它只**换已有工作负载的镜像**,不创建负载:仓库里有 Helm chart / 清单需要首次 apply 时,提示用户先在集群建好,再把这个节点当持续发版用。
 - script:同 build 的 file 档位那套键(buildEnvId/commands/artifactPath…)。
 - notify:titleTemplate/bodyTemplate(可用 {{project}} {{branch}} {{status}});channel 留空(用户选渠道)。
 - git_source:config 留空 {}。

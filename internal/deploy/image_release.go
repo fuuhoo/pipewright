@@ -87,6 +87,12 @@ func (s *service) stageImageOne(ctx context.Context, srv *target.Server, a run.A
 	if st.ref == "" {
 		return st, "image 产物缺少 reference(repo:tag 或镜像 id)", false
 	}
+	ctx, release, gerr := s.holdServer(ctx, srv.ID)
+	if gerr != nil {
+		return st, "等待目标机空闲时部署被中断:" + humanExecError(gerr), false
+	}
+	defer release()
+
 	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 
@@ -108,9 +114,17 @@ func (s *service) stageImageOne(ctx context.Context, srv *target.Server, a run.A
 // 或切后健康失败时,旧容器已被 rm,目标机被留在「无容器 / 坏容器」状态。现在与蓝绿一致:失败即回滚
 // 到上一镜像(首次部署无上一镜像可回滚则记 failed)。
 func (s *service) deployImageOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck, started time.Time) TargetResult {
+	res := TargetResult{ServerID: srv.ID, ServerName: srv.Name, StartedAt: started}
+	// 整段(拉取 → 切换 → 健康 → 必要时回滚)占住这台机:闸在计时起点之前拿,各步才拿得到满额度。
+	ctx, release, gerr := s.holdServer(ctx, srv.ID)
+	if gerr != nil {
+		return finishFailed(res, "等待目标机空闲时部署被中断:"+humanExecError(gerr))
+	}
+	defer release()
+
 	st, failMsg, ok := s.stageImageOne(ctx, srv, a, cfg)
 	if !ok {
-		return finishFailed(TargetResult{ServerID: srv.ID, ServerName: srv.Name, StartedAt: started}, failMsg)
+		return finishFailed(res, failMsg)
 	}
 	return s.activateImageOne(ctx, srv, a, hc, st, started, "")
 }
@@ -182,6 +196,16 @@ func (s *service) rollbackImage(ctx context.Context, srv *target.Server, res Tar
 
 // fleetRollbackImageOne 把一台「本机切换成功、但机群其它机失败」的容器回滚到上一镜像(蓝绿机群级原子性)。
 func (s *service) fleetRollbackImageOne(ctx context.Context, srv *target.Server, st imageState, res *TargetResult) {
+	ctx, release, gerr := s.holdServer(ctx, srv.ID)
+	if gerr != nil {
+		finish := time.Now().UTC()
+		res.Status = run.TargetRolledBack
+		res.FinishedAt = &finish
+		res.Message = "蓝绿:其它机切换失败,本机回滚被中断:" + humanExecError(gerr)
+		return
+	}
+	defer release()
+
 	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 	var rbErr error

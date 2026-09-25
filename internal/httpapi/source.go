@@ -275,6 +275,9 @@ func (d sourceDeps) resolveSourceContext(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return "", "", "", "", "", false
 	}
+	if !repoBound(w, proj) {
+		return "", "", "", "", "", false
+	}
 
 	ref = strings.TrimSpace(r.URL.Query().Get("ref"))
 	if ref == "" {

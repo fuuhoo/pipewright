@@ -25,6 +25,10 @@ export default {
   kpiHosts: 'Servers with containers',
   kpiStripAria: 'Container aggregate stats',
 
+  serverFilterLabel: 'Server',
+  serverFilterAria: 'Switch which server this page shows',
+  serverAll: 'All servers',
+
   filterAria: 'Filter containers by state',
   filterAll: 'All',
   filterRunning: 'Running',

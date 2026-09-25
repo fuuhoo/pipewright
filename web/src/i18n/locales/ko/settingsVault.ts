@@ -38,6 +38,7 @@ export default {
   typeSshPassword: 'SSH 비밀번호',
   typeRegistry: '레지스트리',
 
+  typeKubeconfig: 'Kubernetes 설정',
   maskTitle: '마스킹 값(편집에서 평문 보기 가능)',
   maskAria: '마스킹: {value}',
   never: '없음',
@@ -89,6 +90,9 @@ export default {
   valSecretRequired: '시크릿 내용을 입력하세요',
   secretOptionalEdit: '(비워 두면 교체하지 않음)',
   secretPlaceholderSshKey: '전체 개인 키(-----BEGIN/END----- 줄 포함)를 붙여넣으세요…',
+  fieldSecretKubeconfig: 'kubeconfig(YAML)',
+  secretPlaceholderKubeconfig: 'kubeconfig YAML 전체를 붙여넣으세요(apiVersion / clusters / users / contexts)…',
+  hintKubeconfig: '문서 전체를 암호화 보관하며 API 서버 접속 외에는 프로세스 밖으로 내보내지 않습니다. 문서 안의 데이터만 허용: certificate-authority-data + token 또는 client-certificate-data. exec 플러그인, auth-provider, 외부 키 파일은 거부됩니다.',
   secretPlaceholderKeep: '비워 두면 현재 시크릿을 유지합니다',
   secretPlaceholderSshPassword: 'SSH 로그인 비밀번호를 입력하세요…',
   secretPlaceholderToken: '토큰 내용을 붙여넣으세요…',

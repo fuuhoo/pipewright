@@ -4,7 +4,7 @@
 
   5 态由 run.status 驱动(同一 URL,运行生命周期内自然演进):
   · running       → SkeletonRunning  (穿珠时间线 + SSE + 日志占位)
-  · success       → SkeletonSuccess  (全绿时间线 + 零停机流程图 slot)
+  · success       → SkeletonSuccess  (全绿时间线 + 部署结果 slot)
   · failed        → SkeletonFailed   (失败节点 + AI 诊断 slot)
   · partial_failed → SkeletonPartial (targets 扇出 slot)
   · queued / rolled_back → SkeletonTerminal
@@ -149,17 +149,16 @@ const hcRetries = ref(3)
 const hcIntervalSeconds = ref(3)
 const hcTimeoutSeconds = ref(5)
 
-// ─── 零停机切换高级选项(Story 4-4 / FR-11)──────────────────────────────────
-// dist/jar 走「releases/<runId> + current 软链原子切换」;以下为可选高级覆盖,默认隐藏。
-// releaseBase:发布根目录 <base>(空 → 后端从 path 推导);keepReleases:额外保留旧发布份数。
+// ─── 部署目录 / 重启命令高级选项(Story 4-4)─────────────────────────────────
+// 文件类产物(dist/jar)直铺:产物内容就落在「部署目录」下,配了重启命令就在该目录执行。
 // 经既有 deployConfig map 透传,不改部署端点形状。
 const showAdvanced = ref(false)
-const releaseBase = ref('')
-const keepReleases = ref(1)
+const deployPath = ref('')
+const restartCommand = ref('')
 
 // ─── 部署策略(Story 8-8 / FR-8-8)──────────────────────────────────────────
 // rolling(默认)= 全机并行各自成败;canary = 先发金丝雀批次、健康通过才铺其余;
-// blue_green = 全机先就绪、统一切换、失败机群回滚(release 类产物 dist/jar)。
+// blue_green = 全机先铺好产物、再统一重启 + 健康(dist / jar)。
 // 金丝雀批量经 deployConfig.canaryCount 透传。
 const deployStrategy = ref<DeployStrategy>('rolling')
 const canaryCount = ref(1)
@@ -174,11 +173,10 @@ const deployStrategyOptions = computed<ReadonlyArray<{ value: DeployStrategy; la
 // buildDeployConfig 据高级选项收敛 deployConfig;空字段不传(后端取默认)。
 function buildDeployConfig(): Record<string, string> | undefined {
   const cfg: Record<string, string> = {}
-  const base = releaseBase.value.trim()
-  if (base) cfg.releaseBase = base
-  const keep = clampInt(keepReleases.value, 1, 50, 1)
-  // 仅在非默认(1)时下发,避免无谓字段。
-  if (keep !== 1) cfg.keepReleases = String(keep)
+  const dir = deployPath.value.trim()
+  if (dir) cfg.deployPath = dir
+  const rc = restartCommand.value.trim()
+  if (rc) cfg.restartCommand = rc
   // 首批量:canary / interactive 策略且 >1 时下发(默认 1 台)。
   if (deployStrategy.value === 'canary' || deployStrategy.value === 'interactive') {
     const n = clampInt(canaryCount.value, 1, 100, 1)
@@ -881,7 +879,7 @@ function nodeClass(status: StepStatus): string {
               SLOT: SSH 部署执行 (Story 4-2 / FR-10 实现)
               成功态填 run-detail 冻结 targets slot:部署入口(选产物 + 选服务器 + 触发)
               + 每机部署结果卡。命令 array 化经 SSH 执行(AC-SEC-02);message 绝无明文密钥。
-              零停机切换/回滚 = 4-4;多机扇出 = 4-5,不在本期。
+              文件产物直铺到部署目录 + 重启 + 健康门控;多机策略(滚动 / 金丝雀 / 蓝绿 / 交互)= 4-5 / 8-8。
               不扰终端(3-6)/诊断(7-2)/产物(3-4)slot。
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             -->
@@ -1046,7 +1044,7 @@ function nodeClass(status: StepStatus): string {
                   </p>
                 </div>
 
-                <!-- 零停机切换高级选项(Story 4-4):默认隐藏;dist/jar 走 releases + current 软链 -->
+                <!-- 部署目录 / 重启命令高级选项(Story 4-4):默认隐藏;产物直铺到部署目录 -->
                 <div class="deploy-field">
                   <button
                     type="button"
@@ -1067,18 +1065,24 @@ function nodeClass(status: StepStatus): string {
 
                   <div v-if="showAdvanced" class="adv-body">
                     <label class="adv-row">
-                      <span class="adv-key">{{ t('runDetail.releaseBase') }}</span>
+                      <span class="adv-key">{{ t('runDetail.deployPathLabel') }}</span>
                       <input
-                        v-model="releaseBase"
+                        v-model="deployPath"
                         class="deploy-select mono"
                         type="text"
-                        :placeholder="t('runDetail.releaseBasePlaceholder')"
-                        :aria-label="t('runDetail.releaseBase')"
+                        :placeholder="t('runDetail.deployPathPlaceholder')"
+                        :aria-label="t('runDetail.deployPathLabel')"
                       />
                     </label>
                     <label class="adv-row">
-                      <span class="adv-key">{{ t('runDetail.keepReleases') }}</span>
-                      <input v-model.number="keepReleases" class="hc-num" type="number" min="1" max="50" />
+                      <span class="adv-key">{{ t('runDetail.restartCommandLabel') }}</span>
+                      <input
+                        v-model="restartCommand"
+                        class="deploy-select mono"
+                        type="text"
+                        :placeholder="t('runDetail.restartCommandPlaceholder')"
+                        :aria-label="t('runDetail.restartCommandLabel')"
+                      />
                     </label>
                     <p class="adv-hint">
                       {{ t('runDetail.advancedHint') }}
@@ -2416,7 +2420,7 @@ function nodeClass(status: StepStatus): string {
   border-color: var(--color-primary);
 }
 
-/* ── 零停机发布高级选项(Story 4-4)──────────────────────────────────────── */
+/* ── 部署目录 / 重启命令高级选项(Story 4-4)──────────────────────────────── */
 .adv-toggle {
   display: inline-flex;
   align-items: center;

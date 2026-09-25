@@ -28,6 +28,40 @@ const dialTimeout = 10 * time.Second
 // 否则无法防 MITM。本机自测场景无 known_hosts,故暂放宽;切勿带此设置上生产。
 type sshDialer struct{}
 
+// PhaseTiming 是一次远程操作各阶段的耗时(只有时长,绝无地址 / 凭据)。
+//
+// 为什么要拆阶段:一条命令「60s 超时」有三种完全不同的病因 —— 连不上、握手慢、命令本身在目标机
+// 上跑不完。只报一句「部署执行超时」会把三者混成一个,查的人只能猜。
+type PhaseTiming struct {
+	Dial      time.Duration
+	Handshake time.Duration
+	Command   time.Duration
+}
+
+// String 输出可读阶段串(供日志一行说完)。
+func (p PhaseTiming) String() string {
+	return fmt.Sprintf("连接 %s / 握手 %s / 命令 %s",
+		p.Dial.Round(100*time.Millisecond), p.Handshake.Round(100*time.Millisecond), p.Command.Round(100*time.Millisecond))
+}
+
+// timedErr 给 ctx 错误(超时 / 取消)挂上阶段耗时;errors.Is/As 照常透过 Unwrap 命中。
+type timedErr struct {
+	err    error
+	timing PhaseTiming
+}
+
+func (e *timedErr) Error() string { return e.err.Error() }
+func (e *timedErr) Unwrap() error { return e.err }
+
+// PhaseTimingOf 取出错误里的阶段耗时;非本层带计时的错误 → ok=false。
+func PhaseTimingOf(err error) (PhaseTiming, bool) {
+	var te *timedErr
+	if errors.As(err, &te) {
+		return te.timing, true
+	}
+	return PhaseTiming{}, false
+}
+
 func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []string) (*ExecResult, error) {
 	auth, err := authMethods(cfg)
 	if err != nil {
@@ -42,18 +76,23 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 		Timeout:         resolveTimeout(ctx),
 	}
 
+	var timing PhaseTiming
 	// 经 net.Dialer 让 TCP 拨号也尊重 ctx 取消/超时。
+	t0 := time.Now()
 	d := net.Dialer{Timeout: clientCfg.Timeout}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%w", classifyDialErr(err))
 	}
+	timing.Dial = time.Since(t0)
 
+	t1 := time.Now()
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, clientCfg)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("%w", classifyHandshakeErr(err))
 	}
+	timing.Handshake = time.Since(t1)
 	client := ssh.NewClient(sshConn, chans, reqs)
 	defer func() { _ = client.Close() }()
 
@@ -68,7 +107,9 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 	session.Stderr = &stderr
 
 	// AC-SEC-02:array → 安全转义的单行命令(各参数 %q POSIX 转义),不让调用方拼 shell。
+	t2 := time.Now()
 	runErr := runWithContext(ctx, session, quoteArgs(cmd))
+	timing.Command = time.Since(t2)
 
 	res := &ExecResult{
 		Stdout: stdout.String(),
@@ -83,7 +124,7 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 			return res, nil
 		}
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
-			return nil, runErr
+			return nil, &timedErr{err: runErr, timing: timing}
 		}
 		return nil, fmt.Errorf("%w", ErrUnreachable)
 	}
@@ -105,15 +146,20 @@ func (sshDialer) RunWithStdin(ctx context.Context, addr string, cfg SSHConfig, c
 		Timeout:         resolveTimeout(ctx),
 	}
 	d := net.Dialer{Timeout: clientCfg.Timeout}
+	var timing PhaseTiming
+	t0 := time.Now()
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%w", classifyDialErr(err))
 	}
+	timing.Dial = time.Since(t0)
+	t1 := time.Now()
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, clientCfg)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("%w", classifyHandshakeErr(err))
 	}
+	timing.Handshake = time.Since(t1)
 	client := ssh.NewClient(sshConn, chans, reqs)
 	defer func() { _ = client.Close() }()
 
@@ -128,7 +174,10 @@ func (sshDialer) RunWithStdin(ctx context.Context, addr string, cfg SSHConfig, c
 	session.Stderr = &stderr
 	session.Stdin = stdin // 产物字节经 stdin 流式喂给远端 `cat > file`(无 argv 长度限)。
 
+	t2 := time.Now()
 	runErr := runWithContext(ctx, session, quoteArgs(cmd))
+	// 上传的 Command 阶段 = 传字节 + 远端落盘,它才是「大文件要多久」的真值。
+	timing.Command = time.Since(t2)
 	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if runErr != nil {
 		var exitErr *ssh.ExitError
@@ -137,7 +186,7 @@ func (sshDialer) RunWithStdin(ctx context.Context, addr string, cfg SSHConfig, c
 			return res, nil
 		}
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
-			return nil, runErr
+			return nil, &timedErr{err: runErr, timing: timing}
 		}
 		return nil, fmt.Errorf("%w", ErrUnreachable)
 	}
@@ -417,9 +466,12 @@ func resolveTimeout(ctx context.Context) time.Duration {
 }
 
 // classifyDialErr 把 TCP 拨号错误映射为干净领域错误(绝不含内部地址/栈)。
+//
+// 调用侧自己的 ctx 到期 / 被取消要原样上抛:它俩都不指向网络,把它报成「端口未开放」会把人引去
+// 查目标机的防火墙,而真实原因是这次操作没拿到时间。ctx 错误本身不含地址,不违背脱敏要求。
 func classifyDialErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return ErrUnreachable
+		return err
 	}
 	return ErrUnreachable
 }

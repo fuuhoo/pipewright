@@ -9,6 +9,7 @@ export default {
   navDnsProviders: 'Proveedores DNS',
   navAccount: 'Cuenta',
   navServers: 'Servidores',
+  navKubeClusters: 'Cústleres de Kubernetes',
   navDiagnosisStats: 'Comentarios de diagnóstico',
   navSystem: 'Sistema',
 

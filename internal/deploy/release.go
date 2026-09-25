@@ -1,34 +1,32 @@
 package deploy
 
-// release.go 实现「零停机切换 + 失败回滚」(FR-11 / FR-13;Story 4.4)。
+// release.go 实现文件类产物(dist / jar / archive)的**直铺发布**:
 //
-// dist / jar 类产物走「发布目录 + current 软链原子切换」模式(image 类型本期仍 docker run,
-// 零停机切换留后续):
+//	<部署路径>/
+//	  index.html  assets/ …   ← dist:制品库 tar.gz 就地解包
+//	  server-ny               ← 单文件产物:就地落盘
 //
-//	<base>/
-//	  releases/
-//	    <runId-1>/   ← 历史发布(回滚目标)
-//	    <runId-2>/   ← 本次发布
-//	  current  →  releases/<runId-2>   （软链;ln -sfn 原子替换,切换瞬时,零停机）
+// 不再套 `releases/<runId>` + `current` 软链:部署路径下就是产物本身,发完就能直接用。
+// 代价(明确取舍):切换非原子(有毫秒级窗口),且**没有**「一键回滚上一版」—— 要回到旧版
+// 就把那个版本再跑一遍流水线。带进程的服务靠 restartCommand 重启,健康检查失败该机记 failed。
+// image 类型不在此列(走容器编排 image_release.go,仍保留停旧起新 + 回滚上一镜像)。
 //
-// 流程(deployReleaseOne):
-//  1. 探测上一发布:readlink <base>/current(无 → 首次部署,无可回滚)。
-//  2. mkdir -p <base>/releases/<runId> → 把产物负载写入该发布目录。
-//  3. **原子切换** ln -sfn releases/<runId> <base>/current(幂等;切换瞬时)。
-//  4. (4-3 健康门控)切换之后跑健康探测:
-//       - 通过 → 该机 success(保留上一发布供回滚)+ keepReleases 清理旧发布。
-//       - 失败 + 有上一发布 → **回滚**:ln -sfn <上一发布> <base>/current + status=rolled_back + 人读 message。
-//       - 失败 + 无上一发布(首次)→ status=failed(无可回滚)+ 人读 message。
-//       - 回滚动作本身失败 → 仍记录 rolled_back + 人读(不 500;尽力回滚)。
+// 流程(deployFileOne = stageFileOne 紧接 activateFileOne;蓝绿策略跨机分这两阶段):
+//  1. 预备:mkdir -p <部署路径> → 把产物字节铺进去(**不重启、不探测**)。
+//  2. 激活:在部署目录跑 restartCommand(配了才跑)→ 健康门控 → success / failed。
 //
-// 全程命令 **array 化**([]string)经 target.Exec(AC-SEC-02 不拼 shell);切换 / 回滚命令幂等。
+// 单文件产物先落到部署目录内的临时名再 mv 到位:上传经 SSH 通道直写目标路径时,超时或断流
+// 会在部署目录里留下半个可执行文件(下一台机重启就直接跑到坏二进制)。同目录 rename 是原子的,
+// 消费方只会看到旧版或新版。dist 是「解包进目录」,天生非原子,只能保持就地合并。
+//
+// 全程命令 **array 化**([]string)经 target.Exec(AC-SEC-02 不拼 shell)。
 
 import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,17 +34,9 @@ import (
 	"github.com/huangchengsir/pipewright/internal/target"
 )
 
-// defaultKeepReleases 是未显式配置时保留的旧发布份数(FR-11:默认留上一版本 1 份)。
-// 注意:current 指向的「本次发布」始终保留;keepReleases 指的是 current 之外额外保留的旧发布数。
-const defaultKeepReleases = 1
-
-// maxKeepReleases 夹紧保留份数上限(防误配留太多撑爆磁盘)。
-const maxKeepReleases = 50
-
-// releaseModeArtifact 判定产物是否走「发布目录 + current 软链」零停机模式(含蓝绿/canary 编排)。
-// dist / jar / archive 走文件 release 模式(archive 与 dist 同形:制品库 tar.gz 远端解包 / 占位);
-// image 另走容器蓝绿(image_release.go,docker pull/swap/回滚)。
-func releaseModeArtifact(a run.Artifact) bool {
+// fileDeployArtifact 判定产物是否走「文件直铺」发布(dist / jar / archive 同形:
+// 制品库真字节上传 / 远端解包,或历史占位写入)。image 走容器路径,不在此列。
+func fileDeployArtifact(a run.Artifact) bool {
 	switch a.Type {
 	case run.ArtifactDist, run.ArtifactJar, run.ArtifactArchive:
 		return true
@@ -55,18 +45,15 @@ func releaseModeArtifact(a run.Artifact) bool {
 	}
 }
 
-// releaseBase 解析发布根目录(零停机切换的 <base>):
-//   - Config["releaseBase"] 显式优先;
-//   - 否则从 Config["path"](4-2 既有部署目录)推导;
-//   - 否则 defaultDeployRoot/<产物名净化>。
-//
-// release 模式下产物落 <base>/releases/<runId>,current 软链落 <base>/current。
-func releaseBase(a run.Artifact, cfg map[string]string) string {
-	if b := strings.TrimSpace(cfg["releaseBase"]); b != "" {
-		return b
-	}
-	if p := strings.TrimSpace(cfg["path"]); p != "" {
-		return p
+// deployTargetDir 解析产物直铺的目标目录:
+//   - Config["deployPath"] 优先(流水线部署节点的「部署路径」);
+//   - 兼容历史键 Config["path"] / Config["releaseBase"](手工部署面板与旧数据用过);
+//   - 都没有 → defaultDeployRoot/<产物名净化>。
+func deployTargetDir(a run.Artifact, cfg map[string]string) string {
+	for _, k := range []string{"deployPath", "path", "releaseBase"} {
+		if v := strings.TrimSpace(cfg[k]); v != "" {
+			return v
+		}
 	}
 	name := sanitizeName(a.Name)
 	if name == "" {
@@ -75,79 +62,62 @@ func releaseBase(a run.Artifact, cfg map[string]string) string {
 	return path.Join(defaultDeployRoot, name)
 }
 
-// keepReleases 归一并夹紧保留份数(<=0 → 默认 1;> 上限 → 上限)。
-func keepReleases(cfg map[string]string) int {
-	raw := strings.TrimSpace(cfg["keepReleases"])
-	if raw == "" {
-		return defaultKeepReleases
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return defaultKeepReleases
-	}
-	if n > maxKeepReleases {
-		return maxKeepReleases
-	}
-	return n
+// deployState 是「产物已铺好、尚未重启 / 探测」的一机中间态:stageFileOne 产出,
+// activateFileOne 消费。rolling / canary 走 deployFileOne(两阶段紧挨着跑);
+// 蓝绿才跨机分两阶段调度(先全机铺好,再全机重启 + 健康)。
+type deployState struct {
+	dir string // 产物直铺目录(= 部署路径)
 }
 
-// releaseState 是「发布目录就绪、尚未切换 current」的一机中间态(Story 8-8 蓝绿两阶段用)。
-// stageReleaseOne 产出;activateReleaseOne 消费(切换 + 健康 + 回滚)。rolling/canary 走
-// deployReleaseOne(= stage 紧接 activate,行为与拆分前字节级一致);蓝绿才分两阶段跨机编排。
-type releaseState struct {
-	releasesDir string // <base>/releases
-	current     string // <base>/current 软链路径
-	release     string // <base>/releases/<runId> 本次发布目录
-	prev        string // 上一发布绝对路径("" = 首次部署,无可回滚)
-}
-
-// deployReleaseOne 在一台目标机上执行「发布目录 + current 软链原子切换 + 健康门控 + 失败回滚」。
-// 仅在 releaseModeArtifact(a) 为真时被 deployOne 调用。执行错误**不上抛**:映射为 status=failed /
-// rolled_back + 人读 message(绝无明文密钥)。
-//
-// 实现 = stageReleaseOne(置发布目录,不切换)紧接 activateReleaseOne(原子切换 + 健康 + 回滚);
-// 行为与未拆分前完全一致(rolling/canary 单机路径)。蓝绿策略另行跨机分两阶段调度这两个原语。
-func (s *service) deployReleaseOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) TargetResult {
+// deployFileOne 在一台目标机上直铺文件产物 + 重启 + 健康门控。仅在 fileDeployArtifact(a)
+// 为真时被 deployOne 调用。执行错误**不上抛**:映射为 status=failed + 人读 message(绝无明文密钥)。
+func (s *service) deployFileOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) TargetResult {
 	started := time.Now().UTC()
 	res := TargetResult{ServerID: srv.ID, ServerName: srv.Name, StartedAt: started}
+	// 整段部署占住这台机:排队发生在任何计时起点之前,后面的 mkdir / 上传 / 落位才各自拿满额度。
+	ctx, release, gerr := s.holdServer(ctx, srv.ID)
+	if gerr != nil {
+		return finishFailed(res, "等待目标机空闲时部署被中断:"+humanExecError(gerr))
+	}
+	defer release()
 
-	st, failMsg, ok := s.stageReleaseOne(ctx, srv, a, cfg)
+	st, failMsg, ok := s.stageFileOne(ctx, srv, a, cfg)
 	if !ok {
 		return finishFailed(res, failMsg)
 	}
-	return s.activateReleaseOne(ctx, srv, a, cfg, hc, st, started)
+	return s.activateFileOne(ctx, srv, a, cfg, hc, st, started)
 }
 
-// stageReleaseOne 执行 release 模式的**预备阶段**:探测上一发布 + mkdir 发布目录 + 写入产物负载,
-// **不切换 current**(切换在 activateReleaseOne)。返回就绪中间态;放置失败 → (中间态, 人读 message, false)。
-// 拆出以支撑蓝绿「全机先就绪、再统一切换」(stage-all → cutover-all)。
-func (s *service) stageReleaseOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string) (releaseState, string, bool) {
-	base := releaseBase(a, cfg)
-	st := releaseState{
-		releasesDir: path.Join(base, "releases"),
-		current:     path.Join(base, "current"),
-		release:     path.Join(base, "releases", sanitizeRunID(a.RunID)),
+// stageFileOne 执行**预备阶段**:建目录 + 把产物铺进部署路径,**不重启、不探测**。
+// 铺失败 → (中间态, 人读 message, false)。
+func (s *service) stageFileOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string) (deployState, string, bool) {
+	st := deployState{dir: deployTargetDir(a, cfg)}
+
+	// 蓝绿是跨机分阶段调度的(这里铺、另一轮再激活),没有外层 deployFileOne 替它拿闸,
+	// 所以两阶段各自占位;从 deployFileOne 进来时 ctx 已带凭证 → 空操作,不会自己等自己。
+	ctx, release, gerr := s.holdServer(ctx, srv.ID)
+	if gerr != nil {
+		return st, "等待目标机空闲时部署被中断:" + humanExecError(gerr), false
 	}
-	file := path.Join(st.release, deployFileName(a))
+	defer release()
 
 	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 
-	// 1) 探测上一发布(readlink current);失败 / 无软链 → prev 为空(首次部署,无可回滚)。
-	st.prev = s.readCurrentRelease(execCtx, srv.ID, st.current)
-
-	// 2) 放置产物到发布目录。**制品库支撑的产物(Story 8-16)走「上传真字节」**;否则旧占位路径。
-	if isStoredArtifact(a) {
-		if failMsg, ok := s.stageStoredArtifact(execCtx, srv, a, st, file); !ok {
-			return st, failMsg, false
-		}
-		return st, "", true
+	if failMsg, ok := s.runStep(execCtx, srv.ID, [][]string{{"mkdir", "-p", st.dir}}); !ok {
+		return st, failMsg, false
 	}
 
-	// 旧路径(向后兼容:无制品库的历史产物)——把 reference 串当占位写入(非真字节)。
+	// 制品库支撑的产物走「上传真字节」(上传自己按体积计时,不共用上面那条命令的 60s);
+	// 否则历史占位路径(把 reference 串当内容写入)。
+	if isStoredArtifact(a) {
+		failMsg, ok := s.stageStoredArtifact(ctx, srv, a, st)
+		return st, failMsg, ok
+	}
+
+	file := path.Join(st.dir, deployFileName(a))
 	payload := base64.StdEncoding.EncodeToString([]byte(a.Reference + "\n"))
 	placeCmds := [][]string{
-		{"mkdir", "-p", st.release},
 		{"sh", "-c", `printf '%s' "$1" | base64 -d > "$0"`, file, payload},
 	}
 	if a.Type == run.ArtifactJar {
@@ -160,13 +130,13 @@ func (s *service) stageReleaseOne(ctx context.Context, srv *target.Server, a run
 	return st, "", true
 }
 
-// stageStoredArtifact 把制品库里的**真字节**落到目标机发布目录(Story 8-16):
-//   - jar  (format=file)  : 上传到 <release>/<filename>,再探 java -jar 启动命令。
-//   - dist (format=tar.gz): 上传 tar.gz → 远端解包到 <release> → 删临时包。
+// stageStoredArtifact 把制品库里的**真字节**直铺进部署目录:
+//   - format=tar.gz(dist):上传临时包 → 就地解包 → 删包(包内已是产物内容,不额外套层)。
+//   - 其余(jar / archive / 单文件):上传为部署目录内的临时名 → mv 到最终名。
 //
-// jarFile 是旧占位路径算出的目标文件路径(<release>/<deployFileName>);jar 沿用它,
-// dist 用 metadata 的 tar.gz 临时名。制品库未配 / 取字节失败 / 上传失败 → (人读 message, false)。
-func (s *service) stageStoredArtifact(ctx context.Context, srv *target.Server, a run.Artifact, st releaseState, jarFile string) (string, bool) {
+// 上传与命令各自计时:命令 60s 足够,几十 MB 的制品经 SFTP 不该被它掐断(uploadTimeout 按体积给)。
+// 制品库未配 / 取字节失败 / 上传失败 → (人读 message, false)。
+func (s *service) stageStoredArtifact(ctx context.Context, srv *target.Server, a run.Artifact, st deployState) (string, bool) {
 	if s.artStore == nil {
 		return "部署侧未配置制品库,无法取产物真字节(产物已归档但制品库不可用)", false
 	}
@@ -176,43 +146,153 @@ func (s *service) stageStoredArtifact(ctx context.Context, srv *target.Server, a
 	}
 	defer func() { _ = rc.Close() }()
 
-	// 先建发布目录(Upload 自身也会 mkdir 父目录,这里显式建一次,语义清晰)。
-	if failMsg, ok := s.runStep(ctx, srv.ID, [][]string{{"mkdir", "-p", st.release}}); !ok {
-		return failMsg, false
+	// 上传走 SFTP,不经命令回显,所以这里自己打一行:否则日志从 mkdir 直接跳到重启命令,
+	// 几十秒的传输在控制台上完全隐形,看不出「铺没铺、铺了多大」。
+	lg := cmdLogFrom(ctx)
+	size := ""
+	if a.SizeBytes > 0 {
+		size = fmt.Sprintf("(%s)", humanBytes(a.SizeBytes))
 	}
+
+	tmp := path.Join(st.dir, stagingName(a))
+	budget := uploadTimeout(a.SizeBytes)
+	// 体积算出来的额度只是**上限**;上级 ctx 更紧就得照它来,否则日志里写着「上限 5m36s」、实际
+	// 100s 就被掐,查起来两头对不上账。
+	if dl, ok := ctx.Deadline(); ok {
+		if left := time.Until(dl); left > 0 && left < budget {
+			budget = left
+		}
+	}
+	upCtx, cancelUpload := context.WithTimeout(ctx, budget)
+	defer cancelUpload()
 
 	switch artifactFormat(a) {
 	case "tar.gz":
-		// dist:上传 tar.gz → 远端解包 → 删包。
-		tarPath := path.Join(st.release, ".pw-artifact.tar.gz")
-		if err := s.targets.Upload(ctx, srv.ID, rc, tarPath); err != nil {
+		lg(cmdStreamStdout, fmt.Sprintf("· 上传 %s%s → %s(上限 %s,目录将就地解包,不删目录内其它文件)",
+			a.Name, size, st.dir, budget))
+		if err := s.upload(upCtx, srv.ID, rc, tmp); err != nil {
+			s.dropStaging(ctx, srv, tmp)
 			return "上传 dist 制品到目标机失败:" + humanExecError(err), false
 		}
-		unpack := [][]string{
-			{"tar", "-xzf", tarPath, "-C", st.release},
-			{"rm", "-f", tarPath},
-		}
-		if failMsg, ok := s.runStep(ctx, srv.ID, unpack); !ok {
+		if failMsg, ok := s.runStagedCmd(ctx, srv, [][]string{
+			{"tar", "-xzf", tmp, "-C", st.dir},
+			{"rm", "-f", tmp},
+		}); !ok {
+			s.dropStaging(ctx, srv, tmp)
 			return "目标机解包 dist 失败:" + failMsg, false
 		}
 		return "", true
 
 	default:
-		// jar / 其它单文件:上传到目标文件路径。
-		dest := jarFile
-		if name := artifactFilename(a); name != "" {
-			dest = path.Join(st.release, name)
+		name := artifactFilename(a)
+		if name == "" {
+			name = deployFileName(a)
 		}
-		if err := s.targets.Upload(ctx, srv.ID, rc, dest); err != nil {
-			return "上传 jar 制品到目标机失败:" + humanExecError(err), false
+		dest := path.Join(st.dir, name)
+		lg(cmdStreamStdout, fmt.Sprintf("· 上传 %s%s → %s(上限 %s,传完原子改名到位)",
+			a.Name, size, dest, budget))
+		if err := s.upload(upCtx, srv.ID, rc, tmp); err != nil {
+			s.dropStaging(ctx, srv, tmp)
+			return "上传制品到目标机失败:" + humanExecError(err), false
+		}
+		if failMsg, ok := s.runStagedCmd(ctx, srv, [][]string{{"mv", "-f", tmp, dest}}); !ok {
+			s.dropStaging(ctx, srv, tmp)
+			return "制品落位失败:" + failMsg, false
 		}
 		if a.Type == run.ArtifactJar {
-			if failMsg, ok := s.runStep(ctx, srv.ID, [][]string{{"java", "-jar", dest, "--version"}}); !ok {
+			if failMsg, ok := s.runStagedCmd(ctx, srv, [][]string{{"java", "-jar", dest, "--version"}}); !ok {
 				return failMsg, false
 			}
 		}
 		return "", true
 	}
+}
+
+// runStagedCmd 跑一步命令类步骤,60s 额度从**此刻**起算。上传与命令绝不能共用一个计时起点:
+// 68MB 传完已近 90s,若命令与上传同时开始,落位那条 mv 一上手拿到的就是过期 ctx,直接判「部署执行
+// 超时」—— 传对了却报失败,比慢更糟。
+//
+// 上级 ctx 若自带更紧的 deadline,`WithTimeout` 会被它掐住(取两者较早者),报出来的还是同一句
+// 「部署执行超时」,查不出是谁的超时。所以剩余额度不足 60s 时把这行说出来:健康运行里它不响,
+// 一旦响就是「命令没拿到自己的额度」,方向立刻从目标机转回调用侧给的预算。
+func (s *service) runStagedCmd(ctx context.Context, srv *target.Server, cmds [][]string) (string, bool) {
+	if dl, ok := ctx.Deadline(); ok {
+		if left := time.Until(dl); left < execTimeout {
+			cmdLogFrom(ctx)(cmdStreamStdout, fmt.Sprintf("· 落位命令只拿到上级剩余预算 %s(本步本可要用 %s)",
+				left.Round(100*time.Millisecond), execTimeout))
+		}
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
+	failMsg, ok := s.runStep(cmdCtx, srv.ID, cmds)
+	if ok {
+		return "", true
+	}
+	// 本级额度没走完就失败 = 上级 ctx 到期,那句「部署执行超时」指的是流水线给的预算,不是目标机慢。
+	if ctx.Err() != nil {
+		return failMsg + "(上级预算已用尽,非目标机执行慢)", false
+	}
+	return failMsg, false
+}
+
+// upload 走与 exec 同一把「同机串行」闸(见 gate.go):上传是占用 SSH 最久的一步,让它和命令
+// 抢同一个执行权,才不会出现两条流互相把对方饿到 ctx 超时。
+func (s *service) upload(ctx context.Context, serverID string, content io.Reader, remotePath string) error {
+	unlock, err := s.occupy(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	lg := cmdLogFrom(ctx)
+	started := time.Now()
+	if err := s.targets.Upload(ctx, serverID, content, remotePath); err != nil {
+		lg(cmdStreamStderr, "  ✗ "+humanExecError(err)+phaseSuffix(err, started))
+		return err
+	}
+	// 上传成功也要留耗时:几十 MB 的产物在路上花掉半分钟是常态,日志里没有它,
+	// 下一步的等待就又会被读成「目标机卡住了」。
+	lg(cmdStreamStdout, fmt.Sprintf("  · 上传完成,用时 %s", time.Since(started).Round(100*time.Millisecond)))
+	return nil
+}
+
+// uploadTimeout 按产物体积给上传留时间:保底 60s,此后每 MB 再加 4s(约 250KB/s 的下限带宽
+// 预算),上限 15 分钟。体积未知(旧数据没记 sizeBytes)直接给上限 —— 宁可慢判失败,也别把
+// 一次正常的大文件传输判成超时。
+func uploadTimeout(sizeBytes int64) time.Duration {
+	const (
+		base    = 60 * time.Second
+		perMB   = 4 * time.Second
+		ceiling = 15 * time.Minute
+	)
+	if sizeBytes <= 0 {
+		return ceiling
+	}
+	d := base + time.Duration(sizeBytes/(1<<20)+1)*perMB
+	if d > ceiling {
+		return ceiling
+	}
+	return d
+}
+
+// stagingName 是部署目录内的临时落位名:带产物指纹与纳秒,使同目录上的并行部署不会互相覆盖,
+// 也不会撞上上一次失败留下的同名文件。
+func stagingName(a run.Artifact) string {
+	id := strings.TrimSpace(a.Reference)
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	if id == "" {
+		id = "anon"
+	}
+	return fmt.Sprintf(".pw-staging-%s-%d", sanitizeName(id), time.Now().UnixNano())
+}
+
+// dropStaging 尽力清掉失败留下的临时名(别在部署目录里攒垃圾)。失败一律忽略:此刻连接很可能
+// 已经断了,而真正的失败原因已经回报给用户,不该被清理动作盖掉。
+func (s *service) dropStaging(ctx context.Context, srv *target.Server, tmp string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), execTimeout)
+	defer cancel()
+	_, _ = s.exec(cleanupCtx, srv.ID, []string{"rm", "-f", tmp})
 }
 
 // isStoredArtifact 报告产物是否由制品库归档(metadata.stored=true → 部署取真字节)。
@@ -229,7 +309,7 @@ func artifactFormat(a run.Artifact) string {
 	return "file"
 }
 
-// artifactFilename 取产物原始文件名(jar 部署落盘名;缺省空)。
+// artifactFilename 取产物原始文件名(直铺时的落盘名;缺省空)。
 func artifactFilename(a run.Artifact) string {
 	if n, ok := a.Metadata["filename"].(string); ok {
 		return n
@@ -237,145 +317,48 @@ func artifactFilename(a run.Artifact) string {
 	return ""
 }
 
-// activateReleaseOne 执行 release 模式的**切换阶段**:原子切换 current → 本次发布 + 切后健康门控 +
-// 失败回滚 + 旧发布清理。消费 stageReleaseOne 产出的就绪中间态。started 透传以保留单机起始时刻。
-func (s *service) activateReleaseOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck, st releaseState, started time.Time) TargetResult {
+// activateFileOne 执行**激活阶段**:在部署目录跑 restartCommand(配了才跑)→ 健康门控 →
+// success / failed。started 透传以保留单机起始时刻。
+//
+// 直铺没有「上一版本」可切回,所以健康失败就是 failed(人读里说清原因与如何回退)。
+func (s *service) activateFileOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck, st deployState, started time.Time) TargetResult {
 	res := TargetResult{ServerID: srv.ID, ServerName: srv.Name, StartedAt: started}
+
+	ctx, release, gerr := s.holdServer(ctx, srv.ID)
+	if gerr != nil {
+		return finishFailed(res, "等待目标机空闲时部署被中断:"+humanExecError(gerr))
+	}
+	defer release()
 
 	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 
-	// 3) **真·原子**切换 current 软链 → 本次发布(code-review P2)。
-	// `ln -sfn` 在 current 已存在时是 unlink+symlink 两步,中间有 current 不存在的窗口(并发请求 404),
-	// 破坏「零停机」。改为「ln 到临时名 + `mv -T` 原子 rename」:rename(2) 是 POSIX 原子,无窗口。
-	if failMsg, ok := s.runStep(execCtx, srv.ID, atomicSymlinkCmds(st.release, st.current)); !ok {
-		return finishFailed(res, failMsg)
-	}
-
-	// 3.5) 切换后执行「重启 / 切换命令」(支持多行;在 current 目录下跑,$0=current 经位置参传入防注入)。
-	// 多行 = set -e 单脚本逐行执行(与自定义脚本节点同语义)。失败 → 回滚(有上一发布时),与健康失败一致。
 	if rc := strings.TrimSpace(cfg["restartCommand"]); rc != "" {
 		script := "cd \"$0\" && set -e\n" + rc
-		if failMsg, ok := s.runStep(execCtx, srv.ID, [][]string{{"sh", "-c", script, st.current}}); !ok {
-			return s.rollback(execCtx, srv, res, st.current, st.prev, st.release, "重启/切换命令失败:"+failMsg)
+		if failMsg, ok := s.runStep(execCtx, srv.ID, [][]string{{"sh", "-c", script, st.dir}}); !ok {
+			return finishFailed(res, "重启/切换命令失败:"+failMsg)
 		}
 	}
 
-	// 4) 切换之后跑健康门控(4-3);失败触发回滚。
 	if hc.enabled() {
 		if herr := s.runHealthCheck(execCtx, srv.ID, hc); herr != nil {
-			return s.rollback(execCtx, srv, res, st.current, st.prev, st.release, herr.Error())
+			return finishFailed(res, fmt.Sprintf("健康检查失败(直铺模式无上一版本可回滚,该机已停在本次发布):%s", herr.Error()))
 		}
 	}
-
-	// 5) 成功(健康通过或未配置健康检查)→ 清理超 keepReleases 的旧发布(尽力;失败不影响成功态)。
-	keep := keepReleases(cfg)
-	s.pruneReleases(execCtx, srv.ID, st.releasesDir, sanitizeRunID(a.RunID), st.prev, keep)
 
 	finish := time.Now().UTC()
 	res.Status = run.TargetSuccess
 	if hc.enabled() {
-		res.Message = fmt.Sprintf("%s 零停机部署完成 → current → %s(健康检查通过)", a.Type, st.release)
+		res.Message = fmt.Sprintf("%s 部署完成 → %s(健康检查通过)", a.Type, st.dir)
 	} else {
-		res.Message = fmt.Sprintf("%s 零停机部署完成 → current → %s", a.Type, st.release)
+		res.Message = fmt.Sprintf("%s 部署完成 → %s", a.Type, st.dir)
 	}
 	res.FinishedAt = &finish
 	return res
-}
-
-// rollback 在健康门控失败后回滚 current 软链到上一发布。
-//   - 有上一发布:ln -sfn <上一发布> current → status=rolled_back + 人读(说明回滚到哪个 release)。
-//     回滚命令本身失败 → 仍记 rolled_back(尽力回滚)+ 人读说明回滚未确认(不 500)。
-//   - 无上一发布(首次部署):无可回滚 → status=failed + 人读。
-func (s *service) rollback(ctx context.Context, srv *target.Server, res TargetResult, current, prev, release, healthMsg string) TargetResult {
-	finish := time.Now().UTC()
-	res.FinishedAt = &finish
-
-	if prev == "" {
-		// 首次部署 + 健康失败 → 无可回滚。坏版本已在 current,但无上一可切;记 failed 人读。
-		res.Status = run.TargetFailed
-		res.Message = fmt.Sprintf("健康检查失败且无上一发布可回滚(首次部署):%s", healthMsg)
-		return res
-	}
-
-	// 回滚:把 current 软链原子切回上一发布(code-review P2:同样 ln tmp + mv -T,避免回滚窗口)。
-	var rbErr error
-	for _, cmd := range atomicSymlinkCmds(prev, current) {
-		if _, e := s.exec(ctx, srv.ID, cmd); e != nil {
-			rbErr = e
-			break
-		}
-	}
-	res.Status = run.TargetRolledBack
-	prevName := path.Base(prev)
-	if rbErr != nil {
-		// 回滚动作本身失败:仍记 rolled_back(语义:意图回滚),人读说明回滚未确认。
-		res.Message = fmt.Sprintf("健康检查失败,已尝试回滚 current → 上一发布 %s,但回滚命令执行失败:%s(健康原因:%s)",
-			prevName, humanExecError(rbErr), healthMsg)
-		return res
-	}
-	res.Message = fmt.Sprintf("健康检查失败,已回滚 current → 上一发布 %s(失败发布 %s 保留供排查;健康原因:%s)",
-		prevName, path.Base(release), healthMsg)
-	return res
-}
-
-// readCurrentRelease 经 readlink 读 current 软链指向的发布绝对路径(无软链 / 读失败 → "")。
-// 用于回滚目标探测;首次部署时 current 不存在 → 返回 ""(无可回滚)。
-func (s *service) readCurrentRelease(ctx context.Context, serverID, current string) string {
-	out, err := s.exec(ctx, serverID, []string{"readlink", current})
-	if err != nil || out == nil || out.ExitCode != 0 {
-		return ""
-	}
-	link := strings.TrimSpace(out.Stdout)
-	if link == "" {
-		return ""
-	}
-	// readlink 可能返回相对路径(ln -sfn 用绝对则为绝对);归一为绝对(相对则挂回 current 所在目录)。
-	if !path.IsAbs(link) {
-		link = path.Join(path.Dir(current), link)
-	}
-	return link
-}
-
-// pruneReleases 清理 releasesDir 下超出 keepReleases 的旧发布(尽力;失败不影响成功态)。
-// 保留:当前发布(curRunID)+ 上一发布(prev,回滚目标)+ 最近 keep-1 个其它发布。
-// 用 find + sort 经单条 array 化 sh -c(脚本体为固定模板,目录 / 保留名作位置参数传入,不拼 shell)。
-func (s *service) pruneReleases(ctx context.Context, serverID, releasesDir, curRunID, prev string, keep int) {
-	prevName := ""
-	if prev != "" {
-		prevName = path.Base(prev)
-	}
-	// 固定脚本:列 releasesDir 下直接子目录(按 mtime 新→旧),跳过 current 与 prev,
-	// 保留前 keep 个,其余 rm -rf。目录 / 保留名 / keep 作位置参数($0..$3),绝不拼进脚本体。
-	// code-review P3:`for d in $(ls)` 默认按空白词分裂 + 路径名展开(glob)→ 含空格/`*` 的目录会
-	// 拆错或 `rm -rf` 误删。`set -f` 禁 glob + `IFS=换行` 只按行分(不拆空格),且 for(非管道)保留 n 计数。
-	script := `dir="$0"; keep="$1"; cur="$2"; prev="$3"; ` +
-		`[ -d "$dir" ] || exit 0; ` +
-		"set -f; IFS='\n'; n=0; " +
-		`for d in $(ls -1t "$dir" 2>/dev/null); do ` +
-		`  [ -d "$dir/$d" ] || continue; ` +
-		`  if [ "$d" = "$cur" ] || [ "$d" = "$prev" ]; then continue; fi; ` +
-		`  n=$((n+1)); ` +
-		`  if [ "$n" -gt "$keep" ]; then rm -rf "$dir/$d"; fi; ` +
-		`done`
-	_, _ = s.exec(ctx, serverID, []string{
-		"sh", "-c", script, releasesDir, strconv.Itoa(keep), curRunID, prevName,
-	})
-}
-
-// atomicSymlinkCmds 返回「原子替换软链 link → target」的命令序列(code-review P2):
-// `ln -sfn target link.tmp`(新建临时软链,不碰 link)+ `mv -T link.tmp link`(rename 原子替换,
-// `-T` 防 link 为目录软链时把 tmp 移进目标目录)。避免 `ln -sfn` 直接覆盖的 unlink+symlink 窗口。
-func atomicSymlinkCmds(target, link string) [][]string {
-	tmp := link + ".tmp"
-	return [][]string{
-		{"ln", "-sfn", target, tmp},
-		{"mv", "-T", tmp, link},
-	}
 }
 
 // runStep 顺序执行一组 array 命令;任一执行错误 / 非零退出 → 返回 (人读 message, false)。
-// 全部成功 → ("", true)。供 deployReleaseOne 的放置 / 切换阶段复用。
+// 全部成功 → ("", true)。供直铺的放置 / 激活阶段复用。
 func (s *service) runStep(ctx context.Context, serverID string, cmds [][]string) (string, bool) {
 	for _, cmd := range cmds {
 		out, eerr := s.exec(ctx, serverID, cmd)
@@ -398,12 +381,44 @@ func finishFailed(res TargetResult, msg string) TargetResult {
 	return res
 }
 
-// sanitizeRunID 把 runId 净化为安全发布目录段(仅字母数字 . _ -;其余替为 _)。
-// 复用 sanitizeName 规则;runId 通常是 uuid,净化为防御性措施。
-func sanitizeRunID(id string) string {
-	s := sanitizeName(strings.TrimSpace(id))
-	if s == "" {
-		s = "release"
+// humanBytes 把字节数收成可读串(上传回显用;够表达量级即可)。
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
 	}
-	return s
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// defaultDeployRoot 是未指定部署路径时的兜底根目录(本机真验友好:用临时区,不需 root)。
+const defaultDeployRoot = "/tmp/pipewright-deploy"
+
+// deployFileName 取产物落地文件名(reference 的 base 名;无则用净化产物名 + .bin)。
+func deployFileName(a run.Artifact) string {
+	base := path.Base(strings.TrimRight(a.Reference, "/"))
+	base = sanitizeName(base)
+	if base == "" || base == "." {
+		base = sanitizeName(a.Name) + ".bin"
+	}
+	return base
+}
+
+// sanitizeName 把名字净化为安全路径段(仅字母数字 . _ -;其余替为 _)。
+func sanitizeName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }

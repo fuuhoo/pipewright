@@ -182,6 +182,7 @@ const typeLabels = computed<Record<CredentialType, string>>(() => ({
   ssh_key: t('settingsVault.typeSshKey'),
   ssh_password: t('settingsVault.typeSshPassword'),
   registry: t('settingsVault.typeRegistry'),
+  kubeconfig: t('settingsVault.typeKubeconfig'),
 }))
 
 const idleCount = computed(
@@ -212,6 +213,7 @@ const secretLabel = computed(() => {
   if (form.value.type === 'git_http') return t('settingsVault.fieldSecretGitHttp')
   if (form.value.type === 'git_ssh') return t('settingsVault.fieldSecretGitSSH')
   if (form.value.type === 'registry') return t('settingsVault.fieldSecretRegistry')
+  if (form.value.type === 'kubeconfig') return t('settingsVault.fieldSecretKubeconfig')
   return t('settingsVault.fieldSecret')
 })
 const secretPlaceholder = computed(() => {
@@ -220,7 +222,17 @@ const secretPlaceholder = computed(() => {
     case 'ssh_password': return t('settingsVault.secretPlaceholderSshPassword')
     case 'git_http': return t('settingsVault.secretPlaceholderGitHttp')
     case 'registry': return t('settingsVault.secretPlaceholderRegistry')
+    case 'kubeconfig': return t('settingsVault.secretPlaceholderKubeconfig')
     default: return t('settingsVault.secretPlaceholderToken')
+  }
+})
+// 多行私钥/文档类凭据(PEM、kubeconfig)共用这块 textarea,占位文案按类型分岔。
+const secretTextareaPlaceholder = computed(() => {
+  if (modalMode.value === 'edit') return t('settingsVault.secretPlaceholderKeep')
+  switch (form.value.type) {
+    case 'kubeconfig': return t('settingsVault.secretPlaceholderKubeconfig')
+    case 'git_ssh': return t('settingsVault.secretPlaceholderGitSSH')
+    default: return t('settingsVault.secretPlaceholderSshKey')
   }
 })
 const secretHint = computed(() => {
@@ -229,6 +241,7 @@ const secretHint = computed(() => {
     case 'git_http': return t('settingsVault.hintGitHttp')
     case 'git_ssh': return t('settingsVault.hintGitSSH')
     case 'registry': return t('settingsVault.hintRegistrySecret')
+    case 'kubeconfig': return t('settingsVault.hintKubeconfig')
     default: return t('settingsVault.hintSecret')
   }
 })
@@ -571,6 +584,11 @@ async function toggleEditReveal(): Promise<void> {
               <rect x="4" y="11" width="16" height="9" rx="2"/>
               <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
             </svg>
+            <!-- kubeconfig(集群:六边形 helm 轮廓) -->
+            <svg v-else-if="cred.type === 'kubeconfig'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+              <path d="M12 2.5 20 7v10l-8 4.5L4 17V7z"/>
+              <path d="M12 8v8M8.5 10.5 12 8l3.5 2.5"/>
+            </svg>
             <!-- registry -->
             <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
               <rect x="3" y="3" width="8" height="8" rx="1"/>
@@ -726,7 +744,7 @@ async function toggleEditReveal(): Promise<void> {
             <label class="field-label" for="cred-type">{{ t('settingsVault.fieldType') }}</label>
             <div class="segmented" role="group" :aria-label="t('settingsVault.credentialTypeAria')">
               <button
-                v-for="opt in (['git_token', 'git_http', 'git_ssh', 'ssh_key', 'ssh_password', 'registry'] as CredentialType[])"
+                v-for="opt in (['git_token', 'git_http', 'git_ssh', 'ssh_key', 'ssh_password', 'registry', 'kubeconfig'] as CredentialType[])"
                 :key="opt"
                 type="button"
                 class="seg-item"
@@ -812,13 +830,13 @@ async function toggleEditReveal(): Promise<void> {
                  → 私钥结构破坏、ssh.ParsePrivateKey 失败「凭据不是可用的 SSH 私钥」。令牌/镜像仓库仍用
                  password input(单行密文 + 掩码输入)。 -->
             <textarea
-              v-if="form.type === 'ssh_key' || form.type === 'git_ssh'"
+              v-if="form.type === 'ssh_key' || form.type === 'git_ssh' || form.type === 'kubeconfig'"
               id="cred-secret"
               v-model="form.secret"
               class="field-input field-input--mono"
               :class="{ 'field-input--error': formErrors.secret }"
               rows="8"
-              :placeholder="modalMode === 'add' ? (form.type === 'git_ssh' ? t('settingsVault.secretPlaceholderGitSSH') : t('settingsVault.secretPlaceholderSshKey')) : t('settingsVault.secretPlaceholderKeep')"
+              :placeholder="secretTextareaPlaceholder"
               :disabled="formSubmitting"
               :aria-invalid="formErrors.secret ? 'true' : undefined"
               :aria-describedby="formErrors.secret ? 'cred-secret-err' : undefined"

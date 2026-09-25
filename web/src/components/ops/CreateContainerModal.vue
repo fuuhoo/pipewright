@@ -1,14 +1,17 @@
 <script setup lang="ts">
 /*
-  CreateContainerModal.vue — 新增容器(docker run -d)。
-  表单收集镜像/名/端口/env/卷/重启/命令 → POST /api/servers/:id/containers。
+  CreateContainerModal.vue — 新增容器,两种起法:
+  ① 单个容器:表单收集镜像/名/端口/env/卷/重启/命令 → POST /api/servers/:id/containers(docker run -d)。
+  ② Compose:粘贴 docker-compose.yml → POST /api/servers/:id/stacks/deploy(受管目录 + compose up -d),
+     与卡片 Stacks 页签里那套部署走同一个接口。
   端口/env/卷用多行文本框(一行一条),空行忽略。后端严格白名单校验,绝不拼 shell。
 */
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { createContainer, type CreateContainerInput, type RestartPolicy } from '../../api/containers'
+import { createContainer, deployStack, type CreateContainerInput, type RestartPolicy } from '../../api/containers'
 import { suggestCommand } from '../../api/aiOps'
 import { parseDockerRun } from '../../lib/dockerRun'
+import { composeIssue, composeProjectName, composeServiceNames, stackNameIssue } from '../../lib/composePaste'
 import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
 
@@ -22,6 +25,9 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'created', serverId: string):
 const { t } = useI18n()
 const toast = useToast()
 
+type CreateMode = 'run' | 'compose'
+const mode = ref<CreateMode>('run')
+
 const serverId = ref(props.servers[0]?.id ?? '')
 const image = ref('')
 const name = ref('')
@@ -30,6 +36,10 @@ const envText = ref('')
 const volumesText = ref('')
 const restart = ref<RestartPolicy>('unless-stopped')
 const command = ref('')
+
+// Compose 模式
+const composeName = ref('')
+const composeYaml = ref('')
 
 const submitting = ref(false)
 const banner = ref('')
@@ -82,7 +92,37 @@ const RESTART_OPTIONS = computed<{ value: RestartPolicy; label: string }[]>(() =
   { value: 'on-failure', label: t('opsContainer.create.restartOnFailure') },
 ])
 
-const canSubmit = computed(() => serverId.value !== '' && image.value.trim() !== '' && !submitting.value)
+const canSubmit = computed(() => {
+  if (submitting.value || serverId.value === '') return false
+  if (mode.value === 'run') return image.value.trim() !== ''
+  return stackNameIssue(composeName.value) === '' && composeIssue(composeYaml.value) === ''
+})
+
+// Compose 模式的实时反馈:项目名与正文沿用后端那套硬约束,服务摘要按缩进猜,只当提示。
+const nameError = computed(() => {
+  const issue = stackNameIssue(composeName.value)
+  if (issue === 'tooLong') return t('opsContainer.create.composeNameTooLong')
+  if (issue === 'illegal') return t('opsContainer.create.composeNameIllegal')
+  return ''
+})
+const yamlError = computed(() => (composeIssue(composeYaml.value) === 'tooLarge' ? t('opsContainer.create.composeTooLarge') : ''))
+const composeServices = computed(() => composeServiceNames(composeYaml.value))
+/** 服务名摘要只当「粘全了没」的回显:能不能起、起几个由 compose 自己判定。 */
+const composeSummary = computed(() => {
+  if (!composeYaml.value.trim()) return ''
+  if (composeServices.value.length === 0) return t('opsContainer.create.composeNoServices')
+  return t('opsContainer.create.composeServices', { n: composeServices.value.length, names: composeServices.value.join(', ') })
+})
+
+const submitLabel = computed(() => {
+  if (mode.value === 'compose') return submitting.value ? t('opsContainer.create.composeDeploying') : t('opsContainer.create.composeDeploy')
+  return submitting.value ? t('opsContainer.create.creating') : t('opsContainer.create.createRun')
+})
+
+/** 粘贴完就把 compose 自带的顶层 name 挪进项目名框(手填过的不覆盖)。 */
+function onComposeYamlInput(): void {
+  if (!composeName.value.trim()) composeName.value = composeProjectName(composeYaml.value)
+}
 
 /** 多行文本 → 去空行、去首尾空白的数组。 */
 function linesToArray(text: string): string[] {
@@ -94,6 +134,7 @@ function linesToArray(text: string): string[] {
 
 async function submit(): Promise<void> {
   if (!canSubmit.value) return
+  if (mode.value === 'compose') return submitCompose()
   banner.value = ''
   submitting.value = true
   const input: CreateContainerInput = {
@@ -123,6 +164,36 @@ async function submit(): Promise<void> {
     submitting.value = false
   }
 }
+
+/** 部署 Compose:后端 mkdir → 写 compose 文件 → compose up -d,可能拉镜像,耗时按分钟计。 */async function submitCompose(): Promise<void> {
+  if (!canSubmit.value) return
+  banner.value = ''
+  submitting.value = true
+  const project = composeName.value.trim()
+  try {
+    const res = await deployStack(serverId.value, project, composeYaml.value)
+    if (res.ok) {
+      toast.success(t('opsContainer.create.composeDeployed'), { detail: project })
+      emit('created', serverId.value)
+      emit('close')
+      return
+    }
+    banner.value = res.error || t('opsContainer.create.composeDeployFailed')
+  } catch (err) {
+    banner.value =
+      err instanceof HttpError
+        ? (err.apiError?.message ?? t('opsContainer.create.composeDeployStatus', { status: err.status }))
+        : t('opsContainer.create.composeDeployFailed')
+  } finally {
+    submitting.value = false
+  }
+}
+
+function switchMode(next: CreateMode): void {
+  if (mode.value === next || submitting.value) return
+  mode.value = next
+  banner.value = ''
+}
 </script>
 
 <template>
@@ -136,74 +207,131 @@ async function submit(): Promise<void> {
       <div class="modal__body">
         <p v-if="banner" class="form-banner">⚠ {{ banner }}</p>
 
-        <!-- AI 生成:中文描述 → 自动填表 -->
-        <div class="ai-gen">
-          <span class="ai-gen__spark">✦</span>
-          <input
-            v-model="aiNl"
-            class="ai-gen__in"
-            :placeholder="t('opsContainer.create.aiPlaceholder')"
-            @keyup.enter="aiGenerate"
-          />
-          <button class="ai-gen__btn" :disabled="aiBusy || !aiNl.trim()" @click="aiGenerate">
-            {{ aiBusy ? t('opsContainer.create.generating') : t('opsContainer.create.aiGenerate') }}
+        <!-- 起法切换:单个容器走 docker run,多服务走贴 compose -->
+        <div class="mode-seg" role="group" :aria-label="t('opsContainer.create.modeAria')">
+          <button
+            class="mode-seg__btn"
+            :class="{ 'mode-seg__btn--active': mode === 'run' }"
+            :aria-pressed="mode === 'run'"
+            :disabled="submitting"
+            @click="switchMode('run')"
+          >
+            {{ t('opsContainer.create.modeRun') }}
+          </button>
+          <button
+            class="mode-seg__btn"
+            :class="{ 'mode-seg__btn--active': mode === 'compose' }"
+            :aria-pressed="mode === 'compose'"
+            :disabled="submitting"
+            @click="switchMode('compose')"
+          >
+            {{ t('opsContainer.create.modeCompose') }}
           </button>
         </div>
-        <p v-if="aiNote" class="ai-gen__note">{{ aiNote }}</p>
 
-        <div class="grid2">
+        <template v-if="mode === 'run'">
+          <!-- AI 生成:中文描述 → 自动填表 -->
+          <div class="ai-gen">
+            <span class="ai-gen__spark">✦</span>
+            <input
+              v-model="aiNl"
+              class="ai-gen__in"
+              :placeholder="t('opsContainer.create.aiPlaceholder')"
+              @keyup.enter="aiGenerate"
+            />
+            <button class="ai-gen__btn" :disabled="aiBusy || !aiNl.trim()" @click="aiGenerate">
+              {{ aiBusy ? t('opsContainer.create.generating') : t('opsContainer.create.aiGenerate') }}
+            </button>
+          </div>
+          <p v-if="aiNote" class="ai-gen__note">{{ aiNote }}</p>
+
+          <div class="grid2">
+            <label class="field">
+              <span class="field__k">{{ t('opsContainer.create.targetServer') }}</span>
+              <select v-model="serverId" class="field__in">
+                <option v-for="s in props.servers" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__k">{{ t('opsContainer.create.restartPolicy') }}</span>
+              <select v-model="restart" class="field__in">
+                <option v-for="o in RESTART_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid2">
+            <label class="field">
+              <span class="field__k">{{ t('opsContainer.create.image') }} <em>*</em></span>
+              <input v-model="image" class="field__in mono" :placeholder="t('opsContainer.create.imagePlaceholder')" />
+            </label>
+            <label class="field">
+              <span class="field__k">{{ t('opsContainer.create.name') }}</span>
+              <input v-model="name" class="field__in mono" :placeholder="t('opsContainer.create.namePlaceholder')" />
+            </label>
+          </div>
+
           <label class="field">
-            <span class="field__k">{{ t('opsContainer.create.targetServer') }}</span>
-            <select v-model="serverId" class="field__in">
-              <option v-for="s in props.servers" :key="s.id" :value="s.id">{{ s.name }}</option>
-            </select>
+            <span class="field__k">{{ t('opsContainer.create.ports') }} <span class="field__hint">{{ t('opsContainer.create.portsHint') }}</span></span>
+            <textarea v-model="portsText" class="field__in mono" rows="2" placeholder="8080:80&#10;127.0.0.1:9090:90/tcp" />
           </label>
+
           <label class="field">
-            <span class="field__k">{{ t('opsContainer.create.restartPolicy') }}</span>
-            <select v-model="restart" class="field__in">
-              <option v-for="o in RESTART_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
+            <span class="field__k">{{ t('opsContainer.create.env') }} <span class="field__hint">{{ t('opsContainer.create.envHint') }}</span></span>
+            <textarea v-model="envText" class="field__in mono" rows="2" placeholder="TZ=Asia/Shanghai&#10;FOO=bar" />
           </label>
-        </div>
 
-        <div class="grid2">
           <label class="field">
-            <span class="field__k">{{ t('opsContainer.create.image') }} <em>*</em></span>
-            <input v-model="image" class="field__in mono" :placeholder="t('opsContainer.create.imagePlaceholder')" />
+            <span class="field__k">{{ t('opsContainer.create.volumes') }} <span class="field__hint">{{ t('opsContainer.create.volumesHint') }}</span></span>
+            <textarea v-model="volumesText" class="field__in mono" rows="2" placeholder="/data/web:/usr/share/nginx/html:ro&#10;myvol:/cache" />
           </label>
+
           <label class="field">
-            <span class="field__k">{{ t('opsContainer.create.name') }}</span>
-            <input v-model="name" class="field__in mono" :placeholder="t('opsContainer.create.namePlaceholder')" />
+            <span class="field__k">{{ t('opsContainer.create.command') }}</span>
+            <input v-model="command" class="field__in mono" :placeholder="t('opsContainer.create.commandPlaceholder')" />
           </label>
-        </div>
+        </template>
 
-        <label class="field">
-          <span class="field__k">{{ t('opsContainer.create.ports') }} <span class="field__hint">{{ t('opsContainer.create.portsHint') }}</span></span>
-          <textarea v-model="portsText" class="field__in mono" rows="2" placeholder="8080:80&#10;127.0.0.1:9090:90/tcp" />
-        </label>
+        <template v-else>
+          <div class="grid2">
+            <label class="field">
+              <span class="field__k">{{ t('opsContainer.create.targetServer') }}</span>
+              <select v-model="serverId" class="field__in">
+                <option v-for="s in props.servers" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__k">{{ t('opsContainer.create.composeProject') }} <em>*</em></span>
+              <input v-model="composeName" class="field__in mono" :placeholder="t('opsServer.card.deployNamePlaceholder')" />
+            </label>
+          </div>
+          <p v-if="nameError" class="field-err">⚠ {{ nameError }}</p>
 
-        <label class="field">
-          <span class="field__k">{{ t('opsContainer.create.env') }} <span class="field__hint">{{ t('opsContainer.create.envHint') }}</span></span>
-          <textarea v-model="envText" class="field__in mono" rows="2" placeholder="TZ=Asia/Shanghai&#10;FOO=bar" />
-        </label>
-
-        <label class="field">
-          <span class="field__k">{{ t('opsContainer.create.volumes') }} <span class="field__hint">{{ t('opsContainer.create.volumesHint') }}</span></span>
-          <textarea v-model="volumesText" class="field__in mono" rows="2" placeholder="/data/web:/usr/share/nginx/html:ro&#10;myvol:/cache" />
-        </label>
-
-        <label class="field">
-          <span class="field__k">{{ t('opsContainer.create.command') }}</span>
-          <input v-model="command" class="field__in mono" :placeholder="t('opsContainer.create.commandPlaceholder')" />
-        </label>
+          <label class="field">
+            <span class="field__k">
+              {{ t('opsContainer.create.composeFile') }} <em>*</em>
+              <span class="field__hint">{{ t('opsContainer.create.composeFileHint') }}</span>
+            </span>
+            <textarea
+              v-model="composeYaml"
+              class="field__in mono compose-yaml"
+              rows="14"
+              spellcheck="false"
+              :placeholder="t('opsServer.card.deployYamlPlaceholder')"
+              @input="onComposeYamlInput"
+            />
+          </label>
+          <p v-if="yamlError" class="field-err">⚠ {{ yamlError }}</p>
+          <p v-else-if="composeSummary" class="compose-summary">{{ composeSummary }}</p>
+        </template>
       </div>
 
       <footer class="modal__foot">
-        <span class="foot-hint">{{ t('opsContainer.create.footHint') }}</span>
+        <span class="foot-hint">{{ mode === 'run' ? t('opsContainer.create.footHint') : t('opsServer.card.deployHint') }}</span>
         <span class="grow" />
         <button class="btn btn--ghost" :disabled="submitting" @click="emit('close')">{{ t('opsContainer.cancel') }}</button>
         <button class="btn btn--primary" :disabled="!canSubmit" @click="submit">
-          {{ submitting ? t('opsContainer.create.creating') : t('opsContainer.create.createRun') }}
+          {{ submitLabel }}
         </button>
       </footer>
     </div>
@@ -369,6 +497,57 @@ async function submit(): Promise<void> {
   border: 1px solid var(--color-red-line);
   color: var(--color-red);
   font-size: var(--text-label);
+}
+/* 起法切换(单容器 / Compose) */
+.mode-seg {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  gap: 3px;
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+.mode-seg__btn {
+  font-size: var(--text-label);
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--color-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-out-expo), background var(--duration-fast) var(--ease-out-expo);
+}
+.mode-seg__btn:hover:not(:disabled) {
+  color: var(--color-text);
+}
+.mode-seg__btn--active {
+  background: var(--color-primary);
+  color: #fff;
+}
+.mode-seg__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 字段级校验提示(红,贴在字段下方) */
+.field-err {
+  margin: -8px 0 0;
+  font-size: var(--text-micro);
+  color: var(--color-red);
+  word-break: break-all;
+}
+.compose-yaml {
+  min-height: 260px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.compose-summary {
+  margin: -8px 0 0;
+  font-size: var(--text-micro);
+  color: var(--color-dim);
+  word-break: break-all;
 }
 .modal__foot {
   display: flex;

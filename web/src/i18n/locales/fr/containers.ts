@@ -25,6 +25,10 @@ export default {
   kpiHosts: 'Serveurs avec conteneurs',
   kpiStripAria: 'Statistiques agrégées des conteneurs',
 
+  serverFilterLabel: 'Serveur',
+  serverFilterAria: 'Choisir le serveur affiché',
+  serverAll: 'Tous les serveurs',
+
   filterAria: 'Filtrer les conteneurs par état',
   filterAll: 'Tous',
   filterRunning: 'En cours d’exécution',

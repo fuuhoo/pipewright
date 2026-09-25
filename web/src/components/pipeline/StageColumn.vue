@@ -6,6 +6,7 @@ import type { PipelineStage, PipelineJob } from '../../api/pipeline'
 import JobCard from './JobCard.vue'
 import { eligibleNeeds, toggleNeed } from './stageDeps'
 import { hasAnyJobNeeds, layoutJobs, eligibleJobNeeds } from './jobDeps'
+import { boxOf, countBy, edgePath, fanAnchor, type EdgeBox } from './dagEdges'
 import {
   hasWhen,
   whenSummary,
@@ -126,31 +127,58 @@ const dagRef = ref<HTMLElement | null>(null)
 const dagOverlay = ref({ w: 0, h: 0 })
 const dagPaths = ref<string[]>([])
 
+/** 一条边的两端任务 id。顺序即声明顺序:同一目标的多条边按此序在左缘上下排开。 */
+interface DagEdge {
+  from: string
+  to: string
+}
+
+function dagEdges(root: HTMLElement): DagEdge[] {
+  const out: DagEdge[] = []
+  for (const j of props.stage.jobs) {
+    if (!root.querySelector(`.job-node[data-job-id="${CSS.escape(j.id)}"]`)) continue
+    for (const need of j.needs ?? []) {
+      if (root.querySelector(`.job-node[data-job-id="${CSS.escape(need)}"]`)) out.push({ from: need, to: j.id })
+    }
+  }
+  return out
+}
+
 function measureEdges(): void {
   const root = dagRef.value
   if (!root) {
     dagPaths.value = []
     return
   }
-  const nodes = new Map<string, HTMLElement>()
+  const boxes = new Map<string, EdgeBox>()
   root.querySelectorAll<HTMLElement>('.job-node').forEach((el) => {
     const id = el.dataset.jobId
-    if (id) nodes.set(id, el)
+    if (id) boxes.set(id, boxOf(el))
   })
   dagOverlay.value = { w: root.scrollWidth, h: root.scrollHeight }
+  const list = dagEdges(root)
+  // 一个任务的出边/入边各有几条 → 决定这些边落在它边线上的哪几个点(全挤中心会读成一条折线)。
+  const outCount = countBy(list.map((e) => e.from))
+  const inCount = countBy(list.map((e) => e.to))
+  const outSeen = new Map<string, number>()
+  const inSeen = new Map<string, number>()
   const paths: string[] = []
-  for (const j of props.stage.jobs) {
-    for (const need of j.needs ?? []) {
-      const a = nodes.get(need)
-      const b = nodes.get(j.id)
-      if (!a || !b) continue
-      const x1 = a.offsetLeft + a.offsetWidth
-      const y1 = a.offsetTop + a.offsetHeight / 2
-      const x2 = b.offsetLeft
-      const y2 = b.offsetTop + b.offsetHeight / 2
-      const dx = Math.max(18, Math.abs(x2 - x1) * 0.5)
-      paths.push(`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`)
-    }
+  for (const e of list) {
+    const a = boxes.get(e.from)
+    const b = boxes.get(e.to)
+    if (!a || !b) continue
+    const oi = outSeen.get(e.from) ?? 0
+    outSeen.set(e.from, oi + 1)
+    const ii = inSeen.get(e.to) ?? 0
+    inSeen.set(e.to, ii + 1)
+    paths.push(
+      edgePath(
+        a,
+        b,
+        fanAnchor(a, oi, outCount.get(e.from) ?? 1),
+        fanAnchor(b, ii, inCount.get(e.to) ?? 1),
+      ),
+    )
   }
   dagPaths.value = paths
 }
@@ -159,18 +187,36 @@ let ro: ResizeObserver | null = null
 function remeasure(): void {
   void nextTick(measureEdges)
 }
+
+// 逐节点观察:卡片里多一行「⟵ 依赖」chip、名字换行、字体后到,都只改内部尺寸而不改网格外框 ——
+// 只观察外层就会用旧坐标画线。
+function observeTargets(): void {
+  if (!ro) return
+  ro.disconnect()
+  const root = dagRef.value
+  if (!root) return
+  ro.observe(root)
+  root.querySelectorAll<HTMLElement>('.job-node').forEach((el) => ro?.observe(el))
+}
+
 onMounted(() => {
   ro = new ResizeObserver(() => measureEdges())
-  if (dagRef.value) ro.observe(dagRef.value)
+  observeTargets()
   remeasure()
 })
 onBeforeUnmount(() => ro?.disconnect())
-watch(dagRef, (el) => {
-  ro?.disconnect()
-  if (el && ro) ro.observe(el)
+watch(dagRef, () => {
+  observeTargets()
   remeasure()
 })
-watch(() => props.stage.jobs, remeasure, { deep: true })
+watch(
+  () => props.stage.jobs,
+  () => {
+    observeTargets()
+    remeasure()
+  },
+  { deep: true },
+)
 
 // ─── Stage rule chips (when 条件 / gate 审批门 / matrix / services / post) ──────
 // 编辑全部下沉到右侧 StageDrawer(复用 JobDrawer 卡片骨架);此处只渲染汇总 chip。

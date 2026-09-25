@@ -103,6 +103,12 @@ const (
 	ActionServerUpdate   = "server_update"
 	ActionServerDelete   = "server_delete"
 	ActionServerReassign = "server_reassign"
+	// K8s 集群登记:绑一条 kubeconfig 凭据,平台直连集群 API。与服务器同级高危。
+	ActionKubeClusterCreate   = "kube_cluster_create"
+	ActionKubeClusterUpdate   = "kube_cluster_update"
+	ActionKubeClusterDelete   = "kube_cluster_delete"
+	ActionKubeClusterReassign = "kube_cluster_reassign"
+	ActionKubeClusterTest     = "kube_cluster_test"
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
@@ -123,6 +129,7 @@ const (
 	TargetUser           = "user"
 	TargetUserInvitation = "user_invitation"
 	TargetResourceGroup  = "resource_group"
+	TargetKubeCluster    = "kube_cluster"
 )
 
 // Entry 是一条审计写入入参(冻结契约)。Detail 写库前过 Masker,绝不含明文 secret。

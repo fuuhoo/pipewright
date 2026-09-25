@@ -1,16 +1,17 @@
 <script setup lang="ts">
 /*
-  Containers.vue — 容器/镜像管理总览。顶部聚合 KPI + 状态筛选,下面每台服务器一张
-  ServerCard(卡片内部按 容器/镜像 分 tab,只针对这一台)。日志走抽屉、终端跳全屏页、
-  新增容器走弹窗。每 12s 自动刷新聚合(stale-while-revalidate)。
+  Containers.vue — 容器/镜像管理总览。顶部聚合 KPI + 服务器切换 + 状态筛选,下面每台
+  可见服务器一张 ServerCard(卡片内部按 容器/镜像 分 tab,只针对这一台)。日志走抽屉、
+  终端跳全屏页、新增容器走弹窗。每 12s 自动刷新聚合(stale-while-revalidate)。
 */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { getAllContainers, type ServerContainers, type ContainerInfo } from '../api/containers'
 import { listServers, serviceAction, type Server, type ServiceAction } from '../api/servers'
 import { HttpError } from '../api/http'
 import { stateBucket, type StateBucket } from '../lib/containerState'
+import { SERVER_ALL, resolveServerScope, scopedGroups, scopeTone, preferredFirst, type ServerScope } from '../lib/containerScope'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import AppButton from '../components/ui/AppButton.vue'
@@ -42,11 +43,22 @@ const refreshing = ref(false)
 const POLL_MS = 12_000
 let timer: ReturnType<typeof setInterval> | null = null
 
-// ─── 聚合统计 ─────────────────────────────────────────────────────────────────
-const totalContainers = computed(() => groups.value.reduce((n, g) => n + g.total, 0))
-const runningContainers = computed(() => groups.value.reduce((n, g) => n + g.running, 0))
+// ─── 服务器切换 ───────────────────────────────────────────────────────────────
+// 聚合是一屏摊开所有机器,机器一多就要滚动找,所以给一个「全部 / 只看这台」的范围。
+// 范围只切展示与统计口径,不改权限:候选永远来自后端已收敛过的聚合结果。
+const serverScope = ref<ServerScope>(SERVER_ALL)
+
+/** 每轮聚合都换一批新对象;选中的机器掉了就自动回落「全部」(按钮高亮与内容始终一致)。 */
+const scope = computed(() => resolveServerScope(serverScope.value, groups.value))
+const scopeGroups = computed(() => scopedGroups(groups.value, scope.value))
+/** 一台机时没什么可切的,这一行就不占地方。 */
+const showScopeBar = computed(() => groups.value.length > 1)
+
+// ─── 聚合统计(口径 = 当前切换范围)────────────────────────────────────────────
+const totalContainers = computed(() => scopeGroups.value.reduce((n, g) => n + g.total, 0))
+const runningContainers = computed(() => scopeGroups.value.reduce((n, g) => n + g.running, 0))
 const stoppedContainers = computed(() => totalContainers.value - runningContainers.value)
-const coveredServers = computed(() => groups.value.filter((g) => g.reachable && g.runtime).length)
+const coveredServers = computed(() => scopeGroups.value.filter((g) => g.reachable && g.runtime).length)
 
 function serverName(id: string): string {
   return serverById.value.get(id)?.name ?? id
@@ -63,7 +75,7 @@ const bucketCounts = computed(() => {
   let running = 0
   let paused = 0
   let stopped = 0
-  for (const g of groups.value) {
+  for (const g of scopeGroups.value) {
     for (const c of g.containers) {
       const b = stateBucket(c.state)
       if (b === 'running') running++
@@ -116,6 +128,9 @@ function toggleBulkMode(): void {
   bulkMode.value = !bulkMode.value
   if (!bulkMode.value) clearSelection()
 }
+
+// 切换机器后,不在范围内的勾选既看不见又仍会被批量执行 —— 那是最坏的一种「偷偷操作」,直接清掉。
+watch(scope, () => clearSelection())
 
 interface BulkAction {
   action: ServiceAction
@@ -181,10 +196,14 @@ async function runBulk({ action, labelKey, danger }: BulkAction): Promise<void> 
 
 // ─── 新增容器 ─────────────────────────────────────────────────────────────────
 const showCreate = ref(false)
+// 候选永远是全部可用机器(切换只切这一屏的展示),但把聚焦那台排到最前 —— 弹窗默认取第一台。
 const creatableServers = computed(() =>
-  groups.value
-    .filter((g) => g.reachable && g.runtime)
-    .map((g) => ({ id: g.serverId, name: serverName(g.serverId) })),
+  preferredFirst(
+    groups.value
+      .filter((g) => g.reachable && g.runtime)
+      .map((g) => ({ id: g.serverId, name: serverName(g.serverId) })),
+    scope.value,
+  ),
 )
 function onContainerCreated(): void {
   void load()
@@ -313,7 +332,34 @@ onUnmounted(() => {
     />
 
     <template v-else>
-      <!-- 聚合 KPI 条 -->
+      <!-- 服务器切换:一台一张卡,机器多了不用滚动找 -->
+      <div v-if="showScopeBar" class="scope-bar" role="group" :aria-label="t('containers.serverFilterAria')">
+        <span class="scope-bar__label">{{ t('containers.serverFilterLabel') }}</span>
+        <button
+          class="scope-chip"
+          :class="{ 'scope-chip--active': scope === SERVER_ALL }"
+          :aria-pressed="scope === SERVER_ALL"
+          @click="serverScope = SERVER_ALL"
+        >
+          {{ t('containers.serverAll') }}
+          <span class="scope-chip__count">{{ groups.length }}</span>
+        </button>
+        <button
+          v-for="g in groups"
+          :key="g.serverId"
+          class="scope-chip"
+          :class="{ 'scope-chip--active': scope === g.serverId }"
+          :aria-pressed="scope === g.serverId"
+          :title="g.error || `${serverName(g.serverId)} · ${serverHost(g.serverId)}`"
+          @click="serverScope = g.serverId"
+        >
+          <span class="scope-dot" :class="'scope-dot--' + scopeTone(g)" />
+          <span class="scope-chip__name">{{ serverName(g.serverId) }}</span>
+          <span class="scope-chip__count">{{ g.running }}/{{ g.total }}</span>
+        </button>
+      </div>
+
+      <!-- 聚合 KPI 条(统计口径 = 上面选中的范围) -->
       <section class="kpi-strip" :aria-label="t('containers.kpiStripAria')">
         <div class="kpi kpi--total">
           <span class="kpi__num">{{ totalContainers }}</span>
@@ -328,7 +374,7 @@ onUnmounted(() => {
           <span class="kpi__label">{{ t('containers.kpiStopped') }}</span>
         </div>
         <div class="kpi kpi--hosts">
-          <span class="kpi__num">{{ coveredServers }}<span class="kpi__den">/{{ groups.length }}</span></span>
+          <span class="kpi__num">{{ coveredServers }}<span class="kpi__den">/{{ scopeGroups.length }}</span></span>
           <span class="kpi__label">{{ t('containers.kpiHosts') }}</span>
         </div>
       </section>
@@ -380,10 +426,10 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 逐台卡片(卡片内自带 容器/镜像 tab) -->
+      <!-- 逐台卡片(卡片内自带 容器/镜像 tab;只渲染切换范围内的机器) -->
       <section class="cards" :aria-label="t('containers.cardsAria')" :aria-busy="refreshing || undefined">
         <ServerCard
-          v-for="g in groups"
+          v-for="g in scopeGroups"
           :key="g.serverId"
           :group="g"
           :name="serverName(g.serverId)"
@@ -635,6 +681,75 @@ onUnmounted(() => {
   background: oklch(100% 0 0 / 0.22);
   color: #fff;
 }
+
+/* 服务器切换条 */
+.scope-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.scope-bar__label {
+  font-size: var(--text-caps);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+  margin-right: 2px;
+}
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-dim);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-expo), border-color var(--duration-fast) var(--ease-out-expo), background var(--duration-fast) var(--ease-out-expo);
+}
+/* 机器名可能很长(自动登记的叫 p3-in-group180594 这种):截断而不是把 chip 撑成两行,
+   整名 + 地址留在 title 里。窄屏时优先牺牲名字,状态点和计数始终要看得见。 */
+.scope-chip__name {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scope-chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+.scope-chip--active {
+  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.scope-chip__count {
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-inset);
+  color: var(--color-faint);
+}
+.scope-chip--active .scope-chip__count {
+  background: oklch(100% 0 0 / 0.22);
+  color: #fff;
+}
+/* 状态点:连不上 / 没装 docker / 可用。给切换前先看哪台能用的时候省一次点击。 */
+.scope-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-faint);
+}
+.scope-dot--ok { background: var(--color-green); }
+.scope-dot--no-runtime { background: var(--color-amber); }
+.scope-dot--unreachable { background: var(--color-red); }
 
 /* KPI 条 */
 .kpi-strip {

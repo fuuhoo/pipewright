@@ -29,8 +29,14 @@ var (
 	ErrNotFound = errors.New("project: not found")
 	// ErrEmptyName 表示项目名称为空。
 	ErrEmptyName = errors.New("project: name must not be empty")
-	// ErrEmptyRepoURL 表示仓库地址为空。
+	// ErrEmptyRepoURL 表示仓库地址为空(仅在需要仓库的操作上适用,如测试连接)。
 	ErrEmptyRepoURL = errors.New("project: repo url must not be empty")
+	// ErrCredentialWithoutRepo 表示给了凭据却没给仓库地址:没仓库可访问却挂着凭据,
+	// 会让人误以为这把凭据参与了什么(纯发布项目应当两样都留空)。
+	ErrCredentialWithoutRepo = errors.New("project: credential id requires a repo url")
+	// ErrRepoRequired 表示这项设置离不开项目仓库(如流水线即代码、PR 状态回写),
+	// 而项目是纯发布用的(没绑仓库)。
+	ErrRepoRequired = errors.New("project: repo url required")
 	// ErrEmptyCredentialID 表示未选择凭据。
 	ErrEmptyCredentialID = errors.New("project: credential id must not be empty")
 	// ErrCredentialError 表示凭据无效/缺失/无权限(克隆鉴权失败)。
@@ -95,6 +101,9 @@ type UpdateInput struct {
 	Name          *string
 	DefaultBranch *string
 	CredentialID  *string
+	// RepoURL 改绑仓库;指向 "" 表示解绑(项目退化为纯发布用)。解绑时凭据一并清空,
+	// 否则会留下一把没人访问的凭据引用。
+	RepoURL *string
 	// PacEnabled 切换「流水线即代码」开关;nil 表示不修改。
 	PacEnabled *bool
 	// PRStatusEnabled 切换「PR 状态检查」开关;nil 表示不修改。
@@ -179,12 +188,18 @@ func New(db *sql.DB, v vault.Vault, prober RemoteProber) Service {
 }
 
 // validateCreate 校验创建入参的必填项。
+//
+// 仓库地址可以留空:这种项目只用来发布(产物/镜像从别处来,不进 CI 工作区)。
+// 留空时凭据也必须留空 —— 没有仓库要访问,挂着一把凭据只会让人以为它起作用。
 func validateCreate(in CreateInput) error {
 	if in.Name == "" {
 		return ErrEmptyName
 	}
 	if in.RepoURL == "" {
-		return ErrEmptyRepoURL
+		if in.CredentialID != "" {
+			return ErrCredentialWithoutRepo
+		}
+		return nil
 	}
 	if in.CredentialID == "" {
 		return ErrEmptyCredentialID
@@ -257,6 +272,10 @@ func (s *service) probeRefs(ctx context.Context, repoURL, credentialID string) (
 }
 
 func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	in.RepoURL = strings.TrimSpace(in.RepoURL)
+	in.CredentialID = strings.TrimSpace(in.CredentialID)
+	in.DefaultBranch = strings.TrimSpace(in.DefaultBranch)
 	if err := validateCreate(in); err != nil {
 		return nil, err
 	}
@@ -272,9 +291,14 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 			return nil, ErrGroupNotFound
 		}
 	}
-	branch, err := s.probe(ctx, in.RepoURL, in.CredentialID)
-	if err != nil {
-		return nil, err
+	// 无仓库项目(纯发布)不探测:既没有地址可连,也就不该因为网络失败而建不出来。
+	var branch string
+	if in.RepoURL != "" {
+		var perr error
+		branch, perr = s.probe(ctx, in.RepoURL, in.CredentialID)
+		if perr != nil {
+			return nil, perr
+		}
 	}
 	defaultBranch := in.DefaultBranch
 	if defaultBranch == "" {
@@ -285,10 +309,10 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
-	_, err = s.db.ExecContext(ctx,
+	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, group_id, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Name, in.RepoURL, defaultBranch, in.CredentialID, groupID, nowStr, nowStr,
+		id, in.Name, in.RepoURL, defaultBranch, credArg(in.CredentialID), groupID, nowStr, nowStr,
 	)
 	if err != nil {
 		// 外键失败(凭据在校验后被删等竞态)归为凭据不存在;其余为内部错误。
@@ -339,7 +363,7 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 	}
 
 	offset := (page - 1) * pageSize
-	listSQL := `SELECT p.id, p.name, p.repo_url, p.default_branch, p.credential_id,
+	listSQL := `SELECT p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
 	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.created_at, p.updated_at
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id`
@@ -370,7 +394,7 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 
 func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT p.id, p.name, p.repo_url, p.default_branch, p.credential_id,
+		`SELECT p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
 		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.created_at, p.updated_at
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
@@ -391,7 +415,7 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 	var name, repoURL, defaultBranch, credentialID, groupID string
 	var pacInt, prStatusInt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, repo_url, default_branch, credential_id, pac_enabled, pr_status_enabled, group_id FROM projects WHERE id = ?`, id,
+		`SELECT name, repo_url, default_branch, COALESCE(credential_id, ''), pac_enabled, pr_status_enabled, group_id FROM projects WHERE id = ?`, id,
 	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt, &groupID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -406,26 +430,64 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 		if *in.Name == "" {
 			return nil, ErrEmptyName
 		}
-		name = *in.Name
+		name = strings.TrimSpace(*in.Name)
 	}
 	if in.DefaultBranch != nil {
-		defaultBranch = *in.DefaultBranch
+		defaultBranch = strings.TrimSpace(*in.DefaultBranch)
 	}
-	if in.CredentialID != nil {
-		if *in.CredentialID == "" {
+	var repoTouched bool
+	if in.RepoURL != nil {
+		repoTouched = true
+		next := strings.TrimSpace(*in.RepoURL)
+		if next == "" {
+			// 解绑仓库:凭据引用与「读仓库」的两个开关一并撤掉,否则留着的就是
+			// 一把没人访问的凭据 + 两个永远失败的开关。
+			repoURL, credentialID = "", ""
+			defaultBranch = ""
+			pacEnabled, prStatusEnabled = false, false
+		} else {
+			cred := credentialID
+			if in.CredentialID != nil {
+				cred = strings.TrimSpace(*in.CredentialID)
+			}
+			if cred == "" {
+				return nil, ErrEmptyCredentialID
+			}
+			// 换/首次绑仓库:新地址必须探得通,探不通就不改(不给项目留个坏引用)。
+			remoteBranch, perr := s.probe(ctx, next, cred)
+			if perr != nil {
+				return nil, perr
+			}
+			repoURL = next
+			credentialID = cred
+			if defaultBranch == "" {
+				defaultBranch = remoteBranch
+			}
+		}
+	}
+	if in.CredentialID != nil && !repoTouched {
+		cred := strings.TrimSpace(*in.CredentialID)
+		if cred == "" {
 			return nil, ErrEmptyCredentialID
 		}
-		// 改绑凭据:用新凭据对(可能也已更新的)仓库做 ls-remote 校验。
-		if _, err := s.probe(ctx, repoURL, *in.CredentialID); err != nil {
+		if repoURL == "" {
+			return nil, ErrCredentialWithoutRepo
+		}
+		// 改绑凭据:用新凭据对当前仓库做 ls-remote 校验。
+		if _, err := s.probe(ctx, repoURL, cred); err != nil {
 			return nil, err
 		}
-		credentialID = *in.CredentialID
+		credentialID = cred
 	}
 	if in.PacEnabled != nil {
 		pacEnabled = *in.PacEnabled
 	}
 	if in.PRStatusEnabled != nil {
 		prStatusEnabled = *in.PRStatusEnabled
+	}
+	// 这两个开关都以「读得到项目仓库」为前提,没仓库就是永远做不到的事,别让它开着。
+	if repoURL == "" && (pacEnabled || prStatusEnabled) {
+		return nil, ErrRepoRequired
 	}
 	if in.GroupID != nil {
 		groupID = strings.TrimSpace(*in.GroupID)
@@ -450,8 +512,8 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 	}
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE projects SET name = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, updated_at = ? WHERE id = ?`,
-		name, defaultBranch, credentialID, pacInt, prStatusInt, groupID, nowStr, id,
+		`UPDATE projects SET name = ?, repo_url = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, updated_at = ? WHERE id = ?`,
+		name, repoURL, defaultBranch, credArg(credentialID), pacInt, prStatusInt, groupID, nowStr, id,
 	)
 	if err != nil {
 		if isForeignKeyErr(err) {
@@ -498,6 +560,15 @@ func (s *service) TestClone(ctx context.Context, repoURL, credentialID string) (
 		return nil, err
 	}
 	return &TestCloneResult{DefaultBranch: branch, Branches: branches, Tags: tags}, nil
+}
+
+// credArg 把「无凭据」写成 NULL 而不是空串:credential_id 上挂着引用完整性
+// (删掉还在用的凭据要被挡住),空串会被当成一个指向不存在凭据的引用而直接被拒。
+func credArg(credentialID string) any {
+	if strings.TrimSpace(credentialID) == "" {
+		return nil
+	}
+	return credentialID
 }
 
 // scanner 抽象 *sql.Row 与 *sql.Rows 的 Scan。

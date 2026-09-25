@@ -26,7 +26,6 @@ import (
 	"github.com/huangchengsir/pipewright/internal/dagrun"
 	"github.com/huangchengsir/pipewright/internal/pipeline"
 	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // RunnerLookup 解析某项目的远程 runner 服务器 id(空/false = 本地构建)。runner.Service 即满足。
@@ -83,8 +82,13 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 		_ = rep.Log(ctx, streamStderr, "无法加载项目构建配置:"+perr.Error())
 		return ErrBuildFailed
 	}
+	// 远程 runner 只跑 script 任务:未绑仓库的纯发布项目照样能跑(空工作区传过去)。
+	if err := workspaceNeedsRepo(proj, false); err != nil {
+		_ = rep.Log(ctx, streamStderr, err.Error())
+		return ErrBuildFailed
+	}
 
-	// 1) 控制机本地克隆(token 只在控制机)。
+	// 1) 控制机本地备工作区(token 只在控制机;未绑仓库的纯发布项目 → 空目录)。
 	workspace, mkErr := mkTempWorkspace()
 	if mkErr != nil {
 		_ = rep.Log(ctx, streamStderr, "创建临时工作区失败:"+mkErr.Error())
@@ -92,18 +96,8 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 	}
 	defer func() { _ = os.RemoveAll(workspace) }()
 
-	auth := b.revealGitAuth(proj.CredentialID)
-	resolved, cerr := b.cloner.Clone(ctx, proj.RepoURL, auth.Username, auth.Token, r.Trigger.Branch, r.Trigger.Commit, workspace)
-	auth = vault.GitAuth{}
-	if cerr != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return run.ErrCanceled
-		}
-		_ = rep.Log(ctx, streamStderr, "源码克隆失败(鉴权/网络/ref 不存在或被 SSRF 拒绝)")
-		return ErrBuildFailed
-	}
-	if resolved != nil && resolved.CommitShort != "" && b.recordCommit != nil {
-		b.recordCommit(ctx, r.ID, resolved.CommitShort)
+	if _, werr := b.fillWorkspace(ctx, r, proj, workspace, rep); werr != nil {
+		return werr
 	}
 
 	// 2) 打包工作区 → 经 SSH 传到远程并解包。

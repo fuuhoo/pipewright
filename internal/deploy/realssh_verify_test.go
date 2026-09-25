@@ -60,7 +60,7 @@ func TestRealLocalhostDistDeploy(t *testing.T) {
 	rsvc := run.New(db)
 	runID, artID := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactDist, "dist/shop-v1.tar.gz")
 
-	// 唯一发布根目录(便于断言落地);dist 走 release 模式:<base>/releases/<runId> + <base>/current。
+	// 唯一直铺目录(便于断言落地);dist 直铺:产物内容就落在 <base>/ 下。
 	base := "/tmp/pipewright-deploy-real-" + uuid.NewString()[:8]
 	t.Cleanup(func() { _ = os.RemoveAll(base) })
 
@@ -69,7 +69,7 @@ func TestRealLocalhostDistDeploy(t *testing.T) {
 	defer cancel()
 	res, err := dsvc.Deploy(ctx, DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: []string{srv.ID},
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
@@ -82,24 +82,22 @@ func TestRealLocalhostDistDeploy(t *testing.T) {
 	}
 	t.Logf("真部署结果: status=%s message=%q", res[0].Status, res[0].Message)
 
-	// 断言发布目录 <base>/releases/<runId> 真落地(SSH 真传输 + 真执行)。
-	releaseDir := base + "/releases/" + runID
-	entries, rerr := os.ReadDir(releaseDir)
+	// 断言产物真落在部署目录本身(SSH 真传输 + 真执行),且没有 releases/ 层与 current 软链。
+	entries, rerr := os.ReadDir(base)
 	if rerr != nil {
-		t.Fatalf("发布目录未创建: %v", rerr)
+		t.Fatalf("部署目录未创建: %v", rerr)
 	}
 	if len(entries) == 0 {
-		t.Fatalf("发布目录为空,产物未落地")
+		t.Fatalf("部署目录为空,产物未落地")
 	}
 	t.Logf("落地文件: %v", entries)
-
-	// 断言 current 软链真指向本次发布(原子切换)。
-	link, lerr := os.Readlink(base + "/current")
-	if lerr != nil {
-		t.Fatalf("current 软链未建: %v", lerr)
+	for _, e := range entries {
+		if e.Name() == "releases" || e.Name() == "current" {
+			t.Fatalf("直铺模式不应出现 %s: %v", e.Name(), entries)
+		}
 	}
-	if link != releaseDir {
-		t.Fatalf("current 软链指向异常: %q want %q", link, releaseDir)
+	if _, serr := os.Stat(base + "/shop-v1.tar.gz"); serr != nil {
+		t.Fatalf("产物未直铺到部署目录: %v", serr)
 	}
 
 	// run-detail targets slot 回填。
@@ -114,14 +112,13 @@ func TestRealLocalhostDistDeploy(t *testing.T) {
 	}
 }
 
-// TestRealLocalhostRollback 经真实 SSH 到 localhost 真验零停机切换 + 失败回滚全链路:
+// TestRealLocalhostHealthFail 经真实 SSH 到 localhost 真验直铺 + 健康门控:
 //
-//	v1 部署(health=true)→ current → releases/<run1>(成功保留)
-//	v2 部署(health=false,探测必失败)→ 切 current → releases/<run2> 后健康失败 →
-//	  回滚 current → releases/<run1> + status=rolled_back。
+//	v1 部署(health=true)→ 产物落在 <base>/ + success
+//	v2 部署(health=false)→ 产物覆盖到 <base>/ 后健康失败 → failed(直铺无上一版本可回滚)。
 //
 // 默认不跑(需 -tags realssh + DEPLOY_SSH_KEY)。
-func TestRealLocalhostRollback(t *testing.T) {
+func TestRealLocalhostHealthFail(t *testing.T) {
 	keyPath := os.Getenv("DEPLOY_SSH_KEY")
 	if keyPath == "" {
 		t.Skip("DEPLOY_SSH_KEY 未设置;跳过真验")
@@ -161,11 +158,11 @@ func TestRealLocalhostRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// v1:健康检查必通过(true),current → releases/<run1>。
+	// v1:健康检查必通过(true),产物直铺进 <base>。
 	run1, art1 := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactDist, "dist/shop-v1.tar.gz")
 	res1, err := dsvc.Deploy(ctx, DeployInput{
 		RunID: run1, ArtifactID: art1, ServerIDs: []string{srv.ID},
-		Config:      map[string]string{"releaseBase": base},
+		Config:      map[string]string{"deployPath": base},
 		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"true"}, Retries: 1},
 	})
 	if err != nil {
@@ -174,40 +171,37 @@ func TestRealLocalhostRollback(t *testing.T) {
 	if res1[0].Status != run.TargetSuccess {
 		t.Fatalf("v1 应 success, got %s: %s", res1[0].Status, res1[0].Message)
 	}
-	rel1 := base + "/releases/" + run1
-	if link, _ := os.Readlink(base + "/current"); link != rel1 {
-		t.Fatalf("v1 后 current 应指向 %q, got %q", rel1, link)
+	if _, serr := os.Stat(base + "/shop-v1.tar.gz"); serr != nil {
+		t.Fatalf("v1 产物未直铺到部署目录: %v", serr)
 	}
 
-	// v2:健康检查必失败(false),切 current → releases/<run2> 后健康失败 → 回滚到 rel1。
+	// v2:健康检查必失败(false)→ 铺完健康不过 → failed(直铺无版本可回滚)。
 	run2, art2 := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactDist, "dist/shop-v2.tar.gz")
 	res2, err := dsvc.Deploy(ctx, DeployInput{
 		RunID: run2, ArtifactID: art2, ServerIDs: []string{srv.ID},
-		Config:      map[string]string{"releaseBase": base},
+		Config:      map[string]string{"deployPath": base},
 		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"false"}, Retries: 1},
 	})
 	if err != nil {
 		t.Fatalf("v2 Deploy: %v", err)
 	}
-	if res2[0].Status != run.TargetRolledBack {
-		t.Fatalf("v2 健康失败应 rolled_back, got %s: %s", res2[0].Status, res2[0].Message)
+	if res2[0].Status != run.TargetFailed {
+		t.Fatalf("v2 健康失败应 failed(无回滚), got %s: %s", res2[0].Status, res2[0].Message)
 	}
-	t.Logf("v2 回滚结果: status=%s message=%q", res2[0].Status, res2[0].Message)
+	t.Logf("v2 健康失败结果: status=%s message=%q", res2[0].Status, res2[0].Message)
 
-	// 关键断言:current 真切回 v1 的发布(零停机回滚)。
-	link, lerr := os.Readlink(base + "/current")
-	if lerr != nil {
-		t.Fatalf("回滚后 current 软链丢失: %v", lerr)
+	// 关键断言:目录里就是产物本身 —— 既无 releases/ 层,也无 current 软链。
+	if _, serr := os.Stat(base + "/shop-v2.tar.gz"); serr != nil {
+		t.Fatalf("v2 产物应直铺在部署目录: %v", serr)
 	}
-	if link != rel1 {
-		t.Fatalf("回滚后 current 应切回 v1 %q, got %q", rel1, link)
+	if _, lerr := os.Lstat(base + "/current"); lerr == nil {
+		t.Fatalf("直铺模式不应有 current 软链")
 	}
-	// v2 失败发布仍保留(供排查),v1 发布仍在。
-	if _, serr := os.Stat(base + "/releases/" + run2); serr != nil {
-		t.Fatalf("失败发布 v2 应保留供排查: %v", serr)
+	if _, derr := os.Stat(base + "/releases"); derr == nil {
+		t.Fatalf("直铺模式不应有 releases/ 目录")
 	}
 	// message 无凭据明文。
 	if strings.Contains(res2[0].Message, "PRIVATE KEY") || strings.Contains(res2[0].Message, "BEGIN OPENSSH") {
-		t.Fatalf("回滚 message 泄漏私钥!")
+		t.Fatalf("失败 message 泄漏私钥!")
 	}
 }

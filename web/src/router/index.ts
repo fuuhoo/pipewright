@@ -35,6 +35,8 @@ const SettingsDnsProviders = () => import('../views/settings/SettingsDnsProvider
 const SettingsAccount = () => import('../views/settings/SettingsAccount.vue')
 // Story 4-1: target server registry + shared SSH layer (FR-14)
 const SettingsServers = () => import('../views/settings/SettingsServers.vue')
+// K8s 发布那条腿:集群登记(kubeconfig 凭据 + 默认命名空间)
+const SettingsKubeClusters = () => import('../views/settings/SettingsKubeClusters.vue')
 // Story 5-1: notification channels (FR-19)
 const SettingsNotifications = () => import('../views/settings/SettingsNotifications.vue')
 // Story 7-5: diagnosis feedback-loop stats (FR-26)
@@ -172,6 +174,7 @@ const router = createRouter({
             { path: 'system', name: 'settings-system', component: SettingsSystem, meta: { title: '系统信息' } },
             // Story 4-1: target servers + shared SSH layer (FR-14)
             { path: 'servers', name: 'settings-servers', component: SettingsServers, meta: { title: '服务器' } },
+            { path: 'kube-clusters', name: 'settings-kube-clusters', component: SettingsKubeClusters, meta: { title: 'K8s 集群' } },
             // Story 7-5: diagnosis feedback-loop stats (FR-26)
             { path: 'diagnosis-stats', name: 'settings-diagnosis-stats', component: SettingsDiagnosisStats, meta: { title: '诊断统计' } },
 

@@ -137,11 +137,23 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 		}
 		// 没有任何可执行节点(script/build_image/deploy_ssh/notify)且无 post → 诚实占位放行。
 		if !needsBuild && len(deployJobs) == 0 && len(notifyJobs) == 0 && len(stage.Post) == 0 {
+			// git_source 卡片要说实话:绑了仓库才报分支/提交,没绑就直说「无源可拉」。
+			// 真值取自项目(节点 config 里的 repoUrl 只是保存期填的镜像,可能滞后)。
+			var srcProj *project.Project
+			for _, jb := range stage.Jobs {
+				if strings.TrimSpace(jb.Type) == "git_source" {
+					// 真值取自项目(节点 config 里的 repoUrl 只是保存期填的镜像,可能滞后)。
+					if p, _, perr := b.resolve(ctx, r); perr == nil {
+						srcProj = p
+					}
+					break
+				}
+			}
 			for _, jb := range stage.Jobs {
 				_ = rep.JobRunning(ctx, jb.ID)
 				jr := rep.JobReporter(jb.ID)
 				if strings.TrimSpace(jb.Type) == "git_source" {
-					for _, line := range gitSourceLogLines(jb, r) {
+					for _, line := range gitSourceLogLines(jb, r, srcProj) {
 						_ = jr.Log(ctx, streamStdout, line)
 					}
 				} else {
@@ -169,14 +181,16 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 		// 工作区:
 		//  - 非 DAG 路径:有 script/build_image **或** 有 post 步骤时克隆一份阶段工作区(沿用既有语义)。
 		//  - DAG 路径:job 各自克隆独立工作区,阶段级工作区仅 post 步骤(在其中跑)才需要。
-		// 纯部署/通知阶段无工作区。proj/settings 在 needsBuild||hasPost 时解析(两路径都可能用到)。
+		// 纯部署/通知阶段无工作区。proj/settings 在 needsBuild||hasPost||部署节点要读仓库文件 时解析
+		// (两路径都可能用到)。最后一项是必须的:部署阶段常常只有 deploy 节点(needsBuild=false),
+		// 而 compose/清单 的「引用仓库文件」那条路要拿 proj.RepoURL 去读 —— 不解析就是必然失败。
 		var (
 			proj      *project.Project
 			settings  *pipeline.Settings
 			workspace string
 			commitTag = "latest"
 		)
-		if needsBuild || hasPost {
+		if needsBuild || hasPost || deployJobsReadRepoFile(deployJobs) {
 			p, s, perr := b.resolve(ctx, r)
 			if perr != nil {
 				_ = rep.Log(ctx, streamStderr, "无法加载项目构建配置:"+perr.Error())
@@ -194,22 +208,15 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 			workspace = ws
 			defer func() { _ = os.RemoveAll(workspace) }() // 宿主零污染
 
-			auth := b.revealGitAuth(proj.CredentialID)
-			resolved, cerr := b.cloner.Clone(ctx, proj.RepoURL, auth.Username, auth.Token, r.Trigger.Branch, r.Trigger.Commit, workspace)
-			auth = vault.GitAuth{}
-			if cerr != nil {
-				if errors.Is(ctx.Err(), context.Canceled) {
-					return run.ErrCanceled
-				}
-				_ = rep.Log(ctx, streamStderr, "源码克隆失败(鉴权/网络/ref 不存在或被 SSRF 拒绝)")
+			if err := workspaceNeedsRepo(proj, len(buildImageJobs) > 0); err != nil {
+				_ = rep.Log(ctx, streamStderr, err.Error())
 				return ErrBuildFailed
 			}
-			if resolved != nil && resolved.CommitShort != "" {
-				commitTag = resolved.CommitShort
-				if b.recordCommit != nil {
-					b.recordCommit(ctx, r.ID, resolved.CommitShort)
-				}
+			tag, werr := b.fillWorkspace(ctx, r, proj, workspace, rep)
+			if werr != nil {
+				return werr
 			}
+			commitTag = tag
 			// 跨阶段产物传递:把上游阶段已归档的 jar/dist 真字节恢复回本阶段新工作区的原相对路径,
 			// 使「构建/打包/部署」拆成独立串行阶段时,下游(如 build_image)仍能拿到上游产物。
 			// best-effort(首阶段无上游产物即 no-op;失败仅记日志,不阻断)。
@@ -305,7 +312,7 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 				}
 				_ = rep.JobRunning(ctx, jb.ID)
 				jrep := rep.JobReporter(jb.ID)
-				if err := b.runDeployJob(ctx, jrep, jb, r.ID, r.Trigger.Params); err != nil {
+				if err := b.runDeployJob(ctx, jrep, jb, r, proj, settings); err != nil {
 					_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
 					return err
 				}
@@ -432,7 +439,7 @@ func (b *Builder) runStageJobsDAG(
 			case isBuildImageJob(et):
 				return b.runBuildImageJobIsolated(ctx, jsink, jrep, r, jb, stage, proj, settings, hasPushJob)
 			case isDeployJob(jb.Type):
-				return b.runDeployJob(ctx, jrep, jb, r.ID, r.Trigger.Params)
+				return b.runDeployJob(ctx, jrep, jb, r, proj, settings)
 			case strings.TrimSpace(jb.Type) == "push_image":
 				// 推送由构建任务自己完成(见「构建后推送」开关 + 环境是否绑定镜像仓);本节点只做编排顺序。
 				_ = jrep.Log(ctx, streamStdout, fmt.Sprintf("· 推送镜像「%s」:推送在构建任务里完成,本节点仅用于编排顺序", jb.Name))
@@ -489,9 +496,14 @@ func (b *Builder) runStageJobsDAG(
 	return nil
 }
 
-// cloneJobWorkspace 为单个 job 克隆一份独立的临时工作区(并发安全),并恢复本 run 已归档的上游产物。
+// cloneJobWorkspace 为单个 job 备一份独立的临时工作区(并发安全),并恢复本 run 已归档的上游产物。
+// needsSource=false 时(纯 script 任务)未绑仓库的项目不拉源码,工作区从空目录开始。
 // 返回 (workspace, commitTag, cleanup, err);调用方务必在用完后调用 cleanup()。失败时已自行清理。
-func (b *Builder) cloneJobWorkspace(ctx context.Context, r *run.Run, proj *project.Project, rep dagrun.StageReporter) (string, string, func(), error) {
+func (b *Builder) cloneJobWorkspace(ctx context.Context, r *run.Run, proj *project.Project, rep dagrun.StageReporter, needsSource bool) (string, string, func(), error) {
+	if err := workspaceNeedsRepo(proj, needsSource); err != nil {
+		_ = rep.Log(ctx, streamStderr, err.Error())
+		return "", "", func() {}, ErrBuildFailed
+	}
 	ws, mkErr := mkTempWorkspace()
 	if mkErr != nil {
 		_ = rep.Log(ctx, streamStderr, "创建临时工作区失败:"+mkErr.Error())
@@ -499,23 +511,10 @@ func (b *Builder) cloneJobWorkspace(ctx context.Context, r *run.Run, proj *proje
 	}
 	cleanup := func() { _ = os.RemoveAll(ws) }
 
-	auth := b.revealGitAuth(proj.CredentialID)
-	resolved, cerr := b.cloner.Clone(ctx, proj.RepoURL, auth.Username, auth.Token, r.Trigger.Branch, r.Trigger.Commit, ws)
-	auth = vault.GitAuth{}
-	if cerr != nil {
+	commitTag, werr := b.fillWorkspace(ctx, r, proj, ws, rep)
+	if werr != nil {
 		cleanup()
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return "", "", func() {}, run.ErrCanceled
-		}
-		_ = rep.Log(ctx, streamStderr, "源码克隆失败(鉴权/网络/ref 不存在或被 SSRF 拒绝)")
-		return "", "", func() {}, ErrBuildFailed
-	}
-	commitTag := "latest"
-	if resolved != nil && resolved.CommitShort != "" {
-		commitTag = resolved.CommitShort
-		if b.recordCommit != nil {
-			b.recordCommit(ctx, r.ID, resolved.CommitShort) // 同一 commit;并发重复记录幂等无害
-		}
+		return "", "", func() {}, werr
 	}
 	// 跨阶段 + 阶段内上游 job 产物:把本 run 已归档的 jar/dist 真字节恢复进本 job 工作区原相对路径。
 	b.restorePriorArtifacts(ctx, r, ws, rep)
@@ -538,7 +537,7 @@ func (b *Builder) runScriptJobIsolated(
 	upstreamEnv []pipeline.BuildVar,
 	reportSink TestReportSink,
 ) ([]pipeline.BuildVar, error) {
-	ws, _, cleanup, err := b.cloneJobWorkspace(ctx, r, proj, rep)
+	ws, _, cleanup, err := b.cloneJobWorkspace(ctx, r, proj, rep, false)
 	if err != nil {
 		return nil, err
 	}
@@ -587,7 +586,7 @@ func (b *Builder) runBuildImageJobIsolated(
 	settings *pipeline.Settings,
 	hasPushJob bool,
 ) error {
-	ws, commitTag, cleanup, err := b.cloneJobWorkspace(ctx, r, proj, rep)
+	ws, commitTag, cleanup, err := b.cloneJobWorkspace(ctx, r, proj, rep, true)
 	if err != nil {
 		return err
 	}
@@ -595,23 +594,33 @@ func (b *Builder) runBuildImageJobIsolated(
 	return b.runBuildImageJob(ctx, sink, rep, jb, stage.Name, proj, settings, r.Trigger.ResolvedEnvironment, ws, commitTag, hasPushJob)
 }
 
-// runDeployJob 执行一个 deploy_ssh 节点:把本 run 已产出的产物经 SSH 部署到节点配置的目标机
-// (复用 deploy.Service.DeployForStage 中途部署,不动 run 终态)。任一目标失败 → 阶段失败、阻断下游。
-func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb pipeline.Job, runID string, params map[string]string) error {
+// runDeployJob 执行一个部署节点(deploy_ssh / deploy_docker / deploy_k8s):把本 run 已产出的产物
+// (或节点自带的 compose / k8s 清单正文)发到节点配置的目标(经 SSH 到机器,或直连集群 API server;
+// 复用 deploy.Service.DeployForStage 中途部署,不动 run 终态)。任一目标失败 → 阶段失败、阻断下游。
+func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb pipeline.Job, r *run.Run, proj *project.Project, settings *pipeline.Settings) error {
+	runID := r.ID
+	params := deployTemplateVars(r.Trigger.Params, settings)
 	if b.deployer == nil {
 		_ = rep.Log(ctx, streamStdout, "· 部署节点:部署服务未注入,跳过")
 		return nil
 	}
+	// 落点二选一:集群 ID(k8s 发布)或服务器 ID(SSH / docker)。两条腿的落点表不同,
+	// 混着填在保存期就被 validateDeployK8s 拒掉了,这里只可能有一个非空。
+	clusterID := cfgString(jb.Config, pipeline.ConfigKeyClusterID)
 	serverID := cfgString(jb.Config, "serverId")
-	if serverID == "" {
-		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」未选目标服务器(serverId 空)", jb.Name))
+	targetID, targetKind := serverID, "服务器"
+	if clusterID != "" {
+		targetID, targetKind = clusterID, "集群"
+	}
+	if targetID == "" {
+		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」未选目标%s", jb.Name, targetKind))
 		return ErrBuildFailed
 	}
 	cfg := map[string]string{}
 	// deployPath / restartCommand 支持 {{param}} 占位:用本次运行参数渲染(命令型部署据此让
 	// 「本地端口 / 穿透端口」等随运行参数变化;非配置类部署不写占位 → renderTemplate 零开销直返)。
 	if dp := renderTemplate(cfgString(jb.Config, "deployPath"), params); dp != "" {
-		cfg["releaseBase"] = dp
+		cfg["deployPath"] = dp
 	}
 	if rc := renderTemplate(cfgString(jb.Config, "restartCommand"), params); rc != "" {
 		cfg["restartCommand"] = rc
@@ -619,11 +628,73 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 	// 镜像产物部署参数(#51)透传:deploy.DeployForStage 经这些键挑镜像产物并组装
 	// `docker run`(artifactType=image 选镜像;containerName/ports/runArgs 驱动容器名与端口/运行参数)。
 	// artifactFrom = 产物来源任务 ID:并行构建出多件同类产物时,靠它锁定部署哪一件。
+	// dockerMode/stackName/composeYaml 是「docker 部署」节点的三件套(单容器 / compose 两种方式)。
 	// 各值原样搬运(deploy 层 array 化、绝不拼 shell,守 AC-SEC-02);空值不入 cfg 保持默认。
-	for _, k := range []string{"artifactType", pipeline.ConfigKeyArtifactFrom, "containerName", "ports", "runArgs"} {
+	for _, k := range []string{
+		"artifactType", pipeline.ConfigKeyArtifactFrom, "containerName", "ports", "runArgs",
+		pipeline.ConfigKeyDockerMode, pipeline.ConfigKeyStackName,
+		pipeline.ConfigKeyClusterID, pipeline.ConfigKeyWorkloadKind,
+		pipeline.ConfigKeyRolloutTimeout, pipeline.ConfigKeyAutoRollback,
+		pipeline.ConfigKeyManifestSource,
+	} {
 		if v := cfgString(jb.Config, k); v != "" {
 			cfg[k] = v
 		}
+	}
+	// 命名空间与负载名支持 {{param}}:同一套流水线按运行参数发到不同命名空间(如按分支隔离)
+	// 是常规用法;集群 ID 是 uuid,渲染它没有意义。
+	for _, k := range []string{pipeline.ConfigKeyNamespace, pipeline.ConfigKeyWorkloadName} {
+		if v := renderTemplate(cfgString(jb.Config, k), params); v != "" {
+			cfg[k] = v
+		}
+	}
+	// compose 正文在这一步收敛成「一份正文」交下去(deploy 层只认 composeYaml):
+	// 粘贴的按运行参数渲染 —— 同一份栈按参数换端口是一条流水线的常见用法;
+	// 引用仓库文件的现读现用,且**不渲染** —— 那份文件是仓库的资产,不是模板,
+	// 拿它当模板替换会把作者写的 ${...}/{{...}} 悄悄吃掉。
+	// 项目名**两条路都不渲染** —— 它是栈的身份,渲染出第二个名字等于机器上留下两个栈。
+	if composeSourceIsRepo(jb) {
+		path := composeRepoPath(jb)
+		body, rerr := b.readRepoYAML(ctx, jb, path, r, proj, "compose")
+		if rerr != nil {
+			_ = rep.Log(ctx, streamStderr, rerr.Error())
+			return ErrBuildFailed
+		}
+		cfg[pipeline.ConfigKeyComposeYaml] = body
+		// 仓库路径也透下去只为一个目的:部署日志写明这份正文从哪来,排查「改了没生效」时
+		// 不用猜目标机上那份是谁铺的。粘贴档不写这个键 —— 写了就是假线索。
+		cfg[deploy.CfgKeyComposeFile] = path
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("· compose 正文取自仓库文件 %s(%d 字节)", path, len(body)))
+	} else if cy := renderTemplate(cfgString(jb.Config, pipeline.ConfigKeyComposeYaml), params); cy != "" {
+		cfg[pipeline.ConfigKeyComposeYaml] = cy
+	}
+	// K8s 清单同样在这里收敛成「一份正文」交下去(deploy 层只认 manifestYaml)。
+	// 与 compose 的差别是**两条路都渲染**:仓库里那份 k8s.yaml 本就是流水线模板 —— 它必须靠
+	// {{IMAGE}} 拿到本次构建的镜像,而 deploy 层之前没人知道镜像是什么。真留着没替换的变量
+	// 也不会静默发出去:kube 层解析时拒绝任何残留占位符(见 internal/kube/apply.go)。
+	if manifestIsApplied(jb) {
+		body := cfgString(jb.Config, pipeline.ConfigKeyManifestYaml)
+		if cfgString(jb.Config, pipeline.ConfigKeyManifestSource) == pipeline.ManifestSourceRepo {
+			path := strings.TrimSpace(cfgString(jb.Config, pipeline.ConfigKeyManifestFile))
+			text, rerr := b.readRepoYAML(ctx, jb, path, r, proj, "清单")
+			if rerr != nil {
+				_ = rep.Log(ctx, streamStderr, rerr.Error())
+				return ErrBuildFailed
+			}
+			body = text
+			// 仓库路径透下去只为一句日志:排查「改了没生效」时不必猜集群里那份是谁铺的。
+			cfg[deploy.CfgKeyManifestFile] = path
+			_ = rep.Log(ctx, streamStdout, fmt.Sprintf("· 清单正文取自仓库文件 %s(%d 字节)", path, len(text)))
+		}
+		rendered := renderTemplate(body, params)
+		if names := secretVarNames(rendered, settings); names != "" {
+			// 变量表里刻意剔除了 secret(正文会入库,见 deployTemplateVars)。这类写法必须
+			// 停在执行之前说清楚 —— 否则用户看到的是「变量没给全」,而他明明配了。
+			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」的清单引用了加密变量 %s:清单正文会随发布结果入库,"+
+				"不能把机密抄进去。请改用非加密变量,或让镜像 / 集群自己取凭据(Secret 名、服务账号)", jb.Name, names))
+			return ErrBuildFailed
+		}
+		cfg[pipeline.ConfigKeyManifestYaml] = rendered
 	}
 	// 部署后健康探测(原「健康检查」节点的能力,现并入部署任务):deploy 层在同一条 exec
 	// 链路上逐机探测,不通 → 该机 failed(阻断下游)。缺参数当场判失败,不留「静默不探测」的假绿。
@@ -666,10 +737,30 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 	if stratLabel == "" {
 		stratLabel = "rolling(默认)"
 	}
-	_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ SSH 部署本次产物到服务器 %s(策略 %s)…", serverID, stratLabel))
+	// 日志首行说清走的是哪条链路:docker 两种方式在目标机上做的事完全不同,
+	// 都写成「SSH 部署本次产物」会让人以为 compose 节点也在发构建产物。
+	switch what := cfgString(jb.Config, pipeline.ConfigKeyDockerMode); what {
+	case pipeline.DockerModeCompose:
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ Compose 部署到服务器 %s(整份 YAML 交目标机 docker compose)…", serverID))
+	case pipeline.DockerModeRun:
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ Docker 部署本次镜像到服务器 %s(停旧起新,策略 %s)…", serverID, stratLabel))
+	default:
+		if clusterID != "" {
+			if manifestIsApplied(jb) {
+				// 清单那条腿发出去的是「这一份声明」,不是某一个负载 —— 别按负载名报一个集群里
+				// 可能并不存在的目标。
+				_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ K8s 应用清单到集群 %s(按清单建/收敛对象,滚完才算成功)…", clusterID))
+				break
+			}
+			_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ K8s 发布本次镜像到集群 %s 的 %s/%s(换镜像后等集群滚完)…",
+				clusterID, cfgString(jb.Config, pipeline.ConfigKeyNamespace), cfgString(jb.Config, pipeline.ConfigKeyWorkloadName)))
+			break
+		}
+		_ = rep.Log(ctx, streamStdout, fmt.Sprintf("→ SSH 部署本次产物到服务器 %s(策略 %s)…", serverID, stratLabel))
+	}
 	// 把目标机真实执行的命令 + stdout/stderr 实时回流到本部署步骤日志(脱敏由 sink 侧 Masker 兜底)。
 	dctx := deploy.WithCmdLog(ctx, func(stream, text string) { _ = rep.Log(ctx, stream, text) })
-	results, err := b.deployer.DeployForStage(dctx, runID, []string{serverID}, cfg, strategy)
+	results, err := b.deployer.DeployForStage(dctx, runID, []string{targetID}, cfg, strategy)
 	if err != nil {
 		_ = rep.Log(ctx, streamStderr, "部署失败:"+err.Error())
 		return ErrBuildFailed
@@ -688,6 +779,177 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		return ErrBuildFailed
 	}
 	return nil
+}
+
+// composeSourceIsRepo 报告这个 compose 节点的正文取自项目仓库,而不是节点里粘的那份。
+func composeSourceIsRepo(jb pipeline.Job) bool {
+	return cfgString(jb.Config, pipeline.ConfigKeyComposeSource) == pipeline.ComposeSourceRepo
+}
+
+// composeRepoPath 是节点配的仓库相对路径(已 trim;合法性由调用处判)。
+func composeRepoPath(jb pipeline.Job) string {
+	return strings.TrimSpace(cfgString(jb.Config, pipeline.ConfigKeyComposeFile))
+}
+
+// deployJobsReadRepoFile 报告这批部署节点里有没有要从项目仓库读正文的(compose 或 k8s 清单)。
+// 有,就必须解析出 proj —— 这是纯部署阶段(没有构建节点)唯一需要项目信息的理由。
+func deployJobsReadRepoFile(jobs []pipeline.Job) bool {
+	for _, jb := range jobs {
+		if composeSourceIsRepo(jb) || cfgString(jb.Config, pipeline.ConfigKeyManifestSource) == pipeline.ManifestSourceRepo {
+			return true
+		}
+	}
+	return false
+}
+
+// manifestIsApplied 报告该部署节点走「应用清单」这条腿(repo / paste)。空与 none 都是
+// 「只换镜像」—— 老节点没这一格,行为必须与加它之前一字不差。
+func manifestIsApplied(jb pipeline.Job) bool {
+	switch cfgString(jb.Config, pipeline.ConfigKeyManifestSource) {
+	case pipeline.ManifestSourceRepo, pipeline.ManifestSourcePaste:
+		return true
+	}
+	return false
+}
+
+// deployTemplateVars 是部署节点正文(命令 / compose / 清单)渲染用的变量表:本次运行参数
+// + 流水线级「变量」。**加密变量刻意不进**:这些正文会落到目标机上、清单还会随发布结果入库
+// (deploy_manifests,回滚要读它),收加密变量等于把机密抄一份存在我们自己的库里。
+// IMAGE 也从这里剔掉 —— 它是内置占位符,由部署层换成本次挑中的那件镜像,运行参数不许顶掉它。
+func deployTemplateVars(params map[string]string, settings *pipeline.Settings) map[string]string {
+	out := make(map[string]string, len(params)+4)
+	for k, v := range params {
+		out[k] = v
+	}
+	if settings != nil {
+		for _, v := range settings.Build.Vars {
+			if v.Secret || strings.TrimSpace(v.Key) == "" {
+				continue
+			}
+			out[v.Key] = v.Value
+		}
+	}
+	delete(out, deploy.ImagePlaceholder)
+	return out
+}
+
+// secretVarNames 返回正文里残留、且名字正好是某个加密变量的占位符(形如 `{{TOKEN}}`)。
+// 这些是被 deployTemplateVars 有意跳过的:不说破就会变成一句查不出原因的「变量没给全」。
+func secretVarNames(text string, settings *pipeline.Settings) string {
+	if settings == nil || !strings.Contains(text, "{{") {
+		return ""
+	}
+	secret := map[string]bool{}
+	for _, v := range settings.Build.Vars {
+		if v.Secret {
+			secret[v.Key] = true
+		}
+	}
+	var names []string
+	for _, m := range tplPlaceholder.FindAllStringSubmatch(text, -1) {
+		if !secret[m[1]] {
+			continue
+		}
+		name := "{{" + m[1] + "}}"
+		if !strings.Contains(strings.Join(names, " "), name) {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, " / ")
+}
+
+// projectHasRepo 报告项目是否绑了 git 仓库(纯发布项目为空)。
+func projectHasRepo(proj *project.Project) bool {
+	return proj != nil && strings.TrimSpace(proj.RepoURL) != ""
+}
+
+// sourcelessEmptyWorkspaceNote 在未绑仓库的项目日志里说明工作区为什么是空的,免得人以为检出坏了。
+const sourcelessEmptyWorkspaceNote = "· 项目未绑定仓库:本阶段工作区为空(不拉源码),任务在没有源码的目录里跑"
+
+// workspaceNeedsRepo 在工作区要克隆前确认项目绑了仓库。needsSource 由调用方按任务类型给:
+// 镜像档构建吃的是仓库里的 Dockerfile,没源码就没得构建 → 拦;纯脚本任务能在空目录里自己造文件
+// → 放行。被拦时给一句照着能改的话,而不是让 go-git 对着空地址报「鉴权/网络」。
+func workspaceNeedsRepo(proj *project.Project, needsSource bool) error {
+	if needsSource && !projectHasRepo(proj) {
+		return errors.New("本阶段的构建任务要拉取源码,但项目未绑定仓库:请到项目里绑定仓库,或把这一阶段改成不依赖源码(只发已有产物/镜像)")
+	}
+	return nil
+}
+
+// fillWorkspace 填入工作区内容:绑了仓库就克隆源码,没绑(纯发布项目)就留空目录并说明一句。
+// 返回本次用于镜像 tag 的 commitTag(无仓库/未解析出 commit → "latest")。克隆失败与取消
+// 都记日志后返回错误;成功且解析到 commit 时顺手回写运行记录。
+func (b *Builder) fillWorkspace(ctx context.Context, r *run.Run, proj *project.Project, workspace string, rep dagrun.StageReporter) (string, error) {
+	if !projectHasRepo(proj) {
+		_ = rep.Log(ctx, streamStdout, sourcelessEmptyWorkspaceNote)
+		return "latest", nil
+	}
+	auth := b.revealGitAuth(proj.CredentialID)
+	resolved, cerr := b.cloner.Clone(ctx, proj.RepoURL, auth.Username, auth.Token, r.Trigger.Branch, r.Trigger.Commit, workspace)
+	auth = vault.GitAuth{}
+	if cerr != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return "", run.ErrCanceled
+		}
+		_ = rep.Log(ctx, streamStderr, "源码克隆失败(鉴权/网络/ref 不存在或被 SSRF 拒绝)")
+		return "", ErrBuildFailed
+	}
+	commitTag := "latest"
+	if resolved != nil && resolved.CommitShort != "" {
+		commitTag = resolved.CommitShort
+		if b.recordCommit != nil {
+			b.recordCommit(ctx, r.ID, resolved.CommitShort)
+		}
+	}
+	return commitTag, nil
+}
+
+// readRepoYAML 读出「部署节点引用仓库文件」时那份正文(compose 与 k8s 清单共用一条路径规则;
+// what 只影响报错里那句主语)。读的是本次运行 commit(无 commit 则 branch)上的文件,不是工作区
+// —— 部署节点可能跑在与构建不同的机器上,工作区未必存在。错误信息一律面向用户、可操作,
+// 不透传 go-git 内部报错。
+func (b *Builder) readRepoYAML(ctx context.Context, jb pipeline.Job, path string, r *run.Run, proj *project.Project, what string) (string, error) {
+	if b.repoFiles == nil {
+		return "", fmt.Errorf("%s 节点「%s」要引用仓库文件 %s,但平台未启用代码管理区(读不到仓库内容);改回粘贴正文或开启代码管理区", what, jb.Name, path)
+	}
+	if proj == nil || strings.TrimSpace(proj.RepoURL) == "" {
+		return "", fmt.Errorf("%s 节点「%s」要引用仓库文件,但项目未绑定仓库", what, jb.Name)
+	}
+	if path == "" || !pipeline.RepoYAMLPathOK(path) {
+		return "", fmt.Errorf("%s 节点「%s」的仓库文件路径非法:%s(需为仓库内相对路径,以 .yml/.yaml 结尾)", what, jb.Name, path)
+	}
+	auth := b.revealGitAuth(proj.CredentialID)
+	body, err := b.repoFiles.ReadFile(ctx, proj.RepoURL, auth.Username, auth.Token, r.Trigger.Branch, r.Trigger.Commit, path)
+	auth = vault.GitAuth{}
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrRepoFileNotFound):
+			return "", fmt.Errorf("仓库里没有 %s(分支 %s / commit %s 上不存在该文件)", path, r.Trigger.Branch, shortCommit(r))
+		case errors.Is(err, ErrRepoBadFilePath):
+			return "", fmt.Errorf("%s 节点「%s」的仓库文件路径非法:%s", what, jb.Name, path)
+		case errors.Is(err, ErrRepoFileTooLarge):
+			return "", fmt.Errorf("%s 超过仓库单文件正文上限", path)
+		default:
+			return "", fmt.Errorf("读取仓库文件 %s 失败:%s", path, err)
+		}
+	}
+	s := string(body)
+	if strings.TrimSpace(s) == "" {
+		return "", fmt.Errorf("仓库文件 %s 是空的", path)
+	}
+	return s, nil
+}
+
+// shortCommit 取 commit 短号用于日志;没 commit 时直说「最新提交」。
+func shortCommit(r *run.Run) string {
+	c := strings.TrimSpace(r.Trigger.Commit)
+	if c == "" {
+		return "最新提交"
+	}
+	if len(c) > 7 {
+		return c[:7]
+	}
+	return c
 }
 
 // runNotifyJob 执行一个 notify 节点:按节点配的渠道(id 或名称)发一条通知。
@@ -1057,8 +1319,25 @@ func cfgString(cfg map[string]any, key string) string { return pipeline.ConfigSt
 // gitSourceLogLines 为 git_source 节点拼出可读的源码信息(仓库 / 分支 / 提交 / 凭据)。
 // 注:git_source 是 go-git 库克隆(非 shell 命令),真实检出发生在构建阶段各 job 工作区,
 // 此处展示「本阶段引用的源」让步骤日志不再是空占位。绝不回显凭据值,只标注是否已绑定。
-func gitSourceLogLines(jb pipeline.Job, r *run.Run) []string {
+// proj 为项目真值,可为 nil(项目读不到时):只有确实读到「未绑仓库」才说「无源可拉」,
+// 读不到时退回按节点 config 里的镜像信息展示,不把读取失败说成没绑仓库。
+func gitSourceLogLines(jb pipeline.Job, r *run.Run, proj *project.Project) []string {
+	lines := []string{}
+	if proj != nil && strings.TrimSpace(proj.RepoURL) == "" {
+		return append(lines,
+			"· 项目未绑定仓库:本流水线不拉源码,只用于发布已有产物/镜像",
+			"· 需要源码请到项目里绑定仓库(项目卡片 →「仓库设置」)")
+	}
 	repo := cfgString(jb.Config, "repoUrl")
+	cred := cfgString(jb.Config, "credentialId")
+	if proj != nil {
+		if repo == "" {
+			repo = strings.TrimSpace(proj.RepoURL)
+		}
+		if cred == "" {
+			cred = strings.TrimSpace(proj.CredentialID)
+		}
+	}
 	branch := cfgString(jb.Config, "branch")
 	if branch == "" {
 		branch = strings.TrimSpace(r.Trigger.Branch)
@@ -1067,7 +1346,6 @@ func gitSourceLogLines(jb pipeline.Job, r *run.Run) []string {
 		branch = "(默认分支)"
 	}
 	commit := strings.TrimSpace(r.Trigger.Commit)
-	lines := []string{}
 	if repo != "" {
 		lines = append(lines, "· 源码仓库:"+repo)
 	}
@@ -1081,7 +1359,7 @@ func gitSourceLogLines(jb pipeline.Job, r *run.Run) []string {
 		branchLine += "   · 提交:构建阶段克隆时解析 HEAD"
 	}
 	lines = append(lines, branchLine)
-	if cfgString(jb.Config, "credentialId") != "" {
+	if cred != "" {
 		lines = append(lines, "· 凭据:已绑定(经保险库,绝不回显)")
 	}
 	lines = append(lines, "· 实际克隆在构建阶段各 job 工作区执行(go-git 浅克隆)")

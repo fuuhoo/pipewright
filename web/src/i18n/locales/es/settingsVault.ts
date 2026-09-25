@@ -38,6 +38,7 @@ export default {
   typeSshPassword: 'Contraseña SSH',
   typeRegistry: 'Registro',
 
+  typeKubeconfig: 'Configuración de Kubernetes',
   maskTitle: 'Valor enmascarado (puedes verlo al editar)',
   maskAria: 'Enmascarado: {value}',
   never: 'Nunca',
@@ -89,6 +90,9 @@ export default {
   valSecretRequired: 'El secreto es obligatorio',
   secretOptionalEdit: '(déjalo en blanco para no rotar)',
   secretPlaceholderSshKey: 'Pega la clave privada completa (incluidas las líneas -----BEGIN/END-----)…',
+  fieldSecretKubeconfig: 'kubeconfig (YAML)',
+  secretPlaceholderKubeconfig: 'Pega el YAML kubeconfig completo (apiVersion / clusters / users / contexts)…',
+  hintKubeconfig: 'El archivo se guarda cifrado y solo sale del proceso para conectar con el API server. Solo se aceptan datos integrados: certificate-authority-data más token o client-certificate-data; se rechazan complementos exec, auth-provider y archivos de claves externos.',
   secretPlaceholderKeep: 'Déjalo en blanco para mantener el secreto actual',
   secretPlaceholderSshPassword: 'Introduce la contraseña de inicio de sesión SSH…',
   secretPlaceholderToken: 'Pega el contenido del token…',

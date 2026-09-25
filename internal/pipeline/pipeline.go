@@ -53,6 +53,14 @@ var (
 	ErrInvalidStage = errors.New("pipeline: invalid stage")
 	// ErrInvalidJob 表示任务校验失败(任务名空 / type 空)。
 	ErrInvalidJob = errors.New("pipeline: invalid job")
+	// ErrSourceStageRequired 表示流水线缺了(或多了)源阶段。它同时是 ErrInvalidStage
+	// (沿用既有判定),但必须单独报——否则用户看到的是「阶段名不能为空且 kind 必须为…」,
+	// 跟他刚做的事一句都对不上。
+	ErrSourceStageRequired = errors.New("pipeline: exactly one source stage required")
+	// ErrJobDepUnknown 表示任务的 needs 指向了本阶段里不存在的任务。它同时是
+	// ErrInvalidJob(沿用既有判定),但 HTTP 层必须把它和「名字/类型为空」分开报——
+	// 否则删掉一个被依赖的任务后,用户只会看到一句对不上号的「任务名不能为空」。
+	ErrJobDepUnknown = errors.New("pipeline: job needs an unknown job")
 	// ErrDuplicateID 表示 stage/job id 全局重复。
 	ErrDuplicateID = errors.New("pipeline: duplicate id")
 )
@@ -174,6 +182,9 @@ func New(db *sql.DB, opts ...ServiceOption) Service {
 func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 	cfg, err := s.load(ctx, projectID)
 	if err == nil {
+		// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
+		// 放回去,用户不必先保存一次才看得到。
+		restoreSourceJob(&cfg.Spec)
 		// 给 git_source 任务预填项目绑定的仓库/分支/凭据(字段留空时)+ 卡片摘要,
 		// 使画布源节点直接展示项目源码信息(经 YAML 导入/手编保存的 source 任务常为空)。
 		s.fillSourceDefaults(ctx, projectID, &cfg.Spec)
@@ -184,6 +195,40 @@ func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 	}
 	// 首次访问无配置:惰性生成默认种子。
 	return s.createDefault(ctx, projectID)
+}
+
+// restoreSourceJob 给缺了 git_source 任务的源阶段补回一张卡片(就地改 spec)。
+// 源阶段是流水线唯一「没有已有任务就没有补加入口」的一列,缺了就永久修不回来,
+// 所以读和存两条路径都补一次。返回是否发生了补回。
+func restoreSourceJob(spec *Spec) bool {
+	healed := false
+	for i := range spec.Stages {
+		st := &spec.Stages[i]
+		if strings.TrimSpace(st.Kind) != KindSource || hasSourceJob(st.Jobs) {
+			continue
+		}
+		// id 固定成 job_src(与默认种子一致,免得每次刷新画布都看到一张新卡片),
+		// 真被撞上了才退化成 uuid。
+		id := "job_src"
+		if specHasJobID(spec, id) {
+			id = uuid.NewString()
+		}
+		st.Jobs = append([]Job{{ID: id, Name: "源", Type: "git_source", Config: map[string]any{}}}, st.Jobs...)
+		healed = true
+	}
+	return healed
+}
+
+// specHasJobID 报告 spec 里是否已有同 id 的任务(id 须全图唯一)。
+func specHasJobID(spec *Spec, id string) bool {
+	for _, st := range spec.Stages {
+		for _, jb := range st.Jobs {
+			if jb.ID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fillSourceDefaults 为 git_source 任务预填项目绑定的仓库/分支/凭据(仅当对应字段为空,
@@ -198,7 +243,7 @@ func (s *service) fillSourceDefaults(ctx context.Context, projectID string, spec
 		}
 		loaded = true
 		_ = s.db.QueryRowContext(ctx,
-			`SELECT repo_url, default_branch, credential_id FROM projects WHERE id = ?`, projectID,
+			`SELECT repo_url, default_branch, COALESCE(credential_id, '') FROM projects WHERE id = ?`, projectID,
 		).Scan(&repoURL, &branch, &credID)
 	}
 	asStr := func(v any) string { s, _ := v.(string); return strings.TrimSpace(s) }
@@ -221,16 +266,21 @@ func (s *service) fillSourceDefaults(ctx context.Context, projectID string, spec
 			if credID != "" && asStr(job.Config["credentialId"]) == "" {
 				job.Config["credentialId"] = credID
 			}
-			if strings.TrimSpace(job.Summary) == "" {
+			// 摘要只在为空或仍是自己生成的占位时重写,用户手写的文字不碰。
+			summary := strings.TrimSpace(job.Summary)
+			if summary != "" && summary != sourceSummaryUnbound &&
+				!strings.HasSuffix(summary, sourceSummaryPushSuffix) {
+				continue
+			}
+			if asStr(job.Config["repoUrl"]) == "" {
+				// 项目和任务都没给仓库:这张卡片说的是「本项目的源码来源 = 无」。
+				job.Summary = sourceSummaryUnbound
+			} else {
 				b := branch
 				if b == "" {
 					b = "main"
 				}
-				if repoURL != "" {
-					job.Summary = repoURL + " · " + b
-				} else {
-					job.Summary = b + " · push/tag/PR"
-				}
+				job.Summary = asStr(job.Config["repoUrl"]) + " · " + b
 			}
 		}
 	}
@@ -365,16 +415,24 @@ func (s *service) sourceSummary(ctx context.Context, projectID string) (string, 
 		}
 		return "", fmt.Errorf("pipeline: load project: %w", err)
 	}
+	repoURL = strings.TrimSpace(repoURL)
 	branch := strings.TrimSpace(defaultBranch)
 	if branch == "" {
 		branch = "main"
 	}
-	repo := strings.TrimSpace(repoURL)
-	if repo == "" {
-		return branch + " · push/tag/PR", nil
+	if repoURL == "" {
+		// 没绑仓库:源阶段无源可拉,别拼一个凭空的分支名糊人。
+		return sourceSummaryUnbound, nil
 	}
-	return repo + " · " + branch, nil
+	return repoURL + " · " + branch, nil
 }
+
+// sourceSummaryUnbound 是没绑仓库项目(仅发布用)的源卡片摘要。
+const sourceSummaryUnbound = "未绑定仓库 · 仅用于发布"
+
+// sourceSummaryPushSuffix 是历史占位摘要的后缀(旧数据形如「main · push/tag/PR」)。
+// 只有空摘要或这种占位才允许重写,用户手写的摘要一律不碰。
+const sourceSummaryPushSuffix = " · push/tag/PR"
 
 // defaultSpec 构造默认种子:仅 源阶段(git_source 引用项目仓库)+ 空构建阶段。
 // 部署/通知等阶段不再预置——按需由用户「+添加阶段」动态加入,空阶段不写死、不冒充已配置
@@ -455,6 +513,14 @@ func normalizeSpec(in Spec) (Spec, error) {
 			if err := validateBuildTask(name, jobName, jobType, cfg); err != nil {
 				return Spec{}, err
 			}
+			// docker 部署节点同理:单容器与 compose 在目标机上做的事不同,方式与正文不能靠猜。
+			if err := validateDeployDocker(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
+			}
+			// K8s 发布节点:发到哪个集群 / 哪个负载必须说全,否则执行期只会剩一句「连不上」。
+			if err := validateDeployK8s(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
+			}
 			jobs = append(jobs, Job{
 				ID:      jobID,
 				Name:    jobName,
@@ -463,6 +529,14 @@ func normalizeSpec(in Spec) (Spec, error) {
 				Config:  cfg,
 				Needs:   normalizeNeeds(jb.Needs),
 			})
+		}
+
+		// 源阶段恒有一个 git_source 任务:它是「项目仓库」在画布上的那一张卡片,
+		// 删掉后这阶段就没有任何补加入口(加任务只挂在已有任务上)。所以缺了就补回来,
+		// 让存量流水线在下次读/存时自愈,而不是留一列死的给执行人看。
+		if kind == KindSource && !hasSourceJob(jobs) {
+			jobs = append([]Job{{ID: uuid.NewString(), Name: "源", Type: "git_source", Config: map[string]any{}}}, jobs...)
+			seen[jobs[0].ID] = struct{}{}
 		}
 
 		// 阶段内 job 依赖校验:引用须为同阶段 job、不自指、不成环(阶段内 job 级 DAG)。
@@ -504,7 +578,7 @@ func normalizeSpec(in Spec) (Spec, error) {
 		}
 	}
 	if sourceCount != 1 {
-		return Spec{}, fmt.Errorf("%w: pipeline must have exactly one source stage", ErrInvalidStage)
+		return Spec{}, fmt.Errorf("%w: %w", ErrInvalidStage, ErrSourceStageRequired)
 	}
 
 	// 阶段依赖(needs)校验:引用必须存在、不可自指、不可成环(Epic 8 · 8-1)。
@@ -539,6 +613,16 @@ func (s *service) enforceBuildEnvCatalog(spec Spec) error {
 		return nil
 	}
 	return &BuildEnvValidationError{Problems: problems}
+}
+
+// hasSourceJob 报告这批任务里有没有 git_source(源阶段的项目仓库卡片)。
+func hasSourceJob(jobs []Job) bool {
+	for _, jb := range jobs {
+		if strings.TrimSpace(jb.Type) == "git_source" {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeNeeds 规范化阶段依赖列表:trim、剔空、去重(保留首次出现序)。
@@ -606,9 +690,10 @@ func validateJobDAG(jobs []Job) error {
 		nodes = append(nodes, dag.Node{ID: jb.ID, Needs: jb.Needs})
 	}
 	if _, err := dag.New(nodes); err != nil {
+		if errors.Is(err, dag.ErrUnknownDep) {
+			return &unknownDepError{}
+		}
 		switch {
-		case errors.Is(err, dag.ErrUnknownDep):
-			return fmt.Errorf("%w: job needs reference an unknown job in the stage", ErrInvalidJob)
 		case errors.Is(err, dag.ErrSelfDep):
 			return fmt.Errorf("%w: job must not depend on itself", ErrInvalidJob)
 		case errors.Is(err, dag.ErrCycle):
@@ -618,6 +703,17 @@ func validateJobDAG(jobs []Job) error {
 		}
 	}
 	return nil
+}
+
+// unknownDepError 是「任务 needs 指向本阶段不存在的任务」这一种错误的载体。
+// 它必须同时匹配 ErrJobDepUnknown(HTTP 层据此报出能对上号的话)与 ErrInvalidJob
+// (沿用既有判定,别的调用方不必改)。
+type unknownDepError struct{}
+
+func (e *unknownDepError) Error() string { return ErrJobDepUnknown.Error() }
+
+func (e *unknownDepError) Is(target error) bool {
+	return target == ErrJobDepUnknown || target == ErrInvalidJob
 }
 
 // normalizeSpecShape 保证从库回读的 spec 切片/map 非 nil(JSON 输出为 [] / {} 而非 null)。

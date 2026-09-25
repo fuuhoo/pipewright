@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: 'Projekt nicht gefunden, bitte aktualisieren und erneut versuchen.',
   triggerErrStatus: 'Auslösen fehlgeschlagen ({status})',
   triggerErrRetry: 'Auslösen fehlgeschlagen, bitte später erneut versuchen.',
+
+  // ─── Optionales Repository (nur-Veröffentlichungs-Projekte) ───
+  bindRepo: 'Git-Repository binden',
+  bindRepoOnHint: 'Die Pipeline beginnt beim Quellcode: der Quellcode-Job klont dieses Repository, Builds und Deployments folgen Branch oder Commit.',
+  bindRepoOffHint: 'Nur Veröffentlichung: keine Quellcode-Stufe — anderweitig vorbereitete Artefakte oder Images werden direkt deployed. Du kannst später auf der Projektkarte noch ein Repository binden.',
+  repoNotBound: 'Kein Repository · nur Veröffentlichung',
+  actionRepoTitle: 'Repository-Einstellungen · {name}',
+  actionRepoAria: 'Repository-Bindung von Projekt {name} einstellen',
+  repoTitle: 'Repository-Einstellungen',
+  repoSub: '{name} · Git-Repository binden, ändern oder lösen',
+  repoErrUnreachable: 'Repository-URL nicht erreichbar; nichts wurde gespeichert.',
+  repoErrStatus: 'Speichern fehlgeschlagen ({status})',
+  repoErrRetry: 'Speichern fehlgeschlagen, bitte später erneut versuchen.',
+  triggerSubNoRepo: '{name} · dieses Projekt dient nur der Veröffentlichung; Lauf direkt erstellen',
 }

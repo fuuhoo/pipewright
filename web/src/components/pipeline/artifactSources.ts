@@ -22,6 +22,8 @@ const NON_PRODUCING_TYPES = new Set([
   'notify',
   'deploy_ssh',
   'deploy_frontend',
+  'deploy_docker',
+  'deploy_k8s',
 ])
 
 export function producesArtifact(job: PipelineJob): boolean {

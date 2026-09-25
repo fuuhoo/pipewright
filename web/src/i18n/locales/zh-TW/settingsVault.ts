@@ -38,6 +38,7 @@ export default {
   typeSshPassword: 'SSH 密碼',
   typeRegistry: '映像倉庫',
 
+  typeKubeconfig: 'Kubernetes 設定',
   maskTitle: '遮罩值（編輯中可檢視明文）',
   maskAria: '遮罩: {value}',
   never: '從未',
@@ -89,6 +90,9 @@ export default {
   valSecretRequired: '請填寫密鑰內容',
   secretOptionalEdit: '（留空則不輪換）',
   secretPlaceholderSshKey: '貼上完整私鑰(含 -----BEGIN/END----- 行)…',
+  fieldSecretKubeconfig: 'kubeconfig(YAML)',
+  secretPlaceholderKubeconfig: '貼上整份 kubeconfig YAML(apiVersion / clusters / users / contexts)…',
+  hintKubeconfig: '整份檔案加密儲存,除連線叢集 API server 外不離此行程。只認檔案內資料:certificate-authority-data 加 token 或 client-certificate-data;exec 外掛、auth-provider 與外部金鑰檔案一律拒絕。',
   secretPlaceholderKeep: '留空則保持目前密鑰不變',
   secretPlaceholderSshPassword: '輸入 SSH 登入密碼…',
   secretPlaceholderToken: '貼上權杖內容…',

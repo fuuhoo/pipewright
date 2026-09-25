@@ -30,6 +30,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/dnsprovider"
 	"github.com/huangchengsir/pipewright/internal/group"
 	"github.com/huangchengsir/pipewright/internal/i18n"
+	"github.com/huangchengsir/pipewright/internal/kube"
 	"github.com/huangchengsir/pipewright/internal/library"
 	"github.com/huangchengsir/pipewright/internal/metrics"
 	"github.com/huangchengsir/pipewright/internal/notify"
@@ -86,6 +87,8 @@ type options struct {
 	refsLister       RefsLister
 	runnerConfig     runner.Service
 	servers          target.Service
+	// kubeClusters 是「集群目标」这一条腿(K8s 发布直连 API server,不经目标机 SSH)。
+	kubeClusters     kube.Service
 	notifications    notify.Service
 	deployer         deploy.Service
 	anomaly          anomaly.Service
@@ -353,6 +356,13 @@ func WithRunnerConfig(svc runner.Service) Option {
 // 密文,响应/错误绝无明文。不传则相关端点返回 503(服务未初始化)。
 func WithServers(s target.Service) Option {
 	return func(o *options) { o.servers = s }
+}
+
+// WithKubeClusters 注入集群目标服务(internal/kube),挂载 /api/kube-clusters* 路由
+// (GET auth;写方法 + test auth + CSRF)。kubeconfig 仅经 vault 密文,响应/错误绝无明文。
+// 不传则相关端点返回 503(服务未初始化)。
+func WithKubeClusters(s kube.Service) Option {
+	return func(o *options) { o.kubeClusters = s }
 }
 
 // WithDeploy 注入部署执行服务(Story 4.2;internal/deploy,FR-10),挂载
@@ -801,6 +811,15 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Put("/servers/{id}", makeUpdateServerHandler(sv, o.access, aud, authn))
 		ar.Delete("/servers/{id}", makeDeleteServerHandler(sv, o.access, aud, authn))
 		ar.Post("/servers/{id}/test", makeTestServerHandler(sv))
+		// 集群目标(K8s 发布那条腿;internal/kube)。kc 为 nil 时 handler 返回 503。
+		// kubeconfig 经 vault 即用即弃,响应/错误/审计绝无明文(AC-SEC-01)。
+		kc := o.kubeClusters
+		ar.Get("/kube-clusters", makeListKubeClustersHandler(kc, o.access))
+		ar.Post("/kube-clusters", makeCreateKubeClusterHandler(kc, o.access, aud, authn))
+		ar.Get("/kube-clusters/{id}", makeGetKubeClusterHandler(kc))
+		ar.Put("/kube-clusters/{id}", makeUpdateKubeClusterHandler(kc, o.access, aud, authn))
+		ar.Delete("/kube-clusters/{id}", makeDeleteKubeClusterHandler(kc, o.access, aud, authn))
+		ar.Post("/kube-clusters/{id}/test", makeTestKubeClusterHandler(kc, aud, authn))
 		// 服务日志查看(Story 6.2;FR-16,经 SSH 取目标服务器日志)。复用 sv(4-1 装配,无新服务)。
 		// 均为 GET 只读 → 过 auth、豁免 CSRF。source/target 严格白名单校验(AC-SEC-02);
 		// SSH/命令失败人读不 500;实时 /logs/stream 为 SSE,客户端断开即关 SSH session。

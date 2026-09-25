@@ -58,10 +58,8 @@ func TestCanaryCount(t *testing.T) {
 type touchRecorder struct {
 	mu           sync.Mutex
 	touched      map[string]bool // 被 Exec 过的 serverID
-	sawMv        bool            // 是否出现过 cutover 切换(mv -T → current)
 	calls2       [][]string      // 全部命令(image 蓝绿断言 pull/run 用)
 	failOn       func(serverID string, cmd []string) bool
-	prevLink     string // 非空 → readlink current 返回该路径(模拟已有上一发布)
 	inspectImage string // 非空 → docker inspect 返回该镜像(模拟已有上一镜像)
 }
 
@@ -72,17 +70,7 @@ func (r *touchRecorder) exec(serverID string, cmd []string) (*target.ExecResult,
 	}
 	r.touched[serverID] = true
 	r.calls2 = append(r.calls2, cmd)
-	if cmd[0] == "mv" {
-		r.sawMv = true
-	}
 	r.mu.Unlock()
-	// 模拟 readlink current → 上一发布(供机群回滚有 prev 可回)。
-	if cmd[0] == "readlink" {
-		if r.prevLink != "" {
-			return &target.ExecResult{ExitCode: 0, Stdout: r.prevLink}, nil
-		}
-		return &target.ExecResult{ExitCode: 0}, nil
-	}
 	// 模拟 docker inspect → 上一镜像(供 image 机群回滚有 prevImage 可回)。
 	if len(cmd) >= 2 && cmd[0] == "docker" && cmd[1] == "inspect" {
 		if r.inspectImage != "" {
@@ -202,19 +190,31 @@ func TestDeployBlueGreenSuccess(t *testing.T) {
 			t.Fatalf("target %d status = %s (msg %q), want success", i, r.Status, r.Message)
 		}
 	}
-	if !rec.sawMv {
-		t.Fatalf("蓝绿成功应发生 current 原子切换(mv -T)")
+	// 直铺蓝绿不再有 current 切换:两机各自铺进部署路径,无软链/原子 rename 命令。
+	for _, c := range rec.calls2 {
+		if len(c) > 0 && (c[0] == "ln" || c[0] == "mv" || c[0] == "readlink") {
+			t.Fatalf("直铺蓝绿不应出现软链切换命令: %v", c)
+		}
+	}
+	var sawMkdir int
+	for _, c := range rec.calls2 {
+		if len(c) > 0 && c[0] == "mkdir" {
+			sawMkdir++
+		}
+	}
+	if sawMkdir != 2 {
+		t.Fatalf("两机应各建一次部署目录, got %d (%v)", sawMkdir, rec.calls2)
 	}
 }
 
-// 蓝绿安全不变量:预备阶段任一机失败 → 绝不切换任何机(无 mv → current),已就绪机标 failed 未切换。
-func TestDeployBlueGreenStageFailAbortsAllCutover(t *testing.T) {
+// 蓝绿安全不变量:预备阶段任一机失败 → 任何机都不进入激活(不重启、不探测),已铺好的机仍跑旧版本。
+func TestDeployBlueGreenStageFailAbortsActivate(t *testing.T) {
 	db := testDB(t)
 	rsvc := run.New(db)
 	s2ID := ""
 	rec := &touchRecorder{
 		failOn: func(serverID string, cmd []string) bool {
-			return serverID == s2ID && cmd[0] == "mkdir" // 第二台就绪失败
+			return serverID == s2ID && cmd[0] == "mkdir" // 第二台铺产物失败
 		},
 	}
 	tgt := &stubTarget{execFn: rec.exec}
@@ -226,32 +226,37 @@ func TestDeployBlueGreenStageFailAbortsAllCutover(t *testing.T) {
 	svc := New(tgt, rsvc)
 	res, err := svc.Deploy(context.Background(), DeployInput{
 		RunID: runID, ArtifactID: artID,
-		ServerIDs: []string{s1.ID, s2.ID},
-		Strategy:  "blue_green",
+		ServerIDs:   []string{s1.ID, s2.ID},
+		Strategy:    "blue_green",
+		Config:      map[string]string{"restartCommand": "systemctl restart shop"},
+		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"true"}, Retries: 1},
 	})
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
-	// 任一就绪失败 → 整体不切换;两机均非 success。
+	// 任一就绪失败 → 整体不激活;两机均非 success。
 	for i, r := range res {
 		if r.Status == run.TargetSuccess {
-			t.Fatalf("target %d 不应 success(预备失败应中止全部切换);msg=%q", i, r.Message)
+			t.Fatalf("target %d 不应 success(预备失败应中止全部重启);msg=%q", i, r.Message)
 		}
 	}
-	if rec.sawMv {
-		t.Fatalf("蓝绿预备阶段失败后绝不应发生任何 current 切换(mv),但出现了 cutover")
+	// 关键:已铺好的 s1 不应被执行健康探测(即没进激活阶段)。
+	for _, c := range rec.calls2 {
+		if len(c) == 1 && c[0] == "true" {
+			t.Fatalf("预备阶段失败后不应有任何健康探测: %v", rec.calls2)
+		}
 	}
 }
 
-// 蓝绿机群级原子性:切换阶段一机健康失败 → 已切换成功且有上一发布的机一并回滚(rolled_back)。
-func TestDeployBlueGreenFleetRollbackOnPartialFailure(t *testing.T) {
+// 直铺语义:激活阶段(重启 + 健康)各机独立成败 —— 健康失败机记 failed 并说明无上一版本可回滚,
+// 其余机保持 success(没有 current 软链,故无机群级一并回滚;image 蓝绿才有)。
+func TestDeployBlueGreenActivateHealthFailIsPerServer(t *testing.T) {
 	db := testDB(t)
 	rsvc := run.New(db)
 	badID := ""
 	rec := &touchRecorder{
-		prevLink: "/srv/app/releases/old", // 模拟已有上一发布 → 可回滚
 		failOn: func(serverID string, cmd []string) bool {
-			// 仅 bad 机健康探测(command=["true"])失败;放置/切换均成功。
+			// 仅 bad 机健康探测(command=["true"])失败;铺产物/重启均成功。
 			return serverID == badID && cmd[0] == "true"
 		},
 	}
@@ -272,15 +277,14 @@ func TestDeployBlueGreenFleetRollbackOnPartialFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
-	// 两机都应为 rolled_back:bad 机健康失败自身回滚;good 机因机群失败被一并回滚。
-	for i, r := range res {
-		if r.Status != run.TargetRolledBack {
-			t.Fatalf("target %d (%s) status = %s (msg %q), want rolled_back", i, r.ServerName, r.Status, r.Message)
-		}
+	if res[0].Status != run.TargetSuccess {
+		t.Fatalf("good 机应 success, got %s (msg %q)", res[0].Status, res[0].Message)
 	}
-	// good 机回滚 message 应点明机群级回滚。
-	if !strings.Contains(res[0].Message, "机群") && !strings.Contains(res[0].Message, "其它机") {
-		t.Fatalf("good 机 message = %q, want 含机群级回滚说明", res[0].Message)
+	if res[1].Status != run.TargetFailed {
+		t.Fatalf("bad 机应 failed(直铺无回滚), got %s (msg %q)", res[1].Status, res[1].Message)
+	}
+	if !strings.Contains(res[1].Message, "无上一版本可回滚") {
+		t.Fatalf("bad 机 message 应说明无版本可回滚: %q", res[1].Message)
 	}
 }
 

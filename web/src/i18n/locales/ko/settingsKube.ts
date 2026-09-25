@@ -1,0 +1,55 @@
+export default {
+  title: "Kubernetes 클러스터",
+  desc: "배포 대상지로 Kubernetes 클러스터를 등록합니다. 내용은 kubeconfig 자격 증명과 기본 namespace 뿐입니다. API server 주소는 저장하지 않고 목록을 볼 때마다 자격 증명에서 읽어, 정보가 갈리는 일을 막습니다. 플랫폼은 SSH 경유 없이 클러스터 API에 직접 접속합니다.",
+  addCluster: "클러스터 등록",
+  editCluster: "클러스터 편집",
+  addDisabledHint: "먼저 자격 증명 보관소에 kubeconfig를 추가하세요",
+  noManageGroupHint:
+    "관리자도 아니고 관리 가능한 그룹도 없어서 클러스터를 등록할 수 없습니다",
+  noCredentialHint:
+    "kubeconfig 자격 증명이 없습니다. 「자격 증명 보관소」에 종류가 kubeconfig인 항목을 추가한 뒤 클러스터를 등록하세요.",
+  retry: "다시 시도",
+  registeredClusters: "등록된 클러스터",
+  clusterCount: "{n} 개",
+  emptyList: "아직 등록된 클러스터가 없습니다.",
+  credentialDeleted: "(자격 증명은 삭제됨)",
+  endpointUnknown: "주소 미확인(kubeconfig에 server 필드가 없습니다)",
+  testOk: "연결 성공 · {ms}ms",
+  testing: "테스트 중…",
+  testConnection: "연결 테스트",
+  edit: "편집",
+  delete: "삭제",
+  deleteCluster: "클러스터 삭제",
+  deleteConfirm:
+    "클러스터 {name}을(를) 삭제할까요? 등록 정보만 삭제되고 자격 증명은 그대로이며 클러스터 안의 워크로드에는 아무 영향이 없습니다.",
+  confirmDelete: "삭제 확인",
+  deleting: "삭제 중…",
+  cancel: "취소",
+  save: "저장",
+  saving: "저장 중…",
+  fieldName: "클러스터 이름",
+  fieldCredential: "kubeconfig 자격 증명",
+  selectCredential: "kubeconfig 자격 증명을 선택하세요",
+  credentialHint:
+    "한 클러스터에 여러 자격 증명(서로 다른 ServiceAccount)을 둘 수 있습니다. 등록 시 하나를 고르며, 바꾸면 배포 시 쓰는 권한도 달라집니다.",
+  fieldNamespace: "기본 namespace",
+  namespaceHint:
+    "K8s 배포 작업에서 namespace를 비워 두면 이 값으로 보완합니다. 비우면 기본값 없음. 소문자·숫자·- 만 허용하고 첫/마지막 문자는 영문자 또는 숫자, 최대 63자입니다.",
+  errNameRequired: "클러스터 이름을 입력하세요",
+  errCredentialRequired: "kubeconfig 자격 증명을 선택하세요",
+  errGroupRequired: "속할 그룹을 선택하세요",
+  errNamespace:
+    "namespace가 올바르지 않습니다: 소문자·숫자·- 만 허용, 첫/마지막은 영문자 또는 숫자(최대 63자)",
+  errLoadConn:
+    "서버에 연결할 수 없습니다. 네트워크를 확인한 뒤 다시 시도하세요",
+  errLoadStatus: "클러스터 목록 불러오기 실패 (HTTP {status})",
+  errLoadRetry: "클러스터 목록 불러오기에 실패했습니다. 다시 시도하세요",
+  errConnRetry:
+    "서버에 연결할 수 없습니다. 네트워크를 확인한 뒤 다시 시도하세요",
+  errSaveStatus: "클러스터 저장 실패 (HTTP {status})",
+  errSaveRetry: "저장에 실패했습니다. 다시 시도하세요",
+  errDeleteStatus: "클러스터 삭제 실패 (HTTP {status})",
+  errDeleteRetry: "삭제에 실패했습니다. 다시 시도하세요",
+  errTestStatus: "연결 테스트 실패 (HTTP {status})",
+  errTestRetry: "연결 테스트에 실패했습니다. 다시 시도하세요",
+};

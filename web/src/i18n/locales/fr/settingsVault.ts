@@ -38,6 +38,7 @@ export default {
   typeSshPassword: 'Mot de passe SSH',
   typeRegistry: 'Registre',
 
+  typeKubeconfig: 'Configuration Kubernetes',
   maskTitle: 'Valeur masquée (affichable dans Modifier)',
   maskAria: 'Masqué : {value}',
   never: 'Jamais',
@@ -89,6 +90,9 @@ export default {
   valSecretRequired: 'Le secret est requis',
   secretOptionalEdit: '(laisser vide pour ne pas faire pivoter)',
   secretPlaceholderSshKey: 'Collez la clé privée complète (avec les lignes -----BEGIN/END-----)…',
+  fieldSecretKubeconfig: 'kubeconfig (YAML)',
+  secretPlaceholderKubeconfig: 'Collez l’intégralité du YAML kubeconfig (apiVersion / clusters / users / contexts)…',
+  hintKubeconfig: 'Le fichier est chiffré au repos et ne quitte le processus que pour joindre l’API server. Seules les données intégrées sont acceptées : certificate-authority-data plus jeton ou client-certificate-data ; plugins exec, auth-provider et fichiers de clés externes sont rejetés.',
   secretPlaceholderKeep: 'Laisser vide pour conserver le secret actuel',
   secretPlaceholderSshPassword: 'Saisissez le mot de passe de connexion SSH…',
   secretPlaceholderToken: 'Collez le contenu du jeton…',

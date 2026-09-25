@@ -68,6 +68,11 @@ export interface CreateProjectInput {
 
 export interface UpdateProjectInput {
   name?: string
+  /**
+   * 改绑仓库;传 '' 表示解绑 —— 项目退化为「只发布」(不拉源码,凭据/默认分支/需要仓库的开关一并清除)。
+   * 省略 = 不动仓库相关字段。
+   */
+  repoUrl?: string
   defaultBranch?: string
   credentialId?: string
   /** Toggle pipeline-as-code (GitOps) for this project. */

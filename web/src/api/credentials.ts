@@ -16,7 +16,14 @@
 
 import { http } from './http'
 
-export type CredentialType = 'git_token' | 'git_http' | 'git_ssh' | 'ssh_key' | 'ssh_password' | 'registry'
+export type CredentialType =
+  | 'git_token'
+  | 'git_http'
+  | 'git_ssh'
+  | 'ssh_key'
+  | 'ssh_password'
+  | 'registry'
+  | 'kubeconfig'
 
 export interface Credential {
   id: string

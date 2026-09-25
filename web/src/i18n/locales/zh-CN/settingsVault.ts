@@ -38,6 +38,7 @@ export default {
   typeSshPassword: 'SSH 密码',
   typeRegistry: '镜像仓库',
 
+  typeKubeconfig: 'Kubernetes 配置',
   maskTitle: '掩码值（编辑中可查看明文）',
   maskAria: '掩码: {value}',
   never: '从未',
@@ -89,6 +90,9 @@ export default {
   valSecretRequired: '请填写密钥内容',
   secretOptionalEdit: '（留空则不轮换）',
   secretPlaceholderSshKey: '粘贴完整私钥(含 -----BEGIN/END----- 行)…',
+  fieldSecretKubeconfig: 'kubeconfig(YAML)',
+  secretPlaceholderKubeconfig: '粘贴整份 kubeconfig YAML(apiVersion / clusters / users / contexts)…',
+  hintKubeconfig: '整份文件加密存储,除连接集群 API server 外不出此进程。只认文件内数据:certificate-authority-data 加 token 或 client-certificate-data;exec 插件、auth-provider 与外部密钥文件一律拒绝。',
   secretPlaceholderKeep: '留空保持当前密钥不变',
   secretPlaceholderSshPassword: '输入 SSH 登录密码…',
   secretPlaceholderToken: '粘贴令牌内容…',

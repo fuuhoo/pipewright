@@ -25,6 +25,10 @@ export default {
   kpiHosts: '有容器的伺服器',
   kpiStripAria: '容器彙整統計',
 
+  serverFilterLabel: '伺服器',
+  serverFilterAria: '依伺服器切換這一屏看哪台',
+  serverAll: '全部伺服器',
+
   filterAria: '依狀態篩選容器',
   filterAll: '全部',
   filterRunning: '執行中',

@@ -172,6 +172,8 @@ const inlineCredTypeLabels = computed<Record<CredentialType, string>>(() => ({
   ssh_key: t('settingsVault.typeSshKey'),
   ssh_password: t('settingsVault.typeSshPassword'),
   registry: t('settingsVault.typeRegistry'),
+  // 行内建不了集群凭据(kubeconfig 要到保险库整份粘贴),此条只为满足 Record 完整性。
+  kubeconfig: t('settingsVault.typeKubeconfig'),
 }))
 
 async function loadCredentials(): Promise<void> {
@@ -217,6 +219,8 @@ const createModalOpen = ref(false)
 
 const createForm = ref({
   name: '',
+  // 不绑定仓库 = 纯发布项目:没有源码这一环,流水线从别处产出的产物/镜像开始。
+  bindRepo: true,
   repoUrl: '',
   credentialId: '',
   defaultBranch: '',
@@ -248,7 +252,7 @@ const remoteBranches = ref<string[]>([])
 const remoteTags = ref<string[]>([])
 
 function openCreateModal(): void {
-  createForm.value = { name: '', repoUrl: '', credentialId: '', defaultBranch: '', groupId: '' }
+  createForm.value = { name: '', bindRepo: true, repoUrl: '', credentialId: '', defaultBranch: '', groupId: '' }
   clearCreateErrors()
   createBanner.value = ''
   testState.value = 'idle'
@@ -326,16 +330,19 @@ function validateCreateForm(): boolean {
     createErrors.value.name = t('projects.errNameRequired')
     ok = false
   }
-  if (!createForm.value.repoUrl.trim()) {
-    createErrors.value.repoUrl = t('projects.errRepoRequired')
-    ok = false
-  } else if (!isSupportedRepoUrl(createForm.value.repoUrl.trim())) {
-    createErrors.value.repoUrl = t('projects.errRepoFormat')
-    ok = false
-  }
-  if (!createForm.value.credentialId) {
-    createErrors.value.credentialId = t('projects.errCredRequired')
-    ok = false
+  // 纯发布项目没有仓库/凭据这两项,自然也不校验它们。
+  if (createForm.value.bindRepo) {
+    if (!createForm.value.repoUrl.trim()) {
+      createErrors.value.repoUrl = t('projects.errRepoRequired')
+      ok = false
+    } else if (!isSupportedRepoUrl(createForm.value.repoUrl.trim())) {
+      createErrors.value.repoUrl = t('projects.errRepoFormat')
+      ok = false
+    }
+    if (!createForm.value.credentialId) {
+      createErrors.value.credentialId = t('projects.errCredRequired')
+      ok = false
+    }
   }
   return ok
 }
@@ -374,22 +381,7 @@ async function handleTestClone(): Promise<void> {
     }
   } catch (err) {
     testState.value = 'error'
-    if (err instanceof HttpError) {
-      const code = err.apiError?.code
-      if (code === 'credential_error') {
-        testError.value = t('projects.testErrCredential')
-      } else if (code === 'repo_unreachable') {
-        testError.value = t('projects.testErrUnreachable')
-      } else if (code === 'vault_unconfigured') {
-        testError.value = t('projects.testErrVault')
-      } else if (err.status === 0) {
-        testError.value = t('projects.errNetwork')
-      } else {
-        testError.value = err.apiError?.message ?? t('projects.testErrStatus', { status: err.status })
-      }
-    } else {
-      testError.value = t('projects.testErrRetry')
-    }
+    testError.value = testCloneErrorText(err)
   }
 }
 
@@ -398,12 +390,13 @@ async function handleCreateSubmit(): Promise<void> {
   createSubmitting.value = true
   createBanner.value = ''
 
+  const bound = createForm.value.bindRepo
   const input: CreateProjectInput = {
     name: createForm.value.name.trim(),
-    repoUrl: createForm.value.repoUrl.trim(),
-    credentialId: createForm.value.credentialId,
+    repoUrl: bound ? createForm.value.repoUrl.trim() : '',
+    credentialId: bound ? createForm.value.credentialId : '',
   }
-  if (createForm.value.defaultBranch.trim()) {
+  if (bound && createForm.value.defaultBranch.trim()) {
     input.defaultBranch = createForm.value.defaultBranch.trim()
   }
   // 未归组是零值,不必发送;发出去反而让后端按「放进某个组」做 Manage 校验。
@@ -436,6 +429,153 @@ async function handleCreateSubmit(): Promise<void> {
     }
   } finally {
     createSubmitting.value = false
+  }
+}
+
+// testCloneErrorText 把「测试连接」的失败映射成人话:新建弹窗与仓库弹窗共用同一套说法。
+function testCloneErrorText(err: unknown): string {
+  if (err instanceof HttpError) {
+    const code = err.apiError?.code
+    if (code === 'credential_error') return t('projects.testErrCredential')
+    if (code === 'repo_unreachable') return t('projects.testErrUnreachable')
+    if (code === 'vault_unconfigured') return t('projects.testErrVault')
+    if (err.status === 0) return t('projects.errNetwork')
+    return err.apiError?.message ?? t('projects.testErrStatus', { status: err.status })
+  }
+  return t('projects.testErrRetry')
+}
+
+// ─── repo modal(绑定 / 改绑 / 解绑项目仓库)──────────────────────────────────
+// 建项目时选了「不绑定仓库」也能事后补上;绑了也能解绑(退回纯发布用)。
+// 解绑是连带清除:凭据引用、默认分支、流水线即代码与 PR 状态回写都依赖读得到仓库。
+
+const repoModalOpen = ref(false)
+const repoProject = ref<Project | null>(null)
+const repoForm = ref({ bindRepo: true, repoUrl: '', credentialId: '', defaultBranch: '' })
+const repoErrors = ref({ repoUrl: '', credentialId: '' })
+const repoBanner = ref('')
+const repoSubmitting = ref(false)
+const repoTestState = ref<TestState>('idle')
+const repoTestError = ref('')
+const repoRemoteBranches = ref<string[]>([])
+const repoRemoteTags = ref<string[]>([])
+
+function openRepoModal(p: Project): void {
+  repoProject.value = p
+  repoForm.value = {
+    bindRepo: Boolean(p.repoUrl),
+    repoUrl: p.repoUrl,
+    credentialId: p.credentialId,
+    defaultBranch: p.defaultBranch,
+  }
+  repoErrors.value = { repoUrl: '', credentialId: '' }
+  repoBanner.value = ''
+  repoSubmitting.value = false
+  repoTestState.value = 'idle'
+  repoTestError.value = ''
+  repoRemoteBranches.value = []
+  repoRemoteTags.value = []
+  repoModalOpen.value = true
+}
+
+function closeRepoModal(): void {
+  if (repoSubmitting.value) return
+  repoModalOpen.value = false
+}
+
+function clearRepoErrors(): void {
+  repoErrors.value = { repoUrl: '', credentialId: '' }
+}
+
+function validateRepoForm(): boolean {
+  clearRepoErrors()
+  if (!repoForm.value.bindRepo) return true
+  let ok = true
+  if (!repoForm.value.repoUrl.trim()) {
+    repoErrors.value.repoUrl = t('projects.errRepoRequired')
+    ok = false
+  } else if (!isSupportedRepoUrl(repoForm.value.repoUrl.trim())) {
+    repoErrors.value.repoUrl = t('projects.errRepoFormat')
+    ok = false
+  }
+  if (!repoForm.value.credentialId) {
+    repoErrors.value.credentialId = t('projects.errCredRequired')
+    ok = false
+  }
+  return ok
+}
+
+async function handleRepoTestClone(): Promise<void> {
+  let ok = true
+  if (!repoForm.value.repoUrl.trim()) {
+    repoErrors.value.repoUrl = t('projects.errRepoFirst')
+    ok = false
+  }
+  if (!repoForm.value.credentialId) {
+    repoErrors.value.credentialId = t('projects.errCredFirst')
+    ok = false
+  }
+  if (!ok) return
+
+  repoTestState.value = 'testing'
+  repoTestError.value = ''
+  repoRemoteBranches.value = []
+  repoRemoteTags.value = []
+  try {
+    const result = await testClone({
+      repoUrl: repoForm.value.repoUrl.trim(),
+      credentialId: repoForm.value.credentialId,
+    })
+    repoTestState.value = 'ok'
+    repoRemoteBranches.value = result.branches ?? []
+    repoRemoteTags.value = result.tags ?? []
+    if (!repoForm.value.defaultBranch) {
+      repoForm.value.defaultBranch = result.defaultBranch
+    }
+  } catch (err) {
+    repoTestState.value = 'error'
+    repoTestError.value = testCloneErrorText(err)
+  }
+}
+
+async function handleRepoSubmit(): Promise<void> {
+  const target = repoProject.value
+  if (!target || !validateRepoForm()) return
+  repoSubmitting.value = true
+  repoBanner.value = ''
+
+  const bound = repoForm.value.bindRepo
+  const input: UpdateProjectInput = { repoUrl: bound ? repoForm.value.repoUrl.trim() : '' }
+  if (bound) {
+    input.credentialId = repoForm.value.credentialId
+    input.defaultBranch = repoForm.value.defaultBranch.trim()
+  }
+
+  try {
+    const updated = await updateProject(target.id, input)
+    projects.value = projects.value.map((p) => (p.id === updated.id ? updated : p))
+    repoModalOpen.value = false
+  } catch (err) {
+    if (err instanceof HttpError) {
+      const code = err.apiError?.code
+      if (code === 'credential_error') {
+        repoErrors.value.credentialId = t('projects.createErrCredField')
+        repoBanner.value = t('projects.createErrCredBanner')
+      } else if (code === 'repo_unreachable') {
+        repoErrors.value.repoUrl = t('projects.createErrRepoField')
+        repoBanner.value = t('projects.repoErrUnreachable')
+      } else if (code === 'vault_unconfigured') {
+        repoBanner.value = t('projects.createErrVault')
+      } else if (err.status === 0) {
+        repoBanner.value = t('projects.errNetwork')
+      } else {
+        repoBanner.value = err.apiError?.message ?? t('projects.repoErrStatus', { status: err.status })
+      }
+    } else {
+      repoBanner.value = t('projects.repoErrRetry')
+    }
+  } finally {
+    repoSubmitting.value = false
   }
 }
 
@@ -626,7 +766,8 @@ function openTriggerModal(p: Project): void {
   triggerBanner.value      = ''
   triggerSubmitting.value  = false
   triggerModalOpen.value   = true
-  void loadBranchOptions(p.id)
+  // 纯发布项目没有仓库,列分支只会 400;参数定义照拉(运行参数与仓库无关)。
+  if (p.repoUrl) void loadBranchOptions(p.id)
   void loadTriggerDefs(p.id)
 }
 
@@ -940,21 +1081,23 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             </div>
           </div>
 
-          <!-- Repo + branch (equal-width columns) -->
+          <!-- Repo + branch (equal-width columns);纯发布项目没有这两行,直接说明用途 -->
           <div class="card-repo">
             <div class="repo-url-row">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
               </svg>
               <a
+                v-if="project.repoUrl"
                 class="repo-url mono"
                 :href="project.repoUrl"
                 target="_blank"
                 rel="noopener noreferrer"
                 :title="project.repoUrl"
               >{{ project.repoUrl.replace(/^https?:\/\//, '') }}</a>
+              <span v-else class="repo-url repo-url--unbound mono">{{ t('projects.repoNotBound') }}</span>
             </div>
-            <div class="branch-row">
+            <div v-if="project.repoUrl" class="branch-row">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
               </svg>
@@ -1049,8 +1192,22 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
                 </svg>
               </button>
 
-              <!-- Code browse (Story 7-4: read-only source viewer, FR-4) -->
+              <!-- 仓库设置:绑定 / 改绑 / 解绑(解绑即退回「只发布」) -->
               <button
+                class="action-btn"
+                :title="t('projects.actionRepoTitle', { name: project.name })"
+                :aria-label="t('projects.actionRepoAria', { name: project.name })"
+                @click="openRepoModal(project)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.72"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+              </button>
+
+              <!-- Code browse (Story 7-4: read-only source viewer, FR-4) — 没仓库就无从浏览 -->
+              <button
+                v-if="project.repoUrl"
                 class="action-btn"
                 :title="t('projects.actionCodeTitle', { name: project.name })"
                 :aria-label="t('projects.actionCodeAria', { name: project.name })"
@@ -1118,7 +1275,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           </div>
           <div>
             <h3 class="modal-title">{{ t('projects.triggerTitle') }}</h3>
-            <p class="modal-sub">{{ t('projects.triggerSub', { name: triggerProject.name }) }}</p>
+            <p class="modal-sub">{{ triggerProject.repoUrl ? t('projects.triggerSub', { name: triggerProject.name }) : t('projects.triggerSubNoRepo', { name: triggerProject.name }) }}</p>
           </div>
           <button
             class="modal-close"
@@ -1149,8 +1306,8 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           novalidate
           @submit.prevent="handleTriggerSubmit"
         >
-          <!-- Branch -->
-          <div class="field">
+          <!-- Branch(纯发布项目没有仓库,不显示分支/commit 两项) -->
+          <div v-if="triggerProject?.repoUrl" class="field">
             <label class="field-label" for="trigger-branch">
               {{ t('projects.branch') }}
               <span class="field-hint-inline">{{ t('projects.branchHint') }}</span>
@@ -1177,7 +1334,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           </div>
 
           <!-- Commit (optional) -->
-          <div class="field">
+          <div v-if="triggerProject?.repoUrl" class="field">
             <label class="field-label" for="trigger-commit">
               {{ t('projects.commit') }}
               <span class="field-hint-inline">{{ t('projects.commitHint') }}</span>
@@ -1318,8 +1475,22 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             <span v-if="createErrors.name" id="proj-name-err" class="field-error" role="alert">{{ createErrors.name }}</span>
           </div>
 
-          <!-- Repo URL -->
+          <!-- 源码来源:绑定仓库 or 只发布(不拉源码) -->
           <div class="field">
+            <label class="field-check">
+              <input
+                v-model="createForm.bindRepo"
+                type="checkbox"
+                :disabled="createSubmitting"
+                @change="createErrors.repoUrl = ''; createErrors.credentialId = ''; testState = 'idle'; remoteBranches = []; remoteTags = []"
+              />
+              <span>{{ t('projects.bindRepo') }}</span>
+            </label>
+            <span class="field-hint">{{ createForm.bindRepo ? t('projects.bindRepoOnHint') : t('projects.bindRepoOffHint') }}</span>
+          </div>
+
+          <!-- Repo URL -->
+          <div v-if="createForm.bindRepo" class="field">
             <label class="field-label" for="proj-repo">{{ t('projects.fieldRepo') }}</label>
             <input
               id="proj-repo"
@@ -1338,7 +1509,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           </div>
 
           <!-- Credential dropdown — Git credentials supported by project clone, masked display -->
-          <div class="field">
+          <div v-if="createForm.bindRepo" class="field">
             <label class="field-label" for="proj-cred">
               {{ t('projects.credential') }}
               <span class="field-hint-inline">{{ t('projects.fieldCredHint') }}</span>
@@ -1374,7 +1545,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             </span>
           </div>
 
-          <div v-if="inlineCredentialOpen" class="inline-credential-panel">
+          <div v-if="createForm.bindRepo && inlineCredentialOpen" class="inline-credential-panel">
             <div class="inline-credential-title">{{ t('projects.inlineCredTitle') }}</div>
             <div v-if="inlineCredentialBanner" class="field-error" role="alert">{{ inlineCredentialBanner }}</div>
             <div class="field">
@@ -1463,7 +1634,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           </div>
 
           <!-- Default branch (optional) — 测试连接后展示真实分支/tag 面板下拉(仍可手输) -->
-          <div class="field">
+          <div v-if="createForm.bindRepo" class="field">
             <label class="field-label" for="proj-branch">
               {{ t('projects.fieldDefaultBranch') }}
               <span class="field-hint-inline">{{ t('projects.fieldDefaultBranchHint') }}</span>
@@ -1497,7 +1668,7 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
           </div>
 
           <!-- Test clone — left-bottom, separated from primary actions -->
-          <div class="test-clone-row">
+          <div v-if="createForm.bindRepo" class="test-clone-row">
             <button
               type="button"
               class="btn-ghost"
@@ -1558,6 +1729,185 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
             >
               <span v-if="createSubmitting" class="spinner" aria-hidden="true" />
               {{ createSubmitting ? t('projects.creating') : t('projects.createSubmit') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Repo modal(绑定 / 改绑 / 解绑仓库)
+  ════════════════════════════════════════════════════════════════════════ -->
+  <Teleport to="body">
+    <div
+      v-if="repoModalOpen && repoProject"
+      class="modal-scrim"
+      role="dialog"
+      :aria-label="t('projects.repoTitle')"
+      aria-modal="true"
+      @keydown.esc="closeRepoModal"
+      @click.self="closeRepoModal"
+    >
+      <div class="modal">
+        <div class="modal-head">
+          <div class="modal-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.72"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="modal-title">{{ t('projects.repoTitle') }}</h3>
+            <p class="modal-sub">{{ t('projects.repoSub', { name: repoProject.name }) }}</p>
+          </div>
+          <button
+            class="modal-close"
+            :aria-label="t('projects.closeDialog')"
+            :disabled="repoSubmitting"
+            @click="closeRepoModal"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div
+          v-if="repoBanner"
+          class="banner banner--error modal-banner"
+          role="alert"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {{ repoBanner }}
+        </div>
+
+        <form
+          class="modal-form"
+          novalidate
+          @submit.prevent="handleRepoSubmit"
+        >
+          <div class="field">
+            <label class="field-check">
+              <input
+                v-model="repoForm.bindRepo"
+                type="checkbox"
+                :disabled="repoSubmitting"
+                @change="clearRepoErrors(); repoTestState = 'idle'; repoRemoteBranches = []; repoRemoteTags = []"
+              />
+              <span>{{ t('projects.bindRepo') }}</span>
+            </label>
+            <span class="field-hint">{{ repoForm.bindRepo ? t('projects.bindRepoOnHint') : t('projects.bindRepoOffHint') }}</span>
+          </div>
+
+          <div v-if="repoForm.bindRepo" class="field">
+            <label class="field-label" for="repo-url-input">{{ t('projects.fieldRepo') }}</label>
+            <input
+              id="repo-url-input"
+              v-model="repoForm.repoUrl"
+              class="field-input field-input--mono"
+              :class="{ 'field-input--error': repoErrors.repoUrl }"
+              type="url"
+              :placeholder="t('projects.repoUrlPlaceholder')"
+              autocomplete="off"
+              :disabled="repoSubmitting"
+              :aria-invalid="repoErrors.repoUrl ? 'true' : undefined"
+              :aria-describedby="repoErrors.repoUrl ? 'repo-url-err' : undefined"
+              @input="repoErrors.repoUrl = ''; repoTestState = 'idle'; repoRemoteBranches = []; repoRemoteTags = []"
+            />
+            <span v-if="repoErrors.repoUrl" id="repo-url-err" class="field-error" role="alert">{{ repoErrors.repoUrl }}</span>
+          </div>
+
+          <div v-if="repoForm.bindRepo" class="field">
+            <label class="field-label" for="repo-cred-input">
+              {{ t('projects.credential') }}
+              <span class="field-hint-inline">{{ t('projects.fieldCredHint') }}</span>
+            </label>
+            <CredentialSelect
+              input-id="repo-cred-input"
+              v-model="repoForm.credentialId"
+              :credentials="gitCredentials"
+              :loading="credentialsLoading"
+              :disabled="repoSubmitting"
+              :has-error="Boolean(repoErrors.credentialId)"
+              :placeholder="t('projects.credSelect')"
+              :loading-label="t('projects.credLoading')"
+              :empty-label="t('projects.credSelect')"
+              @change="repoErrors.credentialId = ''; repoTestState = 'idle'"
+            />
+            <span v-if="repoErrors.credentialId" class="field-error" role="alert">{{ repoErrors.credentialId }}</span>
+          </div>
+
+          <div v-if="repoForm.bindRepo" class="field">
+            <label class="field-label" for="repo-branch-input">
+              {{ t('projects.fieldDefaultBranch') }}
+              <span class="field-hint-inline">{{ t('projects.fieldDefaultBranchHint') }}</span>
+            </label>
+            <RefPicker
+              input-id="repo-branch-input"
+              v-model="repoForm.defaultBranch"
+              :branches="repoRemoteBranches"
+              :tags="repoRemoteTags"
+              :disabled="repoSubmitting"
+              placeholder="main"
+              :branches-label="t('projects.refGroupBranches')"
+              :tags-label="t('projects.refGroupTags')"
+            />
+          </div>
+
+          <div v-if="repoForm.bindRepo" class="test-clone-row">
+            <button
+              type="button"
+              class="btn-ghost"
+              :disabled="repoSubmitting || repoTestState === 'testing'"
+              :aria-busy="repoTestState === 'testing'"
+              @click="handleRepoTestClone"
+            >
+              <span v-if="repoTestState === 'testing'" class="spinner spinner--dim" aria-hidden="true" />
+              {{ repoTestState === 'testing' ? t('projects.testing') : t('projects.testConnection') }}
+            </button>
+            <div
+              v-if="repoTestState === 'ok'"
+              class="test-result test-result--ok"
+              role="status"
+              aria-live="polite"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5"/>
+              </svg>
+              {{ t('projects.testOk') }}
+              <span v-if="repoRemoteBranches.length" class="test-branch mono">{{ t('projects.fieldDefaultBranchListed', { n: repoRemoteBranches.length + repoRemoteTags.length }) }}</span>
+            </div>
+            <div
+              v-else-if="repoTestState === 'error'"
+              class="test-result test-result--error"
+              role="alert"
+              aria-live="assertive"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
+              </svg>
+              {{ repoTestError }}
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="repoSubmitting"
+              @click="closeRepoModal"
+            >{{ t('projects.cancel') }}</button>
+            <button
+              type="submit"
+              class="btn-primary"
+              :disabled="repoSubmitting"
+              :aria-busy="repoSubmitting"
+            >
+              <span v-if="repoSubmitting" class="spinner" aria-hidden="true" />
+              {{ repoSubmitting ? t('projects.saving') : t('projects.save') }}
             </button>
           </div>
         </form>
@@ -2092,6 +2442,10 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   color: var(--color-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.repo-url--unbound {
+  color: var(--color-faint);
 }
 
 .repo-url:focus-visible {
@@ -2801,6 +3155,15 @@ const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   font-size: 0.74rem;
   color: var(--color-faint);
   line-height: 1.4;
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8rem;
+  color: var(--color-text);
+  cursor: pointer;
 }
 
 .link {

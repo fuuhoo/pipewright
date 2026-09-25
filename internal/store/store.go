@@ -30,6 +30,10 @@ type Store struct {
 	DB *sql.DB
 	// Dialect 标识底层方言(SQLite 默认 / MySQL);Open 时由驱动判定。
 	Dialect Dialect
+
+	// strictFKCheck 在 migrate 开头算出:仅当本库当前没有外键损坏行时为 true。
+	// true 才要求每条迁移的终态零损坏(见 applyMigration);存量脏库不因此起不来。
+	strictFKCheck bool
 }
 
 // OpenConfig 是驱动感知的打开参数。Driver 取 "sqlite"(默认)或 "mysql";
@@ -125,6 +129,13 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
+	// 迁移前置:只有本库当前零外键损坏时,才对每条迁移的终态做强校验。存量脏库
+	// (手工 SQL 留下的孤儿行)不该因为历史数据问题而起不来。
+	if s.Dialect == SQLite {
+		n, err := countFKViolations(s.DB)
+		s.strictFKCheck = err == nil && n == 0
+	}
+
 	fsys, glob := s.migrationFS()
 	entries, err := fs.Glob(fsys, glob)
 	if err != nil {
@@ -195,6 +206,16 @@ func (s *Store) applyMigration(version, sqlText string) error {
 		return nil
 	}
 
+	// 表重建类迁移(DROP + RENAME)必须在**事务外**关外键:PRAGMA foreign_keys 是
+	// 连接级开关,在事务内执行是空操作(SQLite 官方流程也明确要求这一点)。
+	// 不关的后果不是报错而是真删数据——DROP TABLE projects 会对 14 张子表的
+	// ON DELETE CASCADE 级联删除(含全部 pipeline_runs)。屏蔽只限迁移过程,
+	// 终态由下面的 foreign_key_check 兜底。
+	if _, err := s.DB.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable fk for migration %s: %w", version, err)
+	}
+	defer func() { _, _ = s.DB.Exec(`PRAGMA foreign_keys = ON`) }()
+
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return fmt.Errorf("begin migration %s: %w", version, err)
@@ -209,10 +230,60 @@ func (s *Store) applyMigration(version, sqlText string) error {
 		_ = tx.Rollback()
 		return fmt.Errorf("record migration %s: %w", version, err)
 	}
+	if s.strictFKCheck {
+		n, sample, err := txFKViolations(tx)
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("check fk for migration %s: %w", version, err)
+		}
+		if n > 0 {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply migration %s: 终态有 %d 行外键损坏(例:%s)", version, n, sample)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration %s: %w", version, err)
 	}
 	return nil
+}
+
+// countFKViolations 统计全库外键损坏行数。PRAGMA foreign_key_check 不受
+// foreign_keys 开关影响,所以屏蔽期间也能查终态。
+func countFKViolations(db *sql.DB) (int, error) {
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+	}
+	return n, rows.Err()
+}
+
+// txFKViolations 在迁移事务内做同样的统计,并带回首条损坏描述供错误信息定位。
+func txFKViolations(tx *sql.Tx) (int, string, error) {
+	rows, err := tx.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return 0, "", err
+	}
+	defer rows.Close()
+	n := 0
+	sample := ""
+	for rows.Next() {
+		var table, parent string
+		var rowid int64
+		var fkID int
+		if err := rows.Scan(&table, &rowid, &parent, &fkID); err != nil {
+			return 0, "", err
+		}
+		if n == 0 {
+			sample = fmt.Sprintf("%s.%d 引用缺失的 %s", table, rowid, parent)
+		}
+		n++
+	}
+	return n, sample, rows.Err()
 }
 
 // splitStatements 把含多条 SQL 的迁移文本拆成单条语句(供 MySQL 逐条执行)。

@@ -9,6 +9,7 @@ export default {
   navDnsProviders: 'DNS 供應商',
   navAccount: '帳戶',
   navServers: '伺服器',
+  navKubeClusters: 'K8s 叢集',
   navDiagnosisStats: '診斷回饋',
   navSystem: '系統',
 

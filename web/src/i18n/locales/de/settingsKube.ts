@@ -1,0 +1,55 @@
+export default {
+  title: "Kubernetes-Cluster",
+  desc: "Registriert Kubernetes-Cluster als Auslieferungsziele: ein kubeconfig-Zugang plus Standard-Namespace. Die Adresse des API-Servers wird nicht in der Datenbank gespeichert, sondern bei jeder Liste aus dem Zugang gelesen — so gibt es keine zwei Wahrheiten. Die Plattform spricht direkt mit dem API-Server des Clusters, ohne SSH-Zwischenstation.",
+  addCluster: "Cluster registrieren",
+  editCluster: "Cluster bearbeiten",
+  addDisabledHint: "Lege zuerst einen kubeconfig-Zugang im Zugangs-Tresor an",
+  noManageGroupHint:
+    "Du bist weder Administrator noch besitzt du eine verwaltbare Gruppe — Cluster können daher nicht registriert werden",
+  noCredentialHint:
+    "Noch kein kubeconfig-Zugang. Lege im Zugangs-Tresor einen Zugang vom Typ „kubeconfig“ an und registriere dann den Cluster.",
+  retry: "Erneut versuchen",
+  registeredClusters: "Registrierte Cluster",
+  clusterCount: "{n} Stück",
+  emptyList: "Noch ist kein Cluster registriert.",
+  credentialDeleted: "(Zugang gelöscht)",
+  endpointUnknown:
+    "Adresse unbekannt (die kubeconfig enthält kein server-Feld)",
+  testOk: "Verbunden · {ms} ms",
+  testing: "Wird getestet …",
+  testConnection: "Verbindung testen",
+  edit: "Bearbeiten",
+  delete: "Löschen",
+  deleteCluster: "Cluster löschen",
+  deleteConfirm:
+    "Cluster {name} wirklich löschen? Es wird nur diese Registrierung entfernt: Der Zugang bleibt, und keine Workload im Cluster wird angefasst.",
+  confirmDelete: "Löschen bestätigen",
+  deleting: "Wird gelöscht …",
+  cancel: "Abbrechen",
+  save: "Speichern",
+  saving: "Wird gespeichert …",
+  fieldName: "Cluster-Name",
+  fieldCredential: "kubeconfig-Zugang",
+  selectCredential: "kubeconfig-Zugang auswählen",
+  credentialHint:
+    "Ein Cluster kann mehrere Zugänge haben (unterschiedliche ServiceAccounts); wähle bei der Registrierung einen. Ein Wechsel ändert Identität und Rechte der Auslieferung.",
+  fieldNamespace: "Standard-Namespace",
+  namespaceHint:
+    "Greift, wenn der K8s-Auslieferungsauftrag den Namespace freilässt; leer bedeutet kein Standard. Nur Kleinbuchstaben, Ziffern und -, am Anfang und Ende alphanumerisch, maximal 63 Zeichen.",
+  errNameRequired: "Bitte einen Cluster-Namen angeben",
+  errCredentialRequired: "Bitte einen kubeconfig-Zugang wählen",
+  errGroupRequired: "Bitte die Zielgruppe wählen",
+  errNamespace:
+    "Ungültiger Namespace: nur Kleinbuchstaben, Ziffern und -, am Anfang und Ende alphanumerisch (max. 63 Zeichen)",
+  errLoadConn: "Server nicht erreichbar. Netzwerk prüfen und erneut versuchen",
+  errLoadStatus: "Clusterliste konnte nicht geladen werden (HTTP {status})",
+  errLoadRetry:
+    "Clusterliste konnte nicht geladen werden. Bitte erneut versuchen",
+  errConnRetry: "Server nicht erreichbar. Netzwerk prüfen und erneut versuchen",
+  errSaveStatus: "Cluster konnte nicht gespeichert werden (HTTP {status})",
+  errSaveRetry: "Speichern fehlgeschlagen. Bitte erneut versuchen",
+  errDeleteStatus: "Cluster konnte nicht gelöscht werden (HTTP {status})",
+  errDeleteRetry: "Löschen fehlgeschlagen. Bitte erneut versuchen",
+  errTestStatus: "Verbindungstest fehlgeschlagen (HTTP {status})",
+  errTestRetry: "Verbindungstest fehlgeschlagen. Bitte erneut versuchen",
+};

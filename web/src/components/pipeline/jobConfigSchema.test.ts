@@ -107,6 +107,127 @@ describe('jobConfigSchema', () => {
     })
   })
 
+  // docker 部署节点:一个节点两种方式(单容器 / Compose),表单只该露出当前方式那几项。
+  describe('docker deploy task', () => {
+    const fields = JOB_TYPE_SPECS.deploy_docker.fields
+
+    function visible(config: Record<string, string>): string[] {
+      return fields.filter((f) => !f.when || f.when(config)).map((f) => f.key)
+    }
+
+    it('expands per docker mode; nothing but the mode itself shows while unset', () => {
+      expect(visible({})).toContain('serverId')
+      expect(visible({})).toContain('dockerMode')
+      expect(visible({})).toContain('healthProbe')
+      expect(visible({})).not.toContain('containerName')
+      expect(visible({})).not.toContain('stackName')
+      for (const k of ['artifactFrom', 'containerName', 'ports', 'runArgs', 'strategy']) {
+        expect(visible({ dockerMode: 'run' }), k).toContain(k)
+        expect(visible({ dockerMode: 'compose' }), k).not.toContain(k)
+      }
+      for (const k of ['stackName', 'composeYaml']) {
+        expect(visible({ dockerMode: 'compose' }), k).toContain(k)
+        expect(visible({ dockerMode: 'run' }), k).not.toContain(k)
+      }
+    })
+
+    it('defaults to the single-container mode; the compose template switches it', () => {
+      expect(JOB_TYPE_SPECS.deploy_docker.defaultConfig?.dockerMode).toBe('run')
+      expect(jobTemplatePrefill('deploy_docker', 'compose_stack')).toEqual({ dockerMode: 'compose' })
+    })
+
+    // 键名是跨端契约:pipeline.ConfigKey* / deploy.CfgKey* / build 层透传清单与之逐字相同。
+    it('uses the exact key names the backend reads', () => {
+      const keys = fields.map((f) => f.key)
+      for (const k of ['dockerMode', 'stackName', 'composeYaml', 'serverId', 'artifactFrom']) {
+        expect(keys, k).toContain(k)
+      }
+    })
+
+    it('shares one health-probe block with deploy_ssh (same backend validator)', () => {
+      const probe = (t: string) =>
+        JOB_TYPE_SPECS[t].fields.filter((f) => f.key.startsWith('health')).map((f) => f.key)
+      expect(probe('deploy_docker')).toEqual(probe('deploy_ssh'))
+    })
+
+    // 项目名直接成为目标机上的受管目录名:表单当场点出非法,而不是发出去才失败。
+    it('rejects an illegal compose project name inline', () => {
+      const validate = fields.find((f) => f.key === 'stackName')!.validate!
+      expect(validate({ stackName: 'my-stack' })).toBe('')
+      expect(validate({ stackName: '' })).toBe('')
+      for (const bad of ['a/b', '-app', 'has space']) {
+        expect(validate({ stackName: bad }), bad).toBeTruthy()
+      }
+    })
+
+    it('flags an oversized compose body inline', () => {
+      const validate = fields.find((f) => f.key === 'composeYaml')!.validate!
+      expect(validate({ composeYaml: 'services: {}' })).toBe('')
+      expect(validate({ composeYaml: 'x'.repeat(512 * 1024 + 1) })).toBeTruthy()
+    })
+
+    // 正文来源二选一:选「引用仓库文件」就不该再逼用户粘一份正文 —— 那份快照会被忽略,
+    // 留在表单里只会让人以为改它有用。
+    it('swaps the body control when the body comes from the repo', () => {
+      const compose = { dockerMode: 'compose' }
+      expect(visible(compose)).toContain('composeYaml')
+      expect(visible(compose)).not.toContain('composeFile')
+      const fromRepo = { ...compose, composeSource: 'repo' }
+      expect(visible(fromRepo)).toContain('composeFile')
+      expect(visible(fromRepo)).not.toContain('composeYaml')
+      // 缺省 = 粘贴(与后端认 ""/paste 同一口径),没选过来源的老节点不会突然少一个输入框。
+      expect(visible({ ...compose, composeSource: 'paste' })).toContain('composeYaml')
+    })
+
+    it('rejects a repo path that could not be read from the repository', () => {
+      const validate = fields.find((f) => f.key === 'composeFile')!.validate!
+      expect(validate({ composeFile: 'deploy/docker-compose.yml' })).toBe('')
+      expect(validate({ composeFile: 'docker-compose.yaml' })).toBe('')
+      expect(validate({ composeFile: '' })).toBeTruthy()
+      for (const bad of ['../secrets.yml', '/etc/x.yml', 'Dockerfile', 'a/../b.yml', 'a//b.yml']) {
+        expect(validate({ composeFile: bad }), bad).toBeTruthy()
+      }
+    })
+  })
+
+  // K8s 发布节点:落点是集群不是机器,所以这套字段里不该出现任何 SSH 时代的概念。
+  describe('k8s release task', () => {
+    const spec = JOB_TYPE_SPECS.deploy_k8s
+    const keys = spec.fields.map((f) => f.key)
+
+    it('is pickable and asks for exactly what the backend validator requires', () => {
+      expect(PICKABLE_TYPES).toContain('deploy_k8s')
+      for (const k of ['clusterId', 'namespace', 'workloadKind', 'workloadName', 'containerName']) {
+        expect(keys, k).toContain(k)
+      }
+      for (const sshOnly of ['serverId', 'deployPath', 'restartCommand', 'strategy', 'healthProbe']) {
+        expect(keys, sshOnly).not.toContain(sshOnly)
+      }
+    })
+
+    it('treats an empty namespace as "use the cluster default", not as an error', () => {
+      const v = spec.fields.find((f) => f.key === 'namespace')!.validate!
+      expect(v({ namespace: '' })).toBe('')
+      expect(v({ namespace: 'prod-cn' })).toBe('')
+      for (const bad of ['Prod', '-x', 'a_b', 'x-']) {
+        expect(v({ namespace: bad }), bad).toBeTruthy()
+      }
+    })
+
+    it('requires a DNS-shaped workload name and a bounded rollout timeout', () => {
+      const name = spec.fields.find((f) => f.key === 'workloadName')!.validate!
+      expect(name({ workloadName: 'api' })).toBe('')
+      expect(name({ workloadName: '' })).toBeTruthy()
+      expect(name({ workloadName: 'Api' })).toBeTruthy()
+      const t = spec.fields.find((f) => f.key === 'rolloutTimeout')!.validate!
+      expect(t({ rolloutTimeout: '' })).toBe('')
+      expect(t({ rolloutTimeout: '300' })).toBe('')
+      for (const bad of ['0', '1801', '1.5', 'abc']) {
+        expect(t({ rolloutTimeout: bad }), bad).toBeTruthy()
+      }
+    })
+  })
+
   // 模板是「预填配方」而不是节点类型:两型合一后,前端部署只作为部署任务的模板存在。
   describe('task templates', () => {
     it('deploy_frontend is not pickable but still renders legacy nodes', () => {

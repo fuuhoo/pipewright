@@ -7,8 +7,10 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/huangchengsir/pipewright/internal/target"
 )
@@ -17,6 +19,23 @@ const (
 	cmdStreamStdout = "stdout"
 	cmdStreamStderr = "stderr"
 )
+
+// slowOpLog 起,一条远程命令的耗时也会回流到日志。
+// 上传 / 大解包这类慢步骤如果没有耗时数字,控制台上就只有一段没有解释的等待(看着像卡死)。
+const slowOpLog = 5 * time.Second
+
+// phaseSuffix 把 target 层的阶段耗时摊开:同一个「部署执行超时」,连接阶段花满与命令阶段花满
+// 是完全不同的病因(前者是通往目标机的路,后者是目标机上的那条命令)。
+func phaseSuffix(err error, started time.Time) string {
+	if t, ok := target.PhaseTimingOf(err); ok {
+		return "(耗时 " + t.String() + ")"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		// 老 dialer / 桩不带阶段计时:至少报出总耗时,别只留一句「超时」。
+		return fmt.Sprintf("(耗时 %s)", time.Since(started).Round(100*time.Millisecond))
+	}
+	return ""
+}
 
 // CmdLogFunc 接收一行待写入运行日志的部署命令/输出(stream = stdout | stderr)。
 type CmdLogFunc func(stream, text string)
@@ -44,10 +63,20 @@ func cmdLogFrom(ctx context.Context) CmdLogFunc {
 func (s *service) exec(ctx context.Context, serverID string, cmd []string) (*target.ExecResult, error) {
 	lg := cmdLogFrom(ctx)
 	lg(cmdStreamStdout, "$ "+displayCmd(cmd))
+	unlock, gerr := s.occupy(ctx, serverID)
+	if gerr != nil {
+		lg(cmdStreamStderr, "  ✗ "+humanExecError(gerr))
+		return nil, gerr
+	}
+	defer unlock()
+	started := time.Now()
 	out, err := s.targets.Exec(ctx, serverID, cmd)
 	if err != nil {
-		lg(cmdStreamStderr, "  ✗ "+humanExecError(err))
+		lg(cmdStreamStderr, "  ✗ "+humanExecError(err)+phaseSuffix(err, started))
 		return out, err
+	}
+	if d := time.Since(started); d >= slowOpLog {
+		lg(cmdStreamStdout, fmt.Sprintf("  · 该步耗时 %s", d.Round(100*time.Millisecond)))
 	}
 	if out != nil {
 		if t := strings.Trim(out.Stdout, "\r\n"); strings.TrimSpace(t) != "" {

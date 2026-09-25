@@ -168,7 +168,7 @@ func TestE2EMultiTargetDeployAllSuccess(t *testing.T) {
 
 	res, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: h.serverIDs,
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("多机 Deploy: %v", err)
@@ -181,15 +181,14 @@ func TestE2EMultiTargetDeployAllSuccess(t *testing.T) {
 			t.Fatalf("目标 %s 应 success,实际 %s", r.ServerID, r.Status)
 		}
 	}
-	// 每台真落地(进各容器断言发布目录 + current 软链)。
-	releaseDir := base + "/releases/" + runID
+	// 每台真落地(产物就在部署路径下,无 releases/current 壳)。
+	landed := base + "/shop-v1.tar.gz"
 	for i, c := range fleet {
-		if _, err := c.Exec(t, "test", "-e", releaseDir); err != nil {
-			t.Fatalf("第 %d 台 web-%d 容器内发布目录未落地: %s", i+1, i+1, releaseDir)
+		if _, err := c.Exec(t, "test", "-e", landed); err != nil {
+			t.Fatalf("第 %d 台 web-%d 容器内产物未直铺落地: %s", i+1, i+1, landed)
 		}
-		out, _ := c.Exec(t, "readlink", base+"/current")
-		if strings.TrimSpace(out) != releaseDir {
-			t.Fatalf("第 %d 台 current 软链异常: %q", i+1, strings.TrimSpace(out))
+		if _, err := c.Exec(t, "test", "-e", base+"/releases"); err == nil {
+			t.Fatalf("第 %d 台不应有 releases/ 目录", i+1)
 		}
 	}
 	// run 终态:全成功 → success。
@@ -197,7 +196,7 @@ func TestE2EMultiTargetDeployAllSuccess(t *testing.T) {
 	if rn.Status != run.StatusSuccess {
 		t.Fatalf("全成功 run 终态应 success,实际 %s", rn.Status)
 	}
-	t.Logf("✅ dist 并行真部署到 3 台 CentOS 全成功,每台真落地 + current 软链切换")
+	t.Logf("✅ dist 并行真部署到 3 台 CentOS 全成功,每台产物直铺进部署路径")
 }
 
 // TestE2EMultiTargetPartialFailure 部署到 3 台,其中 1 台部署前宕机 → 该台 failed、其余真成功、整体 partial_failed(FR-13)。
@@ -218,7 +217,7 @@ func TestE2EMultiTargetPartialFailure(t *testing.T) {
 
 	res, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: h.serverIDs,
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("多机 Deploy(含宕机): %v", err)
@@ -238,10 +237,10 @@ func TestE2EMultiTargetPartialFailure(t *testing.T) {
 		}
 	}
 	// 关键:健康两台**真落地**(失败被隔离,其余非事务地完成)。
-	releaseDir := base + "/releases/" + runID
+	landed := base + "/shop-v1.tar.gz"
 	for _, idx := range []int{0, 2} {
-		if _, err := fleet[idx].Exec(t, "test", "-e", releaseDir); err != nil {
-			t.Fatalf("健康台 web-%d 未真落地(失败隔离失效): %s", idx+1, releaseDir)
+		if _, err := fleet[idx].Exec(t, "test", "-e", landed); err != nil {
+			t.Fatalf("健康台 web-%d 未真落地(失败隔离失效): %s", idx+1, landed)
 		}
 	}
 	// run 终态:有失败 + 有成功 → partial_failed。

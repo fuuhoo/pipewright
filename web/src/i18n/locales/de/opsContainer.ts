@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run fehlgeschlagen',
     createFailedStatus: 'Erstellung fehlgeschlagen ({status})',
     createFailed: 'Erstellungsanfrage fehlgeschlagen',
+
+    // Compose-Einfügemodus (gleiches Deploy-Endpunkt wie der Stacks-Reiter der Karte)
+    modeAria: 'Erstellungsart wählen',
+    modeRun: 'Einzelner Container',
+    modeCompose: 'Compose (YAML einfügen)',
+    composeProject: 'Projektname',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: 'vollständig einfügen; beliebig viele Dienste',
+    composeNameIllegal: 'Projektname nur Buchstaben, Ziffern und . _ - erlaubt, darf nicht mit - beginnen und kein / enthalten',
+    composeNameTooLong: 'Projektname zu lang (max. 128 Zeichen)',
+    composeTooLarge: 'compose-Inhalt überschreitet 512 KiB',
+    composeNoServices: 'Unter services: wurden keine Dienste erkannt – Einrückung prüfen; es entscheidet docker compose',
+    composeServices: '{n} Dienste: {names} · nach dem Deploy im Stacks-Reiter der Karte verwalten',
+    composeDeploy: 'Deployen und starten',
+    composeDeploying: 'Deploy läuft… (Images werden geladen)',
+    composeDeployed: 'Compose deployed',
+    composeDeployFailed: 'Compose-Deploy fehlgeschlagen',
+    composeDeployStatus: 'Deploy fehlgeschlagen ({status})',
   },
 
   // SystemPruneModal.vue

@@ -62,6 +62,8 @@ func resolveGuardTarget(path string) (guardTarget, bool) {
 			return guardTarget{}, false
 		}
 		return guardTarget{kind: access.KindServer, id: id}, true
+	case "kube-clusters":
+		return guardTarget{kind: access.KindKubeCluster, id: id}, true
 	default:
 		return guardTarget{}, false
 	}

@@ -39,11 +39,17 @@
   flex: none;
 }
 
+/* 表头是阶段间连线的落点。没有可见边界时,线看着就是"从空里伸出来一截";给一块底板,
+   两端各有一条实边可对齐。padding 也算进量出来的盒子里,连线跟着 DOM 走,不写死偏移。 */
 .stage-header {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  padding: 4px 8px;
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--color-text);
@@ -53,8 +59,8 @@
   width: 18px;
   height: 18px;
   border-radius: 5px;
-  background: var(--color-inset);
-  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  border: 1px solid var(--color-border-strong);
   display: grid;
   place-items: center;
   font-size: 0.66rem;
@@ -241,54 +247,6 @@
 .add-job-btn:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-}
-
-/* ─── SVG connector ─────────────────────────────────────────────────────── */
-.stage-connector {
-  width: 74px;
-  flex: none;
-  margin-top: 44px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-}
-
-.stage-connector svg {
-  width: 74px;
-  height: 30px;
-  overflow: visible;
-}
-
-.conn-edge {
-  fill: none;
-  stroke: var(--color-primary);
-  stroke-width: 2;
-  stroke-linecap: round;
-  opacity: 0.55;
-}
-
-.conn-flow {
-  fill: none;
-  stroke: var(--color-cyan);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 4 10;
-  animation: pipeline-flow 1.2s linear infinite;
-}
-
-.conn-port {
-  fill: var(--color-primary);
-}
-
-@keyframes pipeline-flow {
-  to { stroke-dashoffset: -14; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .conn-flow {
-    animation: none;
-    opacity: 0;
-  }
 }
 
 /* ─── Add stage button ────────────────────────────────────────────────────── */

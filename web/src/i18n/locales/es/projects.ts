@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: 'El proyecto no existe; actualiza y reinténtalo.',
   triggerErrStatus: 'El disparo falló ({status})',
   triggerErrRetry: 'El disparo falló, inténtalo de nuevo más tarde.',
+
+  // ─── Repositorio opcional (proyectos solo de publicación) ─────
+  bindRepo: 'Vincular un repositorio Git',
+  bindRepoOnHint: 'El pipeline empieza por el código: el job de origen clona este repositorio y las compilaciones y despliegues siguen la rama o el commit.',
+  bindRepoOffHint: 'Solo publicación: no hay etapa de código; los artefactos o imágenes preparados fuera se despliegan directamente. Puedes vincular un repositorio más tarde desde la tarjeta del proyecto.',
+  repoNotBound: 'Sin repositorio · solo publicación',
+  actionRepoTitle: 'Ajustes del repositorio · {name}',
+  actionRepoAria: 'Configurar la vinculación de repositorio del proyecto {name}',
+  repoTitle: 'Ajustes del repositorio',
+  repoSub: '{name} · vincular, cambiar o desvincular el repositorio Git',
+  repoErrUnreachable: 'No se puede acceder a la URL del repositorio; no se guardó nada.',
+  repoErrStatus: 'Error al guardar ({status})',
+  repoErrRetry: 'No se pudo guardar, inténtalo de nuevo más tarde.',
+  triggerSubNoRepo: '{name} · este proyecto es solo de publicación; crea una ejecución directamente',
 }

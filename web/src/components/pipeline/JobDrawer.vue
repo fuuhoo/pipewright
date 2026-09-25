@@ -5,6 +5,7 @@ import { localizeName } from '../../lib/pipelineLabels'
 import type { PipelineJob, PipelineStage } from '../../api/pipeline'
 import type { Credential } from '../../api/credentials'
 import type { Server } from '../../api/servers'
+import type { KubeCluster } from '../../api/kubeClusters'
 import type { NotificationChannel } from '../../api/notifications'
 import type { Environment } from '../../api/pipelineSettings'
 import { listEnabledBuildEnvs, type PresetBuildEnv } from '../../api/buildEnvs'
@@ -24,7 +25,8 @@ import {
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
-import { artifactSourceGroups } from './artifactSources'
+import { artifactSourceGroups, producesArtifact } from './artifactSources'
+import { artifactPathHints, containerWorkDir, WORKSPACE_ROOT } from './workspaceHints'
 import {
   isStudioNode,
   parsePromotedParams,
@@ -42,6 +44,8 @@ const props = defineProps<{
   stage: PipelineStage
   credentials?: Credential[]
   servers?: Server[]
+  /** 落点 = 集群时的候选(K8s 发布节点)。与 servers 分列:一个集群没有 host/user 可言。 */
+  clusters?: KubeCluster[]
   channels?: NotificationChannel[]
   /** 项目的部署环境(含各自绑定的镜像仓)—— push_image 只读回显推送目标用。 */
   environments?: Environment[]
@@ -195,6 +199,14 @@ const visibleFields = computed<JobField[]>(() => {
   })
 })
 
+/**
+ * 字段级校验(只渲染当前可见字段的错误):返回非空 = 错误文案,显示在控件下方。
+ * 与后端保存校验同一判据 —— 在抽屉里就指出哪一项不对,而不是等一个 422 再回头猜。
+ */
+function fieldError(field: JobField): string {
+  return field.validate?.(typedConfig.value) ?? ''
+}
+
 // 高级(执行/缓存)字段折叠:主表单只显示非高级字段;高级字段收进默认折叠分区。
 const showExecAdvanced = ref(false)
 /** 当前可见字段里第一个高级字段的 key —— 用于在它前面插入「高级」折叠开关。 */
@@ -278,6 +290,40 @@ const staleArtifactSource = computed(() => {
   for (const g of artifactSources.value) if (g.jobs.some((j) => j.id === v)) return ''
   return v
 })
+
+// 集群被删掉或归了管不到的分组时,把原值挂回选项(与上面「产物来源失配」同一动机):
+// 否则下拉会静默清空,用户改别的一项就把落点悄悄弄丢了。
+const staleCluster = computed(() => {
+  const f = visibleFields.value.find((x) => x.kind === 'cluster')
+  if (!f) return ''
+  const v = typedConfig.value[f.key] ?? ''
+  if (!v) return ''
+  return (props.clusters ?? []).some((c) => c.id === v) ? '' : v
+})
+
+// ─── 工作区路径提示 ───────────────────────────────────────────────────────────
+// 手写脚本最常踩空的一处:任务各自跑在新克隆的工作区里,容器里挂在 /workspace,
+// 而 workDir 只是仓库根下的相对子目录。提示直接给出绝对路径,抄就行,不必猜。
+const workspaceHints = computed(() =>
+  artifactPathHints(props.allStages ?? [], props.stage.id, props.job.id),
+)
+/** 只有会在容器工作区里跑东西的节点才有意义(源 / 通知 / 部署节点没有工作区)。 */
+const showWorkspaceHints = computed(() => producesArtifact(props.job))
+const hintWorkDir = computed(() => containerWorkDir(typedConfig.value.workDir))
+
+const copiedHintKey = ref<string | null>(null)
+let hintCopyTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copyHintPath(key: string, path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path)
+    copiedHintKey.value = key
+    if (hintCopyTimer) clearTimeout(hintCopyTimer)
+    hintCopyTimer = setTimeout(() => { copiedHintKey.value = null }, 1600)
+  } catch {
+    // 非安全上下文 / 用户拒权:路径本来就明文显示,可手动选抄。
+  }
+}
 
 onMounted(async () => {
   try {
@@ -645,6 +691,36 @@ async function confirmSave(): Promise<void> {
         </div>
       </div>
 
+      <!-- 工作区路径提示:在页面手写脚本时,「该写哪个路径」不该靠猜。 -->
+      <div v-if="showWorkspaceHints" class="workspace-hints">
+        <div class="workspace-hints-paths">
+          <span class="workspace-hints-key">{{ t('pipelineJob.workspaceRoot') }}</span>
+          <code>{{ WORKSPACE_ROOT }}</code>
+          <span class="workspace-hints-sep">·</span>
+          <span class="workspace-hints-key">{{ t('pipelineJob.workspaceJobDir') }}</span>
+          <code>{{ hintWorkDir }}</code>
+        </div>
+
+        <template v-if="workspaceHints.length">
+          <div class="workspace-hints-title">{{ t('pipelineJob.workspaceUpstreamTitle') }}</div>
+          <button
+            v-for="h in workspaceHints"
+            :key="h.sourceJobId + ':' + h.declared"
+            type="button"
+            class="workspace-hint"
+            :title="t('pipelineJob.workspaceHintCopy')"
+            @click="copyHintPath(h.sourceJobId + ':' + h.declared, h.path)"
+          >
+            <code>{{ copiedHintKey === h.sourceJobId + ':' + h.declared ? t('pipelineJob.workspaceHintCopied') : h.path }}</code>
+            <span class="workspace-hint-from">
+              {{ t('pipelineJob.workspaceHintFrom', { from: h.sourceJobName }) }}
+              <template v-if="h.wildcard">· {{ t('pipelineJob.workspaceHintWildcard') }}</template>
+            </span>
+          </button>
+          <p class="workspace-hints-note">{{ t('pipelineJob.workspaceUpstreamNote') }}</p>
+        </template>
+      </div>
+
       <template v-for="field in visibleFields" :key="field.key">
         <!-- 高级折叠开关:插在第一个高级(执行/缓存)字段前 -->
         <button
@@ -672,7 +748,7 @@ async function confirmSave(): Promise<void> {
           :value="fieldValue(field.key)"
           class="drawer-input drawer-textarea"
           :class="{ 'is-mono': field.monospace }"
-          rows="4"
+          :rows="field.rows ?? 4"
           :placeholder="field.placeholder"
           :aria-label="field.label"
           @input="updateLocal(field.key, ($event.target as HTMLTextAreaElement).value)"
@@ -717,6 +793,22 @@ async function confirmSave(): Promise<void> {
           <option value="">{{ t('pipelineJob.credUnselected') }}</option>
           <option v-for="srv in (servers ?? [])" :key="srv.id" :value="srv.id">
             {{ srv.name }} · {{ srv.host }}
+          </option>
+        </select>
+
+        <!-- cluster picker(K8s 发布):展示地址与默认命名空间,选完就知道发去哪。
+             地址读自凭据,取不到时明确写「地址未知」而不是留空 —— 空白会被当成渲染坏了。 -->
+        <select
+          v-else-if="field.kind === 'cluster'"
+          :value="fieldValue(field.key)"
+          class="drawer-select"
+          :aria-label="field.label"
+          @change="setField(field.key, ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ (clusters ?? []).length ? t('pipelineJob.clusterUnselected') : t('pipelineJob.clusterNone') }}</option>
+          <option v-if="staleCluster" :value="staleCluster">{{ t('pipelineJob.clusterMissing') }}</option>
+          <option v-for="c in (clusters ?? [])" :key="c.id" :value="c.id">
+            {{ c.name }} · {{ c.endpoint || t('pipelineJob.clusterEndpointUnknown') }}<template v-if="c.namespaceDefault"> · {{ c.namespaceDefault }}</template>
           </option>
         </select>
 
@@ -829,6 +921,7 @@ async function confirmSave(): Promise<void> {
         />
 
         <p v-if="field.hint && field.kind !== 'toggle'" class="field-hint">{{ field.hint }}</p>
+        <p v-if="fieldError(field)" class="field-error">{{ fieldError(field) }}</p>
       </div>
       </template>
 
@@ -1081,6 +1174,14 @@ async function confirmSave(): Promise<void> {
   line-height: 1.4;
 }
 
+/* 字段级校验错误:比 hint 显眼,但不抢表单的视觉重心(仍是行内提示)。 */
+.field-error {
+  margin: 5px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--color-red);
+}
+
 /* 推送目标只读回显:环境 → 该环境绑定的镜像仓 */
 .push-target {
   display: flex;
@@ -1325,5 +1426,77 @@ async function confirmSave(): Promise<void> {
 .reuse-confirm:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* ─── 工作区路径提示 ────────────────────────────────────────────────────── */
+.workspace-hints {
+  margin: 0 0 11px;
+  padding: 8px 10px;
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md, 6px);
+}
+
+.workspace-hints-paths {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 0.74rem;
+  color: var(--color-dim);
+}
+
+.workspace-hints-paths code,
+.workspace-hint code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.74rem;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.workspace-hints-sep {
+  color: var(--color-border);
+}
+
+.workspace-hints-title {
+  margin-top: 7px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-dim);
+  text-transform: uppercase;
+}
+
+.workspace-hint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: none;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-hint:hover {
+  border-color: var(--color-border);
+}
+
+.workspace-hint-from {
+  flex: none;
+  font-size: 0.7rem;
+  color: var(--color-dim);
+}
+
+.workspace-hints-note {
+  margin: 7px 0 0;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--color-dim);
 }
 </style>

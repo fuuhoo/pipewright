@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: 'Projet introuvable, veuillez actualiser et réessayer.',
   triggerErrStatus: 'Échec du déclenchement ({status})',
   triggerErrRetry: 'Échec du déclenchement, veuillez réessayer plus tard.',
+
+  // ─── Dépôt optionnel (projets de publication seule) ───────────
+  bindRepo: 'Associer un dépôt Git',
+  bindRepoOnHint: 'Le pipeline part du code source : la job source clone ce dépôt, et les builds et déploiements suivent la branche ou le commit.',
+  bindRepoOffHint: 'Publication seule : aucune étape de code source ; les artefacts ou images préparés ailleurs sont déployés directement. Vous pourrez associer un dépôt plus tard depuis la carte du projet.',
+  repoNotBound: 'Aucun dépôt · publication seule',
+  actionRepoTitle: 'Paramètres du dépôt · {name}',
+  actionRepoAria: 'Configurer l’association du dépôt du projet {name}',
+  repoTitle: 'Paramètres du dépôt',
+  repoSub: '{name} · associer, modifier ou rompre l’association du dépôt Git',
+  repoErrUnreachable: 'URL du dépôt injoignable ; rien n’a été enregistré.',
+  repoErrStatus: 'Échec de l’enregistrement ({status})',
+  repoErrRetry: 'Échec de l’enregistrement, veuillez réessayer plus tard.',
+  triggerSubNoRepo: '{name} · ce projet sert uniquement à la publication ; créez une exécution directement',
 }

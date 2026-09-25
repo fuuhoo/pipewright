@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run a échoué',
     createFailedStatus: 'Échec de la création ({status})',
     createFailed: 'Échec de la requête de création',
+
+    // Mode Compose (même point de déploiement que l’onglet Stacks de la carte)
+    modeAria: 'Choisir le mode de création',
+    modeRun: 'Conteneur unique',
+    modeCompose: 'Compose (coller le YAML)',
+    composeProject: 'Nom du projet',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: 'coller le fichier entier ; nombre de services libre',
+    composeNameIllegal: 'Le nom ne prend que lettres, chiffres et . _ -, sans commencer par - ni contenir /',
+    composeNameTooLong: 'Nom de projet trop long (128 caractères max)',
+    composeTooLarge: 'Contenu compose supérieur à 512 Kio',
+    composeNoServices: 'Aucun service reconnu sous services: vérifiez l’indentation ; docker compose tranche',
+    composeServices: '{n} services : {names} · à gérer dans l’onglet Stacks après déploiement',
+    composeDeploy: 'Déployer et démarrer',
+    composeDeploying: 'Déploiement… (images en cours)',
+    composeDeployed: 'Compose déployé',
+    composeDeployFailed: 'Échec du déploiement du Compose',
+    composeDeployStatus: 'Déploiement échoué ({status})',
   },
 
   // SystemPruneModal.vue

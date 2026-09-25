@@ -6,8 +6,9 @@
 // (AC-SEC-02,杜绝命令注入)。SSH 密钥经 vault 由 target 层即用即弃,本层绝不接触明文;
 // 输出 / message 绝无明文密钥。
 //
-// 边界(本期不做):零停机切换 / 回滚 = 4-4;多机并行扇出细节 = 4-5(本期顺序执行,失败
-// 不连累其它机)。本层 import run(取产物 + 写部署结果 + 更新终态)与 target(SSH 执行);
+// 编排边界:文件类产物(dist/jar/archive)**直铺**到部署路径(无 releases/current 软链,故不做
+// 零停机切换与一键回滚);image 走容器停旧起新 + 失败回滚上一镜像。多机策略见 strategy.go。
+// 本层 import run(取产物 + 写部署结果 + 更新终态)与 target(SSH 执行);
 // run 包**不** import deploy(避免环)。
 package deploy
 
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/huangchengsir/pipewright/internal/artifactstore"
+	"github.com/huangchengsir/pipewright/internal/kube"
 	"github.com/huangchengsir/pipewright/internal/run"
 	"github.com/huangchengsir/pipewright/internal/target"
 )
@@ -49,9 +51,6 @@ var (
 
 // truncateLen 是写入 message 的命令输出最大长度(防超大输出撑爆响应 / 内存)。
 const truncateLen = 800
-
-// execTimeout 是单台部署的执行超时(防一台挂死拖垮整次部署;失败不连累其它机)。
-const execTimeout = 60 * time.Second
 
 // maxParallelDeploys 是多机扇出的有界并发上限(Story 4.5;信号量防同时打爆 N 台 SSH)。
 // 每机独立 goroutine,信号量 cap 4:目标机再多也不会一次性建超过 4 条 SSH 连接。
@@ -99,6 +98,9 @@ type TargetResult struct {
 	Message    string // 人读摘要(绝无明文密钥)
 	StartedAt  time.Time
 	FinishedAt *time.Time
+	// Manifests 是本次实际交到集群手里的清单正文(只有 k8s「应用清单」那条腿带;SSH 腿为空)。
+	// 它与结果同事务落 deploy_manifests,回滚读的就是这张表里的上一版。
+	Manifests []run.ManifestDoc
 }
 
 // Service 定义部署执行对外接口(冻结点由 httpapi 层 DTO 承载;本接口可演进)。
@@ -118,6 +120,9 @@ type Service interface {
 	//
 	// 定位类错误(run 不存在 / 非失败态 / 无失败目标 / 无产物 / 服务器不存在)上抛,供 HTTP 层 422/404。
 	// 执行失败不上抛:重试目标置 failed + 人读 message,整体仍 200。
+	//
+	// 只覆盖 SSH / docker 落点:k8s 节点失败请在流水线里重跑该任务 —— 这里复用逐机 SSH 链路,
+	// 拿集群 ID 找不到服务器(ErrServerNotFound),不会静默发错东西。
 	RetryFailed(ctx context.Context, in RetryInput) ([]TargetResult, error)
 
 	// ContinueDeploy 续发交互式分批部署中**暂停**(pending)的其余目标(对齐 POST /runs/{id}/deploy/continue)。
@@ -129,12 +134,13 @@ type Service interface {
 	// **不触碰已部署批次** → 据全量重算 run 终态 → 返回全量最新 targets。无 pending → ErrNoPendingTargets。
 	AbortDeploy(ctx context.Context, in AbortInput) ([]TargetResult, error)
 
-	// DeployForStage 是「流水线 deploy_ssh 节点」用的中途部署:取该 run 已产出的首个可发布产物
-	// (dist/jar/archive)→ 按策略部署到目标机 → 持久化每机结果(填 run-detail targets)。
+	// DeployForStage 是「流水线部署节点」用的中途部署:取该 run 已产出的可发布产物 →
+	// 按落点分腿发布(SSH / docker 走逐机策略与切后探测;cfg 带 clusterId 的 k8s 节点走 API server
+	// 直连 + rollout 门控)→ 持久化每目标结果(填 run-detail targets)。
 	// **不校验 run 状态**(流水线执行中 run 仍 running)、**不置 run 终态**(终态由 dag 调度器控制)。
-	// 无可发布产物 → ErrArtifactNotFound;服务器不存在 → ErrServerNotFound;有目标失败 → 返回 error
-	// 令该阶段失败、阻断下游(复用 dagrun「阶段失败→下游不执行」)。
-	DeployForStage(ctx context.Context, runID string, serverIDs []string, cfg map[string]string, strategy string) ([]TargetResult, error)
+	// 无可发布产物 → ErrArtifactNotFound;服务器 / 集群不存在 → ErrServerNotFound / ErrClusterNotFound。
+	// targetIDs 是落点 ID:SSH / docker 节点填服务器 ID,k8s 节点填集群 ID(同记进 deploy_targets)。
+	DeployForStage(ctx context.Context, runID string, targetIDs []string, cfg map[string]string, strategy string) ([]TargetResult, error)
 }
 
 // service 是 run + target 支撑的 Service 实现。
@@ -150,6 +156,12 @@ type service struct {
 	// artStore 是制品库(Story 8-16):非 nil 时部署 release 类「已归档」产物会取真字节经 SSH 上传到
 	// 目标机;nil 或产物非归档 → 旧占位路径(向后兼容)。由 main 注入(WithArtifactStore)。
 	artStore *artifactstore.Store
+	// kube 是 Kubernetes 集群目标层(deploy_k8s 节点用它直连 API server);nil = 平台未启用
+	// k8s 能力,此时集群发布节点明确报错而不是退回 SSH(见 k8sRouteOf)。
+	kube kube.Service
+	// gates 是「同机串行」的执行权:同一台目标机一次只放一个远程操作出去(见 gate.go)。
+	gatesMu sync.Mutex
+	gates   map[string]chan struct{}
 }
 
 // Option 配置 deploy.Service(如注入诊断钩子)。
@@ -159,6 +171,11 @@ type Option func(*service)
 // 部署 failed/partial_failed → 合成失败日志(SetFailureLog)+ 触发钩子,让 7-2 诊断飞轮覆盖部署失败。
 func WithDiagnoseHook(fn func(ctx context.Context, runID string)) Option {
 	return func(s *service) { s.diagnoseHook = fn }
+}
+
+// WithKube 注入 Kubernetes 集群目标层(deploy_k8s 节点;不注入则该节点明确失败,不偷偷走 SSH)。
+func WithKube(svc kube.Service) Option {
+	return func(s *service) { s.kube = svc }
 }
 
 // WithArtifactStore 注入制品库(Story 8-16):部署 release 类已归档产物时取真字节上传目标机。
@@ -285,20 +302,11 @@ func (s *service) Deploy(ctx context.Context, in DeployInput) ([]TargetResult, e
 	// 5) 持久化每机结果(填 run-detail targets slot)。
 	dts := make([]run.DeployTarget, 0, len(results))
 	for _, r := range results {
-		dts = append(dts, run.DeployTarget{
-			RunID:      in.RunID,
-			ServerID:   r.ServerID,
-			ServerName: r.ServerName,
-			Status:     r.Status,
-			Message:    r.Message,
-			StartedAt:  r.StartedAt,
-			FinishedAt: r.FinishedAt,
-		})
+		dts = append(dts, deployTargetOf(in.RunID, r))
 	}
 	if err := s.runs.SaveDeployTargets(ctx, in.RunID, dts); err != nil {
 		return nil, err
 	}
-
 	// 6) 暂停态(交互式首批已过、其余 pending)→ 不置终态(run 保持成功,等续发/中止);
 	//    否则据结果置 run 终态:全成功 → success;有失败 → partial_failed;全失败 → failed。
 	if paused {
@@ -316,8 +324,11 @@ func (s *service) Deploy(ctx context.Context, in DeployInput) ([]TargetResult, e
 }
 
 // DeployForStage 见接口注释:流水线 deploy_ssh 节点的中途部署(不校验 run 状态、不置终态)。
-func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []string, cfg map[string]string, strategy string) ([]TargetResult, error) {
-	if len(serverIDs) == 0 {
+//
+// targetIDs 是这条流水线的落点:SSH / docker 节点是目标服务器 ID,k8s 节点(cfg 带 clusterId)
+// 是集群 ID —— 两者都是「一台/一个目标」,共用同一份 deploy_targets 记录与结果形状。
+func (s *service) DeployForStage(ctx context.Context, runID string, targetIDs []string, cfg map[string]string, strategy string) ([]TargetResult, error) {
+	if len(targetIDs) == 0 {
 		return nil, ErrNoServers
 	}
 	// 流水线部署节点的健康探测(节点表单配置;未配 → nil,行为与此前完全一致)。
@@ -326,7 +337,13 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 	// 供「配置类」流水线用(如 frp 隧道:就地 upsert frpc.ini + reload)。与产物发布完全隔离——
 	// **真实产物部署(artifactType != command)绝不进此分支**,既有部署/策略/健康检查路径零影响。
 	if strings.TrimSpace(cfg["artifactType"]) == "command" {
-		return s.runCommandOnly(ctx, runID, serverIDs, cfg, hc)
+		return s.runCommandOnly(ctx, runID, targetIDs, cfg, hc)
+	}
+	// docker 部署的 compose 方式:正文自带镜像与拓扑,**不取构建产物**(与命令型同为无产物分支)。
+	// 放在产物查找之前,否则一次纯 compose 部署会因为本次没构建出东西而报 ErrArtifactNotFound。
+	// 单容器方式继续走下面的产物路径(那里强制偏好镜像)。
+	if dockerModeOf(cfg) == DockerModeCompose {
+		return s.deployComposeStack(ctx, runID, targetIDs, cfg, hc)
 	}
 	// 取该 run 已产出的可部署产物。dist/jar/archive 走文件发布;image 走容器 pull→停旧起新→
 	// 健康→回滚(复用 image_release.go)。二者都在时按节点 cfg["artifactType"] 选(空 → 默认优先
@@ -345,7 +362,14 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 		}
 		arts = scoped
 	}
-	artifact := pickStageArtifact(arts, strings.TrimSpace(cfg["artifactType"]))
+	// docker 单容器方式发的必然是镜像:偏好留空时 pickStageArtifact 默认偏向文件产物,
+	// 不显式纠正就会把 dist 铺进机器却报告容器已起。
+	// k8s 节点同理(且更严格:产物不是镜像直接判错,见 deployToK8s)。
+	prefer := strings.TrimSpace(cfg["artifactType"])
+	if prefer == "" && (IsDockerRunMode(cfg) || K8sRouteOf(cfg)) {
+		prefer = run.ArtifactImage
+	}
+	artifact := pickStageArtifact(arts, prefer)
 	if artifact == nil {
 		return nil, ErrArtifactNotFound
 	}
@@ -356,8 +380,19 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 		cmdLogFrom(ctx)(cmdStreamStdout, fmt.Sprintf("· 产物 %s(%s)", artifact.Name, artifact.Type))
 	}
 
-	servers := make([]*target.Server, 0, len(serverIDs))
-	for _, sid := range serverIDs {
+	// 集群发布(deploy_k8s):落点不是机器而是一个 API server,整条链路没有 shell。
+	// 因此它不进 deployWithStrategy —— 逐机批次、切后探测、软链切换在这里既跑不了也不该跑,
+	// 滚动与就绪判定由集群控制器 + rollout 门控负责(见 k8s_deploy.go)。
+	if K8sRouteOf(cfg) {
+		results, err := s.deployToK8s(ctx, runID, targetIDs, cfg, *artifact)
+		if err != nil {
+			return nil, err
+		}
+		return results, s.saveStageTargets(ctx, runID, results)
+	}
+
+	servers := make([]*target.Server, 0, len(targetIDs))
+	for _, sid := range targetIDs {
 		srv, gerr := s.targets.Get(ctx, sid)
 		if gerr != nil {
 			if errors.Is(gerr, target.ErrNotFound) {
@@ -369,19 +404,31 @@ func (s *service) DeployForStage(ctx context.Context, runID string, serverIDs []
 	}
 
 	results := s.deployWithStrategy(ctx, servers, *artifact, cfg, hc, NormalizeStrategy(strategy))
-
-	// 持久化每机结果(填 run-detail targets slot);**不置 run 终态**(dag 调度器控制)。
-	dts := make([]run.DeployTarget, 0, len(results))
-	for _, r := range results {
-		dts = append(dts, run.DeployTarget{
-			RunID: runID, ServerID: r.ServerID, ServerName: r.ServerName,
-			Status: r.Status, Message: r.Message, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-		})
-	}
-	if err := s.runs.SaveDeployTargets(ctx, runID, dts); err != nil {
+	if err := s.saveStageTargets(ctx, runID, results); err != nil {
 		return nil, err
 	}
 	return results, nil
+}
+
+// saveStageTargets 持久化每个落点的部署结果(填 run-detail targets slot);**不置 run 终态**
+// —— 流水线部署节点由 dag 调度器控制终态,这里只留痕。
+func (s *service) saveStageTargets(ctx context.Context, runID string, results []TargetResult) error {
+	dts := make([]run.DeployTarget, 0, len(results))
+	for _, r := range results {
+		dts = append(dts, deployTargetOf(runID, r))
+	}
+	return s.runs.SaveDeployTargets(ctx, runID, dts)
+}
+
+// deployTargetOf 把一次目标机结果折成 run 层的持久化形状。清单正文只能经这一个出口下沉:
+// 少带一次,「上一版发了什么」就永远查不到了(而回滚正是读它)。
+func deployTargetOf(runID string, r TargetResult) run.DeployTarget {
+	return run.DeployTarget{
+		RunID: runID, ServerID: r.ServerID, ServerName: r.ServerName,
+		Status: r.Status, Message: r.Message,
+		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		Manifests: r.Manifests,
+	}
 }
 
 // runCommandOnly 执行「命令型」部署:在每台目标机直接跑 cfg["restartCommand"](无构建产物)。
@@ -430,10 +477,7 @@ func (s *service) runCommandOnly(ctx context.Context, runID string, serverIDs []
 	}
 	dts := make([]run.DeployTarget, 0, len(results))
 	for _, r := range results {
-		dts = append(dts, run.DeployTarget{
-			RunID: runID, ServerID: r.ServerID, ServerName: r.ServerName,
-			Status: r.Status, Message: r.Message, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-		})
+		dts = append(dts, deployTargetOf(runID, r))
 	}
 	if err := s.runs.SaveDeployTargets(ctx, runID, dts); err != nil {
 		return nil, err
@@ -468,7 +512,7 @@ func artifactsFromSource(arts []run.Artifact, ref string) []run.Artifact {
 // deployableStageArtifact 判定产物在「流水线部署节点」可被部署:文件发布类(dist/jar/archive)
 // 或镜像类(image)。其余类型不可部署(无对应编排)。
 func deployableStageArtifact(a run.Artifact) bool {
-	return releaseModeArtifact(a) || a.Type == run.ArtifactImage
+	return fileDeployArtifact(a) || a.Type == run.ArtifactImage
 }
 
 // pickStageArtifact 从该 run 的产物里挑「部署节点」要部署的一件,返回 nil = 无可部署产物。
@@ -494,7 +538,7 @@ func pickStageArtifact(arts []run.Artifact, prefer string) *run.Artifact {
 		if a.Type == run.ArtifactImage && firstImage == nil {
 			firstImage = &arts[i]
 		}
-		if releaseModeArtifact(a) && firstRelease == nil {
+		if fileDeployArtifact(a) && firstRelease == nil {
 			firstRelease = &arts[i]
 		}
 	}
@@ -598,15 +642,7 @@ func (s *service) RetryFailed(ctx context.Context, in RetryInput) ([]TargetResul
 	// 7) **逐目标 upsert**:只更新被重试目标对应行,**保留**本次未重试的成功目标(别用整批删的 SaveDeployTargets)。
 	dts := make([]run.DeployTarget, 0, len(retried))
 	for _, r := range retried {
-		dts = append(dts, run.DeployTarget{
-			RunID:      in.RunID,
-			ServerID:   r.ServerID,
-			ServerName: r.ServerName,
-			Status:     r.Status,
-			Message:    r.Message,
-			StartedAt:  r.StartedAt,
-			FinishedAt: r.FinishedAt,
-		})
+		dts = append(dts, deployTargetOf(in.RunID, r))
 	}
 	if err := s.runs.UpsertDeployTargets(ctx, in.RunID, dts); err != nil {
 		return nil, err
@@ -677,14 +713,12 @@ func (s *service) deployFanout(ctx context.Context, servers []*target.Server, a 
 	return results
 }
 
-// deployOne 在一台目标机上构造并执行该产物类型的部署命令,返回该机结果。
-// 部署命令全部成功后,若配置了健康检查(Story 4.3),再经同一 Exec 链路做健康门控:
-// 探测通过 → success(message 含"健康检查通过");重试耗尽仍失败 → failed + 人读 message。
-// 执行错误**不上抛**:映射为 status=failed + 人读 message(绝无明文密钥)。
+// deployOne 在一台目标机上按产物类型分派部署编排:文件类直铺(release.go)、镜像容器编排
+// (image_release.go)。执行错误**不上抛**:一律映射为 status + 人读 message(绝无明文密钥)。
 func (s *service) deployOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) TargetResult {
-	// dist / jar / archive 走「发布目录 + current 软链原子切换 + 健康门控 + 失败回滚」零停机模式(Story 4.4)。
-	if releaseModeArtifact(a) {
-		return s.deployReleaseOne(ctx, srv, a, cfg, hc)
+	// dist / jar / archive 走「产物直铺到部署路径 + 重启 + 健康门控」(见 release.go)。
+	if fileDeployArtifact(a) {
+		return s.deployFileOne(ctx, srv, a, cfg, hc)
 	}
 
 	// image 走「pull → 停旧起新 → 健康门控 → 失败回滚上一镜像」(复用蓝绿单机原语,每机独立)。
@@ -693,67 +727,16 @@ func (s *service) deployOne(ctx context.Context, srv *target.Server, a run.Artif
 		return s.deployImageOne(ctx, srv, a, cfg, hc, time.Now().UTC())
 	}
 
-	started := time.Now().UTC()
-	res := TargetResult{
+	// 到这里只剩未知类型:既非文件直铺(dist/jar/archive)也非镜像 → 无对应编排,直接 failed 人读。
+	finish := time.Now().UTC()
+	return TargetResult{
 		ServerID:   srv.ID,
 		ServerName: srv.Name,
-		StartedAt:  started,
+		StartedAt:  finish,
+		Status:     run.TargetFailed,
+		Message:    fmt.Sprintf("不支持的产物类型:%s", a.Type),
+		FinishedAt: &finish,
 	}
-
-	cmds, summary, berr := buildCommands(a, cfg)
-	if berr != nil {
-		finish := time.Now().UTC()
-		res.Status = run.TargetFailed
-		res.Message = berr.Error()
-		res.FinishedAt = &finish
-		return res
-	}
-
-	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
-	defer cancel()
-
-	for _, cmd := range cmds {
-		out, eerr := s.exec(execCtx, srv.ID, cmd)
-		if eerr != nil {
-			finish := time.Now().UTC()
-			res.Status = run.TargetFailed
-			res.Message = humanExecError(eerr)
-			res.FinishedAt = &finish
-			return res
-		}
-		if out != nil && out.ExitCode != 0 {
-			finish := time.Now().UTC()
-			res.Status = run.TargetFailed
-			// 命令本身非零退出:回显 stderr 摘要(target 层执行的是平台构造的命令,
-			// 不含凭据明文;仍截断防超大输出)。
-			res.Message = fmt.Sprintf("部署命令退出码 %d:%s", out.ExitCode, truncate(strings.TrimSpace(out.Stderr)))
-			res.FinishedAt = &finish
-			return res
-		}
-	}
-
-	// 部署命令全部成功 → 若配置了健康检查,做部署后健康门控(Story 4.3 / FR-12)。
-	// 探测在部署命令成功之后跑;每机独立;经同一 target.Exec 链路(array 不拼 shell)。
-	if hc.enabled() {
-		if herr := s.runHealthCheck(execCtx, srv.ID, hc); herr != nil {
-			finish := time.Now().UTC()
-			res.Status = run.TargetFailed
-			res.Message = herr.Error()
-			res.FinishedAt = &finish
-			return res
-		}
-		finish := time.Now().UTC()
-		res.Status = run.TargetSuccess
-		res.Message = summary + "(健康检查通过)"
-		res.FinishedAt = &finish
-		return res
-	}
-
-	finish := time.Now().UTC()
-	res.Status = run.TargetSuccess
-	res.Message = summary
-	res.FinishedAt = &finish
-	return res
 }
 
 // overallStatus 据每机结果聚合 run 终态:
@@ -824,6 +807,8 @@ func humanExecError(err error) string {
 		return "引用的 SSH 凭据不存在"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "部署执行超时"
+	case errors.Is(err, context.Canceled):
+		return "部署已取消(运行被取消或服务退出)"
 	default:
 		// 兜底:不泄漏内部细节(target 层错误体已无凭据明文)。
 		return "部署执行失败"

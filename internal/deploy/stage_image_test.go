@@ -100,9 +100,9 @@ func TestStagePrefersFileArtifactByDefault(t *testing.T) {
 	if len(res) != 1 || res[0].Status != run.TargetSuccess {
 		t.Fatalf("want 1 success, got %+v", res)
 	}
-	// 默认应走文件发布(dist → ln -sfn current),不应 docker pull。
-	if !hasCmd(tgt.calls, "ln", "-sfn") {
-		t.Fatalf("默认应走文件发布(软链切换): %v", tgt.calls)
+	// 默认应走文件直铺(mkdir 部署路径 + 落产物),不应 docker pull。
+	if !hasCmd(tgt.calls, "mkdir", "-p") {
+		t.Fatalf("默认应走文件发布(产物直铺): %v", tgt.calls)
 	}
 	if hasCmd(tgt.calls, "docker", "pull") {
 		t.Fatalf("默认不应部署镜像: %v", tgt.calls)

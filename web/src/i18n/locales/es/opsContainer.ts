@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run falló',
     createFailedStatus: 'Error en la creación ({status})',
     createFailed: 'Error en la solicitud de creación',
+
+    // Modo Compose (usa el mismo endpoint de despliegue que la pestaña Stacks)
+    modeAria: 'Elige cómo crear',
+    modeRun: 'Un contenedor',
+    modeCompose: 'Compose (pegar YAML)',
+    composeProject: 'Nombre del proyecto',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: 'pega el archivo completo; cualquier número de servicios',
+    composeNameIllegal: 'El nombre solo admite letras, dígitos y . _ -, no puede empezar por - ni llevar /',
+    composeNameTooLong: 'Nombre de proyecto demasiado largo (máx. 128 caracteres)',
+    composeTooLarge: 'El contenido de compose supera los 512 KiB',
+    composeNoServices: 'No se detectaron servicios bajo services: revisa la sangría; lo decide docker compose',
+    composeServices: '{n} servicios: {names} · tras desplegar se gestionan en la pestaña Stacks',
+    composeDeploy: 'Desplegar e iniciar',
+    composeDeploying: 'Desplegando… (puede descargar imágenes)',
+    composeDeployed: 'Compose desplegado',
+    composeDeployFailed: 'Error al desplegar el Compose',
+    composeDeployStatus: 'Despliegue fallido ({status})',
   },
 
   // SystemPruneModal.vue

@@ -26,7 +26,13 @@ const ICONS: Record<string, string> = {
     '<path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
   deploy_ssh:
     '<rect x="3" y="4" width="18" height="6" rx="1.6"/><rect x="3" y="14" width="18" height="6" rx="1.6"/><path d="M7 7h.01M7 17h.01"/>',
+  // docker 部署:船体 + 堆叠的集装箱(docker 的通用图形语言)。
+  deploy_docker:
+    '<path d="M3.5 14h17l-1.7 4.3A2.2 2.2 0 0 1 16.8 20H7.2a2.2 2.2 0 0 1-2-1.7L3.5 14Z"/><path d="M7 10.7h3.4M11.3 10.7h3.4M7.6 7.3H11M11.6 7.3H15"/><path d="M16.6 5.6c1.5.6 2.5 1.4 3 2.6"/>',
   health_check: '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+  // K8s 发布:舵轮(k8s 的通用图形语言)—— 外圈 + 六根辐条 + 轮毂。
+  deploy_k8s:
+    '<circle cx="12" cy="12" r="8.4"/><path d="M12 3.6v16.8M4.7 7.8l14.6 8.4M4.7 16.2 19.3 7.8"/><circle cx="12" cy="12" r="2.1"/>',
   notify:
     '<path d="M18 8.5a6 6 0 0 0-12 0c0 6.5-2.5 8.5-2.5 8.5h17S18 15 18 8.5"/><path d="M13.6 21a2 2 0 0 1-3.2 0"/>',
   script:

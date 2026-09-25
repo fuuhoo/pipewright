@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { PipelineStage, PipelineJob, StageKind } from '../../api/pipeline'
 import type { Credential } from '../../api/credentials'
 import type { Server } from '../../api/servers'
+import type { KubeCluster } from '../../api/kubeClusters'
 import type { NotificationChannel } from '../../api/notifications'
 import type { Environment } from '../../api/pipelineSettings'
 import StageColumn from './StageColumn.vue'
@@ -13,6 +14,7 @@ import JobTypePicker from './JobTypePicker.vue'
 import type { CustomNode } from '../../api/customNodes'
 import { jobTypeLabel, getJobTypeSpec, jobTemplatePrefill } from './jobConfigSchema'
 import { hasAnyNeeds } from './stageDeps'
+import { boxOf, countBy, edgePath, fanAnchor, type EdgeBox } from './dagEdges'
 import './pipeline.css'
 
 // ─── Props / emits ────────────────────────────────────────────────────────────
@@ -27,6 +29,8 @@ const props = defineProps<{
   yaml: string
   credentials?: Credential[]
   servers?: Server[]
+  /** 透传给 JobDrawer:K8s 发布节点的落点候选(集群列表)。 */
+  clusters?: KubeCluster[]
   channels?: NotificationChannel[]
   /** 透传给 JobDrawer:push_image 节点只读回显各环境绑定的镜像仓。 */
   environments?: Environment[]
@@ -298,38 +302,85 @@ const edges = computed<Edge[]>(() => {
   return out
 })
 
-const HEADER_Y = 13 // connect edges at stage-header vertical center
+/**
+ * 连线的两端都量「阶段表头那块可见的底板」,而不是阶段列的外框。
+ *
+ * 之前纵向量表头、横向量列边界,混用两套坐标:带内部 DAG 的阶段列会被任务网格撑得比表头宽
+ * (量到过 236px 的空档),线就从列右边界伸出来,那一段什么也没有 —— 看着正是「线头停在半路」。
+ * 表头有实边、有底色,是唯一两端都能对齐的可见元素;列边界留给 CSS 自己管。
+ */
+function headerBox(col: HTMLElement): EdgeBox {
+  const head = col.querySelector<HTMLElement>('.stage-header')
+  if (!head) return boxOf(col)
+  return {
+    x: col.offsetLeft + head.offsetLeft,
+    y: col.offsetTop + head.offsetTop,
+    w: head.offsetWidth,
+    h: head.offsetHeight,
+  }
+}
+
+function stageCols(flow: HTMLElement): Map<string, HTMLElement> {
+  const out = new Map<string, HTMLElement>()
+  for (const s of props.stages) {
+    const el = flow.querySelector<HTMLElement>(`:scope > .stage-col[data-stage-id="${CSS.escape(s.id)}"]`)
+    if (el) out.set(s.id, el)
+  }
+  return out
+}
 
 function measureEdges(): void {
   const flow = flowRef.value
   if (!flow) return
-  const cols = Array.from(flow.querySelectorAll<HTMLElement>('.stage-col'))
-  const byId = new Map<string, HTMLElement>()
-  props.stages.forEach((s, i) => { if (cols[i]) byId.set(s.id, cols[i]) })
+  const byId = stageCols(flow)
   overlay.value = { w: flow.scrollWidth, h: flow.scrollHeight }
+  const boxes = new Map<string, EdgeBox>()
+  for (const [id, col] of byId) boxes.set(id, headerBox(col))
+  // 扇入/扇出各自按边数沿表头高度均分锚点:多条边全挤在中心点会读成一条折线,分不清谁接谁。
+  const outs = countBy(edges.value.map((e) => e.from))
+  const ins = countBy(edges.value.map((e) => e.to))
+  const outIdx = new Map<string, number>()
+  const inIdx = new Map<string, number>()
   const paths: string[] = []
   for (const e of edges.value) {
-    const a = byId.get(e.from)
-    const b = byId.get(e.to)
+    const a = boxes.get(e.from)
+    const b = boxes.get(e.to)
     if (!a || !b) continue
-    const x1 = a.offsetLeft + a.offsetWidth
-    const y1 = a.offsetTop + HEADER_Y
-    const x2 = b.offsetLeft
-    const y2 = b.offsetTop + HEADER_Y
-    const dx = Math.max(26, Math.abs(x2 - x1) * 0.5)
-    paths.push(`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`)
+    const oi = outIdx.get(e.from) ?? 0
+    outIdx.set(e.from, oi + 1)
+    const ii = inIdx.get(e.to) ?? 0
+    inIdx.set(e.to, ii + 1)
+    paths.push(edgePath(a, b, fanAnchor(a, oi, outs.get(e.from) ?? 1), fanAnchor(b, ii, ins.get(e.to) ?? 1), 26))
   }
   edgePaths.value = paths
 }
 
+// 阶段列/表头任一变化都要重测:只观察外层容器时,列宽随内部 DAG 网格变宽变高而容器尺寸不变,
+// 就会拿旧坐标画线 —— 那正是「线头停在半路」的成因。
 let ro: ResizeObserver | null = null
+function observeTargets(): void {
+  if (!ro) return
+  ro.disconnect()
+  const flow = flowRef.value
+  if (!flow) return
+  ro.observe(flow)
+  flow.querySelectorAll<HTMLElement>('.stage-col, .stage-header').forEach((el) => ro?.observe(el))
+}
+
 onMounted(() => {
   measureEdges()
   ro = new ResizeObserver(() => measureEdges())
-  if (flowRef.value) ro.observe(flowRef.value)
+  observeTargets()
 })
 onBeforeUnmount(() => ro?.disconnect())
-watch(() => props.stages, () => nextTick(measureEdges), { deep: true })
+watch(
+  () => props.stages,
+  () => nextTick(() => {
+    measureEdges()
+    observeTargets()
+  }),
+  { deep: true },
+)
 
 // ─── v6.2 §3.7:YAML 折叠区已删除 ───
 // 原「查看 YAML」按钮 + 只读预览块下架(前端不再提供直接查看/编辑入口)。
@@ -367,6 +418,7 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
           <StageColumn
             :stage="stage"
             :stage-index="idx"
+            :data-stage-id="stage.id"
             :selected-job-id="selectedJobId"
             :all-stages="stages"
             role="listitem"
@@ -399,6 +451,7 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
       :stage="selectedStage"
       :credentials="props.credentials"
       :servers="props.servers"
+      :clusters="props.clusters"
       :channels="props.channels"
       :environments="props.environments"
       :all-stages="props.stages"

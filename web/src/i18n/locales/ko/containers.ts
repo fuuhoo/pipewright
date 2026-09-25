@@ -25,6 +25,10 @@ export default {
   kpiHosts: '컨테이너가 있는 서버',
   kpiStripAria: '컨테이너 집계 통계',
 
+  serverFilterLabel: '서버',
+  serverFilterAria: '이 화면에 표시할 서버 전환',
+  serverAll: '전체 서버',
+
   filterAria: '상태별로 컨테이너 필터링',
   filterAll: '전체',
   filterRunning: '실행 중',

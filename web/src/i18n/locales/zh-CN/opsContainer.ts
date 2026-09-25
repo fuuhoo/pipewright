@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run 失败',
     createFailedStatus: '创建失败({status})',
     createFailed: '创建请求失败',
+
+    // Compose 粘贴模式(与卡片 Stacks 页签走同一个部署接口)
+    modeAria: '选择创建方式',
+    modeRun: '单个容器',
+    modeCompose: 'Compose(粘贴 YAML)',
+    composeProject: '项目名',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: '整份粘贴,服务数不限',
+    composeNameIllegal: '项目名只能用字母、数字和 . _ -,不能以 - 开头或包含 /',
+    composeNameTooLong: '项目名太长(上限 128 字符)',
+    composeTooLarge: 'compose 内容超过 512 KiB 上限',
+    composeNoServices: '没识别到 services 下的服务名,请确认缩进;最终以 docker compose 的结果为准',
+    composeServices: '共 {n} 个服务:{names} · 部署后在卡片的「Stacks」里管理',
+    composeDeploy: '部署并启动',
+    composeDeploying: '部署中…(可能在拉镜像)',
+    composeDeployed: 'Compose 已部署',
+    composeDeployFailed: 'Compose 部署失败',
+    composeDeployStatus: '部署失败({status})',
   },
 
   // SystemPruneModal.vue

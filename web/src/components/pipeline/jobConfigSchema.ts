@@ -15,6 +15,7 @@
  */
 
 import type { CredentialType } from '../../api/credentials'
+import { composeIssue, stackNameIssue } from '../../lib/composePaste'
 import { t } from '../../i18n'
 
 // ─── Field model ──────────────────────────────────────────────────────────────
@@ -34,6 +35,8 @@ export type FieldKind =
   | 'artifactsource'
   /** 只读回显:推送目标 = 环境绑定的镜像仓(不可编辑,也不写进 config) */
   | 'pushTarget'
+  /** K8s 集群选择:候选 = 设置 · K8s 集群 里本人可见的集群(值存集群 ID) */
+  | 'cluster'
 
 export interface SelectOption {
   value: string
@@ -55,8 +58,16 @@ export interface JobField {
   credentialType?: CredentialType
   /** Render with monospace font (paths, commands, image refs) */
   monospace?: boolean
+  /** `textarea` 的行数(缺省 4;compose 正文这种整份文件要给它看得下的额度) */
+  rows?: number
   /** Conditional visibility based on the current config values */
   when?: (config: Record<string, string>) => boolean
+  /**
+   * 字段级校验:返回非空 = 该字段的错误文案(显示在控件下方)。
+   * 与后端的保存校验同一口径 —— 让用户在抽屉里就看见「项目名不能含 /」,
+   * 而不是点保存吃一个 422 再回头找是哪一项错了。
+   */
+  validate?: (config: Record<string, string>) => string
 }
 
 /** Accent palette keys — map to --color-{accent} / --color-{accent}-soft tokens. */
@@ -171,6 +182,52 @@ export function normalizeDeployArtifactPref(pref: string): string {
   return pref === 'dist' || pref === 'jar' || pref === 'archive' ? 'file' : pref
 }
 
+// docker 部署的两种方式:值与后端 pipeline.DockerMode* 逐字一致(键名失配 = 该档字段全部隐藏)。
+const DOCKER_MODE_RUN = 'run'
+const DOCKER_MODE_COMPOSE = 'compose'
+
+const DOCKER_MODE_OPTIONS: SelectOption[] = [
+  { value: DOCKER_MODE_RUN, get label() { return t('pipelineJob.dockerModeRun') } },
+  { value: DOCKER_MODE_COMPOSE, get label() { return t('pipelineJob.dockerModeCompose') } },
+]
+
+// compose 正文的两个来源,值与后端 pipeline.ComposeSource* 逐字一致。
+// 仓库文件那份不进节点配置:运行时按本次 commit 现读,所以改了仓库里那份就自动生效;
+// 粘贴档则是配置里的一份快照,改完要回节点里同步。
+const COMPOSE_SOURCE_PASTE = 'paste'
+const COMPOSE_SOURCE_REPO  = 'repo'
+
+const COMPOSE_SOURCE_OPTIONS: SelectOption[] = [
+  { value: COMPOSE_SOURCE_PASTE, get label() { return t('pipelineJob.composeSourcePaste') } },
+  { value: COMPOSE_SOURCE_REPO, get label() { return t('pipelineJob.composeSourceRepo') } },
+]
+
+// compose 的项目名与正文约束由 lib/composePaste 统一给(与「新增容器」弹窗同一套规则:
+// 同一份 compose 交出去,两处对错的判法不该不一样)。
+const stackNameError = (name: string): string => {
+  switch (stackNameIssue(name)) {
+    case 'tooLong': return t('pipelineJob.stackNameTooLong')
+    case 'illegal': return t('pipelineJob.stackNameIllegal')
+    default: return ''
+  }
+}
+const composeBodyError = (yaml: string): string =>
+  (composeIssue(yaml) === 'tooLarge' ? t('pipelineJob.composeTooLarge') : '')
+
+// 与后端 pipeline.ComposeFilePathOK 同一判据(表单提示与保存期 422 要说同一句话)。
+// 「没填」和「填了但形状不对」分两句:前者是还没写完,后者是写错了。
+const composeFileError = (path: string): string => {
+  const p = path.trim()
+  if (!p) return t('pipelineJob.fieldComposeFileRequired')
+  if (p.length > 512 || !/\.ya?ml$/.test(p) || p.startsWith('/') || p.includes('\\')) {
+    return t('pipelineJob.fieldComposeFileBad')
+  }
+  if (p.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) {
+    return t('pipelineJob.fieldComposeFileBad')
+  }
+  return ''
+}
+
 // `when` helpers
 const modelIs = (v: string) => (c: Record<string, string>) =>
   (c.buildModel || 'dockerfile') === v
@@ -181,6 +238,11 @@ const probeIs = (v: string) => (c: Record<string, string>) =>
 // jar / dist 是收敛前的历史档位值:存量流水线不改配置也照原路径执行,所以这里继续认。
 const tierIsImage = (c: Record<string, string>) => c.artifactType === 'image'
 const tierIsFile  = (c: Record<string, string>) => BUILD_FILE_TIERS.has(c.artifactType)
+// docker 部署的方式分派:两种方式在目标机上做的事不同,表单只该露出当前方式的那几项。
+const dockerModeIs = (v: string) => (c: Record<string, string>) => c.dockerMode === v
+// composeSource 缺省 = 粘贴(与后端 validateDeployDocker 认 ""/paste 同一口径)。
+const composeSourceIs = (v: string) => (c: Record<string, string>) =>
+  (c.composeSource || COMPOSE_SOURCE_PASTE) === v
 const imageNeedsBuildEnv = (c: Record<string, string>) => tierIsImage(c) && modelIs('toolchain')(c)
 const needsBuildEnvField = (c: Record<string, string>) => tierIsFile(c) || imageNeedsBuildEnv(c)
 
@@ -295,6 +357,63 @@ const SCRIPT_FIELDS: JobField[] = [
   },
 ]
 
+// 部署后的健康门控字段(原「健康检查」节点迁到这里):部署命令在目标机跑成功后,经**同一条 SSH 链路**
+// 再探测该机,不通即判本节点失败并阻断下游(蓝绿策略下还会回滚上一版)。
+// deploy_ssh 与 deploy_docker 共用同一套 —— 探测方式的必填校验在后端 validateHealthProbe 是同一出处,
+// 表单两侧就不该长得不一样。
+// 没有「期望状态码」这类字段 —— 执行侧用的是 `curl -fsS`,4xx/5xx 即视为不通。
+const DEPLOY_HEALTH_FIELDS: JobField[] = [
+  {
+    key: 'healthProbe',
+    get label() { return t('pipelineJob.fieldHealthProbeLabel') },
+    kind: 'select',
+    options: PROBE_MODE_OPTIONS,
+    get hint() { return t('pipelineJob.fieldHealthProbeHint') },
+  },
+  {
+    key: 'healthUrl',
+    get label() { return t('pipelineJob.fieldHealthUrlLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'http://localhost:8080/healthz',
+    get hint() { return t('pipelineJob.fieldHealthUrlHint') },
+    when: probeIs('http'),
+  },
+  {
+    key: 'healthCommand',
+    get label() { return t('pipelineJob.fieldHealthCommandLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'test -f /opt/app/current/OK',
+    get hint() { return t('pipelineJob.fieldHealthCommandHint') },
+    when: probeIs('command'),
+  },
+  {
+    key: 'healthRetries',
+    get label() { return t('pipelineJob.fieldHealthRetriesLabel') },
+    kind: 'number',
+    placeholder: '3',
+    get hint() { return t('pipelineJob.fieldHealthRetriesHint') },
+    when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
+  },
+  {
+    key: 'healthInterval',
+    get label() { return t('pipelineJob.fieldHealthIntervalLabel') },
+    kind: 'number',
+    placeholder: '3',
+    get hint() { return t('pipelineJob.fieldHealthIntervalHint') },
+    when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
+  },
+  {
+    key: 'healthTimeout',
+    get label() { return t('pipelineJob.fieldHealthTimeoutLabel') },
+    kind: 'number',
+    placeholder: '5',
+    get hint() { return t('pipelineJob.fieldHealthTimeoutHint') },
+    when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
+  },
+]
+
 // 部署节点的字段(deploy_ssh 与遗留 deploy_frontend 节点共用同一套表单)。
 const DEPLOY_SSH_FIELDS: JobField[] = [
   {
@@ -370,57 +489,207 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     get hint() { return t('pipelineJob.fieldRestartCommandHint') },
     when: (c) => c.artifactType !== 'image',
   },
-  // 健康门控(原「健康检查」节点迁到这里):部署命令在目标机跑成功后,经**同一条 SSH 链路**
-  // 再探测该机,不通即判本节点失败并阻断下游(蓝绿策略下还会回滚上一版)。
-  // 没有「期望状态码」这类字段 —— 执行侧用的是 `curl -fsS`,4xx/5xx 即视为不通。
+  // 健康门控(原「健康检查」节点迁到这里):探测方式与必填项见 DEPLOY_HEALTH_FIELDS。
+  ...DEPLOY_HEALTH_FIELDS,
+]
+
+// docker 部署节点的字段(deploy_docker):两种交付方式在同一节点上,靠 dockerMode 分派。
+// 与 deploy_ssh 的分工是按**交付手段**划的:铺文件 + 重启进程归它,以 docker 起容器归这里 ——
+// 单容器档复用镜像产物的「停旧起新 + 失败回滚」链路,compose 档则整份 YAML 交目标机编排。
+const DEPLOY_DOCKER_FIELDS: JobField[] = [
   {
-    key: 'healthProbe',
-    get label() { return t('pipelineJob.fieldHealthProbeLabel') },
+    key: 'serverId',
+    get label() { return t('pipelineJob.fieldServerIdLabel') },
+    kind: 'server',
+    get hint() { return t('pipelineJob.fieldServerIdHint') },
+  },
+  {
+    key: 'dockerMode',
+    get label() { return t('pipelineJob.fieldDockerModeLabel') },
     kind: 'select',
-    options: PROBE_MODE_OPTIONS,
-    get hint() { return t('pipelineJob.fieldHealthProbeHint') },
+    options: DOCKER_MODE_OPTIONS,
+    get hint() { return t('pipelineJob.fieldDockerModeHint') },
+  },
+  // ── 单容器(run)──
+  {
+    // 发的是上游构建出的镜像;并行构建出多件镜像时,靠来源任务锁定发哪一件(留空 = 取首个)。
+    key: 'artifactFrom',
+    get label() { return t('pipelineJob.fieldArtifactFromLabel') },
+    kind: 'artifactsource',
+    get hint() { return t('pipelineJob.fieldDockerImageFromHint') },
+    when: dockerModeIs(DOCKER_MODE_RUN),
   },
   {
-    key: 'healthUrl',
-    get label() { return t('pipelineJob.fieldHealthUrlLabel') },
+    key: 'containerName',
+    get label() { return t('pipelineJob.fieldContainerNameLabel') },
     kind: 'text',
     monospace: true,
-    placeholder: 'http://localhost:8080/healthz',
-    get hint() { return t('pipelineJob.fieldHealthUrlHint') },
-    when: probeIs('http'),
+    placeholder: 'app',
+    get hint() { return t('pipelineJob.fieldContainerNameHint') },
+    when: dockerModeIs(DOCKER_MODE_RUN),
   },
   {
-    key: 'healthCommand',
-    get label() { return t('pipelineJob.fieldHealthCommandLabel') },
+    key: 'ports',
+    get label() { return t('pipelineJob.fieldPortsLabel') },
     kind: 'text',
     monospace: true,
-    placeholder: 'test -f /opt/app/current/OK',
-    get hint() { return t('pipelineJob.fieldHealthCommandHint') },
-    when: probeIs('command'),
+    placeholder: '8080:80, 9000:9000',
+    get hint() { return t('pipelineJob.fieldPortsHint') },
+    when: dockerModeIs(DOCKER_MODE_RUN),
   },
   {
-    key: 'healthRetries',
-    get label() { return t('pipelineJob.fieldHealthRetriesLabel') },
-    kind: 'number',
-    placeholder: '3',
-    get hint() { return t('pipelineJob.fieldHealthRetriesHint') },
-    when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
+    key: 'runArgs',
+    get label() { return t('pipelineJob.fieldRunArgsLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: '-e KEY=value --restart always',
+    get hint() { return t('pipelineJob.fieldRunArgsHint') },
+    when: dockerModeIs(DOCKER_MODE_RUN),
   },
   {
-    key: 'healthInterval',
-    get label() { return t('pipelineJob.fieldHealthIntervalLabel') },
-    kind: 'number',
-    placeholder: '3',
-    get hint() { return t('pipelineJob.fieldHealthIntervalHint') },
-    when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
+    key: 'strategy',
+    get label() { return t('pipelineJob.fieldStrategyLabel') },
+    kind: 'select',
+    options: DEPLOY_STRATEGY_OPTIONS,
+    when: dockerModeIs(DOCKER_MODE_RUN),
+  },
+  // ── Compose ──
+  {
+    key: 'stackName',
+    get label() { return t('pipelineJob.fieldStackNameLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'my-stack',
+    get hint() { return t('pipelineJob.fieldStackNameHint') },
+    when: dockerModeIs(DOCKER_MODE_COMPOSE),
+    validate: (c) => stackNameError(c.stackName ?? ''),
   },
   {
-    key: 'healthTimeout',
-    get label() { return t('pipelineJob.fieldHealthTimeoutLabel') },
+    key: 'composeSource',
+    get label() { return t('pipelineJob.fieldComposeSourceLabel') },
+    kind: 'select',
+    options: COMPOSE_SOURCE_OPTIONS,
+    get hint() { return t('pipelineJob.fieldComposeSourceHint') },
+    when: dockerModeIs(DOCKER_MODE_COMPOSE),
+  },
+  {
+    // 引用仓库文件时正文不进节点:运行时按本次 commit 现读,改完合入即生效,节点不用再编辑。
+    key: 'composeFile',
+    get label() { return t('pipelineJob.fieldComposeFileLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'docker-compose.yml',
+    get hint() { return t('pipelineJob.fieldComposeFileHint') },
+    when: (c) => dockerModeIs(DOCKER_MODE_COMPOSE)(c) && composeSourceIs(COMPOSE_SOURCE_REPO)(c),
+    validate: (c) => composeFileError(c.composeFile ?? ''),
+  },
+  {
+    key: 'composeYaml',
+    get label() { return t('pipelineJob.fieldComposeYamlLabel') },
+    kind: 'textarea',
+    monospace: true,
+    rows: 14,
+    placeholder: 'services:\n  web:\n    image: nginx:latest\n    ports:\n      - "8080:80"',
+    get hint() { return t('pipelineJob.fieldComposeYamlHint') },
+    when: (c) => dockerModeIs(DOCKER_MODE_COMPOSE)(c) && !composeSourceIs(COMPOSE_SOURCE_REPO)(c),
+    validate: (c) => composeBodyError(c.composeYaml ?? ''),
+  },
+  ...DEPLOY_HEALTH_FIELDS,
+]
+
+// K8s 发布节点的字段(deploy_k8s):落点是「一个集群」而不是「一台机器」,所以这里刻意没有
+// serverId / deployPath / restartCommand / strategy,也没有 healthProbe —— 平台直连集群 API 换镜像,
+// 滚动是否成功由集群自己的 rollout 状态判定(那就等价于健康门控)。
+// 必填口径与后端 pipeline.validateDeployK8s 逐字一致。
+const WORKLOAD_KIND_OPTIONS: SelectOption[] = [
+  { value: 'Deployment', get label() { return t('pipelineJob.workloadKindDeployment') } },
+  { value: 'StatefulSet', get label() { return t('pipelineJob.workloadKindStatefulSet') } },
+]
+
+// 命名空间是 DNS-label、负载名是 DNS-subdomain —— 与后端 kube 包建 URL 前的两道校验同一规则。
+// 表单先拦住,用户就不会在点保存之后才看到一个 422 再回头猜哪项错了。
+const reDnsLabel = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
+const reDnsSubdomain = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
+
+const DEPLOY_K8S_FIELDS: JobField[] = [
+  {
+    key: 'clusterId',
+    get label() { return t('pipelineJob.fieldClusterLabel') },
+    kind: 'cluster',
+    get hint() { return t('pipelineJob.fieldClusterHint') },
+    validate: (c) => (c.clusterId ? '' : t('pipelineJob.fieldClusterRequired')),
+  },
+  {
+    // 发的是上游构建出的镜像;并行构建出多件镜像时靠来源任务锁定发哪一件(留空 = 取首个)。
+    key: 'artifactFrom',
+    get label() { return t('pipelineJob.fieldArtifactFromLabel') },
+    kind: 'artifactsource',
+    get hint() { return t('pipelineJob.fieldDockerImageFromHint') },
+  },
+  {
+    key: 'namespace',
+    get label() { return t('pipelineJob.fieldNamespaceLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'default',
+    get hint() { return t('pipelineJob.fieldNamespaceHint') },
+    validate: (c) => {
+      const v = (c.namespace ?? '').trim()
+      // 留空合法:落到集群登记的默认命名空间(后端 releaseOneCluster 那条兜底链)。
+      if (!v) return ''
+      if (v.length > 63 || !reDnsLabel.test(v)) return t('pipelineJob.fieldNamespaceBad')
+      return ''
+    },
+  },
+  {
+    key: 'workloadKind',
+    get label() { return t('pipelineJob.fieldWorkloadKindLabel') },
+    kind: 'select',
+    options: WORKLOAD_KIND_OPTIONS,
+    get hint() { return t('pipelineJob.fieldWorkloadKindHint') },
+  },
+  {
+    key: 'workloadName',
+    get label() { return t('pipelineJob.fieldWorkloadNameLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'api',
+    get hint() { return t('pipelineJob.fieldWorkloadNameHint') },
+    validate: (c) => {
+      const v = (c.workloadName ?? '').trim()
+      if (!v) return t('pipelineJob.fieldWorkloadNameRequired')
+      if (v.length > 253 || !reDnsSubdomain.test(v)) return t('pipelineJob.fieldWorkloadNameBad')
+      return ''
+    },
+  },
+  {
+    // 工作负载只有一个容器时留空即可;多容器(如 sidecar)必须点名换哪一个。
+    key: 'containerName',
+    get label() { return t('pipelineJob.fieldK8sContainerLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'app',
+    get hint() { return t('pipelineJob.fieldK8sContainerHint') },
+  },
+  {
+    key: 'rolloutTimeout',
+    get label() { return t('pipelineJob.fieldRolloutTimeoutLabel') },
     kind: 'number',
-    placeholder: '5',
-    get hint() { return t('pipelineJob.fieldHealthTimeoutHint') },
-    when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
+    placeholder: '300',
+    get hint() { return t('pipelineJob.fieldRolloutTimeoutHint') },
+    validate: (c) => {
+      const v = (c.rolloutTimeout ?? '').trim()
+      if (!v) return ''
+      const n = Number(v)
+      if (!Number.isInteger(n) || n < 1 || n > 1800) return t('pipelineJob.fieldRolloutTimeoutBad')
+      return ''
+    },
+  },
+  {
+    key: 'autoRollback',
+    get label() { return t('pipelineJob.fieldAutoRollbackLabel') },
+    kind: 'toggle',
+    get hint() { return t('pipelineJob.fieldAutoRollbackHint') },
   },
 ]
 
@@ -658,6 +927,36 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     }],
   },
 
+  // docker 部署:同一节点两种方式(单容器 / compose),dockerMode 必填 —— 与后端
+  // validateDeployDocker 同一口径,所以 defaultConfig 直接预填 run,不给「没选」的空档。
+  deploy_docker: {
+    type: 'deploy_docker',
+    get label() { return t('pipelineJob.typeDeployDockerLabel') },
+    get description() { return t('pipelineJob.typeDeployDockerDesc') },
+    accent: 'green',
+    category: 'deploy',
+    fields: DEPLOY_DOCKER_FIELDS,
+    defaultConfig: { dockerMode: DOCKER_MODE_RUN, strategy: 'rolling' },
+    templates: [{
+      id: 'compose_stack',
+      get label() { return t('pipelineJob.deployTemplateComposeLabel') },
+      get description() { return t('pipelineJob.deployTemplateComposeDesc') },
+      prefill: { dockerMode: DOCKER_MODE_COMPOSE },
+    }],
+  },
+
+  // K8s 发布:换集群里工作负载的镜像并等它滚完。滚动策略由集群控制器做,所以本节点
+  // 不暴露 strategy / healthProbe —— 支持它们就等于承诺一件不会发生的事。
+  deploy_k8s: {
+    type: 'deploy_k8s',
+    get label() { return t('pipelineJob.typeDeployK8sLabel') },
+    get description() { return t('pipelineJob.typeDeployK8sDesc') },
+    accent: 'green',
+    category: 'deploy',
+    fields: DEPLOY_K8S_FIELDS,
+    defaultConfig: { workloadKind: 'Deployment' },
+  },
+
   // health_check 不是一种任务:它过去只是个占位节点(表单填的探测参数无人消费、执行侧恒放行),
   // 真正的门控在部署服务里。现按部署任务的「健康探测」配置生效,撤销该类型;存量节点保存时会被
   // 后端拒绝并给出改配指引(不做静默放行,也不自动迁移)。
@@ -845,7 +1144,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
 
 /**
  * Canonical, ordered list of pickable types — 一个动词一张卡:
- * 源 / 构建 / 部署 / 通知 / 脚本 / 模板节点。
+ * 源 / 构建 / 部署(SSH 铺产物、Docker 起容器,两种交付手段各一张卡)/ 通知 / 脚本 / 模板节点。
  * 不在列表里的仍是有效类型(build_image、build_frontend、build_backend、push_image、
  * deploy_frontend、custom):spec 保留以便存量节点照常渲染与执行,保存时该收敛的收敛
  * (见 canonicalJobType),该按新类型重选的由后端 422 明确报错 —— 不做静默迁移。
@@ -854,6 +1153,8 @@ export const PICKABLE_TYPES: readonly string[] = [
   'git_source',
   'build',
   'deploy_ssh',
+  'deploy_docker',
+  'deploy_k8s',
   'notify',
   'script',
   'templated',

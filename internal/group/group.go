@@ -464,6 +464,8 @@ func (s *Service) GroupIDOf(ctx context.Context, kind access.Kind, id string) (s
 		q = `SELECT group_id FROM projects WHERE id = ?`
 	case access.KindServer:
 		q = `SELECT group_id FROM servers WHERE id = ?`
+	case access.KindKubeCluster:
+		q = `SELECT group_id FROM kube_clusters WHERE id = ?`
 	case access.KindRun:
 		// 运行没有自己的分组,归属来自所属项目;项目行已删(留存策略清掉了)时 group_id
 		// 是 NULL,按 fail closed 当作「资源不存在」,而不是退化成未归组让全员可读他人日志。

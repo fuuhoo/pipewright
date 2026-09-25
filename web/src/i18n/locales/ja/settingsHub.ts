@@ -9,6 +9,7 @@ export default {
   navDnsProviders: 'DNS プロバイダー',
   navAccount: 'アカウント',
   navServers: 'サーバー',
+  navKubeClusters: 'K8s クラスター',
   navDiagnosisStats: '診断フィードバック',
   navSystem: 'システム',
 

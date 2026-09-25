@@ -2,6 +2,7 @@ package storetest_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -20,8 +21,8 @@ func TestMigrationsApplied(t *testing.T) {
 			t.Fatalf("count migrations: %v", err)
 		}
 		// 与 migrations/{sqlite,mysql} 下的 .sql 文件数一致;新增迁移需同步改此值。
-		if n != 56 {
-			t.Fatalf("应用迁移数 = %d, 期望 56", n)
+		if n != 59 {
+			t.Fatalf("应用迁移数 = %d, 期望 59", n)
 		}
 		// 核心领域表存在(随手验一张)。
 		if _, err := st.DB.ExecContext(ctx, `SELECT 1 FROM audit_log WHERE 1=0`); err != nil {
@@ -111,6 +112,30 @@ func TestErrorClassification(t *testing.T) {
 		}
 		if !store.IsForeignKeyErr(err) {
 			t.Fatalf("应识别为外键冲突: %v", err)
+		}
+	})
+}
+
+// TestProjectRepoOptional 验证「纯发布项目」(不绑 git 仓库)在两方言都能落库:
+// repo_url 走 NOT NULL DEFAULT '',credential_id 用 NULL 表示「没有凭据」——
+// 空串会撞外键(见上),所以「无凭据」必须是 NULL。
+func TestProjectRepoOptional(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, st *store.Store) {
+		ctx := context.Background()
+		if _, err := st.DB.ExecContext(ctx,
+			`INSERT INTO projects (id, name, credential_id, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			"p_release", "只发布", nil, now(), now()); err != nil {
+			t.Fatalf("无仓库/无凭据项目应能插入(credential_id=NULL): %v", err)
+		}
+		var repoURL string
+		var cred sql.NullString
+		if err := st.DB.QueryRowContext(ctx,
+			`SELECT repo_url, credential_id FROM projects WHERE id = ?`, "p_release").Scan(&repoURL, &cred); err != nil {
+			t.Fatalf("读回纯发布项目: %v", err)
+		}
+		if repoURL != "" || cred.Valid {
+			t.Fatalf("纯发布项目应为 repo_url='' + credential_id NULL, got %q valid=%v", repoURL, cred.Valid)
 		}
 	})
 }

@@ -1,0 +1,55 @@
+export default {
+  title: "Clústeres de Kubernetes",
+  desc: "Registra clústeres de Kubernetes como destinos de despliegue: una credencial kubeconfig más un namespace predeterminado. La dirección del API server no se guarda en la base de datos: se lee de la credencial en cada listado, para no tener dos verdades. La plataforma habla con el API del clúster directamente, sin pasar por SSH.",
+  addCluster: "Registrar clúster",
+  editCluster: "Editar clúster",
+  addDisabledHint:
+    "Añade antes una credencial kubeconfig en el depósito de credenciales",
+  noManageGroupHint:
+    "No eres administrador ni tienes grupos gestionables, así que no puedes registrar un clúster",
+  noCredentialHint:
+    "Aún no hay credenciales kubeconfig. Añade una de tipo «kubeconfig» en el Depósito de credenciales y después registra el clúster.",
+  retry: "Reintentar",
+  registeredClusters: "Clústeres registrados",
+  clusterCount: "{n}",
+  emptyList: "Todavía no has registrado ningún clúster.",
+  credentialDeleted: "(credencial eliminada)",
+  endpointUnknown:
+    "Dirección desconocida (el kubeconfig no tiene campo server)",
+  testOk: "Conectado · {ms} ms",
+  testing: "Probando…",
+  testConnection: "Probar conexión",
+  edit: "Editar",
+  delete: "Eliminar",
+  deleteCluster: "Eliminar clúster",
+  deleteConfirm:
+    "¿Eliminar el clúster {name}? Solo se borra este registro: la credencial sigue ahí y no se toca ninguna carga de trabajo del clúster.",
+  confirmDelete: "Confirmar eliminación",
+  deleting: "Eliminando…",
+  cancel: "Cancelar",
+  save: "Guardar",
+  saving: "Guardando…",
+  fieldName: "Nombre del clúster",
+  fieldCredential: "Credencial kubeconfig",
+  selectCredential: "Elige una credencial kubeconfig",
+  credentialHint:
+    "Un clúster puede tener varias credenciales (distintas ServiceAccounts); elige una al registrarlo. Cambiarla cambia la identidad y los permisos de despliegue.",
+  fieldNamespace: "Namespace predeterminado",
+  namespaceHint:
+    "Se usa cuando la tarea de despliegue K8s deja el namespace vacío; en blanco no hay predeterminado. Solo minúsculas, dígitos y -, debe empezar y terminar en alfanumérico, máximo 63.",
+  errNameRequired: "Escribe el nombre del clúster",
+  errCredentialRequired: "Selecciona una credencial kubeconfig",
+  errGroupRequired: "Elige el grupo al que pertenece",
+  errNamespace:
+    "Namespace no válido: solo minúsculas, dígitos y -, debe empezar y terminar en alfanumérico (máximo 63)",
+  errLoadConn: "No se alcanza el servidor. Revisa la red y reintenta",
+  errLoadStatus: "Error al cargar los clústeres (HTTP {status})",
+  errLoadRetry: "Error al cargar los clústeres. Inténtalo de nuevo",
+  errConnRetry: "No se alcanza el servidor. Revisa la red y reintenta",
+  errSaveStatus: "Error al guardar el clúster (HTTP {status})",
+  errSaveRetry: "Error al guardar. Inténtalo de nuevo",
+  errDeleteStatus: "Error al eliminar el clúster (HTTP {status})",
+  errDeleteRetry: "Error al eliminar. Inténtalo de nuevo",
+  errTestStatus: "La prueba de conexión falló (HTTP {status})",
+  errTestRetry: "La prueba de conexión falló. Inténtalo de nuevo",
+};

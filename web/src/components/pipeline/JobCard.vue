@@ -77,7 +77,9 @@ function handleEditDeps(e: MouseEvent): void {
           <path d="M8 6.6c5 0 3 5.4 8 5.4M8 17.4c5 0 3-5.4 8-5.4"/>
         </svg>
       </button>
+      <!-- 源卡片就是「项目仓库」本身:删了没有补回的入口(源阶段不给加任务),故不提供删除 -->
       <button
+        v-if="job.type !== 'git_source'"
         class="job-card-del"
         :aria-label="t('pipelineCanvas.deleteJobAria', { name: job.name })"
         :title="t('pipelineCanvas.deleteJobTitle')"

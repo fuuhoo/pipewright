@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: 'プロジェクトが存在しません。更新して再試行してください。',
   triggerErrStatus: 'トリガーに失敗しました（{status}）',
   triggerErrRetry: 'トリガーに失敗しました。しばらくしてから再試行してください。',
+
+  // ─── リポジトリは任意（リリース専用プロジェクト）──────────────
+  bindRepo: 'Git リポジトリをバインド',
+  bindRepoOnHint: 'パイプラインはソースから始まります：ソースジョブがこのリポジトリをクローンし、ビルドとデプロイはブランチ / commit に従います。',
+  bindRepoOffHint: 'リリース専用：ソース工程はありません。外部で用意した成果物やイメージを直接デプロイします。後からプロジェクトカードでリポジトリをバインドできます。',
+  repoNotBound: 'リポジトリ未バインド · リリース専用',
+  actionRepoTitle: 'リポジトリ設定 · {name}',
+  actionRepoAria: 'プロジェクト {name} のリポジトリバインドを設定',
+  repoTitle: 'リポジトリ設定',
+  repoSub: '{name} · Git リポジトリのバインド / 変更 / 解除',
+  repoErrUnreachable: 'リポジトリ URL に到達できないため保存しませんでした。',
+  repoErrStatus: '保存に失敗しました（{status}）',
+  repoErrRetry: '保存に失敗しました。しばらくしてから再試行してください。',
+  triggerSubNoRepo: '{name} · このプロジェクトはリリース専用です。そのまま実行を作成します',
 }

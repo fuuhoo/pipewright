@@ -28,6 +28,8 @@ type stubTarget struct {
 	calls [][]string
 	// uploads 记录 Upload 的 remotePath→字节(断言部署落的是真产物字节,非占位 reference)。
 	uploads map[string][]byte
+	// uploadFn 由各用例注入:在上传内部占住一会儿,用于断言上传与命令共同一把闸(见 gate_test.go)。
+	uploadFn func(serverID, remotePath string)
 }
 
 func (s *stubTarget) Get(_ context.Context, id string) (*target.Server, error) {
@@ -70,7 +72,7 @@ func (s *stubTarget) ExecInteractive(context.Context, string, []string) (target.
 }
 
 // Upload 满足 target.Service(Story 8-16 制品库部署);桩捕获上传字节供断言「部署的是真字节」。
-func (s *stubTarget) Upload(_ context.Context, _ string, content io.Reader, remotePath string) error {
+func (s *stubTarget) Upload(_ context.Context, serverID string, content io.Reader, remotePath string) error {
 	b, _ := io.ReadAll(content)
 	s.callMu.Lock()
 	if s.uploads == nil {
@@ -78,6 +80,9 @@ func (s *stubTarget) Upload(_ context.Context, _ string, content io.Reader, remo
 	}
 	s.uploads[remotePath] = b
 	s.callMu.Unlock()
+	if s.uploadFn != nil {
+		s.uploadFn(serverID, remotePath)
+	}
 	return nil
 }
 
@@ -225,21 +230,23 @@ func TestDeployDistSuccess(t *testing.T) {
 			t.Fatalf("空命令")
 		}
 	}
-	// dist 走 release 模式(4-4):首条为 readlink current(探测上一发布);随后含 mkdir releases/<runId>。
-	var sawMkdir, sawLn bool
+	// dist 走直铺:mkdir 落部署路径本身,无 releases/<runId> 层、无 current 软链切换。
+	var sawMkdir bool
 	for _, c := range tgt.calls {
 		if c[0] == "mkdir" {
 			sawMkdir = true
 		}
-		if c[0] == "ln" && len(c) >= 4 && c[1] == "-sfn" {
-			sawLn = true
+		if c[0] == "ln" || c[0] == "mv" || c[0] == "readlink" {
+			t.Fatalf("直铺模式不应有 current 软链/原子切换命令: %v", c)
+		}
+		for _, tok := range c {
+			if strings.Contains(tok, "/releases/") {
+				t.Fatalf("直铺模式不应套 releases/ 目录: %v", c)
+			}
 		}
 	}
 	if !sawMkdir {
-		t.Fatalf("release 模式应含 mkdir 命令: %v", tgt.calls)
-	}
-	if !sawLn {
-		t.Fatalf("release 模式应含 ln -sfn current 原子切换: %v", tgt.calls)
+		t.Fatalf("直铺应含 mkdir 部署目录命令: %v", tgt.calls)
 	}
 
 	// 持久化 + 终态。

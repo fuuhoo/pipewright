@@ -170,8 +170,12 @@ func writePipelineError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, pipeline.ErrProjectNotFound):
 		writeError(w, http.StatusNotFound, "project_not_found", "项目不存在")
+	case errors.Is(err, pipeline.ErrSourceStageRequired):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_stage", "流水线必须有且仅有一个「流水线源」阶段")
 	case errors.Is(err, pipeline.ErrInvalidStage):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_stage", "阶段名不能为空且 kind 必须为 source/build/deploy/notify/custom 之一")
+	case errors.Is(err, pipeline.ErrJobDepUnknown):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_job", "有任务依赖了一个已被删除的任务,请先在依赖里去掉它")
 	case errors.Is(err, pipeline.ErrInvalidJob):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_job", "任务名与类型不能为空")
 	case errors.Is(err, pipeline.ErrDuplicateID):
@@ -179,7 +183,7 @@ func writePipelineError(w http.ResponseWriter, err error) {
 	case errors.Is(err, pipeline.ErrBuildEnvRequired):
 		// 白名单错误消息只含阶段/节点名与镜像名(用户自己填的),无 secret,可原样回显。
 		writeError(w, http.StatusUnprocessableEntity, "build_env_required", err.Error())
-	case errors.Is(err, pipeline.ErrJobTypeRetired), errors.Is(err, pipeline.ErrHealthProbeInvalid), errors.Is(err, pipeline.ErrBuildTaskInvalid), errors.Is(err, pipeline.ErrArtifactSourceInvalid):
+	case errors.Is(err, pipeline.ErrJobTypeRetired), errors.Is(err, pipeline.ErrHealthProbeInvalid), errors.Is(err, pipeline.ErrBuildTaskInvalid), errors.Is(err, pipeline.ErrArtifactSourceInvalid), errors.Is(err, pipeline.ErrDockerDeployInvalid), errors.Is(err, pipeline.ErrK8sDeployInvalid):
 		// 同理:消息只含阶段/任务名与类型/探测方式(均为用户自己填的),原样回显才能直接指导改配。
 		writeError(w, http.StatusUnprocessableEntity, "invalid_job", err.Error())
 	default:

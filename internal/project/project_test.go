@@ -191,8 +191,9 @@ func TestValidation(t *testing.T) {
 		want error
 	}{
 		{"empty name", CreateInput{RepoURL: "u", CredentialID: "c"}, ErrEmptyName},
-		{"empty repo", CreateInput{Name: "n", CredentialID: "c"}, ErrEmptyRepoURL},
-		{"empty cred", CreateInput{Name: "n", RepoURL: "u"}, ErrEmptyCredentialID},
+		// 仓库可留空(纯发布项目),但那样就不该再挂一把没东西可访问的凭据。
+		{"cred without repo", CreateInput{Name: "n", CredentialID: "c"}, ErrCredentialWithoutRepo},
+		{"repo without cred", CreateInput{Name: "n", RepoURL: "u"}, ErrEmptyCredentialID},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

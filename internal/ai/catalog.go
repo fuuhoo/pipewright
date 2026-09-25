@@ -32,6 +32,18 @@ func BuiltinNodeCatalog() []NodeKind {
 			Description: "隔离容器内执行任意命令(跑测试、lint、代码扫描、自定义步骤等)。"},
 		{Type: "deploy_ssh", Label: "部署", Category: "deploy",
 			Description: "经 SSH 把产物(jar/dist/image)或命令部署到目标服务器。可选 healthProbe 做部署后健康门控(不通则该节点失败)。前端静态站点部署也用它:artifactType=dist + strategy=rolling + restartCommand=\"nginx -s reload\"。"},
+		{Type: "deploy_docker", Label: "Docker 部署", Category: "deploy",
+			Description: "在目标机以 docker 交付,config.dockerMode 必填两选一:" +
+				"run = 单容器(发上游构建出的镜像,停旧起新、失败回滚上一镜像),配 containerName/ports/runArgs;" +
+				"compose = 整份 docker-compose.yml + 项目名(config.stackName),交目标机的 compose CLI 编排;" +
+				"正文来源二选一:composeSource=repo + composeFile(读项目仓库里那份文件,随仓库演进)或 composeSource=paste + composeYaml(把正文粘在节点里)。" +
+				"仓库里有 docker-compose.yml 就选 compose + composeSource=repo;两种方式都可选 healthProbe 做部署后健康门控。"},
+		{Type: "deploy_k8s", Label: "K8s 发布", Category: "deploy",
+			Description: "直接把上游构建出的镜像发到 Kubernetes 集群(平台直连集群 API,不经目标机 SSH)。" +
+				"config.clusterId 选集群、workloadName 必填、namespace 可留空(留空 = 用集群登记的默认命名空间)、" +
+				"workloadKind(Deployment|StatefulSet,缺省 Deployment);" +
+				"多容器工作负载要给 containerName。只支持滚动:换镜像后等集群滚完即成败判据,不支持 healthProbe 与其它发布策略;" +
+				"且只换已有负载的镜像,不创建负载。"},
 		{Type: "notify", Label: "通知", Category: "notify",
 			Description: "运行到此节点时向已配渠道(飞书/Webhook/邮件)发通知,支持标题/正文模板。"},
 		{Type: "templated", Label: "自定义节点", Category: "custom",

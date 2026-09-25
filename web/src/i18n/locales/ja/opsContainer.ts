@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run に失敗しました',
     createFailedStatus: '作成に失敗しました({status})',
     createFailed: '作成リクエストに失敗しました',
+
+    // Compose 貼り付けモード(カードの Stacks タブと同じデプロイ API を使用)
+    modeAria: '作成方法を選択',
+    modeRun: '単一コンテナ',
+    modeCompose: 'Compose(YAML を貼り付け)',
+    composeProject: 'プロジェクト名',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: 'ファイル全体を貼り付け、サービス数に制限なし',
+    composeNameIllegal: 'プロジェクト名は英数字と . _ - のみ。- 始まりと / は使えません',
+    composeNameTooLong: 'プロジェクト名が長すぎます(128 文字まで)',
+    composeTooLarge: 'compose の内容が 512 KiB を超えています',
+    composeNoServices: 'services 配下のサービス名を認識できません。インデントを確認してください。最終判定は docker compose',
+    composeServices: '{n} 個のサービス:{names} · デプロイ後はカードの Stacks で管理',
+    composeDeploy: 'デプロイして起動',
+    composeDeploying: 'デプロイ中…(イメージ取得の可能性があります)',
+    composeDeployed: 'Compose をデプロイしました',
+    composeDeployFailed: 'Compose のデプロイに失敗',
+    composeDeployStatus: 'デプロイ失敗({status})',
   },
 
   // SystemPruneModal.vue

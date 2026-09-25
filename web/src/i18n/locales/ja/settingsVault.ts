@@ -38,6 +38,7 @@ export default {
   typeSshPassword: 'SSH パスワード',
   typeRegistry: 'レジストリ',
 
+  typeKubeconfig: 'Kubernetes 設定',
   maskTitle: 'マスク値（編集画面で平文を表示できます）',
   maskAria: 'マスク: {value}',
   never: 'なし',
@@ -89,6 +90,9 @@ export default {
   valSecretRequired: 'シークレットの内容を入力してください',
   secretOptionalEdit: '（空欄ならローテーションしません）',
   secretPlaceholderSshKey: '完全な秘密鍵（-----BEGIN/END----- 行を含む）を貼り付け…',
+  fieldSecretKubeconfig: 'kubeconfig(YAML)',
+  secretPlaceholderKubeconfig: 'kubeconfig YAML 全体を貼り付け(apiVersion / clusters / users / contexts)…',
+  hintKubeconfig: 'ファイル全体を暗号化保存し、API サーバー接続以外ではプロセス外に出しません。ファイル内データのみ対応:certificate-authority-data + token または client-certificate-data。exec プラグイン・auth-provider・外部キーファイルは拒否します。',
   secretPlaceholderKeep: '空欄にすると現在のシークレットを保持します',
   secretPlaceholderSshPassword: 'SSH ログインパスワードを入力…',
   secretPlaceholderToken: 'トークンの内容を貼り付け…',

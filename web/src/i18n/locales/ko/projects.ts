@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: '프로젝트가 존재하지 않습니다. 새로고침한 후 다시 시도하세요.',
   triggerErrStatus: '트리거에 실패했습니다({status})',
   triggerErrRetry: '트리거에 실패했습니다. 잠시 후 다시 시도하세요.',
+
+  // ─── 저장소 선택(배포 전용 프로젝트)──────────────────────────
+  bindRepo: 'Git 저장소 연결',
+  bindRepoOnHint: '파이프라인은 소스에서 시작합니다. 소스 잡이 이 저장소를 클론하고 빌드/배포가 브랜치 또는 commit 을 따릅니다.',
+  bindRepoOffHint: '배포 전용: 소스 단계가 없습니다. 외부에서 준비한 산출물이나 이미지를 바로 배포합니다. 이후 프로젝트 카드에서 저장소를 연결할 수 있습니다.',
+  repoNotBound: '저장소 미연결 · 배포 전용',
+  actionRepoTitle: '저장소 설정 · {name}',
+  actionRepoAria: '{name} 프로젝트의 저장소 연결 설정',
+  repoTitle: '저장소 설정',
+  repoSub: '{name} · Git 저장소 연결 / 변경 / 해제',
+  repoErrUnreachable: '저장소 URL 에 접속할 수 없어 저장하지 않았습니다.',
+  repoErrStatus: '저장 실패({status})',
+  repoErrRetry: '저장에 실패했습니다. 잠시 후 다시 시도하세요.',
+  triggerSubNoRepo: '{name} · 이 프로젝트는 배포 전용입니다. 바로 실행을 만드세요',
 }

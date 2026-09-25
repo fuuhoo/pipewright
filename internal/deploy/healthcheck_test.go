@@ -34,22 +34,22 @@ func TestHealthCheckCommandSuccess(t *testing.T) {
 	if !strings.Contains(res[0].Message, "健康检查通过") {
 		t.Fatalf("message 应含「健康检查通过」: %q", res[0].Message)
 	}
-	// 健康探测命令(array 化的 ["true"])应出现在调用序列中,且在 current 软链切换之后
-	// (dist 走 release 模式;探测后可能再跟 keepReleases 清理,故不强求是末条)。
-	probeIdx, lnIdx := -1, -1
+	// 健康探测命令(array 化的 ["true"])应出现在调用序列中,且在产物铺进部署目录之后
+	// (直铺:先 mkdir/放置,再重启 + 探测)。
+	probeIdx, mkdirIdx := -1, -1
 	for i, c := range tgt.calls {
 		if len(c) == 1 && c[0] == "true" {
 			probeIdx = i
 		}
-		if len(c) > 0 && c[0] == "ln" && lnIdx < 0 {
-			lnIdx = i
+		if len(c) > 0 && c[0] == "mkdir" && mkdirIdx < 0 {
+			mkdirIdx = i
 		}
 	}
 	if probeIdx < 0 {
 		t.Fatalf("应含健康探测命令 [\"true\"], got %v", tgt.calls)
 	}
-	if lnIdx < 0 || probeIdx < lnIdx {
-		t.Fatalf("健康探测应在 current 切换之后跑: lnIdx=%d probeIdx=%d", lnIdx, probeIdx)
+	if mkdirIdx < 0 || probeIdx < mkdirIdx {
+		t.Fatalf("健康探测应在产物放置之后跑: mkdirIdx=%d probeIdx=%d", mkdirIdx, probeIdx)
 	}
 }
 

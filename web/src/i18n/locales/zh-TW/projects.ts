@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: '專案不存在,請重新整理後重試。',
   triggerErrStatus: '觸發失敗({status})',
   triggerErrRetry: '觸發失敗,請稍後重試。',
+
+  // ─── 倉庫可選(純發布專案)─────────────────────────────────────
+  bindRepo: '綁定 Git 倉庫',
+  bindRepoOnHint: '管線從原始碼開始:源任務複製該倉庫,建置與部署依分支/commit 進行。',
+  bindRepoOffHint: '僅用於發布:沒有原始碼環節,產物或映像檔在外部準備好後直接部署。之後仍可在專案卡片上補綁倉庫。',
+  repoNotBound: '未綁定倉庫 · 僅用於發布',
+  actionRepoTitle: '倉庫設定 · {name}',
+  actionRepoAria: '設定專案 {name} 的倉庫綁定',
+  repoTitle: '倉庫設定',
+  repoSub: '{name} · 綁定、改綁或解除綁定 Git 倉庫',
+  repoErrUnreachable: '倉庫地址不可達,未儲存。',
+  repoErrStatus: '儲存失敗({status})',
+  repoErrRetry: '儲存失敗,請稍後重試。',
+  triggerSubNoRepo: '{name} · 該專案僅用於發布,直接建立一次執行',
 }

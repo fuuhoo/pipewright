@@ -19,6 +19,7 @@ import {
 import { listCredentials, type Credential } from '../api/credentials'
 import { listProjects, updateProject, type Project } from '../api/projects'
 import { listServers, type Server } from '../api/servers'
+import { listKubeClusters, type KubeCluster } from '../api/kubeClusters'
 import { listChannels, type NotificationChannel } from '../api/notifications'
 import { getValidation, type ValidationDTO, type IssueScope } from '../api/pipelineValidation'
 import { HttpError } from '../api/http'
@@ -118,6 +119,7 @@ const editBuild    = ref<BuildConfig | null>(null)
 const editEnvs     = ref<Environment[]>([])
 const credentials  = ref<Credential[]>([])
 const servers      = ref<Server[]>([])
+const clusters     = ref<KubeCluster[]>([])
 const channels     = ref<NotificationChannel[]>([])
 
 function applySettings(dto: SettingsDTO): void {
@@ -128,15 +130,17 @@ function applySettings(dto: SettingsDTO): void {
 
 async function loadSettings(): Promise<void> {
   try {
-    const [dto, creds, srvs, chs] = await Promise.all([
+    const [dto, creds, srvs, kcs, chs] = await Promise.all([
       getSettings(projectId.value),
       listCredentials().catch(() => [] as Credential[]),
       listServers().catch(() => [] as Server[]),
+      listKubeClusters().catch(() => [] as KubeCluster[]),
       listChannels().catch(() => [] as NotificationChannel[]),
     ])
     applySettings(dto)
     credentials.value = creds
     servers.value = srvs
+    clusters.value = kcs
     channels.value = chs
   } catch {
     // Settings load failure is non-fatal for the canvas; the vars/envs tabs show
@@ -674,6 +678,7 @@ async function togglePrStatus(next: boolean): Promise<void> {
             :yaml="pipeline.yaml"
             :credentials="credentials"
             :servers="servers"
+            :clusters="clusters"
             :channels="channels"
             :environments="editEnvs"
             @update="handleCanvasUpdate"

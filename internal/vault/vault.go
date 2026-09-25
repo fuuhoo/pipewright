@@ -31,6 +31,11 @@ const (
 	TypeRegistry    = "registry"
 	TypeSSHPassword = "ssh_password" // SSH 登录密码(非 PEM);SSH 层据 looksLikePEM 自动按密码认证
 	TypeDNSToken    = "dns_token"    // DNS 提供商 API 凭据(单字串:Cloudflare token / 「ID,Secret」);掩码走 default 全打点
+	// TypeKubeConfig 是 Kubernetes 访问凭据:secret = 整份 kubeconfig YAML(含 API server 地址 +
+	// CA + SA token 或客户端证书)。一种输入覆盖三种集群接法,且 kubeconfig 本身就是明文敏感材料,
+	// 故整份入库加密、掩码全打点(它没有「安全可暴露的尾部」—— 末段往往是证书 base64)。
+	// 能否真解析出地址由 internal/kube 在建集群时把关:那里的失败信息比这里能说的是话更具体。
+	TypeKubeConfig = "kubeconfig"
 )
 
 // 领域错误。错误体永不含明文/密文/master key。
@@ -173,7 +178,7 @@ func (s *service) configured() bool { return s.key != nil }
 // validateType 校验类型枚举。
 func validateType(t string) error {
 	switch t {
-	case TypeGitToken, TypeGitHTTP, TypeGitSSH, TypeSSHKey, TypeRegistry, TypeSSHPassword, TypeDNSToken:
+	case TypeGitToken, TypeGitHTTP, TypeGitSSH, TypeSSHKey, TypeRegistry, TypeSSHPassword, TypeDNSToken, TypeKubeConfig:
 		return nil
 	default:
 		return ErrInvalidType

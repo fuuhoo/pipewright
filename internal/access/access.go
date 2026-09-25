@@ -43,6 +43,8 @@ type Kind string
 const (
 	KindProject Kind = "project"
 	KindServer  Kind = "server"
+	// KindKubeCluster 是 Kubernetes 集群目标(与 server 同为「部署落点」,但归组独立判定)。
+	KindKubeCluster Kind = "kube_cluster"
 	// KindRun 的运行本身没有分组;归属经 run → project → group 解析。
 	KindRun Kind = "run"
 )

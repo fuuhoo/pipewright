@@ -9,6 +9,7 @@ export default {
   navDnsProviders: 'DNS 提供商',
   navAccount: '账户',
   navServers: '服务器',
+  navKubeClusters: 'K8s 集群',
   navDiagnosisStats: '诊断反馈',
   navSystem: '系统',
 

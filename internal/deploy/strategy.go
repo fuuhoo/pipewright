@@ -4,12 +4,13 @@ package deploy
 // 与 **蓝绿(blue-green)** 两种发布编排,默认 **滚动(rolling)** = 原有 deployFanout 行为不变。
 //
 // 策略是**机群级编排**关注点(如何在 N 台之间排序 / 门控 / 统一切换),不改单机执行语义:
-//   - rolling   : 全机有界并行,各机独立成败,失败机自行回滚(deployFanout,原状)。
+//   - rolling   : 全机有界并行,各机独立成败(image 失败机自行回滚上一镜像;文件直铺无回滚)。
 //   - canary    : 先发**金丝雀子集**(默认 1 台)→ 全过才铺其余;金丝雀任一失败 → 中止其余
 //                 (其余标 failed 人读「未部署,仍运行旧版本」)。复用 deployOne,任意产物类型。
-//   - blue_green: **stage-all → cutover-all**(release 类产物 dist/jar):全机先就绪发布目录(不切换),
-//                 全部就绪才统一原子切换 + 健康;切换阶段任一失败 → 把**已切换成功**的机一并回滚到上一发布
-//                 (机群级原子性)。非 release 产物(image/archive)无 stage/cutover 之分 → 退化 rolling。
+//   - blue_green: **铺产物 → 激活**两阶段(dist/jar/archive):全机先把产物铺进部署路径(不重启),
+//                 全部铺好才统一重启 + 健康。任一机铺产物失败 → 中止,已铺好的机不重启。
+//                 (直铺没有 current 软链,故蓝绿对文件类只保证「要么全重启、要么都不重启」,
+//                  不做机群回滚;image 蓝绿仍保留停旧起新 + 回滚上一镜像。)
 //
 // 安全不变量沿用:命令 array 化(不拼 shell)、单机 panic recover、有界并发(maxParallelDeploys)、
 // message 无明文密钥、错误不上抛(映射 status + 人读)。
@@ -32,7 +33,7 @@ const (
 	StrategyRolling = "rolling"
 	// StrategyCanary 金丝雀:先发小批,健康门控通过才铺其余,否则中止。
 	StrategyCanary = "canary"
-	// StrategyBlueGreen 蓝绿:全机先就绪、统一切换、机群级失败回滚(release 类产物)。
+	// StrategyBlueGreen 蓝绿:全机先铺产物、全部就绪才统一重启 + 健康(文件类);image 另有机群回滚。
 	StrategyBlueGreen = "blue_green"
 	// StrategyInteractive 交互式分批:先发首批(同金丝雀子集)→ **暂停等人确认**,
 	// 不自动铺其余(对标云效 firstBatchPause)。其余机登记为 pending,经 ContinueDeploy 续发
@@ -60,11 +61,11 @@ func (s *service) deployWithStrategy(ctx context.Context, servers []*target.Serv
 	case StrategyCanary:
 		return s.deployCanary(ctx, servers, a, cfg, hc)
 	case StrategyBlueGreen:
-		// 蓝绿需 stage/cutover 两阶段:release 类文件产物(dist/jar/archive)走软链切换;image 走
-		// pull→停旧起新→回滚上一镜像;其余类型无两阶段语义 → 退化滚动。
+		// 蓝绿需 stage/cutover 两阶段:文件类产物(dist/jar/archive)走「先全机铺好、再全机重启」;
+		// image 走 pull→停旧起新→回滚上一镜像;其余类型无两阶段语义 → 退化滚动。
 		switch {
-		case releaseModeArtifact(a):
-			return s.deployBlueGreen(ctx, servers, a, cfg, hc)
+		case fileDeployArtifact(a):
+			return s.deployBlueGreenFile(ctx, servers, a, cfg, hc)
 		case a.Type == run.ArtifactImage:
 			return s.deployBlueGreenImage(ctx, servers, a, cfg, hc)
 		default:
@@ -153,27 +154,29 @@ func (s *service) deployCanary(ctx context.Context, servers []*target.Server, a 
 	return results
 }
 
-// deployBlueGreen 蓝绿发布(release 类产物):stage-all → cutover-all → 失败机群回滚。
+// deployBlueGreenFile 文件类直铺的蓝绿编排:stage-all(全机铺产物,不重启)→ activate-all
+// (全机重启 + 健康门控)。
 //
-//  1. **预备(stage-all)**:全机并行就绪发布目录(写产物,不切换 current)。任一就绪失败 →
-//     中止:已就绪的机不切换(仍运行旧版本),标 failed 人读;整体无任何切换(安全)。
-//  2. **切换(cutover-all)**:全机并行原子切换 current + 切后健康门控(activateReleaseOne)。
-//  3. **机群回滚**:cutover 阶段任一非 success(failed / 自身已 rolled_back)→ 把**本阶段切换成功**
-//     且有上一发布的机一并回滚到上一发布(标 rolled_back 人读),实现机群级「要么全切要么全退」。
-func (s *service) deployBlueGreen(ctx context.Context, servers []*target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) []TargetResult {
+//  1. **预备(stage-all)**:全机并行把产物铺进部署目录(铺 = 上传 / 解包,**不碰运行中的进程**)。
+//     任一铺失败 → 中止:已铺好的机**不重启**(仍运行旧版本),标 failed 人读;整体零重启(安全)。
+//  2. **激活(activate-all)**:全机并行跑 restartCommand + 健康门控。
+//
+// 直铺没有 `current` 软链可切回,所以激活阶段失败**不做机群回滚**:该机记 failed(带健康原因),
+// 已成功的机保持新版本。要整体退回去,把上一版本再跑一次流水线。
+func (s *service) deployBlueGreenFile(ctx context.Context, servers []*target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) []TargetResult {
 	n := len(servers)
 	if n == 0 {
 		return nil
 	}
 	results := make([]TargetResult, n)
-	states := make([]releaseState, n)
+	states := make([]deployState, n)
 	staged := make([]bool, n)
 	started := make([]time.Time, n)
 
-	// ── 阶段 1:全机就绪(不切换)──────────────────────────────────────────────
+	// ── 阶段 1:全机铺产物(不重启)────────────────────────────────────────────
 	s.forEachServer(servers, func(idx int, srv *target.Server) {
 		started[idx] = time.Now().UTC()
-		st, failMsg, ok := s.stageReleaseOne(ctx, srv, a, cfg)
+		st, failMsg, ok := s.stageFileOne(ctx, srv, a, cfg)
 		states[idx] = st
 		if !ok {
 			results[idx] = finishFailed(TargetResult{ServerID: srv.ID, ServerName: srv.Name, StartedAt: started[idx]}, failMsg)
@@ -181,10 +184,10 @@ func (s *service) deployBlueGreen(ctx context.Context, servers []*target.Server,
 		}
 		staged[idx] = true
 	}, func(idx int, srv *target.Server) {
-		results[idx] = abortedResult(srv, "蓝绿预备阶段执行异常中断(本机未切换)")
+		results[idx] = abortedResult(srv, "蓝绿预备阶段执行异常中断(本机未重启)")
 	})
 
-	// 任一就绪失败 → 中止:已就绪机不切换(仍运行旧版本),标 failed 人读。
+	// 任一预备失败 → 中止:已铺好的机不重启(仍运行旧版本)。
 	allStaged := true
 	for i := range staged {
 		if !staged[i] {
@@ -195,39 +198,24 @@ func (s *service) deployBlueGreen(ctx context.Context, servers []*target.Server,
 	if !allStaged {
 		for i, srv := range servers {
 			if staged[i] {
-				results[i] = abortedResult(srv, "蓝绿:预备阶段其它机失败,已中止本机切换(仍运行旧版本)")
+				results[i] = abortedResult(srv, "蓝绿:预备阶段其它机失败,已中止本机重启(仍运行旧版本)")
 			}
 		}
 		return results
 	}
 
-	// ── 阶段 2:全机统一切换 + 健康 ───────────────────────────────────────────
+	// ── 阶段 2:全机统一重启 + 健康 ───────────────────────────────────────────
 	s.forEachServer(servers, func(idx int, srv *target.Server) {
-		results[idx] = s.activateReleaseOne(ctx, srv, a, cfg, hc, states[idx], started[idx])
+		results[idx] = s.activateFileOne(ctx, srv, a, cfg, hc, states[idx], started[idx])
 	}, func(idx int, srv *target.Server) {
-		results[idx] = abortedResult(srv, "蓝绿切换阶段执行异常中断")
+		results[idx] = abortedResult(srv, "蓝绿激活阶段执行异常中断")
 	})
-
-	// ── 阶段 3:切换阶段任一失败 → 已成功切换的机群回滚到上一发布 ──────────────
-	if !allSuccess(results) {
-		s.forEachServer(servers, func(idx int, srv *target.Server) {
-			if results[idx].Status != run.TargetSuccess {
-				return // 失败 / 已自行回滚的机不动。
-			}
-			if states[idx].prev == "" {
-				return // 首次部署无上一发布可回滚:保留(无更好选择;切换阶段它本机是健康的)。
-			}
-			s.fleetRollbackOne(ctx, srv, states[idx], &results[idx])
-		}, func(idx int, srv *target.Server) {
-			// 回滚异常:保留原成功结果,不致命(尽力回滚)。
-		})
-	}
 	return results
 }
 
 // deployBlueGreenImage 镜像蓝绿:stage-all(全机 pull)→ cutover-all(全机停旧起新+健康)→
-// 切换阶段任一失败则把已成功切换的机一并回滚到上一镜像(机群级原子性)。语义同 deployBlueGreen,
-// 只是单机原语换成 stageImageOne/activateImageOne(容器 pull/swap 而非软链切换)。
+// 切换阶段任一失败则把已成功切换的机一并回滚到上一镜像(机群级原子性)。单机原语是
+// stageImageOne/activateImageOne(容器 pull/swap),回滚靠上一镜像标签,故与文件直铺不同。
 func (s *service) deployBlueGreenImage(ctx context.Context, servers []*target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) []TargetResult {
 	n := len(servers)
 	if n == 0 {
@@ -285,29 +273,6 @@ func (s *service) deployBlueGreenImage(ctx context.Context, servers []*target.Se
 		}, func(idx int, srv *target.Server) {})
 	}
 	return results
-}
-
-// fleetRollbackOne 把一台「本机切换成功、但机群中其它机失败」的目标回滚到上一发布(蓝绿阶段 3)。
-// 原子切回 current → prev;就地改写该机结果为 rolled_back + 人读。回滚命令失败仍记 rolled_back(意图)。
-func (s *service) fleetRollbackOne(ctx context.Context, srv *target.Server, st releaseState, res *TargetResult) {
-	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
-	defer cancel()
-
-	var rbErr error
-	for _, cmd := range atomicSymlinkCmds(st.prev, st.current) {
-		if _, e := s.exec(execCtx, srv.ID, cmd); e != nil {
-			rbErr = e
-			break
-		}
-	}
-	finish := time.Now().UTC()
-	res.Status = run.TargetRolledBack
-	res.FinishedAt = &finish
-	if rbErr != nil {
-		res.Message = "蓝绿:其它机切换失败,本机尝试回滚到上一发布但回滚命令执行失败:" + humanExecError(rbErr)
-		return
-	}
-	res.Message = "蓝绿:其它机切换失败,本机已回滚到上一发布(机群级原子性:要么全切要么全退)"
 }
 
 // forEachServer 以有界并发(maxParallelDeploys)对每台 server 跑 work;每 goroutine recover 兜底,

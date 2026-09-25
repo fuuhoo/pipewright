@@ -53,6 +53,9 @@ func IsValidTargetStatus(s string) bool {
 //   - Message    : 人读摘要(成功摘要 / 失败原因;**绝无明文密钥**)。
 //   - StartedAt  : 部署开始时刻。
 //   - FinishedAt : 部署结束时刻(未结束为 nil)。
+//   - Manifests  : 本次实际应用到集群的清单正文(k8s 腿才有;SSH 腿为空)。
+//     **不在** deploy_targets 行上,而是随结果同事务写进 deploy_manifests(表 0060),
+//     供回滚查「上一版到底发了什么」。run-detail 的冻结 DTO 不含它,故只增字段不改形状。
 type DeployTarget struct {
 	ID         string
 	RunID      string
@@ -62,6 +65,7 @@ type DeployTarget struct {
 	Message    string
 	StartedAt  time.Time
 	FinishedAt *time.Time
+	Manifests  []ManifestDoc
 }
 
 // SaveDeployTargets 持久化一次部署的多机结果(参数化 SQL;单事务,全成或全不入,
@@ -88,6 +92,10 @@ func (s *service) SaveDeployTargets(ctx context.Context, runID string, targets [
 	if _, err := tx.ExecContext(ctx, `DELETE FROM deploy_targets WHERE run_id = ?`, runID); err != nil {
 		return fmt.Errorf("run: clear deploy targets: %w", err)
 	}
+	// 清单同理整批替换:目标数变少时,若只在逐目标写入时清旧,被去掉那个目标留下的正文会永远冒充「上一版」。
+	if _, err := tx.ExecContext(ctx, `DELETE FROM deploy_manifests WHERE run_id = ?`, runID); err != nil {
+		return fmt.Errorf("run: clear deploy manifests: %w", err)
+	}
 
 	for i := range targets {
 		t := targets[i]
@@ -112,6 +120,10 @@ func (s *service) SaveDeployTargets(ctx context.Context, runID string, targets [
 				return ErrNotFound
 			}
 			return fmt.Errorf("run: insert deploy target: %w", err)
+		}
+		// 结果与清单同事务:宁可两条一起失败,也不能留下「有结果却查不到发了什么」。
+		if err := saveDeployManifests(ctx, tx, runID, t); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -152,6 +164,8 @@ func (s *service) SetDeployTerminal(ctx context.Context, runID, status string) e
 //
 // 单事务,全成或全不入(避免半截 targets);非法 status → ErrInvalidTargetStatus;
 // run 不存在 → ErrNotFound(外键失败)。空切片为合法 no-op。
+// 目标带 Manifests 时按 (run_id, cluster_id) 替换该目标的清单正文(deploy_manifests),
+// 不带清单的目标不会连带删掉它已有的正文。
 func (s *service) UpsertDeployTargets(ctx context.Context, runID string, targets []DeployTarget) error {
 	for i := range targets {
 		if !IsValidTargetStatus(targets[i].Status) {
@@ -190,25 +204,27 @@ func (s *service) UpsertDeployTargets(ctx context.Context, runID string, targets
 		if uerr != nil {
 			return fmt.Errorf("run: update deploy target: %w", uerr)
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			continue
-		}
-
-		// 无既有行:插入(重试目标若历史上未落过结果的兜底)。
-		if t.ID == "" {
-			t.ID = uuid.NewString()
-		}
-		if _, ierr := tx.ExecContext(ctx,
-			`INSERT INTO deploy_targets
-			   (id, run_id, server_id, server_name, status, message, started_at, finished_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			t.ID, runID, t.ServerID, t.ServerName, t.Status, t.Message,
-			t.StartedAt.UTC().Format(time.RFC3339), finished,
-		); ierr != nil {
-			if isForeignKeyErr(ierr) {
-				return ErrNotFound
+		if n, _ := res.RowsAffected(); n == 0 {
+			// 无既有行:插入(重试目标若历史上未落过结果的兜底)。
+			if t.ID == "" {
+				t.ID = uuid.NewString()
 			}
-			return fmt.Errorf("run: insert deploy target: %w", ierr)
+			if _, ierr := tx.ExecContext(ctx,
+				`INSERT INTO deploy_targets
+				   (id, run_id, server_id, server_name, status, message, started_at, finished_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				t.ID, runID, t.ServerID, t.ServerName, t.Status, t.Message,
+				t.StartedAt.UTC().Format(time.RFC3339), finished,
+			); ierr != nil {
+				if isForeignKeyErr(ierr) {
+					return ErrNotFound
+				}
+				return fmt.Errorf("run: insert deploy target: %w", ierr)
+			}
+		}
+		// 本次重试带清单才替换该目标的正文(不带就什么都不动:重试成功的机也可能压根没发清单)。
+		if err := saveDeployManifests(ctx, tx, runID, t); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {

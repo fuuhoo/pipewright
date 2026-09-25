@@ -1,15 +1,15 @@
 package deploy
 
 // container_deploy_e2e_test.go 是 Epic 4 部署的**真 e2e**:对一台真 alpine+sshd 容器(当真目标
-// 服务器)经真 SSH 真跑部署/零停机/回滚/健康门控,并**进容器内 docker exec 断言**文件真落地、
-// current 软链真切换 —— 这是 fake/localhost 证不到的真实路径(localhost e2e 里 target==本机,断言落在
-// 本机 FS;容器版断言落在容器内,真传输 + 真远端文件系统都被覆盖)。
+// 服务器)经真 SSH 真跑文件直铺部署 + 健康门控,并**进容器内 docker exec 断言**文件真落地在
+// 部署目录本身(无 releases/<runId> 层、无 current 软链)—— 这是 fake/localhost 证不到的真实路径
+// (localhost e2e 里 target==本机,断言落在本机 FS;容器版断言落在容器内,真传输 + 真远端文件系统都被覆盖)。
 //
 // 默认 SKIP(PIPEWRIGHT_E2E_DEPLOY=1 启用)。跑法:
 //
 //	PIPEWRIGHT_E2E_DEPLOY=1 go test ./internal/deploy/ -run E2E -v
 //
-// 容器内有真 docker?没有。故 image 产物部署不在此验(降级);聚焦 dist/file + 健康 + 零停机 + 回滚。
+// 容器内有真 docker?没有。故 image 产物部署不在此验(降级);聚焦 dist/file 直铺 + 健康门控。
 
 import (
 	"context"
@@ -79,7 +79,7 @@ func (h *e2eHarness) containerReadlink(t *testing.T, link string) string {
 	return strings.TrimSpace(out)
 }
 
-// TestE2EDistDeployLandsInContainer 验 dist 产物经真 SSH 真部署 → 进容器断言文件真落地 + 目录结构对。
+// TestE2EDistDeployLandsInContainer 验 dist 产物经真 SSH 真**直铺** → 进容器断言文件就在部署目录下。
 func TestE2EDistDeployLandsInContainer(t *testing.T) {
 	c := startSSHContainer(t)
 	h := newE2EHarness(t, c)
@@ -91,7 +91,7 @@ func TestE2EDistDeployLandsInContainer(t *testing.T) {
 
 	res, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: []string{h.serverID},
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
@@ -100,19 +100,17 @@ func TestE2EDistDeployLandsInContainer(t *testing.T) {
 		t.Fatalf("dist 部署应 success: %+v", res)
 	}
 
-	// 关键:进容器内断言发布目录 + 产物文件真落地(经真 SSH 真传输到真远端 FS)。
-	releaseDir := base + "/releases/" + runID
-	if !h.containerFileExists(t, releaseDir) {
-		t.Fatalf("容器内发布目录未落地: %s", releaseDir)
-	}
-	// 产物文件名 = reference base(shop-v1.tar.gz)。
-	artFile := releaseDir + "/shop-v1.tar.gz"
+	// 关键:进容器内断言产物文件真落在部署目录本身(经真 SSH 真传输到真远端 FS)。
+	artFile := base + "/shop-v1.tar.gz"
 	if !h.containerFileExists(t, artFile) {
-		t.Fatalf("容器内产物文件未落地: %s", artFile)
+		t.Fatalf("容器内产物文件未直铺落地: %s", artFile)
 	}
-	// current 软链真指向本次发布(原子切换)。
-	if link := h.containerReadlink(t, base+"/current"); link != releaseDir {
-		t.Fatalf("容器内 current 软链指向异常: %q want %q", link, releaseDir)
+	// 既无 releases/ 层,也无 current 软链。
+	if h.containerFileExists(t, base+"/releases") {
+		t.Fatalf("直铺模式不应有 releases/ 目录: %s", base+"/releases")
+	}
+	if link := h.containerReadlink(t, base+"/current"); link != "" {
+		t.Fatalf("直铺模式不应有 current 软链: %q", link)
 	}
 	// 落地内容真为 reference 文本(base64 解码经真 SSH 写入)。
 	content, _ := h.c.Exec(t, "cat", artFile)
@@ -122,11 +120,12 @@ func TestE2EDistDeployLandsInContainer(t *testing.T) {
 	if strings.Contains(res[0].Message, "PRIVATE KEY") {
 		t.Fatalf("message 泄漏私钥!")
 	}
-	t.Logf("dist 真落地容器 OK: %s -> current", releaseDir)
+	t.Logf("dist 真直铺落地容器 OK: %s", artFile)
 }
 
-// TestE2EZeroDowntimeAndRollback 验零停机两版切换 + 健康失败回滚,全程进容器断言软链真切换。
-func TestE2EZeroDowntimeAndRollback(t *testing.T) {
+// TestE2EOverwriteInPlaceAndHealthFail 验两版依次发布都落在同一部署目录(就地覆盖),
+// 且健康失败该机记 failed —— 直铺没有 current,故**没有**回滚可言。
+func TestE2EOverwriteInPlaceAndHealthFail(t *testing.T) {
 	c := startSSHContainer(t)
 	h := newE2EHarness(t, c)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -134,11 +133,11 @@ func TestE2EZeroDowntimeAndRollback(t *testing.T) {
 
 	base := "/opt/pw-e2e-zdt-" + uuid.NewString()[:8]
 
-	// v1:健康检查通过(command true)→ current → releases/<run1>。
+	// v1:健康检查通过(command true)→ 产物直铺进 base。
 	run1, art1 := seedSuccessRunWithArtifact(t, h.db, h.rsvc, run.ArtifactDist, "dist/shop-v1.tar.gz")
 	res1, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: run1, ArtifactID: art1, ServerIDs: []string{h.serverID},
-		Config:      map[string]string{"releaseBase": base},
+		Config:      map[string]string{"deployPath": base},
 		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"true"}, Retries: 1},
 	})
 	if err != nil {
@@ -147,38 +146,40 @@ func TestE2EZeroDowntimeAndRollback(t *testing.T) {
 	if res1[0].Status != run.TargetSuccess {
 		t.Fatalf("v1 应 success: %+v", res1[0])
 	}
-	rel1 := base + "/releases/" + run1
-	if link := h.containerReadlink(t, base+"/current"); link != rel1 {
-		t.Fatalf("v1 后容器内 current 应 -> %q, got %q", rel1, link)
+	if !h.containerFileExists(t, base+"/shop-v1.tar.gz") {
+		t.Fatalf("v1 产物未落在部署目录: %s", base+"/shop-v1.tar.gz")
 	}
 
-	// v2:健康检查必失败(command false)→ 切 current → releases/<run2> 后健康失败 → 回滚到 rel1。
+	// v2:健康检查必失败(command false)→ 铺完健康不过 → failed(直铺无版本可回滚)。
 	run2, art2 := seedSuccessRunWithArtifact(t, h.db, h.rsvc, run.ArtifactDist, "dist/shop-v2.tar.gz")
 	res2, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: run2, ArtifactID: art2, ServerIDs: []string{h.serverID},
-		Config:      map[string]string{"releaseBase": base},
+		Config:      map[string]string{"deployPath": base},
 		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"false"}, Retries: 1},
 	})
 	if err != nil {
 		t.Fatalf("v2 Deploy: %v", err)
 	}
-	if res2[0].Status != run.TargetRolledBack {
-		t.Fatalf("v2 健康失败应 rolled_back: %+v", res2[0])
+	if res2[0].Status != run.TargetFailed {
+		t.Fatalf("v2 健康失败应 failed(无回滚): %+v", res2[0])
+	}
+	if !strings.Contains(res2[0].Message, "无上一版本可回滚") {
+		t.Fatalf("message 应说明无版本可回滚: %q", res2[0].Message)
 	}
 
-	// 关键:进容器断言 current 真切回 v1(零停机回滚),v2 失败发布仍保留供排查。
-	if link := h.containerReadlink(t, base+"/current"); link != rel1 {
-		t.Fatalf("回滚后容器内 current 应切回 v1 %q, got %q", rel1, link)
+	// 关键:v2 产物落在**同一目录**(就地覆盖),目录里没有 releases/current 这层壳。
+	if !h.containerFileExists(t, base+"/shop-v2.tar.gz") {
+		t.Fatalf("v2 产物应直铺在同一部署目录: %s", base+"/shop-v2.tar.gz")
 	}
-	if !h.containerFileExists(t, base+"/releases/"+run2) {
-		t.Fatalf("失败发布 v2 应保留供排查")
+	if h.containerFileExists(t, base+"/releases") {
+		t.Fatalf("直铺模式不应有 releases/ 目录")
 	}
-	// run 终态:全部目标回滚 → failed。
+	// run 终态:目标失败 → failed。
 	rn, _ := h.rsvc.Get(ctx, run2)
 	if rn.Status != run.StatusFailed {
-		t.Fatalf("v2 run 终态应 failed(全目标回滚),got %s", rn.Status)
+		t.Fatalf("v2 run 终态应 failed,got %s", rn.Status)
 	}
-	t.Logf("零停机回滚 OK: current 真切回 %s", rel1)
+	t.Logf("两版同目录直铺 OK: %s(v2 健康失败记 failed)", base)
 }
 
 // TestE2EHealthGate 验健康门控:通过型(test -f 落地文件)→ success;必失败型 → 首次部署无可回滚 → failed。
@@ -188,13 +189,13 @@ func TestE2EHealthGate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// 通过型:健康命令在容器内真跑 `test -f <落地文件>`,文件由本次部署真落地 → 通过。
+	// 通过型:健康命令在容器内真跑 `test -f <落地文件>`,文件由本次部署真直铺 → 通过。
 	basePass := "/opt/pw-e2e-hpass-" + uuid.NewString()[:8]
 	runP, artP := seedSuccessRunWithArtifact(t, h.db, h.rsvc, run.ArtifactDist, "dist/shop.tar.gz")
-	landed := basePass + "/releases/" + runP + "/shop.tar.gz"
+	landed := basePass + "/shop.tar.gz"
 	resP, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: runP, ArtifactID: artP, ServerIDs: []string{h.serverID},
-		Config:      map[string]string{"releaseBase": basePass},
+		Config:      map[string]string{"deployPath": basePass},
 		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"test", "-f", landed}, Retries: 2, IntervalSeconds: 1},
 	})
 	if err != nil {
@@ -207,12 +208,12 @@ func TestE2EHealthGate(t *testing.T) {
 		t.Fatalf("成功 message 应含『健康检查通过』: %q", resP[0].Message)
 	}
 
-	// 必失败型(首次部署,无上一发布可回滚)→ failed。
+	// 必失败型(健康探测文件不存在)→ failed(直铺无版本可回滚)。
 	baseFail := "/opt/pw-e2e-hfail-" + uuid.NewString()[:8]
 	runF, artF := seedSuccessRunWithArtifact(t, h.db, h.rsvc, run.ArtifactDist, "dist/shop.tar.gz")
 	resF, err := h.dsvc.Deploy(ctx, DeployInput{
 		RunID: runF, ArtifactID: artF, ServerIDs: []string{h.serverID},
-		Config:      map[string]string{"releaseBase": baseFail},
+		Config:      map[string]string{"deployPath": baseFail},
 		HealthCheck: &HealthCheck{Type: HealthCheckCommand, Command: []string{"test", "-f", "/nonexistent/pw-e2e-missing"}, Retries: 1},
 	})
 	if err != nil {

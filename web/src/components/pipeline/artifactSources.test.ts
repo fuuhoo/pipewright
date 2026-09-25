@@ -36,6 +36,18 @@ describe('artifactSourceGroups · 部署节点的产物来源候选', () => {
     expect(producesArtifact(job('b', 'build'))).toBe(true)
   })
 
+  // docker 部署节点自己是被部署方(单容器发上游镜像、compose 干脆不取产物),
+  // 漏进候选就是让下游去选一件它根本没产出的东西。清单与后端 pipeline.nonProducingJobTypes 同一份。
+  it('docker 部署节点也不算产物来源', () => {
+    expect(producesArtifact(job('jd', 'deploy_docker'))).toBe(false)
+    const stages = [
+      stage('build', [job('japi')]),
+      stage('ship', [job('jd', 'deploy_docker')], ['build'], 'deploy'),
+      stage('after', [job('jdep2', 'deploy_ssh')], ['ship'], 'deploy'),
+    ]
+    expect(groupIdList(stages, 'after', 'jdep2')).toEqual([['japi']])
+  })
+
   it('阶段图声明 needs 后只认传递闭包,并行分支不算上游', () => {
     const stages = [
       stage('api', [job('japi')]),

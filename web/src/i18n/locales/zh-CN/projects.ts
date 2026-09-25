@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: '项目不存在,请刷新后重试。',
   triggerErrStatus: '触发失败({status})',
   triggerErrRetry: '触发失败,请稍后重试。',
+
+  // ─── 仓库可选(纯发布项目)─────────────────────────────────────
+  bindRepo: '绑定 Git 仓库',
+  bindRepoOnHint: '流水线从源码开始:源任务克隆该仓库,构建与部署按分支/commit 走。',
+  bindRepoOffHint: '只用于发布:没有源码环节,产物或镜像在外部准备好后直接部署。之后可在项目卡片上补绑仓库。',
+  repoNotBound: '未绑定仓库 · 仅用于发布',
+  actionRepoTitle: '仓库设置 · {name}',
+  actionRepoAria: '设置项目 {name} 的仓库绑定',
+  repoTitle: '仓库设置',
+  repoSub: '{name} · 绑定、改绑或解绑 Git 仓库',
+  repoErrUnreachable: '仓库地址不可达,未保存。',
+  repoErrStatus: '保存失败({status})',
+  repoErrRetry: '保存失败,请稍后重试。',
+  triggerSubNoRepo: '{name} · 该项目只用于发布,直接创建一次运行',
 }

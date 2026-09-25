@@ -32,6 +32,17 @@ type refDTO struct {
 	Commit string `json:"commit"`
 }
 
+// repoBound 报告项目是否绑了仓库;没有则就地写 400 并返回 false。
+// 纯发布项目(只发已有产物/镜像)压根没有仓库,这类「要读仓库」的端点(列分支、列提交、浏览源码)
+// 必须早退:否则空地址会一路喂到 git 层,报出「鉴权/网络」这类误导人的错。
+func repoBound(w http.ResponseWriter, proj *project.Project) bool {
+	if proj == nil || strings.TrimSpace(proj.RepoURL) == "" {
+		writeError(w, http.StatusBadRequest, "repo_not_bound", "该项目未绑定仓库,此项需要仓库;请到项目设置绑定仓库")
+		return false
+	}
+	return true
+}
+
 type refsResponse struct {
 	Branches []refDTO `json:"branches"`
 	Tags     []refDTO `json:"tags"`
@@ -54,6 +65,11 @@ func makeListRefsHandler(projects project.Service, v vault.Vault, lister RefsLis
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+			return
+		}
+
+		// 纯发布项目(未绑仓库)没有分支可列:给一句能看懂的话,而不是让 repocache 对着空地址报错。
+		if !repoBound(w, proj) {
 			return
 		}
 
@@ -109,6 +125,9 @@ func makeListCommitsHandler(projects project.Service, v vault.Vault, lister Refs
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+			return
+		}
+		if !repoBound(w, proj) {
 			return
 		}
 		ref := strings.TrimSpace(r.URL.Query().Get("ref"))

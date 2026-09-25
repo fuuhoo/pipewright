@@ -101,6 +101,10 @@ type Service interface {
 	// ListDeployTargets 取某次运行的全部部署目标结果(按 started_at 升序;无部署 → 空切片)。
 	// run 不存在不报错(返回空切片);由 HTTP 层据 run 存在性决定 404。
 	ListDeployTargets(ctx context.Context, runID string) ([]DeployTarget, error)
+	// LastAppliedManifest 取同一集群上该对象「上一版成功发布时实际应用的正文」(deploy_manifests,表 0060);
+	// 回滚 = 重新应用它,所以这里就是回滚的数据来源。excludeRunID 传当前 run(重发时本批行可能已落库)。
+	// 无可用历史 → (nil, nil):首次发布没有上一版是常态,调用方须与错误分开处理。
+	LastAppliedManifest(ctx context.Context, clusterID, kind, namespace, name, excludeRunID string) (*ManifestDoc, error)
 	// SetDeployTerminal 在部署后据每机结果置 run 终态:全成功 → success(保持);有失败 → partial_failed;
 	// 全失败 → failed。部署在 run 已是成功终态后发生,故此处直接覆盖终态(不走常规转移图)。
 	// 仅接受这三个终态;run 不存在 → ErrNotFound。

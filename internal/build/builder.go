@@ -72,7 +72,24 @@ type Builder struct {
 	// **只**从这里解析,不再读 job 配置里的镜像字符串。nil(未装配目录服务)时脚本节点直接失败
 	// 要求选环境 —— 不回退到旧的手填镜像通路。由 main 注入(WithBuildEnvGate)。
 	envGate pipeline.BuildEnvGate
+	// repoFiles 按 ref 读出**仓库里的单个文件**(compose 节点引用项目自带的 docker-compose.yml)。
+	// nil(关了代码管理区)时该模式的部署节点直接失败并说明原因 —— 绝不静默改用别的正文来源。
+	// 由 main 注入(WithRepoFiles,实现是 *repocache.ReadFile;此处留接口避免 build↔repocache 成环)。
+	repoFiles repoFileReader
 }
+
+// repoFileReader 抽象「读仓库某 ref 上的一个文件」的能力(默认实现 *repocache.Cache)。
+type repoFileReader interface {
+	ReadFile(ctx context.Context, repoURL, username, token, branch, commit, path string) ([]byte, error)
+}
+
+// 读仓库文件的三类失败,由 reader 契约规定错误值。定义在 build 而不是实现方:build 不能
+// import repocache(它已 import build,成环),而只有调用方需要分辨这三类。
+var (
+	ErrRepoFileNotFound = errors.New("repo file not found")
+	ErrRepoFileTooLarge = errors.New("repo file too large")
+	ErrRepoBadFilePath  = errors.New("invalid repo file path")
+)
 
 // buildCacheStore 抽象「按 key 恢复/保存工作区缓存路径」的能力(便于 fake 单测注入)。
 // 实现是 *buildcache.Store。Restore 返回 (命中?, err);err 仅在输入非法时非 nil(缓存未命中
@@ -166,6 +183,15 @@ func WithBuildCache(c buildCacheStore) BuilderOption {
 	}
 }
 
+// WithRepoFiles 注入「按 ref 读仓库单文件」的能力(compose 节点引用仓库文件用)。
+func WithRepoFiles(r repoFileReader) BuilderOption {
+	return func(b *Builder) {
+		if r != nil {
+			b.repoFiles = r
+		}
+	}
+}
+
 // NewBuilder 构造真实 Builder。driver 经 DetectDriver 探测(全无容器 CLI → ErrNoContainerCLI,
 // 由 main 据此降级回 StubRunner)。cmdr 为 nil 用默认 execCommander(生产);测试经 Option 覆盖。
 func NewBuilder(projects project.Service, settings pipeline.SettingsService, v vault.Vault, opts ...BuilderOption) (*Builder, error) {
@@ -236,6 +262,9 @@ func (b *Builder) Run(ctx context.Context, r *run.Run, sink run.StepSink) error 
 	}
 	if err := sink.StepRunning(ctx, 0); err != nil {
 		return err
+	}
+	if err := workspaceNeedsRepo(proj, true); err != nil {
+		return b.failStep(ctx, sink, 0, err.Error())
 	}
 	workspace, mkErr := mkTempWorkspace()
 	if mkErr != nil {

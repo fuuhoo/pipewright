@@ -47,7 +47,7 @@ func TestE2EArtifactStoreDistUntar(t *testing.T) {
 	dsvc := New(h.targets, h.rsvc, WithArtifactStore(store)) // 注入制品库的部署服务
 	res, err := dsvc.Deploy(ctx, DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: h.serverIDs,
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("dist Deploy: %v", err)
@@ -56,25 +56,27 @@ func TestE2EArtifactStoreDistUntar(t *testing.T) {
 		t.Fatalf("dist 部署应 success,实际 %s / %q", res[0].Status, res[0].Message)
 	}
 
-	// 容器内发布目录应被解包出**真文件树**(且无残留临时 tar.gz)。
-	releaseDir := base + "/releases/" + runID
-	idx, err := fleet[0].Exec(t, "cat", releaseDir+"/index.html")
+	// 容器内部署目录应被就地解包出**真文件树**(且无残留临时 tar.gz)。
+	idx, err := fleet[0].Exec(t, "cat", base+"/index.html")
 	if err != nil || !strings.Contains(idx, "PIPEWRIGHT-REAL") {
 		t.Fatalf("容器内 index.html 应为真 dist 内容:%q err=%v", idx, err)
 	}
-	js, err := fleet[0].Exec(t, "cat", releaseDir+"/assets/app.js")
+	js, err := fleet[0].Exec(t, "cat", base+"/assets/app.js")
 	if err != nil || !strings.Contains(js, "real dist bytes") {
 		t.Fatalf("容器内 assets/app.js 应为真 dist 内容:%q err=%v", js, err)
 	}
-	if _, err := fleet[0].Exec(t, "test", "-e", releaseDir+"/.pw-artifact.tar.gz"); err == nil {
-		t.Fatal("解包后应删除临时 tar.gz,但仍存在")
+	if listing, err := fleet[0].Exec(t, "ls", "-A", base); err == nil &&
+		strings.Contains(listing, ".pw-staging-") {
+		t.Fatalf("解包后应删除临时 tar.gz,但目录仍残留中间态:%q", listing)
 	}
-	// current 软链应已切到本次发布(零停机切换)。
-	cur, _ := fleet[0].Exec(t, "readlink", base+"/current")
-	if strings.TrimSpace(cur) != releaseDir {
-		t.Fatalf("current 应切到本次发布,实际 %q", strings.TrimSpace(cur))
+	// 直铺:目录里既没有 releases/ 层也没有 current 软链。
+	if _, err := fleet[0].Exec(t, "test", "-e", base+"/releases"); err == nil {
+		t.Fatal("直铺模式不应有 releases/ 目录")
 	}
-	t.Logf("✅ 制品库 dist(tar.gz)经 SSH Upload + 远端解包,CentOS 容器内得到真文件树 + current 软链切换")
+	if _, err := fleet[0].Exec(t, "test", "-e", base+"/current"); err == nil {
+		t.Fatal("直铺模式不应有 current 软链")
+	}
+	t.Logf("✅ 制品库 dist(tar.gz)经 SSH Upload + 远端就地解包,CentOS 容器内得到真文件树(无 releases/current)")
 }
 
 // buildTestTarGz 把 files(相对路径→内容)打成 tar.gz 字节(供 e2e 造真 dist 产物)。

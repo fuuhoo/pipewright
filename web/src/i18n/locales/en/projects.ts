@@ -161,4 +161,18 @@ export default {
   triggerErrNotFound: 'Project not found, please refresh and retry.',
   triggerErrStatus: 'Trigger failed ({status})',
   triggerErrRetry: 'Trigger failed, please try again later.',
+
+  // ─── repo is optional (release-only projects) ──────────────────
+  bindRepo: 'Bind a Git repository',
+  bindRepoOnHint: 'The pipeline starts from source: the source job clones this repository, and builds/deploys follow the branch or commit.',
+  bindRepoOffHint: 'Release only: no source stage — artifacts or images prepared elsewhere get deployed directly. You can still bind a repository later from the project card.',
+  repoNotBound: 'No repository · release only',
+  actionRepoTitle: 'Repository settings · {name}',
+  actionRepoAria: 'Set the repository binding of project {name}',
+  repoTitle: 'Repository settings',
+  repoSub: '{name} · bind, rebind, or unbind the Git repository',
+  repoErrUnreachable: 'The repository URL is unreachable; nothing was saved.',
+  repoErrStatus: 'Save failed ({status})',
+  repoErrRetry: 'Save failed, please try again later.',
+  triggerSubNoRepo: '{name} · this project is release only; create a run directly',
 }

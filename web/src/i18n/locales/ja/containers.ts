@@ -25,6 +25,10 @@ export default {
   kpiHosts: 'コンテナのあるサーバー',
   kpiStripAria: 'コンテナ集約統計',
 
+  serverFilterLabel: 'サーバー',
+  serverFilterAria: 'この画面に表示するサーバーを切り替える',
+  serverAll: '全サーバー',
+
   filterAria: '状態でコンテナを絞り込み',
   filterAll: 'すべて',
   filterRunning: '起動中',

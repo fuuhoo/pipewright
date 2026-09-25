@@ -40,6 +40,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/group"
 	"github.com/huangchengsir/pipewright/internal/httpapi"
 	"github.com/huangchengsir/pipewright/internal/library"
+	"github.com/huangchengsir/pipewright/internal/kube"
 	"github.com/huangchengsir/pipewright/internal/mask"
 	"github.com/huangchengsir/pipewright/internal/metrics"
 	"github.com/huangchengsir/pipewright/internal/notify"
@@ -294,6 +295,8 @@ func main() {
 	// 目标服务器(SSH 执行层)+ 远程构建 runner 配置(FR-8-14 续):项目可指定一台 server 作远程构建机,
 	// 配置后该项目构建下沉到远程执行(控制机本地克隆 → 经 SSH 传工作区 → 远程容器跑;token 只在控制机)。
 	targetSvc := target.New(st.DB, credVault, nil)
+	// 集群目标(K8s 发布那条腿):与 targetSvc 并列,凭据同样经 credVault 即用即弃。
+	kubeSvc := kube.New(st.DB, credVault)
 	runnerSvc := runner.New(st.DB, targetExister{targetSvc})
 
 	// 制品库(Story 8-16 / FR-8-16):构建后把 jar/dist 真字节归档,部署时取真字节上传目标机
@@ -351,9 +354,11 @@ func main() {
 
 	// 把代码缓存(若启用)做成 Builder 选项;未启用 → 无操作选项(保持默认直连克隆器)。
 	clonerOpt := func(*build.Builder) {}
+	repoFilesOpt := func(*build.Builder) {}
 	var refsLister httpapi.RefsLister
 	if repoCache != nil {
 		clonerOpt = build.WithCloner(repoCache)
+		repoFilesOpt = build.WithRepoFiles(repoCache)
 		refsLister = repoCache
 	}
 
@@ -364,7 +369,7 @@ func main() {
 	}
 
 	// 部署服务(提前到 dag 装配前构造,供 deploy_ssh 流水线节点注入)。Story 4.6 诊断钩子复用 7-2。
-	deploySvc := deploy.New(targetSvc, runSvc, deploy.WithDiagnoseHook(httpapi.NewDiagnoseHook(runSvc, aiSvc, secretSrc)), deploy.WithArtifactStore(artStore))
+	deploySvc := deploy.New(targetSvc, runSvc, deploy.WithDiagnoseHook(httpapi.NewDiagnoseHook(runSvc, aiSvc, secretSrc)), deploy.WithArtifactStore(artStore), deploy.WithKube(kubeSvc))
 
 	// 运行执行器选择(Epic 8):**默认走 DAG 调度执行器**——它是唯一真正按 UI 配置的
 	// stages/script job/deploy_ssh/notify 编排执行的运行器。只有显式 PIPEWRIGHT_RUNNER=legacy
@@ -383,7 +388,7 @@ func main() {
 		// 「需要审批」通知 + 签名审批链接(signer/PUBLIC_URL 未配则跳过通知,门行为不变)。
 		approvalNotifier := httpapi.NewApprovalNotifier(notifySvc, approvalSigner, strings.TrimSpace(os.Getenv("PIPEWRIGHT_PUBLIC_URL")), runSvc)
 		dagOpts = append(dagOpts, dagrun.WithGate(httpapi.NewApprovalGate(runSvc, approvalCoord, approvalStore, approvalNotifier)))
-		if b, berr := build.NewBuilder(projectSvc, pipelineSettingsSvc, credVault, build.WithArtifactStore(artStore), build.WithArtifactLister(runSvc.ListArtifacts), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithCommitRecorder(func(ctx context.Context, runID, commit string) { _ = runSvc.SetCommit(ctx, runID, commit) }), build.WithStageDeployer(deploySvc), build.WithStageNotifier(notifySvc), build.WithBuildEnvGate(buildEnvGate), clonerOpt, buildCacheOpt); berr == nil {
+		if b, berr := build.NewBuilder(projectSvc, pipelineSettingsSvc, credVault, build.WithArtifactStore(artStore), build.WithArtifactLister(runSvc.ListArtifacts), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithCommitRecorder(func(ctx context.Context, runID, commit string) { _ = runSvc.SetCommit(ctx, runID, commit) }), build.WithStageDeployer(deploySvc), build.WithStageNotifier(notifySvc), build.WithBuildEnvGate(buildEnvGate), clonerOpt, buildCacheOpt, repoFilesOpt); berr == nil {
 			// runSvc 作测试报告持久层注入(Story 8-6 / FR-8-6):script 步骤产报告 → 解析 →
 			// 落库 → 质量门禁裁决(不过则阶段失败,阻断下游部署)。
 			dagOpts = append(dagOpts, dagrun.WithStageExecutor(build.NewStageExecutorWithRunner(b, runSvc, runnerSvc, targetSvc)))
@@ -620,7 +625,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithArtifactStore(artStore), httpapi.WithServers(targetSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithGroups(groupSvc), httpapi.WithAccess(accessSvc)),
+		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithArtifactStore(artStore), httpapi.WithServers(targetSvc), httpapi.WithKubeClusters(kubeSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithGroups(groupSvc), httpapi.WithAccess(accessSvc)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// WriteTimeout 置 0:SSE 长连接(/api/runs/{id}/events)不可被写超时切断;

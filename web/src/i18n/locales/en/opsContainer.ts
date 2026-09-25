@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run failed',
     createFailedStatus: 'Creation failed ({status})',
     createFailed: 'Creation request failed',
+
+    // Compose paste mode (same deploy endpoint as the card's Stacks tab)
+    modeAria: 'Choose how to create',
+    modeRun: 'Single container',
+    modeCompose: 'Compose (paste YAML)',
+    composeProject: 'Project name',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: 'paste the whole file; any number of services',
+    composeNameIllegal: 'Project name allows letters, digits and . _ - only, must not start with - or contain /',
+    composeNameTooLong: 'Project name too long (max 128 characters)',
+    composeTooLarge: 'compose content exceeds the 512 KiB limit',
+    composeNoServices: 'No service names found under services: check the indentation; docker compose has the final say',
+    composeServices: '{n} services: {names} · manage them in the Stacks tab of this server card after deploy',
+    composeDeploy: 'Deploy and start',
+    composeDeploying: 'Deploying… (may pull images)',
+    composeDeployed: 'Compose deployed',
+    composeDeployFailed: 'Compose deployment failed',
+    composeDeployStatus: 'Deployment failed ({status})',
   },
 
   // SystemPruneModal.vue

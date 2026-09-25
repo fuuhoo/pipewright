@@ -33,6 +33,7 @@ const globalItems: SettingsNavItem[] = [
   { to: '/settings/users', key: 'navUsers', adminOnly: true },
   { to: '/settings/audit', key: 'navAudit', adminOnly: true },
   { to: '/settings/servers', key: 'navServers' },
+  { to: '/settings/kube-clusters', key: 'navKubeClusters' },
   { to: '/settings/ai', key: 'navAi' },
   { to: '/settings/oauth', key: 'navOauth' },
   { to: '/settings/dns-providers', key: 'navDnsProviders' },

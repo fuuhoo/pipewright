@@ -693,7 +693,7 @@ func (d *stubStageDeployer) DeployForStage(_ context.Context, _ string, serverID
 
 // TestRunDeployJobPassesImageParams 证 #55:部署节点把镜像产物参数
 // (artifactType/artifactFrom/containerName/ports/runArgs)透传给 deploy.DeployForStage,
-// 使流水线部署节点能部署 #51 的镜像产物(而非只透传 releaseBase/restartCommand)。
+// 使流水线部署节点能部署 #51 的镜像产物(而非只透传 deployPath/restartCommand)。
 func TestRunDeployJobPassesImageParams(t *testing.T) {
 	dep := &stubStageDeployer{}
 	b := &Builder{deployer: dep}
@@ -708,7 +708,7 @@ func TestRunDeployJobPassesImageParams(t *testing.T) {
 		"strategy":      "blue_green",
 		"deployPath":    "/opt/app", // 文件态键仍应透传,不互斥
 	}}
-	if err := b.runDeployJob(context.Background(), rep, jb, "run-1", nil); err != nil {
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1"}, nil, nil); err != nil {
 		t.Fatalf("runDeployJob err: %v", err)
 	}
 	for k, want := range map[string]string{
@@ -717,7 +717,7 @@ func TestRunDeployJobPassesImageParams(t *testing.T) {
 		"containerName": "myapp",
 		"ports":         "8080:80,9000:9000",
 		"runArgs":       "-e KEY=v --restart always",
-		"releaseBase":   "/opt/app",
+		"deployPath":    "/opt/app",
 	} {
 		if got := dep.gotCfg[k]; got != want {
 			t.Errorf("cfg[%q] = %q, want %q(完整 cfg=%+v)", k, got, want, dep.gotCfg)
@@ -732,6 +732,33 @@ func TestRunDeployJobPassesImageParams(t *testing.T) {
 	}
 }
 
+// TestRunDeployJobPassesDockerParams 证「docker 部署」节点的三件套(dockerMode/stackName/composeYaml)
+// 透传给 DeployForStage:deploy 层按键名读,两侧差一个字就是「选了 compose 却发产物」。
+// compose 正文支持 {{param}}(同一份栈按运行参数换端口),项目名**不渲染**(它是栈的身份)。
+func TestRunDeployJobPassesDockerParams(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep}
+	rep := &fakeReporter{}
+	jb := pipeline.Job{ID: "d", Name: "Docker 部署", Type: pipeline.JobTypeDeployDocker, Config: map[string]any{
+		"serverId":    "srv-1",
+		"dockerMode":  pipeline.DockerModeCompose,
+		"stackName":   "shop-{{env}}",
+		"composeYaml": "services:\n  web:\n    ports:\n      - \"{{port}}:80\"\n",
+	}}
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1", Trigger: run.Trigger{Params: map[string]string{"port": "8080", "env": "prod"}}}, nil, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyDockerMode]; got != pipeline.DockerModeCompose {
+		t.Errorf("dockerMode = %q, want compose", got)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyStackName]; got != "shop-{{env}}" {
+		t.Errorf("项目名不应被渲染(等于机器上留两个栈),got %q", got)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyComposeYaml]; !strings.Contains(got, `"8080:80"`) {
+		t.Errorf("compose 正文应按运行参数渲染端口,got %q", got)
+	}
+}
+
 // TestRunDeployJobPassesHealthProbe 证部署节点的健康探测键透传给 DeployForStage
 // (探测能力从撤销的 health_check 节点迁到了部署任务本身)。
 func TestRunDeployJobPassesHealthProbe(t *testing.T) {
@@ -739,13 +766,13 @@ func TestRunDeployJobPassesHealthProbe(t *testing.T) {
 	b := &Builder{deployer: dep}
 	rep := &fakeReporter{}
 	jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: map[string]any{
-		"serverId":      "srv-1",
-		"healthProbe":   "http",
-		"healthUrl":     "http://localhost:{{port}}/healthz",
-		"healthRetries": "10",
+		"serverId":       "srv-1",
+		"healthProbe":    "http",
+		"healthUrl":      "http://localhost:{{port}}/healthz",
+		"healthRetries":  "10",
 		"healthInterval": "3",
 	}}
-	if err := b.runDeployJob(context.Background(), rep, jb, "run-1", map[string]string{"port": "8080"}); err != nil {
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1", Trigger: run.Trigger{Params: map[string]string{"port": "8080"}}}, nil, nil); err != nil {
 		t.Fatalf("runDeployJob err: %v", err)
 	}
 	if got := dep.gotCfg[deploy.CfgKeyHealthProbe]; got != "http" {
@@ -783,7 +810,7 @@ func TestRunDeployJobFailsOnIncompleteProbe(t *testing.T) {
 				cfg[k] = v
 			}
 			jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: cfg}
-			if err := b.runDeployJob(context.Background(), rep, jb, "run-1", nil); !errors.Is(err, ErrBuildFailed) {
+			if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1"}, nil, nil); !errors.Is(err, ErrBuildFailed) {
 				t.Fatalf("want ErrBuildFailed, got %v", err)
 			}
 			if dep.gotCfg != nil {
@@ -956,5 +983,264 @@ func TestSameStageSingleJobUsesLegacyPath(t *testing.T) {
 	}
 	if cl.n != 1 {
 		t.Fatalf("单 job 阶段应共享单一克隆;clone 次数=%d, want 1", cl.n)
+	}
+}
+
+// ─── compose 正文取自仓库文件(#63)──────────────────────────────────────────
+
+// fakeRepoFiles 记录 ReadFile 的入参,并按脚本返回正文或错误。
+type fakeRepoFiles struct {
+	gotRepo, gotUser, gotToken, gotBranch, gotCommit, gotPath string
+	calls                                                     int
+	body                                                      string
+	err                                                       error
+}
+
+func (f *fakeRepoFiles) ReadFile(_ context.Context, repoURL, username, token, branch, commit, path string) ([]byte, error) {
+	f.calls++
+	f.gotRepo, f.gotUser, f.gotToken, f.gotBranch, f.gotCommit, f.gotPath = repoURL, username, token, branch, commit, path
+	if f.err != nil {
+		return nil, f.err
+	}
+	return []byte(f.body), nil
+}
+
+func composeJob(src, file, yaml string) pipeline.Job {
+	cfg := map[string]any{
+		"serverId":   "srv-1",
+		"dockerMode": "compose",
+		"stackName":  "shop",
+	}
+	if src != "" {
+		cfg["composeSource"] = src
+	}
+	if file != "" {
+		cfg["composeFile"] = file
+	}
+	if yaml != "" {
+		cfg["composeYaml"] = yaml
+	}
+	return pipeline.Job{ID: "d", Name: "发栈", Type: "deploy_docker", Config: cfg}
+}
+
+// 选「引用仓库文件」时,cfg 里的 composeYaml 必须是读到的仓库正文(不是节点里粘的那份),
+// 并且按本次运行的 commit 去读 —— 这两条一起构成「合入即生效」的语义。
+func TestRunDeployJobComposeFromRepoFile(t *testing.T) {
+	files := &fakeRepoFiles{body: "services:\n  web:\n    image: nginx\n"}
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep, repoFiles: files}
+	r := &run.Run{ID: "run-1", Trigger: run.Trigger{Branch: "main", Commit: "abcdef1234567890"}}
+	proj := &project.Project{RepoURL: "https://example.invalid/shop.git", CredentialID: "cred-1"}
+	if err := b.runDeployJob(context.Background(), &fakeReporter{}, composeJob("repo", "deploy/docker-compose.yml", "services:\n  old:\n"), r, proj, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if files.calls != 1 {
+		t.Fatalf("应读一次仓库文件,calls=%d", files.calls)
+	}
+	if files.gotPath != "deploy/docker-compose.yml" || files.gotRepo != proj.RepoURL ||
+		files.gotBranch != "main" || files.gotCommit != "abcdef1234567890" {
+		t.Errorf("ReadFile 入参错: path=%q repo=%q branch=%q commit=%q",
+			files.gotPath, files.gotRepo, files.gotBranch, files.gotCommit)
+	}
+	if got := dep.gotCfg["composeYaml"]; got != "services:\n  web:\n    image: nginx\n" {
+		t.Errorf("composeYaml 应是仓库正文,got=%q", got)
+	}
+	if got := dep.gotCfg["composeFile"]; got != "deploy/docker-compose.yml" {
+		t.Errorf("composeFile 应透传给部署日志,got=%q", got)
+	}
+}
+
+// 缺省(粘贴)一档绝不能碰仓库:没有代码管理区的实例上,粘贴档要照常工作。
+func TestRunDeployJobComposePasteDoesNotReadRepo(t *testing.T) {
+	files := &fakeRepoFiles{body: "should-not-be-used\n"}
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep, repoFiles: files}
+	r := &run.Run{ID: "run-1", Trigger: run.Trigger{Branch: "main"}}
+	proj := &project.Project{RepoURL: "https://example.invalid/shop.git"}
+	if err := b.runDeployJob(context.Background(), &fakeReporter{}, composeJob("", "", "services:\n  web:\n"), r, proj, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if files.calls != 0 {
+		t.Errorf("粘贴档不该读仓库,calls=%d", files.calls)
+	}
+	// 结尾换行会被 renderTemplate 去掉(它 trim 过每段输出);断言按渲染后的形状。
+	if !strings.HasPrefix(dep.gotCfg["composeYaml"], "services:\n  web:") {
+		t.Errorf("粘贴档应原样透下正文,got=%q", dep.gotCfg["composeYaml"])
+	}
+	if _, ok := dep.gotCfg["composeFile"]; ok {
+		t.Errorf("粘贴档不应写 composeFile(会是假线索):%+v", dep.gotCfg)
+	}
+}
+
+// 三类失败都要出人话并让节点失败 —— 静默改用别的正文来源是最坏结果(绿了但发的不是那份)。
+func TestRunDeployJobComposeRepoFileErrors(t *testing.T) {
+	proj := &project.Project{RepoURL: "https://example.invalid/shop.git"}
+	r := &run.Run{ID: "run-1", Trigger: run.Trigger{Branch: "main", Commit: "abc1234567890"}}
+	cases := []struct {
+		name  string
+		files *fakeRepoFiles
+		job   pipeline.Job
+		want  string
+	}{
+		{"未启用代码管理区", nil, composeJob("repo", "docker-compose.yml", ""), "未启用代码管理区"},
+		{"仓库里没有", &fakeRepoFiles{err: ErrRepoFileNotFound}, composeJob("repo", "docker-compose.yml", ""), "仓库里没有"},
+		{"路径非法", &fakeRepoFiles{}, composeJob("repo", "../secret.yml", ""), "路径非法"},
+		{"空正文", &fakeRepoFiles{body: "  \n"}, composeJob("repo", "docker-compose.yml", ""), "是空的"},
+		{"项目没绑仓库", &fakeRepoFiles{body: "x:\n"}, pipeline.Job{ID: "d", Name: "发栈", Type: "deploy_docker", Config: map[string]any{
+			"serverId": "srv-1", "dockerMode": "compose", "stackName": "shop",
+			"composeSource": "repo", "composeFile": "docker-compose.yml"}}, "未绑定仓库"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := &stubStageDeployer{}
+			b := &Builder{deployer: dep}
+			if tc.files != nil {
+				b.repoFiles = tc.files
+			}
+			rep := &fakeReporter{}
+			p := proj
+			if tc.name == "项目没绑仓库" {
+				p = &project.Project{}
+			}
+			err := b.runDeployJob(context.Background(), rep, tc.job, r, p, nil)
+			if !errors.Is(err, ErrBuildFailed) {
+				t.Fatalf("应判节点失败,got=%v", err)
+			}
+			if dep.gotCfg != nil {
+				t.Errorf("失败时不应触发部署,cfg=%+v", dep.gotCfg)
+			}
+			var logged string
+			for _, l := range rep.logs {
+				logged += l + "\n"
+			}
+			if !strings.Contains(logged, tc.want) {
+				t.Errorf("日志应含 %q,got=%q", tc.want, logged)
+			}
+		})
+	}
+}
+
+// ─── k8s 清单:正文取哪一份、渲染哪些变量(#69)────────────────────────────
+
+// k8sManifestJob 是一个发集群的部署节点;src 为空 = 老节点(没有「清单来源」这一格)。
+func k8sManifestJob(src, file, yaml string) pipeline.Job {
+	cfg := map[string]any{"clusterId": "clu-1"}
+	if src != "" {
+		cfg["manifestSource"] = src
+	}
+	if file != "" {
+		cfg["manifestFile"] = file
+	}
+	if yaml != "" {
+		cfg["manifestYaml"] = yaml
+	}
+	return pipeline.Job{ID: "k", Name: "发集群", Type: pipeline.JobTypeDeployK8s, Config: cfg}
+}
+
+// 仓库文件那条路的两个要害:正文来自**本次 commit**(合入即生效),而 {{IMAGE}} 必须原样留下 ——
+// 它是内置占位符,由部署层换成本次挑中的那件镜像,dag 层换成别的等于发一件不存在的镜像。
+func TestRunDeployJobManifestFromRepoFile(t *testing.T) {
+	files := &fakeRepoFiles{body: "kind: Deployment\nmetadata:\n  namespace: {{ns}}\nspec:\n  image: {{IMAGE}}\n"}
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep, repoFiles: files}
+	settings := &pipeline.Settings{Build: pipeline.BuildConfig{Vars: []pipeline.BuildVar{
+		{Key: "ns", Value: "shop-prod"},
+	}}}
+	r := &run.Run{ID: "run-1", Trigger: run.Trigger{Branch: "main", Commit: "abcdef1234567890"}}
+	proj := &project.Project{RepoURL: "https://example.invalid/shop.git", CredentialID: "cred-1"}
+	if err := b.runDeployJob(context.Background(), &fakeReporter{}, k8sManifestJob("repo", "deploy/k8s/api.yaml", "粘的那份不算"), r, proj, settings); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if files.gotPath != "deploy/k8s/api.yaml" || files.gotCommit != "abcdef1234567890" {
+		t.Errorf("读文件的入参错: path=%q commit=%q", files.gotPath, files.gotCommit)
+	}
+	got := dep.gotCfg["manifestYaml"]
+	if !strings.Contains(got, "namespace: shop-prod") {
+		t.Errorf("流水线变量该渲染进清单正文,got=%q", got)
+	}
+	if !strings.Contains(got, "{{IMAGE}}") {
+		t.Errorf("{{IMAGE}} 该留给部署层换,got=%q", got)
+	}
+	if dep.gotCfg["manifestFile"] != "deploy/k8s/api.yaml" {
+		t.Errorf("仓库路径该透下去供日志溯源,got=%q", dep.gotCfg["manifestFile"])
+	}
+}
+
+// 加密变量**绝不**渲染进清单:正文会随发布结果入库(deploy_manifests,回滚要读它),收 secret
+// 等于把机密抄一份存在我们自己的库里。但也不能悄悄发出去 —— 停在执行前说清为什么。
+func TestRunDeployJobManifestSecretVarRejected(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep}
+	rep := &fakeReporter{}
+	settings := &pipeline.Settings{Build: pipeline.BuildConfig{Vars: []pipeline.BuildVar{
+		{Key: "DB_PASSWORD", Secret: true, CredentialID: "cred-9"},
+	}}}
+	job := k8sManifestJob("paste", "", "kind: Secret\nstringData:\n  pwd: {{DB_PASSWORD}}\n")
+	err := b.runDeployJob(context.Background(), rep, job, &run.Run{ID: "run-1"}, nil, settings)
+	if !errors.Is(err, ErrBuildFailed) {
+		t.Fatalf("该判节点失败,got=%v", err)
+	}
+	if dep.gotCfg != nil {
+		t.Errorf("失败时不该触发部署,cfg=%+v", dep.gotCfg)
+	}
+	var logged string
+	for _, l := range rep.logs {
+		logged += l + "\n"
+	}
+	if !strings.Contains(logged, "{{DB_PASSWORD}}") || !strings.Contains(logged, "加密变量") {
+		t.Errorf("日志要点名是哪个加密变量,got=%q", logged)
+	}
+}
+
+// 没填「清单来源」的老节点 = 只换镜像那一条腿:绝不往 cfg 里塞 manifestYaml —— 一塞下去,
+// 部署层就改走清单那条路,存量流水线会在没人改过配置的情况下换一条执行链路。
+func TestRunDeployJobManifestSourceEmptyKeepsImageLeg(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep, repoFiles: &fakeRepoFiles{body: "kind: Deployment\n"}}
+	job := k8sManifestJob("", "", "")
+	job.Config["workloadName"] = "api"
+	if err := b.runDeployJob(context.Background(), &fakeReporter{}, job, &run.Run{ID: "run-1"}, nil, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if _, ok := dep.gotCfg["manifestYaml"]; ok {
+		t.Errorf("只换镜像那条腿不该带清单正文:%+v", dep.gotCfg)
+	}
+	if _, ok := dep.gotCfg["manifestFile"]; ok {
+		t.Errorf("不该读仓库:%+v", dep.gotCfg)
+	}
+	if dep.gotCfg["workloadName"] != "api" {
+		t.Errorf("负载名该照旧透传:%+v", dep.gotCfg)
+	}
+}
+
+// 纯部署阶段(整条流水线只有发集群这一步)也必须拿得到项目 —— 「清单取自仓库文件」要先知道
+// 仓库在哪。真机冒烟就是这样炸的:部署阶段没有构建节点,项目压根没解析,节点报「项目未绑定仓库」,
+// 而项目明明绑了。这条用例就是把那句假话钉死。
+func TestStageExecutorDeployOnlyStageResolvesProject(t *testing.T) {
+	files := &fakeRepoFiles{body: "apiVersion: apps/v1\nkind: Deployment\nspec:\n  image: {{IMAGE}}\n"}
+	dep := &stubStageDeployer{}
+	b := newDAGTestBuilder(nil, nil)
+	b.deployer = dep
+	b.repoFiles = files
+	stage := pipeline.Stage{ID: "s2", Name: "发布", Kind: pipeline.KindDeploy, Jobs: []pipeline.Job{{
+		ID: "k1", Name: "发到集群", Type: pipeline.JobTypeDeployK8s,
+		Config: map[string]any{
+			"clusterId": "clu-1", "manifestSource": "repo",
+			"manifestFile": "deploy/k8s/api.yaml", "artifactType": "image",
+		},
+	}}}
+	r := &run.Run{ID: "run-1", ProjectID: "p1", Trigger: run.Trigger{Branch: "master", Commit: "abcdef1234567890"}}
+	rep := &fakeReporter{}
+	if err := NewStageExecutor(b, nil)(context.Background(), r, stage, rep); err != nil {
+		t.Fatalf("阶段应成功,got %v\n日志:%v", err, rep.logs)
+	}
+	if files.calls != 1 {
+		t.Fatalf("部署节点该读一次仓库文件,calls=%d", files.calls)
+	}
+	if files.gotRepo != "https://example.com/r.git" {
+		t.Errorf("读的是项目绑的那个仓库,got=%q", files.gotRepo)
+	}
+	if !strings.Contains(dep.gotCfg["manifestYaml"], "kind: Deployment") {
+		t.Errorf("交下去的该是仓库里那份正文:%+v", dep.gotCfg)
 	}
 }

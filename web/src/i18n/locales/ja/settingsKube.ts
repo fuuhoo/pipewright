@@ -1,0 +1,55 @@
+export default {
+  title: "Kubernetes クラスター",
+  desc: "リリース先として Kubernetes クラスターを登録します。内容は kubeconfig 認証情報と既定の namespace のみ。API server のアドレスは保存せず、一覧のたびに認証情報から読み取るため、情報の食い違いが発生しません。プラットフォームはクラスター API に直接接続し、対象ホストの SSH は使いません。",
+  addCluster: "クラスターを登録",
+  editCluster: "クラスターを編集",
+  addDisabledHint: "先に認証情報ログに kubeconfig を追加してください",
+  noManageGroupHint:
+    "管理者でも管理可能なグループの所有者でもないため、クラスターを登録できません",
+  noCredentialHint:
+    "kubeconfig 認証情報がまだありません。「認証情報ログ」に種類 kubeconfig を追加してからクラスターを登録してください。",
+  retry: "再試行",
+  registeredClusters: "登録済みクラスター",
+  clusterCount: "{n} 件",
+  emptyList: "まだクラスターが登録されていません。",
+  credentialDeleted: "(認証情報は削除済み)",
+  endpointUnknown: "アドレス不明(kubeconfig に server フィールドがありません)",
+  testOk: "接続成功 · {ms}ms",
+  testing: "テスト中…",
+  testConnection: "接続テスト",
+  edit: "編集",
+  delete: "削除",
+  deleteCluster: "クラスターを削除",
+  deleteConfirm:
+    "クラスター {name} を削除しますか?登録情報のみを削除し、認証情報もクラスター内のワークロードも変更されません。",
+  confirmDelete: "削除する",
+  deleting: "削除中…",
+  cancel: "キャンセル",
+  save: "保存",
+  saving: "保存中…",
+  fieldName: "クラスター名",
+  fieldCredential: "kubeconfig 認証情報",
+  selectCredential: "kubeconfig 認証情報を選択",
+  credentialHint:
+    "1 つのクラスターに複数の認証情報(別々の ServiceAccount)を置けます。登録時に 1 つを選びます。変更するとリリース時の権限も変わります。",
+  fieldNamespace: "既定の namespace",
+  namespaceHint:
+    "K8s リリースタスクで namespace 未指定の場合の補完値です。空なら既定なし。小文字英数字と - のみ、先頭末尾は英数字、最大 63 文字。",
+  errNameRequired: "クラスター名を入力してください",
+  errCredentialRequired: "kubeconfig 認証情報を選択してください",
+  errGroupRequired: "所属グループを選択してください",
+  errNamespace:
+    "namespace が不正です:小文字英数字と - のみ、先頭末尾は英数字(最大 63 文字)",
+  errLoadConn:
+    "サーバーに接続できません。ネットワークを確認して再試行してください",
+  errLoadStatus: "クラスター一覧の取得に失敗しました (HTTP {status})",
+  errLoadRetry: "クラスター一覧の取得に失敗しました。再試行してください",
+  errConnRetry:
+    "サーバーに接続できません。ネットワークを確認して再試行してください",
+  errSaveStatus: "クラスターの保存に失敗しました (HTTP {status})",
+  errSaveRetry: "保存に失敗しました。再試行してください",
+  errDeleteStatus: "クラスターの削除に失敗しました (HTTP {status})",
+  errDeleteRetry: "削除に失敗しました。再試行してください",
+  errTestStatus: "接続テストに失敗しました (HTTP {status})",
+  errTestRetry: "接続テストに失敗しました。再試行してください",
+};

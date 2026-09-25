@@ -7,6 +7,8 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -21,6 +23,12 @@ var ErrBuildTaskInvalid = errors.New("pipeline: build task configuration invalid
 
 // ErrArtifactSourceInvalid 是「部署节点的产物来源任务引用不成立」的哨兵错误(HTTP 映射 422)。
 var ErrArtifactSourceInvalid = errors.New("pipeline: deploy artifact source job invalid")
+
+// ErrDockerDeployInvalid 是「docker 部署节点的方式/参数不成立」的哨兵错误(HTTP 映射 422)。
+var ErrDockerDeployInvalid = errors.New("pipeline: docker deploy configuration invalid")
+
+// ErrK8sDeployInvalid 是「K8s 发布节点的参数不成立」的哨兵错误(HTTP 映射 422)。
+var ErrK8sDeployInvalid = errors.New("pipeline: k8s release configuration invalid")
 
 // 合并后的「构建」任务与其相关键。
 const (
@@ -74,6 +82,73 @@ func PushImageEnabled(cfg map[string]any) bool {
 	}
 }
 
+// docker 部署节点(deploy_docker)的 job.Config 键(值与 deploy.CfgKey* 逐字一致,同上)。
+const (
+	// JobTypeDeployDocker 是「docker 部署」节点:在目标机用 docker 起,方式为单容器或 compose。
+	JobTypeDeployDocker = "deploy_docker"
+	// ConfigKeyDockerMode 是 docker 部署的方式:run(单容器)| compose(整份 YAML)。
+	// 两种方式在目标机上做的事完全不同(run 是停旧起新换镜像,compose 是交 CLI 编排),
+	// 留空等于让执行侧猜这份配置该走哪条路 —— 与构建任务的产物档位同一要求。
+	ConfigKeyDockerMode = "dockerMode"
+	// ConfigKeyStackName 是 compose 的项目名(-p 值,也是 /opt/pipewright/stacks/<name> 目录名)。
+	ConfigKeyStackName = "stackName"
+	// ConfigKeyComposeYaml 是 compose 正文(原样上传为目标机上的 docker-compose.yml)。
+	ConfigKeyComposeYaml = "composeYaml"
+	// DockerModeRun / DockerModeCompose 是 docker 部署的两种方式。
+	DockerModeRun     = "run"
+	DockerModeCompose = "compose"
+	// ConfigKeyComposeSource 是 compose 正文的来源:粘贴(paste)| 引用仓库文件(repo)。
+	// 空 = paste,与引入该键之前的存量节点行为逐字一致(存量节点只可能有 composeYaml)。
+	ConfigKeyComposeSource = "composeSource"
+	// ConfigKeyComposeFile 是 composeSource=repo 时要读的仓库相对路径(如 deploy/docker-compose.yml)。
+	ConfigKeyComposeFile = "composeFile"
+	// ComposeSourcePaste / ComposeSourceRepo 是 composeSource 的取值。
+	ComposeSourcePaste = "paste"
+	ComposeSourceRepo  = "repo"
+)
+
+// K8s 发布节点(deploy_k8s)的 job.Config 键(值与 deploy.CfgKey* 逐字一致,同上)。
+const (
+	// JobTypeDeployK8s 是「K8s 发布」节点:平台直连集群 API server 换镜像,不经任何跳板机。
+	JobTypeDeployK8s = "deploy_k8s"
+	// ConfigKeyClusterID 是目标集群(kube_clusters.id)。与 serverId 互斥:一个节点发机器或发集群。
+	ConfigKeyClusterID = "clusterId"
+	// ConfigKeyNamespace 是目标负载所在命名空间。
+	ConfigKeyNamespace = "namespace"
+	// ConfigKeyWorkloadKind 是负载类型(Deployment | StatefulSet);留空按 Deployment。
+	ConfigKeyWorkloadKind = "workloadKind"
+	// ConfigKeyWorkloadName 是负载名(如 api)。
+	ConfigKeyWorkloadName = "workloadName"
+	// ConfigKeyK8sContainer 是 pod 规格里要换镜像的容器名;规格只有一个容器时可留空。
+	ConfigKeyK8sContainer = "containerName"
+	// ConfigKeyRolloutTimeout 是等滚动完成的秒数(空 = 领域默认 300)。
+	ConfigKeyRolloutTimeout = "rolloutTimeout"
+	// ConfigKeyAutoRollback 是滚动失败后是否回填上一镜像("false" 关,其余含空 = 开)。
+	ConfigKeyAutoRollback = "autoRollback"
+	// ConfigKeyManifestSource 是清单来源:none(只换镜像)| repo(读项目仓库里的文件)| paste(粘贴正文)。
+	// 留空 = none,与已有节点兼容(它们没这一格)。
+	ConfigKeyManifestSource = "manifestSource"
+	// ConfigKeyManifestFile 是 repo 来源时仓库根下的相对路径(与 composeFile 同一条路径规则)。
+	ConfigKeyManifestFile = "manifestFile"
+	// ConfigKeyManifestYaml 是 paste 来源时粘贴的清单正文(多文档用 --- 分隔,可含 {{IMAGE}} 占位符)。
+	ConfigKeyManifestYaml = "manifestYaml"
+)
+
+// ManifestSource* 是 manifestSource 的取值(与 composeSource 同一命名形状)。
+const (
+	ManifestSourceNone  = "none"
+	ManifestSourcePaste = "paste"
+	ManifestSourceRepo  = "repo"
+)
+
+// manifestMaxBytes 是粘贴清单正文的上限。清单比 compose 小得多(几十 KB 已是很重的部署),
+// 卡在这里而不是更高,是因为它最终要落 deploy_manifests.body(MySQL TEXT 的硬上限就是 64 KiB,
+// 超了会被**截断**而不报错 —— 半截清单被应用出去比保存期拒掉难查得多)。
+const manifestMaxBytes = 64 << 10
+
+// k8sWorkloadKinds 是可发布的负载类型(与 kube.workloadAPI 白名单同一清单)。
+var k8sWorkloadKinds = map[string]bool{"Deployment": true, "StatefulSet": true}
+
 // 部署节点健康探测的 job.Config 键(值与 deploy.CfgKeyHealth* 逐字一致:build 层原样透传,
 // 两侧键名不同就会静默失配 —— 探测形同没配)。
 const (
@@ -100,9 +175,12 @@ const (
 
 // deployJobTypes 是「把产物/命令发到目标机」的节点类型集合(唯一出处,执行侧与校验侧共用)。
 // deploy_frontend 是预填 nginx 重启命令的部署模板,与 deploy_ssh 同一条执行路径。
+// deploy_docker 交 docker 落地(单容器 or compose),仍算部署节点:健康探测与产物来源校验都适用于它。
 var deployJobTypes = map[string]bool{
 	"deploy_ssh":      true,
 	"deploy_frontend": true,
+	"deploy_docker":   true,
+	"deploy_k8s":      true,
 }
 
 // IsDeployJobType 报告 job 类型是否按部署路径执行(目标机 SSH 发布 + 可选健康门控)。
@@ -171,6 +249,186 @@ func validateBuildTask(stageName, jobName, jobType string, cfg map[string]any) e
 	return issuef(ErrBuildTaskInvalid, "阶段「%s」任务「%s」要先选产物档位(镜像 / 产物)", stageName, jobName)
 }
 
+// reStackName 与 httpapi 侧的 reDockerTgt 逐字一致:compose 项目名既是 `compose -p` 的参数,
+// 也是目标机上 /opt/pipewright/stacks/<name> 的目录名 —— 首字符不许是 `-`(会被当选项)、
+// 不许含 `/`(路径穿越)。两处改了不同步,保存能过但部署会打出个进不去的目录。
+var reStackName = regexp.MustCompile(`^[\w][\w.-]*$`)
+
+// reK8sNamespace 是 k8s 的 DNS-label(Namespace 的合法形状),与 kube.validateNamespace、
+// 前端表单三处同一规则。保存期就拒掉是为了不放过一个「拼进 URL 路径」的野值(.. 之类)。
+var reK8sNamespace = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// composeFileMaxLen 是仓库内 compose 路径的长度上限(路径不是内容,不该有额度)。
+const composeFileMaxLen = 512
+
+// RepoYAMLPathOK 报告这是个能拿去仓库里读的相对路径:必须是 .yml/.yaml、不能是绝对路径
+// 或含 .. 段。compose 文件与 k8s 清单同用这一条(两者都只是"仓库里的一个 YAML")。
+// 执行侧(repocache.ReadFile)自己还有一道同形状的门 —— 两处都判是因为它们各自
+// 都会被独立调用:pipeline 判它是「用户填错了」(保存期 422),repocache 判的是「别拿我当
+// 任意文件读取器」(边界防护)。
+func RepoYAMLPathOK(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" || len(p) > composeFileMaxLen {
+		return false
+	}
+	if !strings.HasSuffix(p, ".yml") && !strings.HasSuffix(p, ".yaml") {
+		return false
+	}
+	if strings.HasPrefix(p, "/") || strings.Contains(p, `\`) {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+const (
+	// stackNameMaxLen 是 compose 项目名上限(与 httpapi 部署端点同)。
+	stackNameMaxLen = 128
+	// composeMaxBytes 是 compose 正文上限(与 httpapi 端点、前端 composePaste.ts 同一额度)。
+	composeMaxBytes = 512 << 10
+)
+
+// validateDeployDocker 要求 docker 部署节点说清用哪种方式,且 compose 方式下项目名与正文配齐:
+// 半截配置跑到目标机上就是「上传空文件再 up -d」,报错还不指向真正原因。
+func validateDeployDocker(stageName, jobName, jobType string, cfg map[string]any) error {
+	if strings.TrimSpace(jobType) != JobTypeDeployDocker {
+		return nil
+	}
+	where := fmt.Sprintf("阶段「%s」任务「%s」", stageName, jobName)
+	switch mode := strings.TrimSpace(ConfigString(cfg, ConfigKeyDockerMode)); mode {
+	case "":
+		return issuef(ErrDockerDeployInvalid, "%s要先选 docker 部署方式(单容器 / Compose)", where)
+	case DockerModeRun:
+		// 单容器 = 把上游构建出的镜像停旧起新,产物来源由 validateArtifactSources 管。
+		return nil
+	case DockerModeCompose:
+		name := strings.TrimSpace(ConfigString(cfg, ConfigKeyStackName))
+		switch {
+		case name == "":
+			return issuef(ErrDockerDeployInvalid, "%s:Compose 部署未填项目名", where)
+		case len(name) > stackNameMaxLen:
+			return issuef(ErrDockerDeployInvalid, "%s:Compose 项目名超过 %d 字符", where, stackNameMaxLen)
+		case !reStackName.MatchString(name):
+			return issuef(ErrDockerDeployInvalid,
+				"%s:Compose 项目名 %q 非法(仅字母数字与 . _ -,不以 - 开头,不含 /)", where, name)
+		}
+		yaml := ConfigString(cfg, ConfigKeyComposeYaml)
+		file := ConfigString(cfg, ConfigKeyComposeFile)
+		// 来源只认 composeSource 一项,另一路的残留值一律忽略(与 dockerMode 切档的既有语义一致:
+		// 编辑器里换来源会藏掉另一路的输入框,但配置里的旧值不该反过来卡住保存)。
+		switch src := strings.TrimSpace(ConfigString(cfg, ConfigKeyComposeSource)); src {
+		case "", ComposeSourcePaste:
+			if strings.TrimSpace(yaml) == "" {
+				return issuef(ErrDockerDeployInvalid, "%s:Compose 部署没有正文(粘贴 docker-compose.yml 内容,或改选仓库文件)", where)
+			}
+			if len(yaml) > composeMaxBytes {
+				return issuef(ErrDockerDeployInvalid, "%s:Compose 正文超过 %d KiB 上限", where, composeMaxBytes>>10)
+			}
+		case ComposeSourceRepo:
+			// 引用仓库文件时正文由执行侧现读(见 build 的 repoFileReader),这里只判路径形状 ——
+			// 判不出内容是否存在(那要碰网络),但路径写错的概率远高于分支被 force-push。
+			if !RepoYAMLPathOK(file) {
+				return issuef(ErrDockerDeployInvalid,
+					"%s:compose 文件路径 %q 非法(仓库根下的相对路径,以 .yml 或 .yaml 结尾,不含 .. 与绝对路径)", where, file)
+			}
+		default:
+			return issuef(ErrDockerDeployInvalid, "%s:compose 正文来源 %q 非法(仅支持 paste / repo)", where, src)
+		}
+		return nil
+	default:
+		return issuef(ErrDockerDeployInvalid, "%s:docker 部署方式 %q 非法(仅支持 run / compose)", where, mode)
+	}
+}
+
+// validateDeployK8s 要求集群发布节点把「发到哪」说全,并保证同一件事只有一处说了算:
+//   - 不带清单(manifestSource 空/none):寻址靠 clusterId + workloadName(+ 可选 namespace / kind),
+//     执行期只换镜像;
+//   - 带清单(repo / paste):命名空间与负载都从清单读,所以 namespace 这格必须空、workloadName 可选。
+//
+// 半截配置跑到执行时就是「连上一个不像样的地址」或「把清单发到另一个命名空间」,
+// 报错信息指向不到真正漏掉的那个字段 —— 所以这些互斥/必填关系在保存期就判掉。
+func validateDeployK8s(stageName, jobName, jobType string, cfg map[string]any) error {
+	if strings.TrimSpace(jobType) != JobTypeDeployK8s {
+		return nil
+	}
+	where := fmt.Sprintf("阶段「%s」任务「%s」", stageName, jobName)
+	if ConfigString(cfg, "serverId") != "" {
+		return issuef(ErrK8sDeployInvalid, "%s:同时配了目标服务器与集群 —— 一个节点只能发一种落点", where)
+	}
+	if ConfigString(cfg, ConfigKeyClusterID) == "" {
+		return issuef(ErrK8sDeployInvalid, "%s:K8s 发布未选目标集群", where)
+	}
+	// 清单来源决定「发到哪」由谁说了算:无清单时是这几个配置格,有清单时是清单本身。
+	src := strings.TrimSpace(ConfigString(cfg, ConfigKeyManifestSource))
+	if src == "" {
+		src = ManifestSourceNone // 老节点没这一格
+	}
+	switch src {
+	case ManifestSourceNone:
+	case ManifestSourcePaste:
+		body := ConfigString(cfg, ConfigKeyManifestYaml)
+		switch {
+		case strings.TrimSpace(body) == "":
+			return issuef(ErrK8sDeployInvalid, "%s:选择粘贴清单却没有正文", where)
+		case len(body) > manifestMaxBytes:
+			return issuef(ErrK8sDeployInvalid, "%s:清单正文超过 %d KiB 上限", where, manifestMaxBytes>>10)
+		}
+		// 正文内容(kind 白名单、Secret、占位符)不在这里判:它带 {{IMAGE}} 之类的占位符时
+		// 还不是可应用的清单,要到执行期渲染完才判得准(kube.ParseManifests)。
+	case ManifestSourceRepo:
+		// 引用仓库文件时同 compose:只判路径形状,文件在不在要碰网络,留给执行期。
+		if !RepoYAMLPathOK(ConfigString(cfg, ConfigKeyManifestFile)) {
+			return issuef(ErrK8sDeployInvalid,
+				"%s:清单路径 %q 非法(仓库根下的相对路径,以 .yml 或 .yaml 结尾,不含 .. 与绝对路径)", where,
+				ConfigString(cfg, ConfigKeyManifestFile))
+		}
+	default:
+		return issuef(ErrK8sDeployInvalid, "%s:清单来源 %q 非法(仅支持 none / repo / paste)", where, src)
+	}
+	manifestMode := src != ManifestSourceNone
+
+	// 命名空间:无清单时这格是生效值(留空 = 用集群登记的默认);一旦填了必须是合法 DNS-label,
+	// 它会原样拼进 API server 的 URL 路径。有清单时则以清单的 metadata.namespace 为准,
+	// 所以这格**必须空着** —— 两处各填一个值就必有一个是假的,不能做成「填了但被忽略」。
+	if ns := ConfigString(cfg, ConfigKeyNamespace); manifestMode {
+		if ns != "" {
+			return issuef(ErrK8sDeployInvalid,
+				"%s:用清单发布时命名空间以清单里的 metadata.namespace 为准(清单没写则用集群登记的默认命名空间),请清空「命名空间」这一格", where)
+		}
+	} else if ns != "" && (len(ns) > 63 || !reK8sNamespace.MatchString(ns)) {
+		return issuef(ErrK8sDeployInvalid, "%s:命名空间 %q 非法(只允许小写字母、数字与 -,首尾须为字母或数字,最长 63)", where, ns)
+	}
+	// 负载名:无清单时必填(它是寻址的唯一依据)。有清单时可留空 = 清单里那个唯一负载;
+	// 有多份负载时执行侧会要求填上以指明门控哪一个滚动。
+	if !manifestMode && ConfigString(cfg, ConfigKeyWorkloadName) == "" {
+		return issuef(ErrK8sDeployInvalid, "%s:K8s 发布未填负载名(如 api)", where)
+	}
+	if kind := ConfigString(cfg, ConfigKeyWorkloadKind); kind != "" && !k8sWorkloadKinds[kind] {
+		return issuef(ErrK8sDeployInvalid, "%s:负载类型 %q 不支持(仅 Deployment / StatefulSet)", where, kind)
+	}
+	if v := ConfigString(cfg, ConfigKeyRolloutTimeout); v != "" {
+		secs, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || secs < 1 || secs > rolloutTimeoutMaxSecs {
+			return issuef(ErrK8sDeployInvalid, "%s:等待滚动秒数 %q 非法(1..%d 的整数)", where, v, rolloutTimeoutMaxSecs)
+		}
+	}
+	if v := ConfigString(cfg, ConfigKeyAutoRollback); v != "" && v != "true" && v != "false" {
+		return issuef(ErrK8sDeployInvalid, "%s:autoRollback 只接受 true / false,收到 %q", where, v)
+	}
+	// 滚动由集群控制器做:选 blue_green / canary 不会有任何效果,那就等于向用户假承诺。
+	if st := ConfigString(cfg, "strategy"); st != "" && st != "rolling" {
+		return issuef(ErrK8sDeployInvalid, "%s:K8s 发布的滚动策略由集群控制器决定,不支持策略 %q(留空或 rolling)", where, st)
+	}
+	return nil
+}
+
+// rolloutTimeoutMaxSecs 与 deploy.maxRolloutTimeout 同一额度(30 分钟)。
+const rolloutTimeoutMaxSecs = 1800
+
 // nonProducingJobTypes 是本身不产出可部署产物的节点类型(与前端 artifactSources.ts 同一清单):
 // 它们的产物不会带 sourceJobId,选作「产物来源」必然在运行时落空,保存时就拒绝。
 var nonProducingJobTypes = map[string]bool{
@@ -179,6 +437,8 @@ var nonProducingJobTypes = map[string]bool{
 	"notify":          true,
 	"deploy_ssh":      true,
 	"deploy_frontend": true,
+	"deploy_docker":   true,
+	"deploy_k8s":      true,
 }
 
 // producesArtifact 报告该类型任务是否可能产出可部署产物。

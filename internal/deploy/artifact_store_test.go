@@ -49,7 +49,7 @@ func TestDeployStoredJarUploadsRealBytes(t *testing.T) {
 	base := "/srv/app-" + uuid.NewString()[:6]
 	res, err := svc.Deploy(context.Background(), DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: []string{srv.ID},
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
@@ -57,14 +57,13 @@ func TestDeployStoredJarUploadsRealBytes(t *testing.T) {
 	if res[0].Status != run.TargetSuccess {
 		t.Fatalf("status = %s (msg %q), want success", res[0].Status, res[0].Message)
 	}
-	// 目标机发布目录里应被 Upload 了**真 jar 字节**(非 reference 串占位)。
-	wantPath := base + "/releases/" + runID + "/app.jar"
-	got, ok := tgt.uploads[wantPath]
-	if !ok {
-		t.Fatalf("未在 %s 上传产物;uploads=%v", wantPath, keysOf(tgt.uploads))
-	}
+	// 直铺:真 jar 字节先落到部署目录内的临时名,再 mv 到位(无 releases/<runId> 层)。
+	tmp, got := stagingUpload(t, tgt, base)
 	if !bytes.Equal(got, jarBytes) {
 		t.Fatalf("上传的不是真 jar 字节")
+	}
+	if !hasCmd(tgt.calls, "mv", "-f", tmp, base+"/app.jar") {
+		t.Fatalf("单文件产物应原子改名到 %s/app.jar;calls=%v", base, tgt.calls)
 	}
 	// 且绝不应再走旧的「base64 写 reference 串」占位路径。
 	for _, c := range tgt.calls {
@@ -72,6 +71,26 @@ func TestDeployStoredJarUploadsRealBytes(t *testing.T) {
 			t.Fatalf("制品库产物不应再用 base64 占位写入:%v", c)
 		}
 	}
+}
+
+// stagingUpload 取部署目录内那次临时名上传,返回 (临时路径, 字节)。恰好一条,否则判失败。
+func stagingUpload(t *testing.T, tgt *stubTarget, base string) (string, []byte) {
+	t.Helper()
+	var tmp string
+	var got []byte
+	for p, b := range tgt.uploads {
+		if !strings.HasPrefix(p, base+"/.pw-staging-") {
+			continue
+		}
+		if tmp != "" {
+			t.Fatalf("部署目录 %s 内有多条临时名上传:%s 与 %s", base, tmp, p)
+		}
+		tmp, got = p, b
+	}
+	if tmp == "" {
+		t.Fatalf("未在 %s 下找到 .pw-staging-* 上传;uploads=%v", base, keysOf(tgt.uploads))
+	}
+	return tmp, got
 }
 
 // 制品库支撑的 dist 部署:上传 tar.gz 并远端解包(命令含 tar -xzf)。
@@ -90,7 +109,7 @@ func TestDeployStoredDistUploadsAndUntars(t *testing.T) {
 	base := "/srv/web-" + uuid.NewString()[:6]
 	res, err := svc.Deploy(context.Background(), DeployInput{
 		RunID: runID, ArtifactID: artID, ServerIDs: []string{srv.ID},
-		Config: map[string]string{"releaseBase": base},
+		Config: map[string]string{"deployPath": base},
 	})
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
@@ -98,20 +117,20 @@ func TestDeployStoredDistUploadsAndUntars(t *testing.T) {
 	if res[0].Status != run.TargetSuccess {
 		t.Fatalf("status = %s (msg %q), want success", res[0].Status, res[0].Message)
 	}
-	// 应上传了 tar.gz。
-	tarPath := base + "/releases/" + runID + "/.pw-artifact.tar.gz"
-	if _, ok := tgt.uploads[tarPath]; !ok {
-		t.Fatalf("未上传 dist tar.gz 到 %s", tarPath)
-	}
-	// 远端应解包(命令序列含 tar -xzf)。
+	// 直铺:临时包上传到部署目录本身(无 releases/<runId> 层),就地解包后删包。
+	tarPath, _ := stagingUpload(t, tgt, base)
+	// 远端应解包到部署目录(命令序列含 tar -xzf … -C <部署目录>),随后清掉临时包。
 	var sawUntar bool
 	for _, c := range tgt.calls {
-		if len(c) >= 2 && c[0] == "tar" && c[1] == "-xzf" {
+		if len(c) >= 5 && c[0] == "tar" && c[1] == "-xzf" && c[2] == tarPath && c[3] == "-C" && c[4] == base {
 			sawUntar = true
 		}
 	}
 	if !sawUntar {
-		t.Fatalf("dist 部署应在远端 tar -xzf 解包;calls=%v", tgt.calls)
+		t.Fatalf("dist 部署应在远端就地 tar -xzf … -C %s 解包;calls=%v", base, tgt.calls)
+	}
+	if !hasCmd(tgt.calls, "rm", "-f", tarPath) {
+		t.Fatalf("解包后应删掉临时包 %s;calls=%v", tarPath, tgt.calls)
 	}
 }
 

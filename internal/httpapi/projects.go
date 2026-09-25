@@ -71,6 +71,10 @@ func writeProjectError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_project", "项目名称不能为空")
 	case errors.Is(err, project.ErrEmptyRepoURL):
 		writeError(w, http.StatusBadRequest, "invalid_project", "仓库地址不能为空")
+	case errors.Is(err, project.ErrCredentialWithoutRepo):
+		writeError(w, http.StatusBadRequest, "invalid_project", "未填仓库地址,无需选择仓库凭据")
+	case errors.Is(err, project.ErrRepoRequired):
+		writeError(w, http.StatusBadRequest, "invalid_project", "该项目未绑定仓库,此项设置需要仓库")
 	case errors.Is(err, project.ErrEmptyCredentialID):
 		writeError(w, http.StatusBadRequest, "invalid_project", "请选择仓库凭据")
 	default:
@@ -209,6 +213,7 @@ func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			Name            *string `json:"name"`
 			DefaultBranch   *string `json:"defaultBranch"`
 			CredentialID    *string `json:"credentialId"`
+			RepoURL         *string `json:"repoUrl"`
 			PacEnabled      *bool   `json:"pacEnabled"`
 			PRStatusEnabled *bool   `json:"prStatusEnabled"`
 			GroupID         *string `json:"groupId"`
@@ -248,6 +253,7 @@ func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			Name:            req.Name,
 			DefaultBranch:   req.DefaultBranch,
 			CredentialID:    req.CredentialID,
+			RepoURL:         req.RepoURL,
 			PacEnabled:      req.PacEnabled,
 			PRStatusEnabled: req.PRStatusEnabled,
 			GroupID:         req.GroupID,

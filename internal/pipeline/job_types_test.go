@@ -279,3 +279,114 @@ func TestArtifactSourceOnlyAppliesToDeployJobs(t *testing.T) {
 		t.Fatalf("脚本节点不该被产物来源校验拦下,got %v", err)
 	}
 }
+
+// docker 部署节点必须说清用哪种方式:半截的 compose 配置跑到目标机上就是
+// 「mkdir + 上传空文件 + up -d」,失败原因还指向别处。项目名的非法字符会直接成为
+// 受管目录名,所以同样在保存期挡下(运行时那层是兜底,不是第一道)。
+func TestNormalizeSpecValidatesDockerDeploy(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     map[string]any
+		wantErr bool
+	}{
+		{"方式留空", map[string]any{}, true},
+		{"单容器方式", map[string]any{ConfigKeyDockerMode: DockerModeRun}, false},
+		{"方式非法", map[string]any{ConfigKeyDockerMode: "swarm"}, true},
+		{"compose 缺项目名", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyComposeYaml: "services: {}"}, true},
+		{"compose 项目名含斜杠", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "a/b", ConfigKeyComposeYaml: "services: {}"}, true},
+		{"compose 项目名以连字符开头", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "-app", ConfigKeyComposeYaml: "services: {}"}, true},
+		{"compose 项目名超长", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: strings.Repeat("a", 129), ConfigKeyComposeYaml: "services: {}"}, true},
+		{"compose 正文留空", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeYaml: "   "}, true},
+		{"compose 正文超限", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeYaml: strings.Repeat("x", composeMaxBytes+1)}, true},
+		{"compose 齐备", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop-web", ConfigKeyComposeYaml: "services:\n  web:\n    image: nginx\n"}, false},
+		// 正文来源 = 引用仓库文件:没有正文才是合法的(正文在运行时现读),路径的形状才是本层能判的。
+		{"compose 引用仓库文件", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: ComposeSourceRepo, ConfigKeyComposeFile: "deploy/docker-compose.yml"}, false},
+		{"compose 引用仓库文件缺路径", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: ComposeSourceRepo}, true},
+		{"compose 仓库路径越界", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: ComposeSourceRepo, ConfigKeyComposeFile: "../secrets.yml"}, true},
+		{"compose 仓库路径非 yaml", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: ComposeSourceRepo, ConfigKeyComposeFile: "deploy/Dockerfile"}, true},
+		{"compose 仓库路径是绝对路径", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: ComposeSourceRepo, ConfigKeyComposeFile: "/etc/docker-compose.yml"}, true},
+		{"compose 正文来源非法", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: "url", ConfigKeyComposeYaml: "services: {}"}, true},
+		// 换来源时另一路的残留值只是藏起来的旧输入,不该反过来卡住保存(执行侧按来源取用)。
+		{"compose 换到仓库文件仍留着粘贴正文", map[string]any{ConfigKeyDockerMode: DockerModeCompose, ConfigKeyStackName: "shop", ConfigKeyComposeSource: ComposeSourceRepo, ConfigKeyComposeFile: "docker-compose.yml", ConfigKeyComposeYaml: "services: {}"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "Docker 部署", Type: JobTypeDeployDocker, Config: tc.cfg}))
+			if tc.wantErr {
+				if !errors.Is(err, ErrDockerDeployInvalid) {
+					t.Fatalf("err = %v, want wraps ErrDockerDeployInvalid", err)
+				}
+				// 422 直接回显该消息:哨兵的英文前缀不能混进去。
+				if strings.Contains(err.Error(), "pipeline:") {
+					t.Errorf("报错不应含哨兵前缀,got %q", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
+// K8s 发布节点分两条路:不带清单=只换镜像(寻址全靠配置格),带清单=清单说话。
+// 本测试盯的就是「同一件事只有一处说了算」——尤其是命名空间:清单模式下再填一格,
+// 生效的只会是清单里那个,留着它等于给用户一个假的控制项。
+func TestNormalizeSpecValidatesK8sDeploy(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     map[string]any
+		wantErr bool
+	}{
+		{"未选集群", map[string]any{ConfigKeyWorkloadName: "api"}, true},
+		{"只换镜像齐备", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api"}, false},
+		{"同时配服务器与集群", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", "serverId": "s1"}, true},
+		{"只换镜像缺负载名", map[string]any{ConfigKeyClusterID: "c1"}, true},
+		{"命名空间非法(大写)", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyNamespace: "Shop"}, true},
+		{"命名空间路径穿越", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyNamespace: "../../admin"}, true},
+		{"命名空间合法", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyNamespace: "shop-prod"}, false},
+		{"负载类型不支持", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyWorkloadKind: "DaemonSet"}, true},
+		{"等待滚动秒数为 0", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyRolloutTimeout: "0"}, true},
+		{"autoRollback 非布尔", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyAutoRollback: "yes"}, true},
+		{"策略非 rolling", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", "strategy": "canary"}, true},
+		// 清单来源:none / repo / paste 三选一,写别的等于没配。
+		{"清单来源非法", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: "url", ConfigKeyManifestYaml: "kind: Deployment"}, true},
+		{"粘贴清单没有正文", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourcePaste, ConfigKeyManifestYaml: "   "}, true},
+		{"粘贴清单超限", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourcePaste, ConfigKeyManifestYaml: strings.Repeat("x", manifestMaxBytes+1)}, true},
+		{"粘贴清单齐备(负载名可留空)", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourcePaste, ConfigKeyManifestYaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n"}, false},
+		// 这条是「命名空间以 yaml」的落地:清单模式再多填一格就是两处各说一套。
+		{"清单模式下还填了命名空间", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyNamespace: "shop", ConfigKeyManifestSource: ManifestSourcePaste, ConfigKeyManifestYaml: "kind: Deployment"}, true},
+		{"清单模式回到 none 后负载名仍必填", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceNone}, true},
+		{"清单模式回到 none 且命名空间可填", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceNone, ConfigKeyWorkloadName: "api", ConfigKeyNamespace: "shop"}, false},
+		{"仓库清单缺路径", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo}, true},
+		{"仓库清单路径越界", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo, ConfigKeyManifestFile: "../k8s.yml"}, true},
+		{"仓库清单路径非 yaml", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo, ConfigKeyManifestFile: "deploy/Dockerfile"}, true},
+		{"仓库清单齐备", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo, ConfigKeyManifestFile: "deploy/k8s/deployment.yaml"}, false},
+		// 换来源时另一路的残留值只是藏起来的旧输入,不该卡住保存(执行侧按来源取用)。
+		{"换到仓库文件仍留着粘贴正文", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo, ConfigKeyManifestFile: "k8s.yml", ConfigKeyManifestYaml: "kind: Deployment"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "K8s 发布", Type: JobTypeDeployK8s, Config: tc.cfg}))
+			if tc.wantErr {
+				if !errors.Is(err, ErrK8sDeployInvalid) {
+					t.Fatalf("err = %v, want wraps ErrK8sDeployInvalid", err)
+				}
+				if strings.Contains(err.Error(), "pipeline:") {
+					t.Errorf("报错不应含哨兵前缀,got %q", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
+// 同名的键落在别的任务类型上不相干:deploy_ssh 不该被 docker 方式校验管。
+func TestDockerDeployValidationOnlyAppliesToItsJobType(t *testing.T) {
+	if _, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "SSH 部署", Type: "deploy_ssh", Config: map[string]any{ConfigKeyDockerMode: "compose"}})); err != nil {
+		t.Fatalf("deploy_ssh 不该被 docker 方式校验拦下,got %v", err)
+	}
+}

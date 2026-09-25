@@ -129,6 +129,24 @@ export default {
     dockerRunFailed: 'docker run 실패',
     createFailedStatus: '생성 실패 ({status})',
     createFailed: '생성 요청 실패',
+
+    // Compose 붙여넣기 모드(카드의 Stacks 탭과 같은 배포 API 사용)
+    modeAria: '생성 방식 선택',
+    modeRun: '단일 컨테이너',
+    modeCompose: 'Compose(YAML 붙여넣기)',
+    composeProject: '프로젝트 이름',
+    composeFile: 'docker-compose.yml',
+    composeFileHint: '파일 전체 붙여넣기, 서비스 수 제한 없음',
+    composeNameIllegal: '프로젝트 이름은 영문·숫자·. _ - 만 가능, - 로 시작하거나 / 포함 불가',
+    composeNameTooLong: '프로젝트 이름이 너무 깁니다(최대 128자)',
+    composeTooLarge: 'compose 내용이 512 KiB 제한을 초과했습니다',
+    composeNoServices: 'services 아래 서비스 이름을 찾지 못했습니다. 들여쓰기를 확인하세요. 최종 판단은 docker compose',
+    composeServices: '{n}개 서비스: {names} · 배포 후 카드의 Stacks에서 관리',
+    composeDeploy: '배포 및 시작',
+    composeDeploying: '배포 중…(이미지를 받을 수 있습니다)',
+    composeDeployed: 'Compose 배포 완료',
+    composeDeployFailed: 'Compose 배포 실패',
+    composeDeployStatus: '배포 실패({status})',
   },
 
   // SystemPruneModal.vue
