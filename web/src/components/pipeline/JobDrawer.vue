@@ -20,8 +20,10 @@ import {
   effectiveJobType,
   normalizeArtifactTier,
   normalizeDeployArtifactPref,
+  normalizeDeployStrategy,
   usesBuildTierField,
   usesDeployPrefField,
+  usesDeployStrategyField,
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
@@ -118,17 +120,24 @@ function splitOnType(type: string, config: Record<string, string>, repickView = 
   if (typed.artifactType && usesDeployPrefField(type)) {
     typed.artifactType = normalizeDeployArtifactPref(typed.artifactType)
   }
+  // 策略同理:recreate 后端从来没实现过(选它实际就是滚动),选项撤掉后存量值读进来归成滚动。
+  if (typed.strategy && usesDeployStrategyField(type)) {
+    typed.strategy = normalizeDeployStrategy(typed.strategy)
+  }
   // 旧配置收敛:有镜像/toolchain 但无 buildEnvId 时,按预置目录反查预填(仅内存,
   // 下次 flush 才落库)。查不到就留给 buildenv 控件显示「未匹配」告警项。
-  if (!typed.buildEnvId) {
-    const spec = getJobTypeSpec(type)
-    if (spec?.fields.some((f) => f.kind === 'buildenv')) {
-      const hit =
-        (config.image && presetByImage(config.image)) ||
-        ((config.toolchainLanguage || config.toolchainVersion) &&
-          presetByToolchain(config.toolchainLanguage ?? '', config.toolchainVersion ?? ''))
-      if (hit) typed.buildEnvId = hit.id
-    }
+  const typeSpec = getJobTypeSpec(type)
+  if (!typed.buildEnvId && typeSpec?.fields.some((f) => f.kind === 'buildenv')) {
+    const hit =
+      (config.image && presetByImage(config.image)) ||
+      ((config.toolchainLanguage || config.toolchainVersion) &&
+        presetByToolchain(config.toolchainLanguage ?? '', config.toolchainVersion ?? ''))
+    if (hit) typed.buildEnvId = hit.id
+  }
+  // 落点从「一台」并成「一批」:存量的 serverId 读进 serverIds,旧键在 droppedKeys 里,
+  // 下面的 flush 会把它从 config 抹掉。不迁的话老节点一打开就是「未选目标主机」。
+  if (!typed.serverIds && config.serverId && typeSpec?.fields.some((f) => f.kind === 'servers')) {
+    typed.serverIds = String(config.serverId).trim()
   }
   typedConfig.value = typed
   extraRows.value = extras.map(([k, v]) => ({ _key: ++_kvSeq, k, v }))
@@ -300,6 +309,29 @@ const staleCluster = computed(() => {
   if (!v) return ''
   return (props.clusters ?? []).some((c) => c.id === v) ? '' : v
 })
+
+// ─── 部署节点「目标主机」多选 ───────────────────────────────────────────────────
+// 落点是一批机器而不是一个下拉值:分批/蓝绿都是「多台之间怎么排」的编排,
+// 只选一台时它们不会改变任何行为 —— 所以这里必须能多选,且勾选顺序就是发布顺序。
+
+/** 已勾选的主机 ID(逗号分隔,保序去空,与后端 DeployServerIDs 同一读法)。 */
+function selectedServerIds(): string[] {
+  return (typedConfig.value.serverIds ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/** 勾了但当前不可见的主机(被删掉或归进了管不到的分组):照原样列出来让人手动去掉。
+ *  静默丢落点比显示一个失效项危险得多 —— 节点会悄悄发往更少的机器。 */
+function staleServerIds(): string[] {
+  const known = new Set((props.servers ?? []).map((s) => s.id))
+  return selectedServerIds().filter((id) => !known.has(id))
+}
+
+function toggleServer(id: string): void {
+  const cur = selectedServerIds()
+  const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+  typedConfig.value = { ...typedConfig.value, serverIds: next.join(',') }
+  flush()
+}
 
 // ─── 工作区路径提示 ───────────────────────────────────────────────────────────
 // 手写脚本最常踩空的一处:任务各自跑在新克隆的工作区里,容器里挂在 /workspace,
@@ -502,7 +534,14 @@ function onExtraBlur(row: KVRow): void {
 
 /** Build the full config object from typed form + advanced extras (typed wins on conflict). */
 function currentConfig(): Record<string, string> {
-  return { ...extrasToObject(extraRows.value), ...typedConfig.value }
+  const config = { ...extrasToObject(extraRows.value), ...typedConfig.value }
+  // 「看不见就不该存在」的格:整项收起时把旧值一并抹掉。这类格的值在当前档位下会**改变行为**
+  // (如 k8s 的命名空间:按清单发布时它是默认命名空间,而后端要求该档下它为空),
+  // 留着就是一颗界面上清不掉的雷 —— 保存只会吃到一个指向隐形字段的 422。
+  for (const f of spec.value?.fields ?? []) {
+    if (f.dropWhenHidden && f.when && !f.when(config)) delete config[f.key]
+  }
+  return config
 }
 
 function flush(): void {
@@ -782,19 +821,28 @@ async function confirmSave(): Promise<void> {
           </option>
         </select>
 
-        <!-- server picker -->
-        <select
-          v-else-if="field.kind === 'server'"
-          :value="fieldValue(field.key)"
-          class="drawer-select"
-          :aria-label="field.label"
-          @change="setField(field.key, ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">{{ t('pipelineJob.credUnselected') }}</option>
-          <option v-for="srv in (servers ?? [])" :key="srv.id" :value="srv.id">
-            {{ srv.name }} · {{ srv.host }}
-          </option>
-        </select>
+        <!-- 目标主机多选:勾选顺序 = 分批发布的先发顺序(单机时策略档根本没有意义,见字段的校验)。
+             不可见的主机(删除/换组)仍列出并可去掉 —— 藏掉就等于悄悄改小了落点。 -->
+        <div v-else-if="field.kind === 'servers'" class="profile-multi" :aria-label="field.label">
+          <label v-for="srv in (servers ?? [])" :key="srv.id" class="profile-option">
+            <input
+              type="checkbox"
+              :checked="selectedServerIds().includes(srv.id)"
+              :aria-label="srv.name"
+              @change="toggleServer(srv.id)"
+            />
+            <span class="profile-option-name">{{ srv.name }}</span>
+            <code class="profile-option-path">{{ srv.user }}@{{ srv.host }}:{{ srv.port }}</code>
+          </label>
+          <label v-for="id in staleServerIds()" :key="id" class="profile-option">
+            <input type="checkbox" checked :aria-label="id" @change="toggleServer(id)" />
+            <span class="profile-option-name">{{ id }}</span>
+            <span class="profile-option-path">{{ t('pipelineJob.serverStale') }}</span>
+          </label>
+          <p v-if="(servers ?? []).length === 0 && staleServerIds().length === 0" class="field-hint">
+            {{ t('pipelineJob.serverNone') }}
+          </p>
+        </div>
 
         <!-- cluster picker(K8s 发布):展示地址与默认命名空间,选完就知道发去哪。
              地址读自凭据,取不到时明确写「地址未知」而不是留空 —— 空白会被当成渲染坏了。 -->

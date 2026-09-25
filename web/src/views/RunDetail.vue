@@ -91,40 +91,57 @@ async function handleCancel(): Promise<void> {
 }
 
 // ─── approval gate (Story 8-4) ──────────────────────────────────────────────────
-// 运行阻塞在审批门(status=waiting_approval)时,展示待批阶段 + 批准/拒绝按钮。
+// 运行阻塞在人工门(status=waiting_approval)时,展示待批项 + 批准/拒绝按钮。
+// 一个运行可以同时挂着好几道门(并行阶段的审批门、部署节点的「首批后暂停」),所以按列表渲染:
+// 只挑第一条 pending 的话,第二道门的审批人在页面上根本不存在。
 
-const pendingApproval = ref<ApprovalRecord | null>(null)
-const approving = ref(false)
-const approvalError = ref('')
+const DEPLOY_GATE_PREFIX = 'deploy:'
+
+const pendingApprovals = ref<ApprovalRecord[]>([])
+const approvingId = ref('')
+const approvalError = ref<Record<string, string>>({})
+
+/** 这道门是不是部署节点的「首批后暂停」(门 ID 带 deploy: 前缀,与后端 approval.DeployGateID 同口径)。 */
+function isBatchGate(a: ApprovalRecord): boolean {
+  return a.stageId.startsWith(DEPLOY_GATE_PREFIX)
+}
+
+// 只在等待态展示待批卡:决定落库与 SSE 推来新状态之间有窗口,靠运行状态兜住,
+// 免得审批人刚点完还剩一张「仍在等待」的假卡。
+const visibleGates = computed(() =>
+  run.value?.status === 'waiting_approval' ? pendingApprovals.value : [],
+)
 
 async function loadApprovals(): Promise<void> {
   try {
     const { items } = await listApprovals(runId.value)
-    pendingApproval.value = items.find((a) => a.status === 'pending') ?? null
+    pendingApprovals.value = items.filter((a) => a.status === 'pending')
   } catch {
-    pendingApproval.value = null
+    pendingApprovals.value = []
   }
 }
 
-async function decideApproval(approve: boolean): Promise<void> {
-  const stage = pendingApproval.value
-  if (!stage || approving.value) return
-  approving.value = true
-  approvalError.value = ''
+async function decideApproval(stage: ApprovalRecord, approve: boolean): Promise<void> {
+  if (approvingId.value) return
+  approvingId.value = stage.stageId
+  approvalError.value = { ...approvalError.value, [stage.stageId]: '' }
   try {
     if (approve) await approveStage(runId.value, stage.stageId)
     else await rejectStage(runId.value, stage.stageId)
-    pendingApproval.value = null
+    pendingApprovals.value = pendingApprovals.value.filter((a) => a.stageId !== stage.stageId)
     // status flips via SSE (waiting_approval → running → terminal); refresh run + approvals.
     run.value = await getRun(runId.value)
     await loadApprovals()
   } catch (err) {
-    approvalError.value =
-      err instanceof HttpError
-        ? (err.apiError?.message ?? t('runDetail.actionFailed', { status: err.status }))
-        : t('runDetail.approvalRequestFailed')
+    approvalError.value = {
+      ...approvalError.value,
+      [stage.stageId]:
+        err instanceof HttpError
+          ? (err.apiError?.message ?? t('runDetail.actionFailed', { status: err.status }))
+          : t('runDetail.approvalRequestFailed'),
+    }
   } finally {
-    approving.value = false
+    approvingId.value = ''
   }
 }
 
@@ -456,7 +473,7 @@ function startSse(): void {
       run.value = { ...run.value, status }
       // Approval gate (8-4): load pending stage when blocked; clear once resumed.
       if (status === 'waiting_approval') void loadApprovals()
-      else pendingApproval.value = null
+      else pendingApprovals.value = []
       // Stop SSE on terminal state + 重拉完整 run:终态由后端补齐的 commit / 构建产物 / 时长
       // 经 SSE 只推了 status,需重新 GET 才能拿到 → 否则要手动刷新才出来。
       if (isTerminal(status)) {
@@ -707,7 +724,8 @@ function nodeClass(status: StepStatus): string {
 
         <!-- ── Approval gate (Story 8-4): waiting for manual approval ── -->
         <div
-          v-if="run.status === 'waiting_approval' && pendingApproval"
+          v-for="gate in visibleGates"
+          :key="gate.stageId"
           class="approval-gate"
           role="region"
           :aria-label="t('runDetail.approvalRegionAria')"
@@ -718,16 +736,24 @@ function nodeClass(status: StepStatus): string {
             </svg>
           </div>
           <div class="approval-gate-body">
-            <div class="approval-gate-title">{{ t('runDetail.approvalTitle', { stage: pendingApproval.stageName }) }}</div>
-            <div class="approval-gate-sub">{{ t('runDetail.approvalSub') }}</div>
-            <div v-if="approvalError" class="approval-gate-error" role="alert">{{ approvalError }}</div>
+            <div class="approval-gate-title">
+              {{ isBatchGate(gate)
+                ? t('runDetail.batchTitle', { job: gate.stageName })
+                : t('runDetail.approvalTitle', { stage: gate.stageName }) }}
+            </div>
+            <div class="approval-gate-sub">
+              {{ isBatchGate(gate) ? t('runDetail.batchSub') : t('runDetail.approvalSub') }}
+            </div>
+            <div v-if="approvalError[gate.stageId]" class="approval-gate-error" role="alert">
+              {{ approvalError[gate.stageId] }}
+            </div>
           </div>
           <div class="approval-gate-actions">
-            <button class="approval-btn approval-btn--reject" :disabled="approving" @click="decideApproval(false)">
+            <button class="approval-btn approval-btn--reject" :disabled="!!approvingId" @click="decideApproval(gate, false)">
               {{ t('runDetail.reject') }}
             </button>
-            <button class="approval-btn approval-btn--approve" :disabled="approving" @click="decideApproval(true)">
-              {{ approving ? t('runDetail.approving') : t('runDetail.approve') }}
+            <button class="approval-btn approval-btn--approve" :disabled="!!approvingId" @click="decideApproval(gate, true)">
+              {{ approvingId === gate.stageId ? t('runDetail.approving') : t('runDetail.approve') }}
             </button>
           </div>
         </div>

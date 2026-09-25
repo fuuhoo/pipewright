@@ -31,19 +31,24 @@ func BuiltinNodeCatalog() []NodeKind {
 		{Type: "script", Label: "自定义脚本", Category: "build",
 			Description: "隔离容器内执行任意命令(跑测试、lint、代码扫描、自定义步骤等)。"},
 		{Type: "deploy_ssh", Label: "部署", Category: "deploy",
-			Description: "经 SSH 把产物(jar/dist/image)或命令部署到目标服务器。可选 healthProbe 做部署后健康门控(不通则该节点失败)。前端静态站点部署也用它:artifactType=dist + strategy=rolling + restartCommand=\"nginx -s reload\"。"},
+			Description: "经 SSH 把产物(镜像或文件/目录)或一条命令部署到目标服务器(config.serverIds,可多台、逗号分隔)。" +
+				"多台时可用 strategy 排发布顺序:rolling(缺省,同时发)|canary(首批 canaryCount 台通过后再发其余)|interactive(首批通过后停下等人工确认,确认后才发其余)|blue-green(逐台起新探活再切);" +
+				"单机节点上这三档做的是同一件事,所以只有多于一台才允许非 rolling。可选 healthProbe 做部署后健康门控(不通则该节点失败)。" +
+				"前端静态站点部署也用它:artifactType=file + deployPath + restartCommand=\"nginx -s reload\"。"},
 		{Type: "deploy_docker", Label: "Docker 部署", Category: "deploy",
-			Description: "在目标机以 docker 交付,config.dockerMode 必填两选一:" +
-				"run = 单容器(发上游构建出的镜像,停旧起新、失败回滚上一镜像),配 containerName/ports/runArgs;" +
-				"compose = 整份 docker-compose.yml + 项目名(config.stackName),交目标机的 compose CLI 编排;" +
+			Description: "在目标机以 docker 交付(config.serverIds,可多台、逗号分隔),config.dockerMode 必填两选一:" +
+				"run = 单容器(发上游构建出的镜像,停旧起新、失败回滚上一镜像),配 containerName/ports/runArgs,多台时 strategy/canaryCount 同 deploy_ssh;" +
+				"compose = 整份 docker-compose.yml + 项目名(config.stackName),交目标机的 compose CLI 编排(这一档不读 strategy);" +
 				"正文来源二选一:composeSource=repo + composeFile(读项目仓库里那份文件,随仓库演进)或 composeSource=paste + composeYaml(把正文粘在节点里)。" +
 				"仓库里有 docker-compose.yml 就选 compose + composeSource=repo;两种方式都可选 healthProbe 做部署后健康门控。"},
 		{Type: "deploy_k8s", Label: "K8s 发布", Category: "deploy",
-			Description: "直接把上游构建出的镜像发到 Kubernetes 集群(平台直连集群 API,不经目标机 SSH)。" +
-				"config.clusterId 选集群、workloadName 必填、namespace 可留空(留空 = 用集群登记的默认命名空间)、" +
-				"workloadKind(Deployment|StatefulSet,缺省 Deployment);" +
-				"多容器工作负载要给 containerName。只支持滚动:换镜像后等集群滚完即成败判据,不支持 healthProbe 与其它发布策略;" +
-				"且只换已有负载的镜像,不创建负载。"},
+			Description: "把上游构建出的镜像发到 Kubernetes 集群(平台直连集群 API,不经目标机 SSH)。" +
+				"config.clusterId 必填(留空给用户选集群);来源方式 config.manifestSource 三选一:" +
+				"none = 只换已有负载的镜像,必填 workloadName(+ 可选 namespace/workloadKind/containerName);" +
+				"repo = 读项目仓库里的清单(manifestFile,仓库根下相对路径,以 .yml/.yaml 结尾),随仓库演进;" +
+				"paste = 把清单正文粘在节点里(manifestYaml,多文档用 --- 分隔,可写 {{IMAGE}} 占位符,上限 64 KiB)。" +
+				"仓库里有 k8s 清单/Helm 生成的清单就选 repo;repo 与 paste 两模式下命名空间与负载名以清单自身为准,namespace 必须留空。" +
+				"只支持滚动(等集群滚完即成败判据),不支持 healthProbe 与其它发布策略。"},
 		{Type: "notify", Label: "通知", Category: "notify",
 			Description: "运行到此节点时向已配渠道(飞书/Webhook/邮件)发通知,支持标题/正文模板。"},
 		{Type: "templated", Label: "自定义节点", Category: "custom",

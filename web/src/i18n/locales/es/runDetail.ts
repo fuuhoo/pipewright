@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: 'Esperando aprobación manual',
   approvalTitle: 'La etapa «{stage}» está esperando aprobación manual',
   approvalSub: 'Aprobar continúa la ejecución; rechazar hace fallar esta etapa y detiene la ejecución.',
+  batchTitle: 'Primer lote publicado — «{job}» espera confirmación',
+  batchSub: 'Aprobar publica el resto de hosts; rechazar los deja en la versión anterior y hace fallar este paso (el primer lote no se revierte).',
   reject: 'Rechazar',
   approve: 'Aprobar',
   approving: 'Procesando…',

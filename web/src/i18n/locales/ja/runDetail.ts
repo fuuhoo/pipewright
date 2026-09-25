@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: '手動承認待ち',
   approvalTitle: 'ステージ「{stage}」が手動承認を待っています',
   approvalSub: '承認すると実行を続行し、却下するとそのステージは失敗して実行が終了します。',
+  batchTitle: '首批の配信が完了 —「{job}」は確認待ち',
+  batchSub: '承認すると残りのホストへの配信を続けます。却下すると残りは旧版のまま本ノードが失敗になります(首批はロールバックしません)。',
   reject: '却下',
   approve: '承認',
   approving: '処理中…',

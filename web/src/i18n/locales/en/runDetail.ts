@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: 'Awaiting manual approval',
   approvalTitle: 'Stage "{stage}" is awaiting manual approval',
   approvalSub: 'Approving continues execution; rejecting fails this stage and stops the run.',
+  batchTitle: 'First batch is out — "{job}" waits for confirmation',
+  batchSub: 'Approving releases the remaining hosts; rejecting keeps them on the previous version and fails this step (the first batch is not rolled back).',
   reject: 'Reject',
   approve: 'Approve',
   approving: 'Processing…',

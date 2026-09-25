@@ -27,7 +27,8 @@ export type FieldKind =
   | 'number'
   | 'toggle'
   | 'credential'
-  | 'server'
+  /** 目标主机多选(勾掉的顺序即分批的先发顺序):分批/蓝绿要多台才成立,单选给不了 */
+  | 'servers'
   | 'channel'
   | 'buildenv'
   | 'configprofiles'
@@ -62,6 +63,13 @@ export interface JobField {
   rows?: number
   /** Conditional visibility based on the current config values */
   when?: (config: Record<string, string>) => boolean
+  /**
+   * 「看不见就不该存在」:该格被 when 藏掉时,它的旧值要从 config 里抹掉(仅靠隐藏不够 ——
+   * 后端在同一档位下会拒绝它的非空值,而界面上没有那一格可清,用户就只看到一个指向隐形字段的 422)。
+   * 只给这种「值本身会改变行为」的格用;像 compose 正文那样后端按当前档直接忽略另一路旧值的格,
+   * 留着旧值反而让用户切回去时不用重打。
+   */
+  dropWhenHidden?: boolean
   /**
    * 字段级校验:返回非空 = 该字段的错误文案(显示在控件下方)。
    * 与后端的保存校验同一口径 —— 让用户在抽屉里就看见「项目名不能含 /」,
@@ -152,11 +160,68 @@ const BUILD_MODEL_OPTIONS: SelectOption[] = [
   { value: 'toolchain', get label() { return t('pipelineJob.buildModelToolchain') } },
 ]
 
+// 档位必须与后端 deploy.NormalizeStrategy 真正实现的编排一一对应:这里多列一项,用户选了就是
+// 换回一个静默的 rolling(日志还会照抄所选串),比没有这一项更糟。
+// 反过来说,能被列出来的每一项都必须**真的改变行为** —— 分批与蓝绿都是「多台之间怎么排」的编排,
+// 单主机节点上它们与一次性没有任何差别,所以字段级校验要求至少两台(后端同一口径会拒)。
 const DEPLOY_STRATEGY_OPTIONS: SelectOption[] = [
   { value: 'rolling', get label() { return t('pipelineJob.deployStrategyRolling') } },
-  { value: 'recreate', get label() { return t('pipelineJob.deployStrategyRecreate') } },
+  { value: 'canary', get label() { return t('pipelineJob.deployStrategyCanary') } },
+  { value: 'interactive', get label() { return t('pipelineJob.deployStrategyInteractive') } },
   { value: 'blue-green', get label() { return t('pipelineJob.deployStrategyBlueGreen') } },
 ]
+
+/** 部署节点已勾选的主机数(勾选顺序即分批的先发顺序,与后端 DeployServerIDs 同一读法)。 */
+function deployHostCount(config: Record<string, string>): number {
+  return (config.serverIds ?? '').split(',').map((s) => s.trim()).filter(Boolean).length
+}
+
+/** 分批档位的首批台数:留空 = 引擎默认 1 台。 */
+function canaryCountOf(config: Record<string, string>): number {
+  const n = Number.parseInt((config.canaryCount ?? '').trim(), 10)
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
+
+/** 该档位是否要在多台之间排序(蓝绿/分批/首批暂停都是;一次性不是)。 */
+function isBatchedStrategy(strategy: string): boolean {
+  return strategy === 'canary' || strategy === 'blue-green' || strategy === 'interactive'
+}
+
+/** 分批档位是否要填首批台数(蓝绿在每台内部切换,没有「首批几台」这一说)。 */
+function isBatchCountStrategy(strategy: string): boolean {
+  return strategy === 'canary' || strategy === 'interactive'
+}
+
+// 策略与落点的匹配校验,与后端 pipeline.validateDeployTargets 同一口径:
+// 落点不足两台时分批/蓝绿不会改变任何行为,与其让用户选了以为生效,不如当场说明。
+function strategyFieldError(config: Record<string, string>): string {
+  if (!isBatchedStrategy((config.strategy ?? '').trim())) return ''
+  return deployHostCount(config) < 2 ? t('pipelineJob.strategyNeedsMultiHost') : ''
+}
+
+// 「首批几台」只在分批真的成立时才问:落点不足两台时策略那一格已经在报错了,
+// 再追一个问题只会让人以为填了它就能分批。
+function asksBatchCount(config: Record<string, string>): boolean {
+  return isBatchCountStrategy((config.strategy ?? '').trim()) && deployHostCount(config) >= 2
+}
+
+function canaryCountFieldError(config: Record<string, string>): string {
+  if (!isBatchCountStrategy((config.strategy ?? '').trim())) return ''
+  const hosts = deployHostCount(config)
+  return canaryCountOf(config) >= hosts ? t('pipelineJob.canaryCountTooMany') : ''
+}
+
+// 落点是必填项:后端在同一口径上会拒(没有目标的部署节点永远跑不成),所以界面先把它问出来。
+const serverIdsError = (config: Record<string, string>): string =>
+  (deployHostCount(config) === 0 ? t('pipelineJob.serverPickRequired') : '')
+
+/**
+ * 部署策略的历史取值:recreate 后端从未实现(NormalizeStrategy 无此 case,一直静默走 rolling),
+ * 选项撤掉后存量节点仍带着它 —— 读入时归成滚动,否则那一格显示成一个既不选也认不出的空值。
+ */
+export function normalizeDeployStrategy(strategy: string): string {
+  return strategy === 'recreate' ? 'rolling' : strategy
+}
 
 // 部署后的健康探测方式(原「健康检查」节点的能力;探测不通 → 部署节点失败)。
 // 显式给「不探测」一档:留空与选 none 同义,但下拉框要有明确的默认项,别让人以为必须选一个。
@@ -417,10 +482,11 @@ const DEPLOY_HEALTH_FIELDS: JobField[] = [
 // 部署节点的字段(deploy_ssh 与遗留 deploy_frontend 节点共用同一套表单)。
 const DEPLOY_SSH_FIELDS: JobField[] = [
   {
-    key: 'serverId',
-    get label() { return t('pipelineJob.fieldServerIdLabel') },
-    kind: 'server',
-    get hint() { return t('pipelineJob.fieldServerIdHint') },
+    key: 'serverIds',
+    get label() { return t('pipelineJob.fieldServerIdsLabel') },
+    kind: 'servers',
+    get hint() { return t('pipelineJob.fieldServerIdsHint') },
+    validate: serverIdsError,
   },
   {
     key: 'artifactType',
@@ -479,6 +545,21 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     get label() { return t('pipelineJob.fieldStrategyLabel') },
     kind: 'select',
     options: DEPLOY_STRATEGY_OPTIONS,
+    get hint() { return t('pipelineJob.fieldStrategyHint') },
+    // 命令型部署(runCommandOnly)整条链路不读策略:隐藏并把旧值抹掉,别留一个填了没用的档位。
+    when: (c) => c.artifactType !== 'command',
+    dropWhenHidden: true,
+    validate: strategyFieldError,
+  },
+  {
+    key: 'canaryCount',
+    get label() { return t('pipelineJob.fieldCanaryCountLabel') },
+    kind: 'number',
+    placeholder: '1',
+    get hint() { return t('pipelineJob.fieldCanaryCountHint') },
+    when: (c) => asksBatchCount(c) && c.artifactType !== 'command',
+    dropWhenHidden: true,
+    validate: canaryCountFieldError,
   },
   {
     key: 'restartCommand',
@@ -498,10 +579,11 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
 // 单容器档复用镜像产物的「停旧起新 + 失败回滚」链路,compose 档则整份 YAML 交目标机编排。
 const DEPLOY_DOCKER_FIELDS: JobField[] = [
   {
-    key: 'serverId',
-    get label() { return t('pipelineJob.fieldServerIdLabel') },
-    kind: 'server',
-    get hint() { return t('pipelineJob.fieldServerIdHint') },
+    key: 'serverIds',
+    get label() { return t('pipelineJob.fieldServerIdsLabel') },
+    kind: 'servers',
+    get hint() { return t('pipelineJob.fieldServerIdsHint') },
+    validate: serverIdsError,
   },
   {
     key: 'dockerMode',
@@ -551,7 +633,21 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     get label() { return t('pipelineJob.fieldStrategyLabel') },
     kind: 'select',
     options: DEPLOY_STRATEGY_OPTIONS,
+    get hint() { return t('pipelineJob.fieldStrategyHint') },
+    // compose 档整份 YAML 交目标机 docker compose up,链路上没有「批次」这个概念(后端同口径会拒)。
     when: dockerModeIs(DOCKER_MODE_RUN),
+    dropWhenHidden: true,
+    validate: strategyFieldError,
+  },
+  {
+    key: 'canaryCount',
+    get label() { return t('pipelineJob.fieldCanaryCountLabel') },
+    kind: 'number',
+    placeholder: '1',
+    get hint() { return t('pipelineJob.fieldCanaryCountHint') },
+    when: (c) => dockerModeIs(DOCKER_MODE_RUN)(c) && asksBatchCount(c),
+    dropWhenHidden: true,
+    validate: canaryCountFieldError,
   },
   // ── Compose ──
   {
@@ -611,6 +707,33 @@ const WORKLOAD_KIND_OPTIONS: SelectOption[] = [
 const reDnsLabel = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 const reDnsSubdomain = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
 
+// k8s 清单来源,值与后端 pipeline.ManifestSource* 逐字一致:none = 只换上游镜像(repo/paste = 按清单 apply)。
+// 它决定「发到哪」由谁说了算 —— none 是上面那几格寻址格,repo/paste 是清单自己的 kind + metadata。
+const MANIFEST_SOURCE_NONE  = 'none'
+const MANIFEST_SOURCE_REPO  = 'repo'
+const MANIFEST_SOURCE_PASTE = 'paste'
+
+const MANIFEST_SOURCE_OPTIONS: SelectOption[] = [
+  { value: MANIFEST_SOURCE_NONE, get label() { return t('pipelineJob.manifestSourceNone') } },
+  { value: MANIFEST_SOURCE_REPO, get label() { return t('pipelineJob.manifestSourceRepo') } },
+  { value: MANIFEST_SOURCE_PASTE, get label() { return t('pipelineJob.manifestSourcePaste') } },
+]
+
+// manifestMaxBytes 与后端 pipeline.manifestMaxBytes 同一额度(64 KiB)。
+const MANIFEST_MAX_BYTES = 64 << 10
+
+const manifestSourceIs = (v: string) => (c: Record<string, string>) =>
+  (c.manifestSource || MANIFEST_SOURCE_NONE) === v
+
+// 路径规则与 composeFile 同一条(后端 RepoYAMLPathOK),含首尾斜杠与 .. 越界,故这里复用同一份判据。
+function repoYAMLPathError(p: string, requiredMsg: string): string {
+  const v = p.trim()
+  if (!v) return requiredMsg
+  if (v.length > 512 || !/\.ya?ml$/.test(v) || v.startsWith('/') || v.includes('\\')) return t('pipelineJob.fieldComposeFileBad')
+  if (v.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) return t('pipelineJob.fieldComposeFileBad')
+  return ''
+}
+
 const DEPLOY_K8S_FIELDS: JobField[] = [
   {
     key: 'clusterId',
@@ -620,11 +743,55 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
     validate: (c) => (c.clusterId ? '' : t('pipelineJob.fieldClusterRequired')),
   },
   {
+    // 清单来源排在寻址格之前:它决定下面哪几格有效,先选它才不会填一堆被忽略的格子。
+    key: 'manifestSource',
+    get label() { return t('pipelineJob.fieldManifestSourceLabel') },
+    kind: 'select',
+    options: MANIFEST_SOURCE_OPTIONS,
+    get hint() { return t('pipelineJob.fieldManifestSourceHint') },
+  },
+  {
+    // 引用仓库文件时正文不进节点:运行时按本次 commit 现读,改完合入即生效(与 composeFile 同规则)。
+    key: 'manifestFile',
+    get label() { return t('pipelineJob.fieldManifestFileLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'k8s/deployment.yaml',
+    get hint() { return t('pipelineJob.fieldManifestFileHint') },
+    when: manifestSourceIs(MANIFEST_SOURCE_REPO),
+    validate: (c) => repoYAMLPathError(c.manifestFile ?? '', t('pipelineJob.fieldManifestFileRequired')),
+  },
+  {
+    // 多份清单用 --- 分隔;镜像处写 {{IMAGE}} 占位符,执行期才替换(所以保存期不判 kind 白名单)。
+    key: 'manifestYaml',
+    get label() { return t('pipelineJob.fieldManifestYamlLabel') },
+    kind: 'textarea',
+    monospace: true,
+    rows: 14,
+    placeholder: 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: "{{IMAGE}}"',
+    get hint() { return t('pipelineJob.fieldManifestYamlHint') },
+    when: manifestSourceIs(MANIFEST_SOURCE_PASTE),
+    validate: (c) => {
+      const v = c.manifestYaml ?? ''
+      if (!v.trim()) return t('pipelineJob.fieldManifestYamlRequired')
+      if (v.length > MANIFEST_MAX_BYTES) return t('pipelineJob.fieldManifestYamlTooLarge')
+      return ''
+    },
+  },
+  {
     // 发的是上游构建出的镜像;并行构建出多件镜像时靠来源任务锁定发哪一件(留空 = 取首个)。
     key: 'artifactFrom',
     get label() { return t('pipelineJob.fieldArtifactFromLabel') },
     kind: 'artifactsource',
     get hint() { return t('pipelineJob.fieldDockerImageFromHint') },
+  },
+  {
+    key: 'workloadKind',
+    get label() { return t('pipelineJob.fieldWorkloadKindLabel') },
+    kind: 'select',
+    options: WORKLOAD_KIND_OPTIONS,
+    get hint() { return t('pipelineJob.fieldWorkloadKindHint') },
+    when: manifestSourceIs(MANIFEST_SOURCE_NONE),
   },
   {
     key: 'namespace',
@@ -633,6 +800,11 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
     monospace: true,
     placeholder: 'default',
     get hint() { return t('pipelineJob.fieldNamespaceHint') },
+    // 有清单时命名空间以清单的 metadata.namespace 为准(清单没写则落到集群登记的默认命名空间),
+    // 后端要求这格必须空着;与其给一个「填了就报错」的格子,不如不收(所以整项只在「只换镜像」时出现)。
+    // 收掉还不够:切档前填过的值要一并抹掉,否则藏起来的旧值会反过来卡住保存(dropWhenHidden)。
+    when: manifestSourceIs(MANIFEST_SOURCE_NONE),
+    dropWhenHidden: true,
     validate: (c) => {
       const v = (c.namespace ?? '').trim()
       // 留空合法:落到集群登记的默认命名空间(后端 releaseOneCluster 那条兜底链)。
@@ -642,19 +814,15 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
     },
   },
   {
-    key: 'workloadKind',
-    get label() { return t('pipelineJob.fieldWorkloadKindLabel') },
-    kind: 'select',
-    options: WORKLOAD_KIND_OPTIONS,
-    get hint() { return t('pipelineJob.fieldWorkloadKindHint') },
-  },
-  {
+    // 负载名只属于「只换镜像」那条腿:清单那条腿是逐份声明按序 apply、清单里每个负载都各自等滚完
+    // (releaseByManifest 根本不读这格),所以按清单发布时它是个无操作格 —— 收了不做的事就等于撒谎。
     key: 'workloadName',
     get label() { return t('pipelineJob.fieldWorkloadNameLabel') },
     kind: 'text',
     monospace: true,
     placeholder: 'api',
     get hint() { return t('pipelineJob.fieldWorkloadNameHint') },
+    when: manifestSourceIs(MANIFEST_SOURCE_NONE),
     validate: (c) => {
       const v = (c.workloadName ?? '').trim()
       if (!v) return t('pipelineJob.fieldWorkloadNameRequired')
@@ -664,14 +832,17 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
   },
   {
     // 工作负载只有一个容器时留空即可;多容器(如 sidecar)必须点名换哪一个。
+    // 按清单 apply 时换哪个容器由清单说了算,这格不参与(所以整项也不出现)。
     key: 'containerName',
     get label() { return t('pipelineJob.fieldK8sContainerLabel') },
     kind: 'text',
     monospace: true,
     placeholder: 'app',
     get hint() { return t('pipelineJob.fieldK8sContainerHint') },
+    when: manifestSourceIs(MANIFEST_SOURCE_NONE),
   },
   {
+    // 低频覆盖项排在最后:两者都有合理缺省(300 秒 / 开启),绝大多数发布不用动。
     key: 'rolloutTimeout',
     get label() { return t('pipelineJob.fieldRolloutTimeoutLabel') },
     kind: 'number',
@@ -919,6 +1090,9 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     accent: 'green',
     category: 'deploy',
     fields: DEPLOY_SSH_FIELDS,
+    // serverId 是「一个节点只能发一台机器」时代的键:分批/蓝绿在那台机器上不会改变任何行为,
+    // 所以落点统一改叫 serverIds。旧键读进来即并入新键(见 JobDrawer 的迁移),不再作为原始参数留着。
+    droppedKeys: ['serverId'],
     templates: [{
       id: 'frontend_static',
       get label() { return t('pipelineJob.deployTemplateFrontendLabel') },
@@ -936,6 +1110,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     accent: 'green',
     category: 'deploy',
     fields: DEPLOY_DOCKER_FIELDS,
+    droppedKeys: ['serverId'],
     defaultConfig: { dockerMode: DOCKER_MODE_RUN, strategy: 'rolling' },
     templates: [{
       id: 'compose_stack',
@@ -954,7 +1129,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     accent: 'green',
     category: 'deploy',
     fields: DEPLOY_K8S_FIELDS,
-    defaultConfig: { workloadKind: 'Deployment' },
+    defaultConfig: { workloadKind: 'Deployment', manifestSource: 'none' },
   },
 
   // health_check 不是一种任务:它过去只是个占位节点(表单填的探测参数无人消费、执行侧恒放行),
@@ -1033,6 +1208,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     accent: 'green',
     category: 'deploy',
     fields: DEPLOY_SSH_FIELDS,
+    droppedKeys: ['serverId'],
     defaultConfig: { strategy: 'rolling', restartCommand: 'nginx -s reload' },
   },
 
@@ -1274,6 +1450,12 @@ export function usesBuildTierField(type: string): boolean {
 export function usesDeployPrefField(type: string): boolean {
   const field = getJobTypeSpec(type)?.fields.find((f) => f.key === 'artifactType')
   return field?.options === DEPLOY_ARTIFACT_OPTIONS
+}
+
+/** 该 type 有「部署策略」下拉?(历史 recreate 取值读成「滚动」) */
+export function usesDeployStrategyField(type: string): boolean {
+  const field = getJobTypeSpec(type)?.fields.find((f) => f.key === 'strategy')
+  return field?.options === DEPLOY_STRATEGY_OPTIONS
 }
 
 /**

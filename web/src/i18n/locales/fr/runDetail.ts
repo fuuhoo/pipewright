@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: 'En attente de validation manuelle',
   approvalTitle: 'L\'étape « {stage} » est en attente de validation manuelle',
   approvalSub: "Approuver poursuit l'exécution ; refuser fait échouer cette étape et arrête l'exécution.",
+  batchTitle: "Premier lot publié — « {job} » attend une confirmation",
+  batchSub: "Approuver publie le reste des hôtes ; refuser les laisse sur la version précédente et fait échouer cette étape (le premier lot n'est pas annulé).",
   reject: 'Rejeter',
   approve: 'Approuver',
   approving: 'Traitement…',

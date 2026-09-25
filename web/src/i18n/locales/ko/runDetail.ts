@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: '수동 승인 대기',
   approvalTitle: '스테이지 "{stage}"이(가) 수동 승인을 기다리고 있습니다',
   approvalSub: '승인하면 실행을 계속하고, 거부하면 해당 스테이지가 실패하며 실행이 종료됩니다.',
+  batchTitle: '首批 배포 완료 —「{job}」확인 대기 중',
+  batchSub: '승인하면 나머지 호스트에 배포를 계속합니다. 거부하면 나머지는 이전 버전을 유지하고 이 단계가 실패로 처리됩니다(首批은 롤백하지 않습니다).',
   reject: '거부',
   approve: '승인',
   approving: '처리 중…',

@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: '等待人工核准',
   approvalTitle: '階段「{stage}」等待人工核准',
   approvalSub: '核准後繼續執行,拒絕則該階段失敗、執行終止。',
+  batchTitle: '任務「{job}」首批主機已發布,等待確認續發',
+  batchSub: '核准後繼續發布其餘主機;拒絕則其餘主機保留舊版本、本節點判失敗(首批已發的不回滾)。',
   reject: '拒絕',
   approve: '核准',
   approving: '處理中…',

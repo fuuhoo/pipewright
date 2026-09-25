@@ -22,6 +22,8 @@ export default {
   approvalRegionAria: '等待人工审批',
   approvalTitle: '阶段「{stage}」等待人工审批',
   approvalSub: '批准后继续执行,拒绝则该阶段失败、运行终止。',
+  batchTitle: '任务「{job}」首批主机已发布,等待确认续发',
+  batchSub: '批准后继续发布其余主机;拒绝则其余主机保留旧版本、本节点判失败(首批已发的不回滚)。',
   reject: '拒绝',
   approve: '批准',
   approving: '处理中…',

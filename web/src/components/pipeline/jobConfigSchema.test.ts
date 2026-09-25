@@ -12,7 +12,9 @@ import {
   isScriptClassType,
   effectiveJobType,
   normalizeDeployArtifactPref,
+  normalizeDeployStrategy,
   usesDeployPrefField,
+  usesDeployStrategyField,
   normalizeArtifactTier,
   usesBuildTierField,
   schemaKeys,
@@ -116,7 +118,7 @@ describe('jobConfigSchema', () => {
     }
 
     it('expands per docker mode; nothing but the mode itself shows while unset', () => {
-      expect(visible({})).toContain('serverId')
+      expect(visible({})).toContain('serverIds')
       expect(visible({})).toContain('dockerMode')
       expect(visible({})).toContain('healthProbe')
       expect(visible({})).not.toContain('containerName')
@@ -129,6 +131,20 @@ describe('jobConfigSchema', () => {
         expect(visible({ dockerMode: 'compose' }), k).toContain(k)
         expect(visible({ dockerMode: 'run' }), k).not.toContain(k)
       }
+      // 首批台数要同时满足两条:档位真的分批,且落点凑够两台(只有一台时上面那格已在报错,
+      // 再问「首批几台」是逼人填一个立刻非法的值)。
+      const two = { serverIds: 'srv-1,srv-2' }
+      expect(visible({ dockerMode: 'run', strategy: 'canary', ...two }), '两台 + 分批').toContain('canaryCount')
+      const cases: Record<string, string>[] = [
+        { dockerMode: 'run', strategy: 'canary' }, // 一台没选,分批本身还不成立
+        { dockerMode: 'run', strategy: 'canary', serverIds: 'srv-1' },
+        { dockerMode: 'run', strategy: 'rolling', ...two },
+        { dockerMode: 'run', strategy: 'blue-green', ...two },
+        { dockerMode: 'compose', strategy: 'canary', ...two }, // compose 档整份 YAML 交目标机,没有批次
+      ]
+      for (const cfg of cases) {
+        expect(visible(cfg), JSON.stringify(cfg)).not.toContain('canaryCount')
+      }
     })
 
     it('defaults to the single-container mode; the compose template switches it', () => {
@@ -139,7 +155,7 @@ describe('jobConfigSchema', () => {
     // 键名是跨端契约:pipeline.ConfigKey* / deploy.CfgKey* / build 层透传清单与之逐字相同。
     it('uses the exact key names the backend reads', () => {
       const keys = fields.map((f) => f.key)
-      for (const k of ['dockerMode', 'stackName', 'composeYaml', 'serverId', 'artifactFrom']) {
+      for (const k of ['dockerMode', 'stackName', 'composeYaml', 'serverIds', 'artifactFrom']) {
         expect(keys, k).toContain(k)
       }
     })
@@ -385,6 +401,34 @@ describe('jobConfigSchema', () => {
       }
       expect(normalizeDeployArtifactPref('image')).toBe('image')
       expect(normalizeDeployArtifactPref('command')).toBe('command')
+    })
+
+    // 策略下拉只能列后端 deployWithStrategy 真编排的档位:recreate 后端从来没有(选它实际就是滚动,
+    // 日志还照抄所选串),所以撤掉了选项,存量值读入时归成滚动 —— 否则那一格显示成认不出的空值。
+    it('部署策略不含引擎没实现的档位,存量 recreate 读成 rolling', () => {
+      for (const type of ['deploy_ssh', 'deploy_docker']) {
+        const strat = getJobTypeSpec(type)!.fields.find((f) => f.key === 'strategy')
+        expect(strat?.options?.map((o) => o.value), type).toEqual(['rolling', 'canary', 'interactive', 'blue-green'])
+        expect(usesDeployStrategyField(type), type).toBe(true)
+      }
+      expect(usesDeployStrategyField('build')).toBe(false)
+      expect(normalizeDeployStrategy('recreate')).toBe('rolling')
+      expect(normalizeDeployStrategy('canary')).toBe('canary')
+      expect(normalizeDeployStrategy('blue-green')).toBe('blue-green')
+      expect(normalizeDeployStrategy('interactive')).toBe('interactive')
+
+      // 「首批后暂停」与 canary 同一套闸门:落点不足两台时暂停没有意义(没有「其余」可等),
+      // 首批台数也照旧要问、要校验。
+      const sshFields = JOB_TYPE_SPECS.deploy_ssh.fields
+      const strategy = sshFields.find((f) => f.key === 'strategy')!
+      const batchCount = sshFields.find((f) => f.key === 'canaryCount')!
+      const two = { serverIds: 'srv-1,srv-2' }
+      expect(strategy.validate?.({ strategy: 'interactive', serverIds: 'srv-1' }), '单主机分批该报错').toBeTruthy()
+      expect(strategy.validate?.({ strategy: 'interactive', ...two }), '两台可暂停').toBeFalsy()
+      expect(batchCount.when?.({ strategy: 'interactive', ...two })).toBe(true)
+      expect(batchCount.when?.({ strategy: 'interactive', serverIds: 'srv-1' })).toBe(false)
+      expect(batchCount.validate?.({ strategy: 'interactive', ...two, canaryCount: '2' }), '首批=全部,没有其余').toBeTruthy()
+      expect(batchCount.validate?.({ strategy: 'interactive', ...two, canaryCount: '1' })).toBeFalsy()
     })
 
     // 跨端契约:artifactType / pushImage 的键名与 pipeline.ConfigKey* 逐字一致。

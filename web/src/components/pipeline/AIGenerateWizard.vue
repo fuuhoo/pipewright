@@ -23,6 +23,7 @@ import {
   type AIProposalStage,
   type AIProposalBranchMapping,
 } from '../../api/aiGenerate'
+import { listServers, type Server } from '../../api/servers'
 import { HttpError } from '../../api/http'
 import AppButton from '../ui/AppButton.vue'
 import AppBanner from '../ui/AppBanner.vue'
@@ -76,6 +77,48 @@ function toggleMapping(id: string): void {
   const s = new Set(selectedMappingIds.value)
   if (s.has(id)) { s.delete(id) } else { s.add(id) }
   selectedMappingIds.value = s
+}
+
+// ─── 部署落点 ─────────────────────────────────────────────────────────────────
+// 主机 ID 是环境相关项,模型无从得知(prompt 明确要求留空),所以应用前在这里由用户选一次:
+// 没有落点的部署节点保存就会被校验拒掉(它永远跑不成),不如在这里先问出来。
+const DEPLOY_HOST_TYPES = new Set(['deploy_ssh', 'deploy_frontend', 'deploy_docker'])
+const hosts = ref<Server[]>([])
+const chosenHostIds = ref<Set<string>>(new Set())
+
+const proposalHasDeploy = computed<boolean>(() =>
+  (response.value?.proposal?.stages ?? []).some((s) => s.jobs.some((j) => DEPLOY_HOST_TYPES.has(j.type))),
+)
+
+const deployHostMissing = computed<boolean>(() => proposalHasDeploy.value && chosenHostIds.value.size === 0)
+
+function toggleHost(id: string): void {
+  const s = new Set(chosenHostIds.value)
+  if (s.has(id)) { s.delete(id) } else { s.add(id) }
+  chosenHostIds.value = s
+}
+
+watch(proposalHasDeploy, async (need) => {
+  if (!need || hosts.value.length > 0) return
+  try {
+    hosts.value = await listServers()
+  } catch {
+    hosts.value = []
+  }
+})
+
+/** 把选定的落点写进提案里每个部署节点(勾选顺序 = 分批的先发顺序)。 */
+function proposalWithHosts(p: AIProposal): AIProposal {
+  const ids = [...chosenHostIds.value].join(',')
+  return {
+    ...p,
+    stages: p.stages.map((st) => ({
+      ...st,
+      jobs: st.jobs.map((j) =>
+        DEPLOY_HOST_TYPES.has(j.type) ? { ...j, config: { ...(j.config ?? {}), serverIds: ids } } : j,
+      ),
+    })),
+  }
 }
 
 /** Are all selectable items checked? */
@@ -141,12 +184,13 @@ async function generate(): Promise<void> {
 
 async function apply(): Promise<void> {
   if (!response.value?.proposal) return
+  if (deployHostMissing.value) return
   phase.value      = 'applying'
   applyError.value = ''
 
   try {
     await aiApply(props.projectId, {
-      proposal: response.value.proposal,
+      proposal: proposalWithHosts(response.value.proposal),
       selections: {
         stageIds: [...selectedStageIds.value],
         build: buildSelected.value,
@@ -449,6 +493,26 @@ watch(() => props.projectId, () => {
                 </div>
               </div>
 
+              <!-- 部署落点:提案里的部署节点不带主机 ID(那是环境相关项,模型不该猜),
+                   应用前在这里选一次;不选就发不到任何机器,保存也会被校验拒掉。 -->
+              <div v-if="proposalHasDeploy" class="proposal-group">
+                <div class="proposal-group-label">{{ t('pipelineJob.fieldServerIdsLabel') }}</div>
+                <div class="host-picker">
+                  <label v-for="h in hosts" :key="h.id" class="host-pick">
+                    <input
+                      type="checkbox"
+                      :checked="chosenHostIds.has(h.id)"
+                      :aria-label="h.name"
+                      @change="toggleHost(h.id)"
+                    />
+                    <span class="proposal-item-name">{{ h.name }}</span>
+                    <code class="build-meta-chip">{{ h.user }}@{{ h.host }}:{{ h.port }}</code>
+                  </label>
+                  <p v-if="hosts.length === 0" class="host-picker-empty">{{ t('pipelineJob.serverNone') }}</p>
+                  <p v-else class="host-picker-empty">{{ t('pipelineJob.fieldServerIdsHint') }}</p>
+                </div>
+              </div>
+
               <!-- Build config -->
               <div class="proposal-group">
                 <div class="proposal-group-label">{{ t('pipelinePanels.wizBuildConfig') }}</div>
@@ -600,9 +664,11 @@ watch(() => props.projectId, () => {
 
             <!-- 应用按钮仅在有提案时显示;LLM 失败降级(proposal=null)时只能重新生成/关闭。 -->
             <div v-if="response && response.proposal" class="footer-right">
+              <!-- 没有落点的部署节点发不到任何机器(保存也会被拒),所以这里不让人点了才吃 422。 -->
+              <span v-if="deployHostMissing" class="footer-hint">{{ t('pipelineJob.serverPickRequired') }}</span>
               <AppButton
                 variant="default"
-                :disabled="noneSelected || isApplying"
+                :disabled="noneSelected || isApplying || deployHostMissing"
                 :loading="isApplying"
                 @click="apply"
               >
@@ -1350,6 +1416,35 @@ watch(() => props.projectId, () => {
   border-radius: var(--rounded-sm);
 }
 
+/* ─── 部署落点多选 ────────────────────────────────────────────────────────── */
+.host-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md, 6px);
+  background: var(--color-inset);
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.host-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.host-pick input { flex: none; }
+
+.host-picker-empty {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-faint);
+}
+
 /* ─── Footer ─────────────────────────────────────────────────────────────── */
 .wiz-footer {
   padding: 14px 20px;
@@ -1365,6 +1460,13 @@ watch(() => props.projectId, () => {
   display: flex;
   gap: 8px;
   margin-left: auto;
+  align-items: center;
+}
+
+/* 应用被挡住时的原因(写在按钮旁,而不是等一次失败的 422) */
+.footer-hint {
+  font-size: 0.75rem;
+  color: var(--color-amber, var(--color-faint));
 }
 
 /* push first button to left, rest to right when no footer-right */

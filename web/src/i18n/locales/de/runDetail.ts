@@ -19,6 +19,8 @@ export default {
   approvalRegionAria: 'Warten auf manuelle Genehmigung',
   approvalTitle: 'Phase „{stage}“ wartet auf manuelle Genehmigung',
   approvalSub: 'Genehmigen setzt die Ausführung fort; Ablehnen lässt diese Phase fehlschlagen und beendet die Ausführung.',
+  batchTitle: 'Erste Gruppe veröffentlicht — „{job}“ wartet auf Bestätigung',
+  batchSub: 'Freigeben veröffentlicht die übrigen Hosts; Ablehnen lässt sie auf der alten Version und lässt diesen Schritt fehlschlagen (die erste Gruppe bleibt bestehen).',
   reject: 'Ablehnen',
   approve: 'Genehmigen',
   approving: 'Wird verarbeitet…',
