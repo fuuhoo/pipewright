@@ -22,6 +22,8 @@ type stubTarget struct {
 	servers map[string]*target.Server
 	// execFn 由各用例注入:据 serverID + cmd 返回结果或错误。
 	execFn func(serverID string, cmd []string) (*target.ExecResult, error)
+	// execCtxFn 同 execFn,但额外把 ctx 递进来 —— 用于断言某一步拿到的是哪份超时额度(见 pull)。
+	execCtxFn func(ctx context.Context, serverID string, cmd []string) (*target.ExecResult, error)
 	// callMu 保护 calls(4-5 并行扇出下多 goroutine 并发 Exec;防 race)。
 	callMu sync.Mutex
 	// calls 记录所有 Exec 命令(断言 array 化:每条是 []string 而非拼接 shell)。
@@ -52,10 +54,13 @@ func (s *stubTarget) Update(context.Context, string, target.UpdateInput) (*targe
 }
 func (s *stubTarget) Delete(context.Context, string) error                     { return nil }
 func (s *stubTarget) Test(context.Context, string) (*target.TestResult, error) { return nil, nil }
-func (s *stubTarget) Exec(_ context.Context, serverID string, cmd []string) (*target.ExecResult, error) {
+func (s *stubTarget) Exec(ctx context.Context, serverID string, cmd []string) (*target.ExecResult, error) {
 	s.callMu.Lock()
 	s.calls = append(s.calls, cmd)
 	s.callMu.Unlock()
+	if s.execCtxFn != nil {
+		return s.execCtxFn(ctx, serverID, cmd)
+	}
 	if s.execFn != nil {
 		return s.execFn(serverID, cmd)
 	}

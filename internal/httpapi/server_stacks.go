@@ -25,12 +25,16 @@ import (
 const (
 	stacksCmdTimeout = 20 * time.Second
 	stacksUpTimeout  = 8 * time.Minute // up 可能拉镜像 + 构建,给充裕超时
-	// stacksBaseDir 是受管 compose 目录基址。部署时在其下按项目名建子目录存 docker-compose.yml,
-	// 使 `compose ls` 可见、后续可重新 up。需运行 SSH 用户对该目录可写(root 默认可)。
-	stacksBaseDir   = "/opt/pipewright/stacks"
-	composeFileName = "docker-compose.yml"
-	composeMaxBytes = 512 << 10 // 512 KiB compose 上限
+	composeFileName  = "docker-compose.yml"
+	composeMaxBytes  = 512 << 10 // 512 KiB compose 上限
 )
+
+// stacksBaseDir 是受管 compose 目录基址。部署时在其下按项目名建子目录存 docker-compose.yml,
+// 使 `compose ls` 可见、后续可重新 up。需运行 SSH 用户对该目录可写(root 默认可)。
+//
+// 做成变量只为真机 e2e 能把受管目录指到临时目录(测 `/opt` 会污染开发机,而且普通用户写不进去);
+// 生产路径恒为该默认值,没有任何写入方改它。
+var stacksBaseDir = "/opt/pipewright/stacks"
 
 // 列 compose 项目 **不用** `docker compose ls`(那是 v2 插件专属;装 v1 docker-compose 或
 // 无 v2 插件的主机会扫不到)。改为按容器的 compose 标签 `com.docker.compose.project` 聚合 ——

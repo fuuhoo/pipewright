@@ -93,14 +93,16 @@ func (s *service) stageImageOne(ctx context.Context, srv *target.Server, a run.A
 	}
 	defer release()
 
-	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
-	defer cancel()
+	probeCtx, probeCancel := context.WithTimeout(ctx, execTimeout)
+	defer probeCancel()
 
 	// 探测当前同名容器所用镜像(供回滚);无容器 / 读失败 → 空(首次部署,无可回滚)。
-	st.prevImage = s.readContainerImage(execCtx, srv.ID, st.name)
+	st.prevImage = s.readContainerImage(probeCtx, srv.ID, st.name)
 
-	// 仅 pull,不动旧容器(零中断预备)。
-	if failMsg, ok := s.runStep(execCtx, srv.ID, [][]string{{"docker", "pull", st.ref}}); !ok {
+	// 仅 pull,不动旧容器(零中断预备)。拉取按 imagePullTimeout 计时,不与命令步骤共用 60s。
+	pullCtx, pullCancel := context.WithTimeout(ctx, imagePullTimeout)
+	defer pullCancel()
+	if failMsg, ok := s.runStep(pullCtx, srv.ID, [][]string{{"docker", "pull", st.ref}}); !ok {
 		return st, failMsg, false
 	}
 	return st, "", true

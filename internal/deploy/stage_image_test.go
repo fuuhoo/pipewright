@@ -2,9 +2,13 @@ package deploy
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/huangchengsir/pipewright/internal/target"
 )
 
 // stage_image_test.go 覆盖「流水线部署节点」(DeployForStage)对 **镜像产物** 的部署编排:
@@ -381,6 +385,55 @@ func TestRollingImageSwapFailureRollsBack(t *testing.T) {
 	}
 	if !hasRunWithRef(rec.calls2, "registry/app:v1") {
 		t.Fatalf("应回滚到上一镜像 v1: %v", rec.calls2)
+	}
+}
+
+// TestStageImagePullGetsOwnTimeout 镜像部署里 `docker pull` 拿的是 imagePullTimeout(8 分钟),
+// 其余命令步骤仍拿 60s 的 execTimeout。回归保护:pull 曾与命令共用那 60s,表现是首次部署大镜像
+// 必报「部署执行超时」,而第二次(镜像已在目标机)秒过 —— 慢在拉取,却被当成切换坏了。
+func TestStageImagePullGetsOwnTimeout(t *testing.T) {
+	db := testDB(t)
+	rsvc := run.New(db)
+	var mu sync.Mutex
+	leftByCmd := map[string]time.Duration{}
+	tgt := &stubTarget{execCtxFn: func(ctx context.Context, _ string, cmd []string) (*target.ExecResult, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Errorf("命令 %v 没有 deadline", cmd)
+			return &target.ExecResult{ExitCode: 1}, nil
+		}
+		mu.Lock()
+		leftByCmd[strings.Join(cmd, " ")] = time.Until(deadline)
+		mu.Unlock()
+		return &target.ExecResult{ExitCode: 0}, nil
+	}}
+	srv := seedServer(t, tgt, "web-1")
+	runID, _ := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactImage, "registry/shop:1.0")
+
+	svc := New(tgt, rsvc)
+	if _, err := svc.DeployForStage(context.Background(), runID, []string{srv.ID}, nil, ""); err != nil {
+		t.Fatalf("DeployForStage: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	pullLeft, ok := leftByCmd["docker pull registry/shop:1.0"]
+	if !ok {
+		t.Fatalf("未记录到 docker pull,拿到的命令: %v", leftByCmd)
+	}
+	if pullLeft <= execTimeout {
+		t.Fatalf("pull 只拿到 %s,应与命令步骤脱钩(≈%s)", pullLeft.Round(time.Second), imagePullTimeout)
+	}
+	if pullLeft > imagePullTimeout {
+		t.Fatalf("pull 拿到了 %s,超过额度 %s", pullLeft.Round(time.Second), imagePullTimeout)
+	}
+	for cmd, left := range leftByCmd {
+		if strings.HasPrefix(cmd, "docker pull ") {
+			continue
+		}
+		if left > execTimeout {
+			t.Fatalf("命令步骤 %q 拿到了 %s,应仍受 %s 约束", cmd, left.Round(time.Second), execTimeout)
+		}
 	}
 }
 
