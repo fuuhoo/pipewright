@@ -173,6 +173,14 @@ export default {
     physical: '物理',
     cacheTooltip: 'ページキャッシュ込みの基準(total − free)/ 総量:ページキャッシュを使用済みに計上し、cgroup / ホストパネル(PVE など)の「使用済み」と一致します。総量は物理/割当メモリを優先し、取得できない場合はカーネルの利用可能総量を使用します。',
     collectedAt: '収集時刻 {time}',
+    system: 'システム',
+    uptime: '稼働 {text}',
+    uptimeDh: '{d} 日 {h} 時間',
+    uptimeD: '{d} 日',
+    uptimeHm: '{h} 時間 {m} 分',
+    uptimeH: '{h} 時間',
+    uptimeM: '{m} 分',
+    uptimeS: '{s} 秒',
   },
 
   // ─── ServiceLogViewer ──────────────────────────────────────────────────────

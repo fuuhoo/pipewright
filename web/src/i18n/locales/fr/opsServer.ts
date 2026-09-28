@@ -173,6 +173,14 @@ export default {
     physical: 'Physique',
     cacheTooltip: 'Avec cache de pages (total − free) / total : le cache de pages est compté comme utilisé, conformément à l’« utilisé » de cgroup / des panneaux de l’hôte (p. ex. PVE). Le total privilégie la mémoire physique/allouée et, à défaut, utilise le total disponible du noyau.',
     collectedAt: 'Collecté à {time}',
+    system: 'Système',
+    uptime: 'en service {text}',
+    uptimeDh: '{d} j {h} h',
+    uptimeD: '{d} j',
+    uptimeHm: '{h} h {m} min',
+    uptimeH: '{h} h',
+    uptimeM: '{m} min',
+    uptimeS: '{s} s',
   },
 
   // ─── ServiceLogViewer ──────────────────────────────────────────────────────

@@ -173,6 +173,14 @@ export default {
     physical: '實體',
     cacheTooltip: '含分頁快取口徑(total − free)/ 總量:分頁快取計入已用,與 cgroup / 宿主面板(如 PVE)的「已用」一致。總量優先取實體/配置記憶體,取不到則用核心可用總量。',
     collectedAt: '採集於 {time}',
+    system: '系統',
+    uptime: '已運行 {text}',
+    uptimeDh: '{d} 天 {h} 小時',
+    uptimeD: '{d} 天',
+    uptimeHm: '{h} 小時 {m} 分',
+    uptimeH: '{h} 小時',
+    uptimeM: '{m} 分',
+    uptimeS: '{s} 秒',
   },
 
   // ─── ServiceLogViewer ──────────────────────────────────────────────────────

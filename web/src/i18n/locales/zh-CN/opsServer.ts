@@ -183,6 +183,14 @@ export default {
     physical: '物理',
     cacheTooltip: '含页缓存口径(total − free)/ 总量:页缓存计入已用,与 cgroup / 宿主面板(如 PVE)的「已用」一致。总量优先取物理/分配内存,取不到则用内核可用总量。',
     collectedAt: '采集于 {time}',
+    system: '系统',
+    uptime: '已运行 {text}',
+    uptimeDh: '{d} 天 {h} 小时',
+    uptimeD: '{d} 天',
+    uptimeHm: '{h} 小时 {m} 分',
+    uptimeH: '{h} 小时',
+    uptimeM: '{m} 分',
+    uptimeS: '{s} 秒',
   },
 
   // ─── ServiceLogViewer ──────────────────────────────────────────────────────

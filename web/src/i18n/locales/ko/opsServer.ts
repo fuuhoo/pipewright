@@ -173,6 +173,14 @@ export default {
     physical: '물리',
     cacheTooltip: '페이지 캐시 포함 기준(total − free)/ 총량: 페이지 캐시를 사용량으로 계산하며 cgroup / 호스트 패널(예: PVE)의 「사용됨」과 일치합니다. 총량은 물리/할당 메모리를 우선하고, 가져올 수 없으면 커널 가용 총량을 사용합니다.',
     collectedAt: '수집 시각 {time}',
+    system: '시스템',
+    uptime: '가동 {text}',
+    uptimeDh: '{d}일 {h}시간',
+    uptimeD: '{d}일',
+    uptimeHm: '{h}시간 {m}분',
+    uptimeH: '{h}시간',
+    uptimeM: '{m}분',
+    uptimeS: '{s}초',
   },
 
   // ─── ServiceLogViewer ──────────────────────────────────────────────────────

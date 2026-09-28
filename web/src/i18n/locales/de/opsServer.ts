@@ -173,6 +173,14 @@ export default {
     physical: 'Physisch',
     cacheTooltip: 'Mit Page-Cache (total − free) / Gesamt: Page-Cache zählt als belegt, übereinstimmend mit „belegt“ von cgroup / Host-Panels (z. B. PVE). Der Gesamtwert bevorzugt physischen/zugewiesenen Speicher; ist dieser nicht ermittelbar, wird der vom Kernel verfügbare Gesamtwert verwendet.',
     collectedAt: 'Erfasst um {time}',
+    system: 'System',
+    uptime: 'laufzeit {text}',
+    uptimeDh: '{d} T {h} Std',
+    uptimeD: '{d} T',
+    uptimeHm: '{h} Std {m} Min',
+    uptimeH: '{h} Std',
+    uptimeM: '{m} Min',
+    uptimeS: '{s} Sek',
   },
 
   // ─── ServiceLogViewer ──────────────────────────────────────────────────────

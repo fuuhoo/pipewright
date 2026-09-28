@@ -219,7 +219,9 @@ export function subscribeServerLogs(
 // GET /api/servers/metrics      → { items: ServerMetrics[] }  (batch; parallel)
 //
 // Metrics are collected over SSH by running a FIXED read-only command whitelist
-// (`cat /proc/loadavg`/`uptime`, `nproc`/`getconf`, `free -b`, `df -B1 /`/`df -k /`).
+// (`cat /proc/loadavg`/`uptime`, `nproc`/`getconf`, `free -b`/`vm_stat`, `df -B1 /`/`df -k /`,
+// plus system identity: `uname -s/-r/-m/-n`, `/etc/os-release`/`sw_vers`,
+// `/proc/uptime`/`sysctl kern.boottime`).
 // AC-SEC-02: the commands are static argv arrays and never incorporate any user
 // input — no injection surface; metrics carry no secrets.
 //
@@ -257,6 +259,25 @@ export interface DiskMetric {
   totalBytes: number
 }
 
+/**
+ * 该机自报的系统标识(静态)。逐字段 best-effort:命令缺失/解析不出 → 空串 / 0,
+ * UI 跳过该片段(不像 cpu/memory 那样标「不可用」,这类信息缺了不值得占一行噪音)。
+ */
+export interface SystemMetric {
+  /** 内核名 `uname -s`:Linux / Darwin 等。探针成功就一定有值。 */
+  os: string
+  /** 人读发行版:Linux 取 /etc/os-release 的 PRETTY_NAME,macOS 取 sw_vers(如「macOS 15.5」)。 */
+  distro: string
+  /** 内核版本 `uname -r`,如 6.6.87-orbstack / 24.5.0。 */
+  kernel: string
+  /** CPU 架构 `uname -m`,如 x86_64 / arm64 / aarch64。 */
+  arch: string
+  /** 机器自己报的主机名 `uname -n`(可能与登记名不同)。 */
+  hostname: string
+  /** 开机至今秒数(Linux 读 /proc/uptime,macOS/BSD 用 kern.boottime 换算);0 = 采不到。 */
+  uptimeSeconds: number
+}
+
 export interface ServerMetrics {
   serverId: string
   /** False when SSH/auth/connect failed; metrics are null and `error` is human-readable. */
@@ -269,6 +290,8 @@ export interface ServerMetrics {
   memory: MemoryMetric | null
   /** Null on parse failure; `df` is cross-platform so usually present. */
   disk: DiskMetric | null
+  /** 该机自报的系统标识;不可达时为 null。字段逐条 best-effort(见 SystemMetric)。 */
+  system: SystemMetric | null
   /** RFC3339 collection timestamp. */
   collectedAt: string
 }

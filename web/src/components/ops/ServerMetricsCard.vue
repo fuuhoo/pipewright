@@ -3,6 +3,7 @@
 
   单台已登记服务器的指标卡:
     · 名称 + reachable 徽标(可达 / 不可达)
+    · 系统信息行:发行版 / 内核 / 架构 / 主机名 / 运行时长(该机自报,缺哪段跳哪段)
     · CPU:1 分钟负载 + 核数(负载相对核数着色:>1×核数 偏红、>0.7× 偏黄)
     · 内存 used/total 进度条 + 人读字节
     · 磁盘 used/total 进度条 + 人读字节
@@ -54,6 +55,38 @@ function humanBytes(n: number): string {
   }
   return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`
 }
+
+// ─── system info(该机自报的静态标识;缺段直接跳过,不标「不可用」) ──────────────
+
+const system = computed(() => props.metrics.system)
+
+/** 主行:发行版优先(macOS 15.5 / Ubuntu 24.04.2 LTS),没有就退内核名(Linux)。 */
+const sysPrimary = computed(() => {
+  const s = system.value
+  if (!s) return ''
+  return s.distro || s.os
+})
+
+/** 运行时长:最多给两级(3 天 4 小时 / 5 小时 12 分 / 8 分 / 40 秒);采不到 → 空。 */
+const uptimeText = computed(() => {
+  const sec = system.value?.uptimeSeconds ?? 0
+  if (sec <= 0) return ''
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d > 0) return h > 0 ? t('opsServer.metrics.uptimeDh', { d, h }) : t('opsServer.metrics.uptimeD', { d })
+  if (h > 0) return m > 0 ? t('opsServer.metrics.uptimeHm', { h, m }) : t('opsServer.metrics.uptimeH', { h })
+  if (m > 0) return t('opsServer.metrics.uptimeM', { m })
+  return t('opsServer.metrics.uptimeS', { s: sec })
+})
+
+/** 次行片段:内核(带上内核名以免主行没给)、架构、主机名、运行时长。 */
+const sysParts = computed(() => {
+  const s = system.value
+  if (!s) return []
+  const kernel = s.kernel ? (s.os && !sysPrimary.value.includes(s.os) ? `${s.os} ${s.kernel}` : s.kernel) : ''
+  return [kernel, s.arch, s.hostname, uptimeText.value ? t('opsServer.metrics.uptime', { text: uptimeText.value }) : ''].filter(Boolean)
+})
 
 const memPercent = computed(() =>
   props.metrics.memory ? pct(props.metrics.memory.usedBytes, props.metrics.memory.totalBytes) : null,
@@ -134,6 +167,15 @@ const loadText = computed(() => {
 
     <!-- Reachable: metric rows (each independently degradable) -->
     <dl v-else class="metrics-card__body">
+      <!-- 系统信息(静态标识,不是指标):主行发行版,次行内核 / 架构 / 主机名 / 运行时长 -->
+      <div v-if="system" class="metric-row metric-row--sys">
+        <dt class="metric-row__label">{{ t('opsServer.metrics.system') }}</dt>
+        <dd class="metric-row__value">
+          <span class="sys-primary" :title="sysPrimary">{{ sysPrimary }}</span>
+          <span v-if="sysParts.length" class="sys-meta">{{ sysParts.join(' · ') }}</span>
+        </dd>
+      </div>
+
       <!-- CPU -->
       <div class="metric-row">
         <dt class="metric-row__label">{{ t('opsServer.metrics.cpuLoad') }}</dt>
@@ -319,6 +361,26 @@ const loadText = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+/* ——— 系统信息行:静态标识,压成两行小字,别和指标抢视线 ——— */
+.metric-row--sys {
+  gap: 3px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-line);
+}
+.sys-primary {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sys-meta {
+  font-size: var(--text-label);
+  color: var(--color-dim);
+  word-break: break-word;
 }
 .metric-num {
   font-variant-numeric: tabular-nums;
