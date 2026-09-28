@@ -16,6 +16,7 @@ export default {
   testConnection: '接続テスト',
   logs: 'ログ',
   terminal: 'ターミナル',
+  remote: 'リモート',
   serviceOps: 'サービス操作',
   edit: '編集',
   delete: '削除',

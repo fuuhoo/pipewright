@@ -22,6 +22,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import ServiceLogViewer from '../../components/ops/ServiceLogViewer.vue'
 import ServiceOpsPanel from '../../components/ops/ServiceOpsPanel.vue'
+import RemoteWorkspaceModal from '../../components/ops/RemoteWorkspaceModal.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -151,6 +152,18 @@ function openTerminal(s: Server): void {
   // 全屏终端在**新标签页**打开,保留当前服务器列表页(终端是长会话,不该顶掉原页面)。
   const route = router.resolve({ name: 'server-terminal', params: { id: s.id } })
   window.open(route.href, '_blank', 'noopener')
+}
+
+// ─── remote workspace modal(终端 + 文件面板,同屏联动) ──────────────────────────
+// 与全屏终端页并存:这一条是「边看目录边敲命令」的日常入口,全屏页保留 AI 助手与大终端。
+const remoteServer = ref<Server | null>(null)
+
+function openRemote(s: Server): void {
+  remoteServer.value = s
+}
+
+function closeRemote(): void {
+  remoteServer.value = null
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -491,6 +504,7 @@ async function handleTest(s: Server): Promise<void> {
               {{ testingId === s.id ? t('settingsServers.testing') : t('settingsServers.testConnection') }}
             </button>
             <button class="btn-ghost" @click="openLogsModal(s)">{{ t('settingsServers.logs') }}</button>
+            <button class="btn-ghost" @click="openRemote(s)">{{ t('settingsServers.remote') }}</button>
             <button class="btn-ghost" @click="openTerminal(s)">{{ t('settingsServers.terminal') }}</button>
             <button class="btn-ghost" @click="openOpsModal(s)">{{ t('settingsServers.serviceOps') }}</button>
             <button class="btn-ghost" @click="openEditModal(s)">{{ t('settingsServers.edit') }}</button>
@@ -631,6 +645,15 @@ async function handleTest(s: Server): Promise<void> {
         />
       </div>
     </div>
+
+    <!-- ─── 远程工作区(上半屏终端 / 下半屏文件面板) ───────────────────────────── -->
+    <RemoteWorkspaceModal
+      v-if="remoteServer"
+      :server-id="remoteServer.id"
+      :server-name="remoteServer.name"
+      :host-label="`${remoteServer.user}@${remoteServer.host}:${remoteServer.port}`"
+      @close="closeRemote"
+    />
   </div>
 </template>
 

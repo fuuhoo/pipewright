@@ -16,6 +16,7 @@ export default {
   testConnection: '測試連線',
   logs: '日誌',
   terminal: '終端機',
+  remote: '遠端',
   serviceOps: '服務操作',
   edit: '編輯',
   delete: '刪除',

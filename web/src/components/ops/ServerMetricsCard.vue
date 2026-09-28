@@ -27,6 +27,9 @@ const props = defineProps<{
   metrics: ServerMetrics
 }>()
 
+/** 只有可达的机器画「远程」按钮:不可达点了只是拿到一条连不上的错误。 */
+const emit = defineEmits<{ (e: 'remote', serverId: string): void }>()
+
 // ─── derived display ───────────────────────────────────────────────────────────
 
 /** 用量百分比(0–100);分母为 0 或缺失 → null(不渲染进度)。 */
@@ -259,7 +262,12 @@ const loadText = computed(() => {
     </dl>
 
     <footer v-if="metrics.reachable" class="metrics-card__foot">
-      {{ t('opsServer.metrics.collectedAt', { time: new Date(metrics.collectedAt).toLocaleTimeString() }) }}
+      <span class="metrics-card__collected">
+        {{ t('opsServer.metrics.collectedAt', { time: new Date(metrics.collectedAt).toLocaleTimeString() }) }}
+      </span>
+      <button class="metrics-card__remote" type="button" @click="emit('remote', metrics.serverId)">
+        {{ t('remoteWorkspace.button') }}
+      </button>
     </footer>
   </article>
 </template>
@@ -423,8 +431,29 @@ const loadText = computed(() => {
 }
 
 .metrics-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   font-size: var(--text-label);
   color: var(--color-faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* 「远程」开弹窗(终端 + 文件面板)。与采集时间同一行:卡片主体留给指标,入口不占高度。 */
+.metrics-card__remote {
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-dim);
+  background: var(--color-inset);
+  border: 1px solid var(--color-line);
+  border-radius: var(--rounded-sm);
+  padding: 2px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.metrics-card__remote:hover {
+  color: var(--color-text);
+  border-color: var(--color-line-strong, var(--color-line));
 }
 </style>

@@ -16,6 +16,7 @@ export default {
   testConnection: '测试连接',
   logs: '日志',
   terminal: '终端',
+  remote: '远程',
   serviceOps: '服务操作',
   edit: '编辑',
   delete: '删除',

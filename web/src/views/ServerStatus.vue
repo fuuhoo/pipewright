@@ -16,6 +16,7 @@ import { useI18n } from 'vue-i18n'
 import { streamAllServerMetrics, listServers, type ServerMetrics, type Server } from '../api/servers'
 import { HttpError } from '../api/http'
 import ServerMetricsCard from '../components/ops/ServerMetricsCard.vue'
+import RemoteWorkspaceModal from '../components/ops/RemoteWorkspaceModal.vue'
 import AppButton from '../components/ui/AppButton.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
@@ -34,14 +35,31 @@ const updatedAt = ref('')
 const metrics = ref<ServerMetrics[]>([])
 /** serverId → metrics 下标(逐台回调要 O(1) 找到那张卡)。 */
 const indexById = new Map<string, number>()
-/** serverId → 展示名(来自登记列表,用于卡片标题)。 */
-const nameById = ref<Map<string, string>>(new Map())
+/** serverId → 登记信息(标题用 name,「远程」弹窗还要 host:port 与 user)。 */
+const serverById = ref<Map<string, Server>>(new Map())
 /** 有一轮取数在飞:轮询与手动刷新都跳过,避免叠请求。 */
 const inFlight = ref(false)
 
 const reachableCount = computed(() => metrics.value.filter((m) => m.reachable).length)
 /** 分母 = 已登记的台数:卡片逐台上屏的中间态不该把「共几台」忽大忽小。 */
-const totalCount = computed(() => Math.max(nameById.value.size, metrics.value.length))
+const totalCount = computed(() => Math.max(serverById.value.size, metrics.value.length))
+
+// 「远程」弹窗的目标机:null = 关闭。每次点卡上都重新取一份登记信息(改过 host 也生效)。
+const remoteId = ref<string | null>(null)
+const remoteServer = computed(() => (remoteId.value ? serverById.value.get(remoteId.value) ?? null : null))
+const remoteHostLabel = computed(() => {
+  const s = remoteServer.value
+  return s ? `${s.user}@${s.host}:${s.port}` : ''
+})
+const remoteName = computed(() => remoteServer.value?.name ?? remoteId.value ?? '')
+
+function openRemote(id: string): void {
+  remoteId.value = id
+}
+
+function closeRemote(): void {
+  remoteId.value = null
+}
 
 // 可达的排前面,不可达的沉底(两组内部都保持上屏顺序 = 登记时间倒序)。
 const sortedMetrics = computed(() => {
@@ -52,7 +70,7 @@ const sortedMetrics = computed(() => {
 })
 
 function displayName(m: ServerMetrics): string {
-  return nameById.value.get(m.serverId) ?? m.serverId
+  return serverById.value.get(m.serverId)?.name ?? m.serverId
 }
 
 function upsertMetrics(item: ServerMetrics): void {
@@ -95,7 +113,7 @@ async function load(): Promise<void> {
   // 剪枝(撤掉已删的服务器)留到整轮结束再做,免得轮中间闪没一张卡。
   const namesPromise = loadServerNames()
     .then((m) => {
-      nameById.value = m
+      serverById.value = m
       return m
     })
     .catch(() => null)
@@ -124,13 +142,12 @@ async function load(): Promise<void> {
   }
 }
 
-async function loadServerNames(): Promise<Map<string, string>> {
+async function loadServerNames(): Promise<Map<string, Server>> {
   const servers: Server[] = await listServers()
-  const m = new Map<string, string>()
-  for (const s of servers) m.set(s.id, s.name)
+  const m = new Map<string, Server>()
+  for (const s of servers) m.set(s.id, s)
   return m
 }
-
 // ─── 自动刷新 ────────────────────────────────────────────────────────────────
 // 指标实时、不落库,这里定时轮询:旧数据留屏、后台静默重取,成功就地替换,失败也不动画面。
 // 标签页隐藏时暂停(省 SSH;终端常在新标签开,这页可能被晾在后台),回到前台立即补一次。
@@ -229,8 +246,18 @@ onUnmounted(() => {
         :key="m.serverId"
         :name="displayName(m)"
         :metrics="m"
+        @remote="openRemote"
       />
     </div>
+
+    <!-- 远程:上半屏终端、下半屏文件面板(挂载即连,卸载即断 —— 不给后台留一条 PTY) -->
+    <RemoteWorkspaceModal
+      v-if="remoteId"
+      :server-id="remoteId"
+      :server-name="remoteName"
+      :host-label="remoteHostLabel"
+      @close="closeRemote"
+    />
   </div>
 </template>
 
