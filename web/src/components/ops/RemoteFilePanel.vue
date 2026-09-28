@@ -11,6 +11,10 @@
       不经过 fetch:大文件不该整份进内存,也不必重复实现进度条。
     · **正文编辑器是内联的一层**,不是套第二层弹窗:叠层弹窗的焦点/滚动/转义键管理
       在窄分屏里最容易出错,而这里只需要「看正文 + 改 + 存」。
+
+  版式照 FinalShell 的右半屏:左边目录树(只列目录、点开哪层才加载哪层),
+  右边 文件名/大小/类型/修改时间/权限 的表格。树与列表共用同一批 listFs 请求结果之外的
+  请求,所以它是懒的 —— 导航到哪一层才展开到哪一层。
 -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
@@ -29,10 +33,11 @@ import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import {
   ROOT,
+  fileExt,
   formatBytes,
   formatMtime,
   joinPath,
-  modeToRwx,
+  modeToLs,
   normalizePath,
   parentDir,
   pathCrumbs,
@@ -83,6 +88,94 @@ const prompt = ref<{ kind: PromptKind; target: FsEntry | null; value: string } |
 const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 
+// ─── 左侧目录树 ─────────────────────────────────────────────────────────────────
+// 只装目录、逐层懒加载:一次列目录若顺手把整棵子树拉平,慢的机器上首屏就得等
+// 几十次 SSH。展开哪一层才问哪一层,读不到(权限、竞态)当作没有子目录 ——
+// 主列表已经如实报过错,树不该把同一个错误再演一遍。
+interface TreeNode {
+  name: string
+  path: string
+  /** null = 还没加载过。 */
+  children: TreeNode[] | null
+  loading: boolean
+  expanded: boolean
+}
+
+function makeNode(name: string, path: string): TreeNode {
+  return { name, path, children: null, loading: false, expanded: false }
+}
+
+const treeRoot = ref<TreeNode>(makeNode(ROOT, ROOT))
+const treeCollapsed = ref(false)
+
+/** 深度优先摊平成可渲染行:折叠的节点连子树一起跳过。 */
+const treeRows = computed(() => {
+  const rows: { node: TreeNode; depth: number }[] = []
+  const walk = (node: TreeNode, depth: number): void => {
+    rows.push({ node, depth })
+    if (node.expanded && node.children) for (const child of node.children) walk(child, depth + 1)
+  }
+  walk(treeRoot.value, 0)
+  return rows
+})
+
+async function loadChildren(node: TreeNode): Promise<void> {
+  if (node.children || node.loading) return
+  node.loading = true
+  try {
+    const res = await listFs(props.serverId, node.path)
+    node.children = sortEntries(res.entries)
+      .filter((e) => e.isDir)
+      .map((e) => makeNode(e.name, e.path))
+  } catch {
+    /* 保持 children=null:下次点开还能重试 */
+  } finally {
+    node.loading = false
+  }
+}
+
+function toggleNode(node: TreeNode): void {
+  node.expanded = !node.expanded
+  if (node.expanded) void loadChildren(node)
+}
+
+/** 导航后把树展开到当前位置;seq 让后一次导航作废前一次,深路径不会串位。 */
+let treeSeq = 0
+
+async function revealInTree(path: string): Promise<void> {
+  const seq = ++treeSeq
+  let node = treeRoot.value
+  await loadChildren(node)
+  for (const crumb of pathCrumbs(path).slice(1)) {
+    if (seq !== treeSeq) return
+    node.expanded = true
+    const next = (node.children ?? []).find((c) => c.name === crumb.label)
+    if (!next) return
+    node = next
+    await loadChildren(node)
+  }
+  if (seq === treeSeq) node.expanded = true
+}
+
+function findLoadedNode(path: string): TreeNode | null {
+  const target = normalizePath(path)
+  const stack: TreeNode[] = [treeRoot.value]
+  while (stack.length) {
+    const n = stack.pop() as TreeNode
+    if (n.path === target) return n
+    if (n.children) stack.push(...n.children)
+  }
+  return null
+}
+
+/** 建目录 / 改名之后让对应那一层重新加载,不然树会停在旧快照上骗人。 */
+function invalidateTree(path: string): void {
+  const node = findLoadedNode(path)
+  if (!node || !node.children) return
+  node.children = null
+  if (node.expanded) void loadChildren(node)
+}
+
 /** 后端错误 → 人读一句:后端已按 UI 语言回 message,只在它缺失时兜底。 */
 function humanize(err: unknown): string {
   if (err instanceof HttpError) {
@@ -103,6 +196,7 @@ async function load(path: string, opts: { silent?: boolean } = {}): Promise<void
     unsupported.value = false
     // 后端不保证顺序(尤其 exec 兜底走的是 shell glob),排序固定在界面这一层做。
     entries.value = res.isDir ? sortEntries(res.entries) : []
+    void revealInTree(currentPath.value)
   } catch (err) {
     if (err instanceof HttpError && err.apiError?.code === 'fs_unsupported') {
       unsupported.value = true
@@ -141,6 +235,14 @@ function submitPathInput(): void {
     return
   }
   navigate(p)
+}
+
+/** 「类型」列的文案:目录/链接是中文名,普通文件给后缀(无后缀回「文件」)。 */
+function typeLabel(e: FsEntry): string {
+  if (e.isDir) return t('remoteWorkspace.panel.typeDir')
+  if (e.isLink) return t('remoteWorkspace.panel.typeLink')
+  const ext = fileExt(e.name)
+  return ext ? t('remoteWorkspace.panel.typeFileExt', { ext: ext.toUpperCase() }) : t('remoteWorkspace.panel.typeFile')
 }
 
 // ─── 终端 → 面板 ────────────────────────────────────────────────────────────────
@@ -237,6 +339,8 @@ async function applyPrompt(): Promise<void> {
     }
     prompt.value = null
     await load(currentPath.value, { silent: true })
+    // 树是逐层缓存的:新建/改名后让对应那一层重新加载,不然它停在旧快照上。
+    invalidateTree(p.kind === 'mkdir' ? currentPath.value : parentDir(p.target?.path ?? currentPath.value))
   } catch (err) {
     toast.error(t('remoteWorkspace.panel.opFailed'), { detail: humanize(err) })
   }
@@ -258,6 +362,7 @@ async function removeEntry(e: FsEntry): Promise<void> {
     await fsOp(props.serverId, 'remove', e.path)
     toast.success(t('remoteWorkspace.panel.removeDone'), { detail: e.path })
     await load(currentPath.value, { silent: true })
+    invalidateTree(parentDir(e.path))
   } catch (err) {
     toast.error(t('remoteWorkspace.panel.opFailed'), { detail: humanize(err) })
   }
@@ -301,9 +406,26 @@ onMounted(() => {
 
 <template>
   <div class="fs-panel">
-    <div class="fs-panel__bar">
-      <button class="fs-btn" type="button" :disabled="!canGoUp" :title="t('remoteWorkspace.panel.up')" @click="goUp">↑</button>
-      <button class="fs-btn" type="button" :title="t('remoteWorkspace.panel.refresh')" @click="load(currentPath)">⟳</button>
+    <div class="fs-bar">
+      <button
+        class="fs-ibtn"
+        :class="{ 'fs-ibtn--on': !treeCollapsed }"
+        type="button"
+        :aria-pressed="!treeCollapsed"
+        :title="treeCollapsed ? t('remoteWorkspace.panel.expandTree') : t('remoteWorkspace.panel.collapseTree')"
+        @click="treeCollapsed = !treeCollapsed"
+      >▤</button>
+      <button class="fs-ibtn" type="button" :disabled="!canGoUp" :title="t('remoteWorkspace.panel.up')" @click="goUp">↑</button>
+      <button class="fs-ibtn" type="button" :title="t('remoteWorkspace.panel.refresh')" @click="load(currentPath)">⟳</button>
+      <span class="fs-bar__sep" aria-hidden="true" />
+      <button class="fs-ibtn" type="button" :title="t('remoteWorkspace.panel.mkdir')" @click="startMkdir">＋</button>
+      <button
+        class="fs-ibtn"
+        type="button"
+        :disabled="uploading"
+        :title="uploading ? t('remoteWorkspace.panel.uploading') : t('remoteWorkspace.panel.upload')"
+        @click="pickFiles"
+      >⇧</button>
       <input
         v-model="pathInput"
         class="fs-path"
@@ -312,10 +434,7 @@ onMounted(() => {
         :aria-label="t('remoteWorkspace.panel.pathAria')"
         @keydown.enter.prevent="submitPathInput"
       />
-      <button class="fs-btn fs-btn--text" type="button" @click="startMkdir">{{ t('remoteWorkspace.panel.mkdir') }}</button>
-      <button class="fs-btn fs-btn--text" type="button" :disabled="uploading" @click="pickFiles">
-        {{ uploading ? t('remoteWorkspace.panel.uploading') : t('remoteWorkspace.panel.upload') }}
-      </button>
+      <span v-if="backend" class="fs-badge" :title="t('remoteWorkspace.panel.backendTitle')">{{ backend }}</span>
       <input ref="fileInput" class="fs-file" type="file" multiple hidden @change="onFilesPicked" />
     </div>
 
@@ -326,94 +445,126 @@ onMounted(() => {
           {{ c.label }}
         </button>
       </template>
-      <span v-if="backend" class="fs-crumbs__backend" :title="t('remoteWorkspace.panel.backendTitle')">{{ backend }}</span>
     </nav>
 
     <p v-if="unsupported" class="fs-note">{{ t('remoteWorkspace.panel.unsupported') }}</p>
     <p v-else-if="errorText && !editing" class="fs-note fs-note--err">{{ errorText }}</p>
 
-    <!-- 内联编辑层 -->
-    <section v-if="editing" class="fs-editor">
-      <header class="fs-editor__head">
-        <span class="fs-editor__path">{{ editorPath }}</span>
-        <span v-if="editorTruncated" class="fs-warn">{{ t('remoteWorkspace.panel.truncated') }}</span>
-        <span class="grow" />
-        <button class="fs-btn fs-btn--text" type="button" @click="closeEditor">{{ t('remoteWorkspace.panel.closeEditor') }}</button>
-      </header>
-      <p v-if="errorText" class="fs-note fs-note--err">{{ errorText }}</p>
-      <p v-else-if="editorBinary" class="fs-note">{{ t('remoteWorkspace.panel.binaryHint') }}</p>
-      <textarea
-        v-else
-        v-model="editorContent"
-        class="fs-editor__text"
-        spellcheck="false"
-        :readonly="editorLoading"
-        :aria-label="t('remoteWorkspace.panel.editorAria')"
-        :placeholder="editorLoading ? t('remoteWorkspace.panel.loading') : ''"
-      />
-      <footer class="fs-editor__foot">
-        <span v-if="editorDirty" class="fs-dirty">{{ t('remoteWorkspace.panel.unsaved') }}</span>
-        <span class="grow" />
-        <button
-          class="fs-btn fs-btn--primary"
-          type="button"
-          :disabled="editorBinary || editorLoading || !editorDirty || editorSaving"
-          @click="saveEditor"
-        >{{ editorSaving ? t('remoteWorkspace.panel.saving') : t('remoteWorkspace.panel.save') }}</button>
-      </footer>
-    </section>
+    <div class="fs-cols">
+      <!-- 目录树:只列目录、点开哪层加载哪层 -->
+      <aside v-if="!unsupported && !treeCollapsed" class="fs-tree" :aria-label="t('remoteWorkspace.panel.treeAria')">
+        <div v-for="row in treeRows" :key="row.node.path" class="fs-tree__row" :style="{ '--depth': String(row.depth) }">
+          <button
+            class="fs-tree__twisty"
+            type="button"
+            :disabled="row.node.loading"
+            :aria-label="row.node.expanded ? t('remoteWorkspace.panel.treeCollapse') : t('remoteWorkspace.panel.treeExpand')"
+            @click.stop="toggleNode(row.node)"
+          >{{ row.node.loading ? '·' : row.node.expanded ? '▾' : '▸' }}</button>
+          <button
+            class="fs-tree__name"
+            :class="{ 'fs-tree__name--here': row.node.path === currentPath }"
+            type="button"
+            :title="row.node.path"
+            @click="navigate(row.node.path)"
+          >
+            <svg class="fs-ico fs-ico--dir" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 3.5c0-.69.56-1.25 1.25-1.25h2.7c.4 0 .77.19 1 .51l.7 1.04h4.6c.69 0 1.25.56 1.25 1.25v6.9c0 .69-.56 1.25-1.25 1.25H3A1.25 1.25 0 0 1 1.75 13.25z" /></svg>
+            <span class="fs-tree__label">{{ row.node.name }}</span>
+          </button>
+        </div>
+      </aside>
 
-    <!-- 列表层 -->
-    <section v-else class="fs-list">
-      <form v-if="prompt" class="fs-prompt" @submit.prevent="applyPrompt">
-        <span class="fs-prompt__label">
-          {{ prompt.kind === 'mkdir' ? t('remoteWorkspace.panel.mkdirIn', { path: currentPath }) : t('remoteWorkspace.panel.renameTo', { name: prompt.target?.name ?? '' }) }}
-        </span>
-        <input v-model="prompt.value" class="fs-prompt__input" type="text" :autofocus="true" @keydown.esc.prevent="prompt = null" />
-        <button class="fs-btn fs-btn--primary" type="submit">{{ t('remoteWorkspace.panel.ok') }}</button>
-        <button class="fs-btn" type="button" @click="prompt = null">{{ t('remoteWorkspace.panel.cancel') }}</button>
-      </form>
+      <!-- 内联编辑层 -->
+      <section v-if="editing" class="fs-editor">
+        <header class="fs-editor__head">
+          <span class="fs-editor__path">{{ editorPath }}</span>
+          <span v-if="editorTruncated" class="fs-warn">{{ t('remoteWorkspace.panel.truncated') }}</span>
+          <span class="grow" />
+          <button class="fs-btn fs-btn--text" type="button" @click="closeEditor">{{ t('remoteWorkspace.panel.closeEditor') }}</button>
+        </header>
+        <p v-if="errorText" class="fs-note fs-note--err">{{ errorText }}</p>
+        <p v-else-if="editorBinary" class="fs-note">{{ t('remoteWorkspace.panel.binaryHint') }}</p>
+        <textarea
+          v-else
+          v-model="editorContent"
+          class="fs-editor__text"
+          spellcheck="false"
+          :readonly="editorLoading"
+          :aria-label="t('remoteWorkspace.panel.editorAria')"
+          :placeholder="editorLoading ? t('remoteWorkspace.panel.loading') : ''"
+        />
+        <footer class="fs-editor__foot">
+          <span v-if="editorDirty" class="fs-dirty">{{ t('remoteWorkspace.panel.unsaved') }}</span>
+          <span class="grow" />
+          <button
+            class="fs-btn fs-btn--primary"
+            type="button"
+            :disabled="editorBinary || editorLoading || !editorDirty || editorSaving"
+            @click="saveEditor"
+          >{{ editorSaving ? t('remoteWorkspace.panel.saving') : t('remoteWorkspace.panel.save') }}</button>
+        </footer>
+      </section>
 
-      <div v-if="loading && !entries.length" class="fs-empty">{{ t('remoteWorkspace.panel.loading') }}</div>
-      <div v-else-if="!entries.length && !errorText && !unsupported" class="fs-empty">{{ t('remoteWorkspace.panel.empty') }}</div>
+      <!-- 列表层 -->
+      <section v-else class="fs-list">
+        <form v-if="prompt" class="fs-prompt" @submit.prevent="applyPrompt">
+          <span class="fs-prompt__label">
+            {{ prompt.kind === 'mkdir' ? t('remoteWorkspace.panel.mkdirIn', { path: currentPath }) : t('remoteWorkspace.panel.renameTo', { name: prompt.target?.name ?? '' }) }}
+          </span>
+          <input v-model="prompt.value" class="fs-prompt__input" type="text" :autofocus="true" @keydown.esc.prevent="prompt = null" />
+          <button class="fs-btn fs-btn--primary" type="submit">{{ t('remoteWorkspace.panel.ok') }}</button>
+          <button class="fs-btn" type="button" @click="prompt = null">{{ t('remoteWorkspace.panel.cancel') }}</button>
+        </form>
 
-      <table v-else class="fs-table">
-        <thead>
-          <tr>
-            <th class="col-name">{{ t('remoteWorkspace.panel.colName') }}</th>
-            <th class="col-mode">{{ t('remoteWorkspace.panel.colMode') }}</th>
-            <th class="col-size">{{ t('remoteWorkspace.panel.colSize') }}</th>
-            <th class="col-mtime">{{ t('remoteWorkspace.panel.colMtime') }}</th>
-            <th class="col-ops">{{ t('remoteWorkspace.panel.colOps') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="e in entries" :key="e.path">
-            <td class="col-name">
-              <button class="fs-name" type="button" @click="openEntry(e)">
-                <span class="fs-name__icon" aria-hidden="true">{{ e.isDir ? '▸' : e.isLink ? '↗' : '·' }}</span>
-                <span :class="{ 'fs-name__dir': e.isDir }">{{ e.name }}</span>
-                <span v-if="e.isLink && e.linkTarget" class="fs-name__link">→ {{ e.linkTarget }}</span>
-              </button>
-            </td>
-            <td class="col-mode">{{ modeToRwx(e.mode) }}</td>
-            <td class="col-size">{{ e.isDir ? '—' : formatBytes(e.size) }}</td>
-            <td class="col-mtime">{{ formatMtime(e.mtime) || '—' }}</td>
-            <td class="col-ops">
-              <a
-                v-if="!e.isDir"
-                class="fs-op"
-                :href="fsDownloadUrl(serverId, e.path)"
-                :title="t('remoteWorkspace.panel.downloadTitle')"
-              >{{ t('remoteWorkspace.panel.download') }}</a>
-              <button v-if="!e.isDir" class="fs-op" type="button" @click="openEditor(e.path)">{{ t('remoteWorkspace.panel.edit') }}</button>
-              <button class="fs-op" type="button" @click="startRename(e)">{{ t('remoteWorkspace.panel.rename') }}</button>
-              <button class="fs-op fs-op--danger" type="button" @click="removeEntry(e)">{{ t('remoteWorkspace.panel.remove') }}</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+        <div v-if="loading && !entries.length" class="fs-empty">{{ t('remoteWorkspace.panel.loading') }}</div>
+        <div v-else-if="!entries.length && !errorText && !unsupported" class="fs-empty">{{ t('remoteWorkspace.panel.empty') }}</div>
+
+        <table v-else class="fs-table">
+          <thead>
+            <tr>
+              <th class="col-name">{{ t('remoteWorkspace.panel.colName') }}</th>
+              <th class="col-size">{{ t('remoteWorkspace.panel.colSize') }}</th>
+              <th class="col-type">{{ t('remoteWorkspace.panel.colType') }}</th>
+              <th class="col-mtime">{{ t('remoteWorkspace.panel.colMtime') }}</th>
+              <th class="col-mode">{{ t('remoteWorkspace.panel.colMode') }}</th>
+              <th class="col-ops">{{ t('remoteWorkspace.panel.colOps') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in entries" :key="e.path">
+              <td class="col-name">
+                <button class="fs-name" type="button" @click="openEntry(e)">
+                  <svg v-if="e.isDir" class="fs-ico fs-ico--dir" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M1.75 3.5c0-.69.56-1.25 1.25-1.25h2.7c.4 0 .77.19 1 .51l.7 1.04h4.6c.69 0 1.25.56 1.25 1.25v6.9c0 .69-.56 1.25-1.25 1.25H3A1.25 1.25 0 0 1 1.75 13.25z" />
+                  </svg>
+                  <svg v-else class="fs-ico" :class="{ 'fs-ico--link': e.isLink }" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M4.75 1.75c0-.414.336-.75.75-.75h3.6l3.15 3.15v9.35c0 .414-.336.75-.75.75h-6a.75.75 0 0 1-.75-.75z" />
+                  </svg>
+                  <span :class="{ 'fs-name__dir': e.isDir }">{{ e.name }}</span>
+                  <span v-if="e.isLink && e.linkTarget" class="fs-name__link">→ {{ e.linkTarget }}</span>
+                </button>
+              </td>
+              <!-- 目录不给体积:两路后端回的都是 0/块数,画成 0 B 是假数据(FinalShell 同样留空)。 -->
+              <td class="col-size">{{ e.isDir ? '' : formatBytes(e.size) }}</td>
+              <td class="col-type">{{ typeLabel(e) }}</td>
+              <td class="col-mtime">{{ formatMtime(e.mtime) }}</td>
+              <td class="col-mode">{{ modeToLs(e) }}</td>
+              <td class="col-ops">
+                <a
+                  v-if="!e.isDir"
+                  class="fs-op"
+                  :href="fsDownloadUrl(serverId, e.path)"
+                  :title="t('remoteWorkspace.panel.downloadTitle')"
+                >{{ t('remoteWorkspace.panel.download') }}</a>
+                <button v-if="!e.isDir" class="fs-op" type="button" @click="openEditor(e.path)">{{ t('remoteWorkspace.panel.edit') }}</button>
+                <button class="fs-op" type="button" @click="startRename(e)">{{ t('remoteWorkspace.panel.rename') }}</button>
+                <button class="fs-op fs-op--danger" type="button" @click="removeEntry(e)">{{ t('remoteWorkspace.panel.remove') }}</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -428,12 +579,59 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.fs-panel__bar {
+.fs-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
+/* 图标按钮:工具条要像 FinalShell 那样一行排开,文字标签留给 title/aria。 */
+.fs-ibtn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--rounded-sm);
+  cursor: pointer;
+}
+.fs-ibtn:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-inset);
+  border-color: var(--color-line);
+}
+.fs-ibtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.fs-ibtn--on {
+  color: var(--color-text);
+  background: var(--color-inset);
+  border-color: var(--color-line);
+}
+.fs-bar__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  flex-shrink: 0;
+  background: var(--color-line);
+}
+.fs-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: var(--text-label);
+  color: var(--color-faint);
+  border: 1px solid var(--color-line);
+  border-radius: var(--rounded-sm);
+}
+
 .fs-path {
   flex: 1 1 auto;
   min-width: 0;
@@ -508,13 +706,95 @@ onMounted(() => {
 .fs-crumbs__sep {
   color: var(--color-faint);
 }
-.fs-crumbs__backend {
-  margin-left: auto;
-  padding: 0 6px;
-  font-size: var(--text-label);
-  color: var(--color-faint);
+/* 两栏:左目录树,右列表/编辑器。树固定宽度,列表吃掉余下空间。 */
+.fs-cols {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.fs-tree {
+  flex: 0 0 190px;
+  min-width: 0;
+  overflow: auto;
+  padding: 2px 0;
+  background: var(--color-inset);
   border: 1px solid var(--color-line);
   border-radius: var(--rounded-sm);
+}
+.fs-tree__row {
+  display: flex;
+  align-items: center;
+  /* 每深一层缩进一档;CSS 变量由 :style 给成字符串,故用 calc 兜住单位。 */
+  padding-left: calc(2px + var(--depth, 0) * 12px);
+  padding-right: 4px;
+}
+.fs-tree__twisty {
+  flex-shrink: 0;
+  width: 16px;
+  height: 20px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--color-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.fs-tree__twisty:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fs-tree__name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  font: inherit;
+  font-size: var(--text-label);
+  color: var(--color-text);
+  background: none;
+  border: 0;
+  border-radius: var(--rounded-sm);
+  padding: 0 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.fs-tree__name:hover {
+  background: var(--color-card-2, var(--color-inset));
+}
+.fs-tree__name--here {
+  background: var(--color-primary-soft, var(--color-inset));
+  box-shadow: inset 2px 0 0 var(--color-primary, var(--color-accent));
+}
+.fs-tree__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 图标:目录用品牌蓝的文件夹,文件用中性文档,链接描一下边以示区别。 */
+.fs-ico {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  fill: var(--color-faint);
+}
+.fs-ico--dir {
+  fill: var(--color-primary, var(--color-accent));
+}
+.fs-ico--link {
+  fill: none;
+  stroke: var(--color-faint);
+  stroke-width: 1.2;
+}
+
+.fs-editor,
+.fs-list {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .fs-note {
@@ -643,15 +923,24 @@ onMounted(() => {
   padding: 2px 6px;
   vertical-align: middle;
 }
+/* 隔行条纹:一屏几十条目,没有条纹时眼睛会串行(和 FinalShell 同一手法)。 */
+.fs-table tbody tr:nth-child(even) {
+  background: var(--color-inset);
+}
 .col-name {
   min-width: 0;
 }
 .col-mode,
 .col-size,
+.col-type,
 .col-mtime {
   color: var(--color-dim);
-  font-family: var(--font-mono, ui-monospace, monospace);
   white-space: nowrap;
+}
+.col-mode,
+.col-mtime,
+.col-size {
+  font-family: var(--font-mono, ui-monospace, monospace);
 }
 .col-size {
   text-align: right;
@@ -674,13 +963,8 @@ onMounted(() => {
   cursor: pointer;
   text-align: left;
 }
-.fs-name:hover .fs-name__dir,
-.fs-name:hover span:last-child {
+.fs-name:hover span {
   text-decoration: underline;
-}
-.fs-name__icon {
-  color: var(--color-faint);
-  flex-shrink: 0;
 }
 .fs-name__dir {
   font-weight: 600;

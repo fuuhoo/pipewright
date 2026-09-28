@@ -8,9 +8,11 @@ import {
   ROOT,
   cdCommand,
   cwdReportScript,
+  fileExt,
   formatBytes,
   formatMtime,
   joinPath,
+  modeToLs,
   modeToRwx,
   normalizePath,
   parentDir,
@@ -100,6 +102,22 @@ describe('modeToRwx', () => {
 
   it('高位(setuid 等)不参与显示', () => {
     expect(modeToRwx(0o4755)).toBe('rwxr-xr-x')
+  })
+})
+
+describe('modeToLs / fileExt', () => {
+  it('首字符给类型,后 9 位仍是权限位', () => {
+    expect(modeToLs({ isDir: true, isLink: false, mode: 0o700 })).toBe('drwx------')
+    expect(modeToLs({ isDir: false, isLink: true, mode: 0o777 })).toBe('lrwxrwxrwx')
+    expect(modeToLs({ isDir: false, isLink: false, mode: 0o644 })).toBe('-rw-r--r--')
+  })
+
+  it('后缀小写;隐藏文件、无后缀、以点结尾都不给后缀', () => {
+    expect(fileExt('app.LOG')).toBe('log')
+    expect(fileExt('archive.tar.gz')).toBe('gz')
+    expect(fileExt('.bashrc')).toBe('')
+    expect(fileExt('Makefile')).toBe('')
+    expect(fileExt('trailing.')).toBe('')
   })
 })
 

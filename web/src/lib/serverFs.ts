@@ -112,6 +112,25 @@ export function modeToRwx(mode: number): string {
   return out
 }
 
+/**
+ * `ls -l` 式 10 位权限串:首字符是类型(d 目录 / l 链接 / - 普通文件)。
+ * 后 9 位取自 mode,而 mode 只有权限位(两路后端都只回 Perm),所以类型首字符
+ * 必须问 isDir/isLink,不能从 mode 里猜。
+ */
+export function modeToLs(entry: { isDir: boolean; isLink: boolean; mode: number }): string {
+  return (entry.isDir ? 'd' : entry.isLink ? 'l' : '-') + modeToRwx(entry.mode)
+}
+
+/**
+ * 后缀名(小写、不含点),给「类型」列用;无后缀与点开头隐藏文件回空串。
+ * `.bashrc` 的点是隐藏标记不是分隔符,把它当后缀会显示成「BASHRC 文件」。
+ */
+export function fileExt(name: string): string {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0 || dot === name.length - 1) return ''
+  return name.slice(dot + 1).toLowerCase()
+}
+
 /** POSIX 单引号安全引用:整串包进单引号,内部单引号换成 `'\''`。 */
 export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
