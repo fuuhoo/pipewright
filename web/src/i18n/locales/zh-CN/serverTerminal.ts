@@ -7,6 +7,7 @@ export default {
 
   kindContainer: '容器',
   kindHost: '主机',
+  shellAuto: '自动(优先 bash)',
   containerLabel: '容器 {label}',
   hostShell: '主机 shell',
 

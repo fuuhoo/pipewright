@@ -15,6 +15,7 @@ export default {
   connectFailed: 'Error de conexión',
   sessionEnded: 'La sesión de terminal ha terminado',
   terminalAria: 'Terminal remoto',
+  shellAuto: 'Automático (prioriza bash)',
   cdLinkUnsupported: 'Este shell no tiene hook de indicador (no es bash/zsh); el cd del terminal no se refleja en el panel de archivos.',
 
   panel: {

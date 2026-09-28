@@ -15,6 +15,7 @@ export default {
   connectFailed: '연결 실패',
   sessionEnded: '터미널 세션이 종료되었습니다',
   terminalAria: '원격 터미널',
+  shellAuto: '자동(bash 우선)',
   cdLinkUnsupported: '이 셸에는 프롬프트 훅이 없습니다(bash/zsh 아님). 터미널의 cd가 아래 파일 패널에 반영되지 않습니다.',
 
   panel: {

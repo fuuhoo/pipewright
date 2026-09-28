@@ -15,6 +15,7 @@ export default {
   connectFailed: '接続に失敗',
   sessionEnded: 'ターミナルセッションを終了しました',
   terminalAria: 'リモートターミナル',
+  shellAuto: '自動（bash 優先）',
   cdLinkUnsupported: 'この shell にはプロンプトフックがありません（bash/zsh 以外）。ターミナルでの cd は下のファイルパネルに反映されません。',
 
   panel: {

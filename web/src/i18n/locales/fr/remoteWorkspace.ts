@@ -15,6 +15,7 @@ export default {
   connectFailed: 'Échec de la connexion',
   sessionEnded: 'Session du terminal terminée',
   terminalAria: 'Terminal distant',
+  shellAuto: 'Automatique (priorité à bash)',
   cdLinkUnsupported: 'Ce shell n’a pas de hook d’invite (ni bash/zsh) ; le cd du terminal ne se répercute pas dans le panneau de fichiers.',
 
   panel: {

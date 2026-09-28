@@ -415,6 +415,13 @@ export type TerminalShell =
   | 'sh'
   | 'bash'
 
+/**
+ * Host-terminal shell choice: a whitelisted shell, or `''` = let the server pick
+ * the best one actually installed (bash/zsh first — those are the shells that
+ * carry the prompt hooks the workspace relies on).
+ */
+export type HostTerminalShell = TerminalShell | ''
+
 export interface TerminalHandlers {
   /** A chunk of terminal output (stdout+stderr merged) arrived from the container. */
   onData: (chunk: Uint8Array) => void
@@ -461,7 +468,7 @@ export function openContainerTerminal(
  * a WS upgrade, so locale travels as a query param (Accept-Language is the
  * server-side fallback).
  */
-function terminalQuery(shell?: TerminalShell): string {
+function terminalQuery(shell?: HostTerminalShell): string {
   const qs = new URLSearchParams()
   if (shell) qs.set('shell', shell)
   qs.set('locale', currentLocale())
@@ -472,12 +479,13 @@ function terminalQuery(shell?: TerminalShell): string {
  * Open an interactive **host shell** on a registered server (SSH → login shell, no container).
  *
  * This is the default target of "open the server's terminal". Same-origin WebSocket carries the
- * session cookie. `shell` defaults server-side to `/bin/sh` when omitted.
+ * session cookie. Omitted / `''` means the server picks the best shell actually installed on that
+ * host, preferring bash/zsh.
  */
 export function openServerTerminal(
   serverId: string,
   handlers: TerminalHandlers,
-  shell?: TerminalShell,
+  shell?: HostTerminalShell,
 ): TerminalConnection {
   const qs = terminalQuery(shell)
   return openTerminalWS(`/api/servers/${serverId}/terminal${qs}`, handlers)

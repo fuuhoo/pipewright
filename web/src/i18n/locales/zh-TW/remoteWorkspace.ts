@@ -15,6 +15,7 @@ export default {
   connectFailed: '連線失敗',
   sessionEnded: '終端機工作階段已結束',
   terminalAria: '遠端終端機',
+  shellAuto: '自動（優先 bash）',
   cdLinkUnsupported: '目前 shell 沒有提示符鉤子（非 bash/zsh），終端機裡的 cd 不會同步到下方檔案面板。',
 
   panel: {

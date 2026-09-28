@@ -15,6 +15,7 @@ export default {
   connectFailed: 'Connection failed',
   sessionEnded: 'Terminal session ended',
   terminalAria: 'Remote terminal',
+  shellAuto: 'Auto (prefer bash)',
   cdLinkUnsupported: 'This shell has no prompt hook (not bash/zsh), so cd in the terminal will not follow in the file panel below.',
 
   panel: {

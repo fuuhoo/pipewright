@@ -15,6 +15,7 @@ export default {
   connectFailed: '连接失败',
   sessionEnded: '终端会话已结束',
   terminalAria: '远程终端',
+  shellAuto: '自动(优先 bash)',
   cdLinkUnsupported: '当前 shell 无提示符钩子(非 bash/zsh),终端里的 cd 不会同步到下方文件面板。',
 
   panel: {

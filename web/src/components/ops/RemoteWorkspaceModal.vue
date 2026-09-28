@@ -19,14 +19,15 @@ import { useI18n } from 'vue-i18n'
 import TerminalPane from './TerminalPane.vue'
 import RemoteFilePanel from './RemoteFilePanel.vue'
 import { ROOT } from '../../lib/serverFs'
-import type { TerminalShell } from '../../api/servers'
+import type { HostTerminalShell } from '../../api/servers'
 
 const props = defineProps<{
   serverId: string
   serverName: string
   /** user@host:port,顶栏与终端条都用它。 */
   hostLabel?: string
-  shell?: TerminalShell
+  /** '' = 让服务端在这台机上挑一个最合适的 shell(bash/zsh 优先)。 */
+  shell?: HostTerminalShell
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()

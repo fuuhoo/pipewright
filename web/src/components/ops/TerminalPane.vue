@@ -8,16 +8,17 @@
   多出来的一条能力是**cwd 上报**:连接后往 PTY 注入一段钩子脚本(见 lib/serverFs 的
   cwdReportScript),让远端 shell 每次出提示符时用 OSC 7 打印当前目录,本组件解析后经
   emit('cwd') 交给上层联动文件面板。只有 bash/zsh 有提示符钩子;其余 shell 静默无联动,
-  文件面板仍可自行导航(不假装能跟上)。
+  文件面板仍可自行导航(不假装能跟上)。shell 默认留空 = 让服务端在这台机上现挑一个
+  (bash/zsh 优先),所以正常情况下联动是开箱即用的。
 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   openServerTerminal,
+  type HostTerminalShell,
   type TerminalConnection,
   type TerminalHandlers,
-  type TerminalShell,
 } from '../../api/servers'
 import { cdCommand, cwdReportScript, pathFromOsc7 } from '../../lib/serverFs'
 
@@ -29,9 +30,10 @@ const props = withDefaults(
     serverId: string
     /** 展示用主机标签(名称或 user@host)。 */
     hostLabel?: string
-    shell?: TerminalShell
+    /** '' = 让服务端在这台机上挑一个最合适的 shell(bash/zsh 优先)。 */
+    shell?: HostTerminalShell
   }>(),
-  { shell: '/bin/sh', hostLabel: '' },
+  { shell: '', hostLabel: '' },
 )
 
 type ConnState = 'idle' | 'connecting' | 'connected' | 'closed' | 'error'
@@ -42,13 +44,26 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const allowedShells: TerminalShell[] = ['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh', 'sh', 'bash']
-const shell = ref<TerminalShell>(props.shell)
+const shellOptions: HostTerminalShell[] = ['', '/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh', 'sh', 'bash']
+const shell = ref<HostTerminalShell>(props.shell)
 
 const connState = ref<ConnState>('idle')
 const statusMsg = ref('')
 const latencyMs = ref<number | null>(null)
 const isBashOrZsh = computed(() => shell.value.includes('bash') || shell.value.includes('zsh'))
+/** 自动模式没法预先知道远端挑了哪个 shell:装没装上钩子,只看它有没有真的报过 cwd。 */
+const sawCwd = ref(false)
+const linkUnconfirmed = ref(false)
+const showLinkNote = computed(
+  () => (shell.value !== '' && !isBashOrZsh.value) || (shell.value === '' && linkUnconfirmed.value),
+)
+
+/** 自动模式只能靠「报没报过 cwd」判有没有钩子:给 4 秒,别一连上就喊不支持。 */
+let linkProbe: number | undefined
+function clearLinkProbe(): void {
+  if (linkProbe !== undefined) window.clearTimeout(linkProbe)
+  linkProbe = undefined
+}
 
 const termHost = ref<HTMLElement | null>(null)
 const term = shallowRef<XTerm | null>(null)
@@ -118,7 +133,12 @@ async function ensureTerm(): Promise<XTerm | null> {
   // OSC 7 ← 远端 shell 报 cwd。返回 true 表示已消费,不再落到终端渲染。
   inst.parser.registerOscHandler(7, (data: string): boolean => {
     const p = pathFromOsc7(data)
-    if (p) emit('cwd', p)
+    if (p) {
+      sawCwd.value = true
+      linkUnconfirmed.value = false
+      clearLinkProbe()
+      emit('cwd', p)
+    }
     return true
   })
 
@@ -207,6 +227,8 @@ async function connect(): Promise<void> {
   inst?.focus()
   setState('connecting')
   statusMsg.value = ''
+  sawCwd.value = false
+  linkUnconfirmed.value = false
   const startedAt = performance.now()
   const handlers: TerminalHandlers = {
     onOpen() {
@@ -215,6 +237,12 @@ async function connect(): Promise<void> {
       refit()
       // 先让 shell 装上 cwd 钩子,再清一次行,免得注入回显留在提示符前。
       conn.value?.send(cwdReportScript())
+      // 自动模式下唯一能证明「这台机的 shell 有提示符钩子」的证据就是它真的报过 cwd。
+      if (shell.value === '') {
+        linkProbe = window.setTimeout(() => {
+          if (!sawCwd.value) linkUnconfirmed.value = true
+        }, 4000)
+      }
     },
     onData(chunk) {
       inst?.write(decoder.decode(chunk, { stream: true }))
@@ -234,6 +262,7 @@ async function connect(): Promise<void> {
 }
 
 function disconnect(): void {
+  clearLinkProbe()
   conn.value?.close()
   conn.value = null
   if (connState.value === 'connected' || connState.value === 'connecting') setState('closed')
@@ -276,7 +305,7 @@ defineExpose({ runCd, connect, disconnect, focus })
       <label class="term-pane__shell">
         <span>Shell</span>
         <select v-model="shell" :aria-label="'Shell'" :disabled="connState === 'connecting'">
-          <option v-for="s in allowedShells" :key="s" :value="s">{{ s }}</option>
+          <option v-for="s in shellOptions" :key="s" :value="s">{{ s || t('remoteWorkspace.shellAuto') }}</option>
         </select>
       </label>
       <span v-if="connState === 'connected'" class="term-pane__live">
@@ -301,7 +330,7 @@ defineExpose({ runCd, connect, disconnect, focus })
 
     <div ref="termHost" class="term-pane__screen" tabindex="0" :aria-label="t('remoteWorkspace.terminalAria')" />
 
-    <p v-if="!isBashOrZsh" class="term-pane__note">
+    <p v-if="showLinkNote" class="term-pane__note">
       {{ t('remoteWorkspace.cdLinkUnsupported') }}
     </p>
   </div>

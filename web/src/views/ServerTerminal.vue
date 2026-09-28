@@ -23,6 +23,7 @@ import {
   type TerminalConnection,
   type TerminalHandlers,
   type TerminalShell,
+  type HostTerminalShell,
 } from '../api/servers'
 import AiOpsPanel from '../components/ops/AiOpsPanel.vue'
 import { completeCommand } from '../api/aiOps'
@@ -51,9 +52,15 @@ const containerLabel = computed(() =>
 // ─── session controls(顶栏会话段) ───────────────────────────────────────────────
 // 终端目标 = 服务器**主机 shell**(SSH 直起登录 shell),或 ?container= 指定的**容器内 shell**。
 const server = ref<Server | null>(null)
-const shell = ref<TerminalShell>(
-  allowedShells.includes(route.query.shell as TerminalShell) ? (route.query.shell as TerminalShell) : '/bin/sh',
+// '' = 自动:让服务端在这台机上现挑一个可用 shell(bash/zsh 优先,两者才有提示符钩子与补全)。
+const shell = ref<HostTerminalShell>(
+  allowedShells.includes(route.query.shell as TerminalShell) ? (route.query.shell as TerminalShell) : '',
 )
+// 容器模式没有「自动」这一档:容器不一定装 bash,服务端对空值给的是 /bin/sh,直接列具体 shell 更实在。
+const shellOptions = computed<HostTerminalShell[]>(() => (isContainer.value ? allowedShells : ['', ...allowedShells]))
+watch(isContainer, (c) => {
+  if (c && shell.value === '') shell.value = '/bin/sh'
+}, { immediate: true })
 
 type ConnState = 'idle' | 'connecting' | 'connected' | 'closed' | 'error'
 const connState = ref<ConnState>('idle')
@@ -80,7 +87,8 @@ watch(
 
 const aiContext = computed(() => ({
   os: 'linux',
-  shell: shell.value,
+  // 自动模式下前端并不知道服务端最终起了哪个 shell,如实报 auto,别让 AI 按 /bin/sh 写命令。
+  shell: shell.value || 'auto',
   container: isContainer.value ? containerName.value : tg('serverTerminal.hostMachine'),
 }))
 
@@ -473,7 +481,7 @@ async function connect(): Promise<void> {
 
   // 容器模式 → docker exec -it <容器> <shell>;否则主机登录 shell。
   conn.value = isContainer.value
-    ? openContainerTerminal(serverId.value, containerName.value, handlers, shell.value)
+    ? openContainerTerminal(serverId.value, containerName.value, handlers, shell.value || undefined)
     : openServerTerminal(serverId.value, handlers, shell.value)
 
   if (!resizeObserver && termHost.value) {
@@ -646,7 +654,7 @@ onBeforeUnmount(() => {
         <div class="cell">
           <span class="k">Shell</span>
           <select v-model="shell" class="seg-select" aria-label="Shell">
-            <option v-for="s in allowedShells" :key="s" :value="s">{{ s }}</option>
+            <option v-for="s in shellOptions" :key="s" :value="s">{{ s || tg('serverTerminal.shellAuto') }}</option>
           </select>
         </div>
       </div>

@@ -7,6 +7,7 @@ export default {
 
   kindContainer: 'コンテナ',
   kindHost: 'ホスト',
+  shellAuto: '自動（bash 優先）',
   containerLabel: 'コンテナ {label}',
   hostShell: 'ホストシェル',
 
