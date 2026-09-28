@@ -1,0 +1,241 @@
+# 手动打包流水线:在 Actions 页面点「Run workflow」→ 按平台各自编译并发布可下载的包。
+#
+# 与 release.yml 的分工:
+#   - release.yml:打 v* tag 时由 GoReleaser 出正式 GitHub Release + ghcr 多架构镜像,全自动。
+#   - 本文件:人工按需出包(试版本、给某台机器单独出包、rc 包先发给同事),默认只留 artifact,
+#     不碰 Releases 页;只有勾了 publish_release 才建一条 draft Release。
+#
+# 平台清单(与 .goreleaser.yaml 的 goos/goarch 一致):
+#   linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+# 六个目标都能在同一个 ubuntu runner 上交叉编译产出:二进制是 CGO_ENABLED=0
+# (sqlite 走 modernc 纯 Go 实现),所以不需要 mac/windows 原生 runner,省钱也快。
+#
+# Actions 一律 SHA 钉死(与 ci.yml / release.yml 同纪律)。
+name: build-packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号(写进二进制 --version,如 v0.4.0-rc1);留空则取 git describe"
+        required: false
+        type: string
+        default: ""
+      build_linux:
+        description: "编译 Linux(amd64 + arm64)"
+        required: false
+        type: boolean
+        default: true
+      build_darwin:
+        description: "编译 macOS(amd64 + arm64)"
+        required: false
+        type: boolean
+        default: true
+      build_windows:
+        description: "编译 Windows(amd64 + arm64)"
+        required: false
+        type: boolean
+        default: true
+      publish_release:
+        description: "额外建 draft GitHub Release(默认只出 workflow artifact)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  VPKG: github.com/huangchengsir/pipewright/internal/version
+
+jobs:
+  # 一次性把版本元数据和「这次要编哪些平台」算出来,后面的矩阵 job 只消费。
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      version_no_v: ${{ steps.meta.outputs.version_no_v }}
+      commit: ${{ steps.meta.outputs.commit }}
+      date: ${{ steps.meta.outputs.date }}
+      targets: ${{ steps.meta.outputs.targets }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # git describe 需要 tag 才拿得到人类可读版本;留空版本号时靠它兜底。
+          fetch-depth: 0
+
+      - id: meta
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          BUILD_LINUX: ${{ github.event.inputs.build_linux }}
+          BUILD_DARWIN: ${{ github.event.inputs.build_darwin }}
+          BUILD_WINDOWS: ${{ github.event.inputs.build_windows }}
+          PUBLISH_RELEASE: ${{ github.event.inputs.publish_release }}
+        run: |
+          set -euo pipefail
+
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            version="$(git describe --tags --always)"
+          fi
+          # 归档名去掉前导 v:与 .goreleaser.yaml 的 name_template 一致,
+          # install.sh 也是按 pipewright_<无v版本>_<os>_<arch>.tar.gz 拼下载地址的。
+          no_v="${version#v}"
+          commit="$(git rev-parse --short HEAD)"
+          # 用提交时间而非构建时间:同一 commit 重复出包,--version 输出可比对。
+          date="$(date -u -d "$(git show -s --format=%cI HEAD)" +%Y-%m-%dT%H:%M:%SZ)"
+
+          # 勾了发 Release 就必须是规范版本号,否则会建出 pipewright-24-gabc123 这类垃圾 tag。
+          if [ "$PUBLISH_RELEASE" = "true" ] && ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::建 Release 需要填规范版本号(v主.次.补丁,可带 -rc/-beta);当前为「$version」"
+            exit 1
+          fi
+
+          rows=""
+          add() {
+            # 用 if 而不是 `[ -n "$rows" ] && rows=…`:后者在首行(条件假)会让整条 && 链返回非零,
+            # 在 set -e 下直接把 job 打死。
+            if [ -n "$rows" ]; then rows="$rows,"; fi
+            rows="$rows{\"goos\":\"$1\",\"goarch\":\"$2\",\"format\":\"$3\"}"
+          }
+          if [ "$BUILD_LINUX" = "true" ]; then
+            add linux amd64 tar.gz
+            add linux arm64 tar.gz
+          fi
+          if [ "$BUILD_DARWIN" = "true" ]; then
+            add darwin amd64 tar.gz
+            add darwin arm64 tar.gz
+          fi
+          if [ "$BUILD_WINDOWS" = "true" ]; then
+            add windows amd64 zip
+            add windows arm64 zip
+          fi
+          if [ -z "$rows" ]; then
+            echo "::error::三个平台一个都没勾,没活可干。"
+            exit 1
+          fi
+
+          {
+            echo "version=$version"
+            echo "version_no_v=$no_v"
+            echo "commit=$commit"
+            echo "date=$date"
+            echo "targets=[$rows]"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "版本 $version(归档前缀 pipewright_${no_v}_),本次出:"
+          printf '%s' "[$rows]" | tr ',' '\n'
+
+  # 前端只建一次:各平台二进制 go:embed 的是同一份与平台无关的 web/dist。
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: cd web && npm ci
+      - run: cd web && npm run build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  # 每个目标(平台+架构)一个独立 job:互不影响,单个挂了可只重跑那一个(fail-fast: false)。
+  package:
+    needs: [prepare, frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.prepare.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # 按 go.mod 的 go 指令取版本:出包用的工具链永远和仓库声明一致,不用两处对齐。
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: 编译并打包 ${{ matrix.target.goos }}/${{ matrix.target.goarch }}
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          FORMAT: ${{ matrix.target.format }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION_NO_V: ${{ needs.prepare.outputs.version_no_v }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          DATE: ${{ needs.prepare.outputs.date }}
+        run: |
+          set -euo pipefail
+          bin=pipewright
+          if [ "$GOOS" = windows ]; then bin=pipewright.exe; fi
+
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
+            -ldflags "-s -w -X $VPKG.Version=$VERSION -X $VPKG.Commit=$COMMIT -X $VPKG.Date=$DATE" \
+            -o "$bin" ./cmd/pipewright
+          # 只有与 runner 同架构那一档能真跑,其余交叉产物在本机执行不了,验证交给 --version 那一档。
+          if [ "$GOOS/$GOARCH" = linux/amd64 ]; then "./$bin" --version; fi
+
+          # 归档内容与 .goreleaser.yaml 的 archives.files 对齐,且二进制在包根不套目录
+          # (install.sh 是按 `tar -xzf … pipewright` 取成员名的)。
+          name="pipewright_${VERSION_NO_V}_${GOOS}_${GOARCH}"
+          case "$FORMAT" in
+            tar.gz) tar -czf "$name.tar.gz" "$bin" README.md LICENSE SECURITY.md ;;
+            zip) zip -q "$name.zip" "$bin" README.md LICENSE SECURITY.md ;;
+            *) echo "::error::未知归档格式:$FORMAT"; exit 1 ;;
+          esac
+          archive="$name.$FORMAT"
+          echo "$archive 的 sha256:$(sha256sum "$archive" | awk '{print $1}')"
+          # 写 GITHUB_ENV 供后面的 upload 步骤引用(同一步内是读不到的)。
+          {
+            echo "ARTIFACT=$name"
+            echo "ARCHIVE=$archive"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+          # 归档已是 gzip/zip,再压一遍纯浪费时间。
+          compression-level: 0
+
+  # 可选:把上面这批包挂成一条 draft Release(不勾就整个 job 跳过)。
+  release:
+    needs: [prepare, package]
+    if: always() && github.event.inputs.publish_release == 'true' && needs.package.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 建 Release、传资产
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: pipewright_*
+          merge-multiple: true
+          path: dist
+
+      - name: 建 draft Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum pipewright_* > checksums.txt)
+          notes="手动打包(build-packages.yml),基于 ${COMMIT}。未走 GoReleaser,不含镜像。"
+          # 同版本号重跑是常态:已存在就覆盖资产,而不是让 job 红掉。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --draft --title "Pipewright ${TAG} (手动打包)" --notes "$notes"
+          fi
+          echo "已发布 draft:https://github.com/${GITHUB_REPOSITORY}/releases?draft=true"
