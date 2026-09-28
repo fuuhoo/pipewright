@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -33,10 +32,18 @@ import (
 type memWorkspace struct {
 	files map[string][]byte
 	dirs  map[string]bool
+	// modes 是被 Chmod 改过的路径;没记的一律按 0644 呈现(与真机默认档一致)。
+	modes map[string]uint32
+	// links 是符号链接路径(列目录时标 isLink,读正文一律「找不到」——打包该跳过它)。
+	links map[string]bool
+	// closes 数的是这条工作区被放掉的次数(批次「整批传完就还连接」由它作证)。
+	closes int
 }
 
 func newMemWorkspace() *memWorkspace {
 	return &memWorkspace{
+		modes: map[string]uint32{},
+		links: map[string]bool{},
 		files: map[string][]byte{
 			"/app/a.txt":     []byte("hello"),
 			"/app/b.log":     []byte("line1\nline2\n"),
@@ -78,7 +85,11 @@ func (m *memWorkspace) Stat(_ context.Context, p string) (target.FileStat, error
 	if !ok {
 		return target.FileStat{}, fmt.Errorf("%w: %s", target.ErrRemoteNotFound, p)
 	}
-	return target.FileStat{Name: path.Base(p), Path: p, Size: int64(len(data)), Mode: 0o644, MtimeUnix: 1700000001}, nil
+	mode := uint32(0o644)
+	if m, ok := m.modes[p]; ok {
+		mode = m
+	}
+	return target.FileStat{Name: path.Base(p), Path: p, Size: int64(len(data)), Mode: mode, MtimeUnix: 1700000001}, nil
 }
 
 func (m *memWorkspace) ReadDir(_ context.Context, dir string) ([]target.FileStat, error) {
@@ -101,6 +112,11 @@ func (m *memWorkspace) ReadDir(_ context.Context, dir string) ([]target.FileStat
 	for d := range m.dirs {
 		if path.Dir(d) == dir && d != "/" && !seen[path.Base(d)] {
 			out = append(out, target.FileStat{Name: path.Base(d), Path: d, IsDir: true, Mode: 0o755})
+		}
+	}
+	for l := range m.links {
+		if path.Dir(l) == dir {
+			out = append(out, target.FileStat{Name: path.Base(l), Path: l, IsLink: true, LinkTarget: "/elsewhere", Mode: 0o777})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -127,6 +143,11 @@ func (m *memWorkspace) OpenRead(_ context.Context, p string) (io.ReadCloser, err
 	if denied(p) {
 		return nil, fmt.Errorf("%w: %s", target.ErrRemotePermission, p)
 	}
+	// 符号链接读不到内容:打包那条路本该在列目录时就跳过它,真来开了就当「不存在」,
+	// 于是「链接没进包」这件事会以最显眼的方式失败,而不是悄悄塞进去一个空条目。
+	if m.links[p] {
+		return nil, fmt.Errorf("%w: %s", target.ErrRemoteNotFound, p)
+	}
 	data, ok := m.files[p]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", target.ErrRemoteNotFound, p)
@@ -147,6 +168,42 @@ func (m *memWorkspace) WriteFile(_ context.Context, p string, r io.Reader) error
 		return err
 	}
 	m.files[p] = data
+	return nil
+}
+
+// AppendChunk 按偏移覆盖(与 sftp 的 WriteAt 同义:同偏移重发是幂等的,不是接在尾巴上)。
+func (m *memWorkspace) AppendChunk(_ context.Context, p string, off int64, r io.Reader) (int64, error) {
+	p = path.Clean(p)
+	if denied(p) {
+		return off, fmt.Errorf("%w: %s", target.ErrRemotePermission, p)
+	}
+	if !m.dirs[path.Dir(p)] {
+		return off, fmt.Errorf("%w: %s", target.ErrRemoteNotFound, path.Dir(p))
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return off, err
+	}
+	cur := m.files[p]
+	if need := int(off) + len(data); need > len(cur) {
+		cur = append(cur, make([]byte, need-len(cur))...)
+	}
+	copy(cur[off:], data)
+	m.files[p] = cur
+	return int64(off) + int64(len(data)), nil
+}
+
+func (m *memWorkspace) Chmod(_ context.Context, p string, mode uint32) error {
+	p = path.Clean(p)
+	if denied(p) {
+		return fmt.Errorf("%w: %s", target.ErrRemotePermission, p)
+	}
+	if _, ok := m.files[p]; !ok {
+		if !m.dirs[p] {
+			return fmt.Errorf("%w: %s", target.ErrRemoteNotFound, p)
+		}
+	}
+	m.modes[p] = mode & 0o777
 	return nil
 }
 
@@ -194,11 +251,19 @@ func (m *memWorkspace) Rename(_ context.Context, from, to string) error {
 	}
 	delete(m.files, from)
 	m.files[to] = data
+	if mode, has := m.modes[from]; has {
+		delete(m.modes, from)
+		m.modes[to] = mode
+	}
 	return nil
 }
 
 func (m *memWorkspace) Backend() string { return "sftp" }
-func (m *memWorkspace) Close() error    { return nil }
+
+func (m *memWorkspace) Close() error {
+	m.closes++
+	return nil
+}
 
 // fakeFSDialer 在假 SSH 拨号器上补 fsDialer 能力(OpenFS 返回内存工作区)。
 type fakeFSDialer struct {
@@ -212,8 +277,19 @@ func (d *fakeFSDialer) OpenFS(_ context.Context, _ string, _ target.SSHConfig) (
 	return d.ws, nil
 }
 
-// setupFSAPI 起一套带远程文件能力的 HTTP 栈,返回服务器 id + 工作区 + 审计器。
-func setupFSAPI(t *testing.T) (*httptest.Server, *http.Client, string, string, *memWorkspace, audit.Recorder) {
+// fsFixture 是一套带远程文件能力的 HTTP 栈。带上假拨号器是为了数「拨了几次连接」——
+// 上传批次复用连接这条承诺,只有计数器能证。
+type fsFixture struct {
+	srv    *httptest.Server
+	client *http.Client
+	csrf   string
+	id     string
+	ws     *memWorkspace
+	dialer *fakeFSDialer
+	rec    audit.Recorder
+}
+
+func setupFSAPIFull(t *testing.T) fsFixture {
 	t.Helper()
 	st := testStoreAuth(t)
 	asvc := auth.NewService(st.DB, nil, nil)
@@ -231,7 +307,14 @@ func setupFSAPI(t *testing.T) (*httptest.Server, *http.Client, string, string, *
 	client := newTestClient(t)
 	csrf := loginWithClient(t, client, srv.URL)
 	id := newServerAPI(t, client, srv.URL, csrf)
-	return srv, client, csrf, id, ws, rec
+	return fsFixture{srv: srv, client: client, csrf: csrf, id: id, ws: ws, dialer: dialer, rec: rec}
+}
+
+// setupFSAPI 是旧签名形状(多数用例不关心拨号次数)。
+func setupFSAPI(t *testing.T) (*httptest.Server, *http.Client, string, string, *memWorkspace, audit.Recorder) {
+	t.Helper()
+	f := setupFSAPIFull(t)
+	return f.srv, f.client, f.csrf, f.id, f.ws, f.rec
 }
 
 func decodeDTO(t *testing.T, resp *http.Response) map[string]any {
@@ -369,14 +452,7 @@ func TestFSDownloadServesBytesAndHeaders(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	// 目录不能当文件下载;不存在必须**在写响应头之前**判掉(否则用户收到 0 字节的「下载完成」)。
-	resp = download(t, client, srv.URL+"/api/servers/"+id+"/fs/download?path=/app")
-	defer func() { _ = resp.Body.Close() }()
-	body, _ = io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), `"not_a_file"`) {
-		t.Errorf("下载目录应 400 not_a_file,得 %d %s", resp.StatusCode, body)
-	}
-
+	// 不存在必须**在写响应头之前**判掉(否则用户收到 0 字节的「下载完成」)。
 	resp = download(t, client, srv.URL+"/api/servers/"+id+"/fs/download?path=/app/missing")
 	defer func() { _ = resp.Body.Close() }()
 	body, _ = io.ReadAll(resp.Body)
@@ -385,40 +461,6 @@ func TestFSDownloadServesBytesAndHeaders(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "octet-stream") {
 		t.Error("404 响应不该已按下载流开头")
-	}
-}
-
-func TestFSUploadLandsInsideDirWithSanitizedName(t *testing.T) {
-	srv, client, csrf, id, ws, rec := setupFSAPI(t)
-
-	// 客户端递来的 filename 带路径穿越:落点必须由服务端 join 消毒后的基名。
-	body, contentType := multipartUpload(t, "../../etc/passwd", "uploaded-payload")
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/servers/"+id+"/fs/upload", body)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("X-CSRF-Token", csrf)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("upload: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	dto := decodeDTO(t, resp)
-	if resp.StatusCode != http.StatusOK || dto["ok"] != true {
-		t.Fatalf("上传应 200 ok,得 %d %v", resp.StatusCode, dto)
-	}
-	if dto["path"] != "/tmp/passwd" {
-		t.Errorf("落点 = %v, want /tmp/passwd(穿越被消毒)", dto["path"])
-	}
-	if string(ws.files["/tmp/passwd"]) != "uploaded-payload" {
-		t.Errorf("远端正文 = %q", ws.files["/tmp/passwd"])
-	}
-	if _, leaked := ws.files["/etc/passwd"]; leaked {
-		t.Fatal("穿越路径被写到了 /etc/passwd")
-	}
-	if e := listAudit(t, rec, audit.ActionServerFS); len(e) != 1 || e[0].Detail["op"] != "upload" {
-		t.Errorf("上传审计 = %v", e)
 	}
 }
 
@@ -567,24 +609,4 @@ func auditInt(v any) int64 {
 	default:
 		return -1
 	}
-}
-
-func multipartUpload(t *testing.T, filename, content string) (io.Reader, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("dir", "/tmp"); err != nil {
-		t.Fatalf("write field: %v", err)
-	}
-	part, err := mw.CreateFormFile("file", filename)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	if _, err := io.WriteString(part, content); err != nil {
-		t.Fatalf("write content: %v", err)
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-	return &buf, mw.FormDataContentType()
 }

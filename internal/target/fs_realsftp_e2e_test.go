@@ -229,3 +229,91 @@ func TestRealSFTPCancelledCtxTearsDown(t *testing.T) {
 		t.Error("拆掉的连接上不该还能列目录")
 	}
 }
+
+// errReader 交出固定字节后报错,模拟客户端断线时那种「半截块」。
+// 指针接收者:值接收者的 Read 拿到的是副本,head 永远清不掉,那会变成一台写不完的机器。
+type errReader struct{ head string }
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if len(r.head) > 0 {
+		n := copy(p, r.head)
+		r.head = r.head[n:]
+		return n, io.ErrUnexpectedEOF
+	}
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestRealSFTPAppendChunkWritesAtOffset(t *testing.T) {
+	// 按偏移写是续传的地基:同一偏移重发必须原地覆盖(幂等),而不是接在文件尾巴上。
+	ws := newRealWorkspace(t)
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "chunked.bin")
+
+	if err := ws.WriteFile(ctx, p, bytes.NewBufferString("abcdefgh")); err != nil {
+		t.Fatalf("预置正文: %v", err)
+	}
+	end, err := ws.AppendChunk(ctx, p, 0, bytes.NewBufferString("XYZ"))
+	if err != nil {
+		t.Fatalf("AppendChunk: %v", err)
+	}
+	if end != 3 {
+		t.Errorf("返回偏移 = %d, want 3(本段落地后的末尾)", end)
+	}
+	data, _, err := ws.ReadFile(ctx, p, 1<<20)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "XYZdefgh" {
+		t.Fatalf("正文 = %q, want \"XYZdefgh\"(偏移 0 覆盖,不许追加或从头截断)", data)
+	}
+}
+
+func TestRealSFTPAppendChunkReportsPartialProgress(t *testing.T) {
+	// 半截块:出错时也要把已确认落地的偏移带回来,下一段从那儿接上才叫断点续传。
+	ws := newRealWorkspace(t)
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "resume.bin")
+
+	end, err := ws.AppendChunk(ctx, p, 0, &errReader{head: "abc"})
+	if err == nil {
+		t.Fatal("读侧报错必须以错误收")
+	}
+	if end != 3 {
+		t.Errorf("已落地偏移 = %d, want 3", end)
+	}
+	// 续上后半段:整份拼起来仍是完整原文。
+	if _, err := ws.AppendChunk(ctx, p, end, bytes.NewBufferString("def")); err != nil {
+		t.Fatalf("续传: %v", err)
+	}
+	data, _, err := ws.ReadFile(ctx, p, 1<<20)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "abcdef" {
+		t.Fatalf("续传后的正文 = %q, want \"abcdef\"", data)
+	}
+}
+
+func TestRealSFTPChmod(t *testing.T) {
+	// 上传覆盖已存在的 600 文件靠它保住权限位,不能放宽成默认的 644。
+	ws := newRealWorkspace(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "key.pem")
+	if err := ws.WriteFile(ctx, p, bytes.NewBufferString("secret")); err != nil {
+		t.Fatalf("写入: %v", err)
+	}
+	if err := ws.Chmod(ctx, p, 0o600); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("os.Stat: %v", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("权限 = %v, want 600", fi.Mode().Perm())
+	}
+	if err := ws.Chmod(ctx, filepath.Join(dir, "missing"), 0o600); !errors.Is(err, ErrRemoteNotFound) {
+		t.Errorf("对不存在的路径设权限应回 ErrRemoteNotFound,得 %v", err)
+	}
+}

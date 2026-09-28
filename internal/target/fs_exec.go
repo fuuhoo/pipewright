@@ -300,20 +300,60 @@ func (w *execWorkspace) runWithStdin(ctx context.Context, script string, r io.Re
 	session.Stderr = &stderr
 	session.Stdin = r
 
-	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	runErr := runWithContext(ctx, session, quoteArgs(cmd))
+	// 结果在跑完之后才取:缓冲区是 ssh 的读循环在填的,提前 String() 会拿到空串。
+	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if runErr != nil {
 		var exitErr *ssh.ExitError
 		if errors.As(runErr, &exitErr) {
 			res.ExitCode = exitErr.ExitStatus()
-			res.Stderr = stderr.String()
 			return res, nil
 		}
 		return nil, runErr
 	}
-	res.Stderr = stderr.String()
 	res.ExitCode = 0
 	return res, nil
+}
+
+// AppendChunk 把一段字节追加到 p 的末尾,并回报追加后的总长度。
+//
+// 兜底做不到随机写(cat 只能接在 EOF),所以这里**忽略传入的 off**:HTTP 层在调用前
+// 已用 Stat 核对 off 与远端当前长度一致,否则直接回 409 让客户端重新定位。半截块不回收,
+// 下一块接在其后,拼起来仍是完整原文 —— 与 SFTP 实现同一条续传语义。
+// `cat >> "$p"` 之后紧跟 `wc -c` 取真实长度:远端写多少算多少,不拿客户端的申报数骗人。
+func (w *execWorkspace) AppendChunk(ctx context.Context, p string, _ int64, r io.Reader) (int64, error) {
+	script := `p=$1
+d=$(dirname "$p")
+if [ ! -d "$d" ]; then echo ` + markNotFound + ` >&2; exit 1; fi
+if [ ! -w "$d" ]; then echo ` + markNotPerm + ` >&2; exit 1; fi
+if [ -e "$p" ] && [ ! -w "$p" ]; then echo ` + markNotPerm + ` >&2; exit 1; fi
+if ! cat >> "$p"; then echo ` + markNotPerm + ` >&2; exit 1; fi
+wc -c < "$p" | tr -dc '0-9'`
+	res, err := w.runWithStdin(ctx, script, r, cleanRemote(p))
+	if err != nil {
+		return 0, err
+	}
+	size, perr := strconv.ParseInt(strings.TrimSpace(res.Stdout), 10, 64)
+	if perr != nil {
+		size = 0
+	}
+	if cerr := checkExec(res); cerr != nil {
+		return size, cerr
+	}
+	return size, nil
+}
+
+// Chmod 用八进制串设权限位。模式由服务端算出(来自 Stat 的对端属性)并以参数传入,
+// 不拼进脚本正文。远端 chmod 的报错文案各家不同,故先 test 存在与可改,再靠退出码定成败。
+func (w *execWorkspace) Chmod(ctx context.Context, p string, mode uint32) error {
+	res, err := w.run(ctx, `p=$1; m=$2
+if [ ! -e "$p" ] && [ ! -L "$p" ]; then echo `+markNotFound+` >&2; exit 1; fi
+chmod "$m" "$p" 2>/dev/null && exit 0
+echo `+markNotPerm+` >&2; exit 1`, cleanRemote(p), strconv.FormatUint(uint64(mode), 8))
+	if err != nil {
+		return err
+	}
+	return checkExec(res)
 }
 
 // Mkdir 递归建目录(等价 mkdir -p)。

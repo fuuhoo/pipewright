@@ -70,6 +70,12 @@ type Workspace interface {
 	OpenRead(ctx context.Context, p string) (io.ReadCloser, error)
 	// WriteFile 覆盖写 p(远端已有同名文件被截断;父目录须已存在)。
 	WriteFile(ctx context.Context, p string, r io.Reader) error
+	// AppendChunk 从 off 起把 r 的字节写进 p(不存在则创建;父目录须已存在),
+	// 返回**已确认落地的末尾偏移**。出错时同样带回已写好的偏移 —— 断点续传要的
+	// 正是这个数:半截块不回收,下一次从它后面接着推,拼起来仍是完整原文。
+	AppendChunk(ctx context.Context, p string, off int64, r io.Reader) (int64, error)
+	// Chmod 设权限位(低 9 位)。上传覆盖已存在文件时用它保住原来的 600。
+	Chmod(ctx context.Context, p string, mode uint32) error
 	// Mkdir 创建目录(递归,等价 mkdir -p)。
 	Mkdir(ctx context.Context, p string) error
 	// Remove 删除文件或空目录。非空目录失败 —— 递归删除不在这层提供。
@@ -312,6 +318,51 @@ func (w *sftpWorkspace) Mkdir(ctx context.Context, p string) error {
 			return mapSFSErr(err)
 		}
 		return nil
+	})
+}
+
+// AppendChunk 按偏移写一段(SFTP 的 SSH_FXP_WRITE 本来就自带偏移字段,不需要 llseek 扩展)。
+//
+// 为什么按偏移而不是 O_APPEND:pkg/sftp 的 File 打开后内部偏移恒为 0,直接 io.Copy
+// 会把已存在的文件从头盖掉。偏移由调用方(HTTP 层)与远端实际长度对齐后传进来,
+// 于是「重发同一块」落在同一位置、内容一致 —— 这正是断点续传要的幂等。
+// 出错时返回已确认写入的末尾偏移(循环只在 WriteAt 成功后前进),调用方据此续传。
+func (w *sftpWorkspace) AppendChunk(ctx context.Context, p string, off int64, r io.Reader) (int64, error) {
+	return call(ctx, w, func() (int64, error) {
+		p = cleanRemote(p)
+		f, err := w.sftp.OpenFile(p, os.O_WRONLY|os.O_CREATE)
+		if err != nil {
+			return off, mapSFSErr(err)
+		}
+		buf := make([]byte, 256*1024)
+		written := off
+		for {
+			n, rerr := r.Read(buf)
+			if n > 0 {
+				if _, werr := f.WriteAt(buf[:n], written); werr != nil {
+					_ = f.Close()
+					return written, mapSFSErr(werr)
+				}
+				written += int64(n)
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				_ = f.Close()
+				return written, mapSFSErr(rerr)
+			}
+		}
+		if cerr := f.Close(); cerr != nil {
+			return written, mapSFSErr(cerr)
+		}
+		return written, nil
+	})
+}
+
+func (w *sftpWorkspace) Chmod(ctx context.Context, p string, mode uint32) error {
+	return callErr(ctx, w, func() error {
+		return mapSFSErr(w.sftp.Chmod(cleanRemote(p), os.FileMode(mode).Perm()))
 	})
 }
 

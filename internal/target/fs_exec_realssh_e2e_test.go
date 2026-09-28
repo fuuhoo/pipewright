@@ -319,3 +319,54 @@ func TestRealExecCtxCancelKeepsConnection(t *testing.T) {
 		t.Fatalf("目录项 = %+v, want 1 条 seed", entries)
 	}
 }
+
+func TestRealExecAppendChunkReportsTotalSize(t *testing.T) {
+	// 兜底只能 cat >> 接在 EOF,回报的是远端实测总长度(wc -c),不是客户端申报数 ——
+	// HTTP 层正是拿这个数字判定「下一段该从哪开始」。
+	ws := newRealExecWorkspace(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "resume.bin")
+
+	n, err := ws.AppendChunk(ctx, p, 0, bytes.NewBufferString("abc"))
+	if err != nil {
+		t.Fatalf("首段 AppendChunk: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("首段后总长 = %d, want 3", n)
+	}
+	// 半截块之后再接一段:拼起来仍是完整原文,父目录不可写时才报错。
+	n, err = ws.AppendChunk(ctx, p, 3, bytes.NewBufferString("def"))
+	if err != nil {
+		t.Fatalf("续段 AppendChunk: %v", err)
+	}
+	if n != 6 {
+		t.Errorf("续段后总长 = %d, want 6", n)
+	}
+	if _, err := ws.AppendChunk(ctx, filepath.Join(dir, "nope", "x"), 0, bytes.NewBufferString("a")); !errors.Is(err, ErrRemoteNotFound) {
+		t.Errorf("父目录不存在应回 ErrRemoteNotFound,得 %v", err)
+	}
+}
+
+func TestRealExecChmod(t *testing.T) {
+	ws := newRealExecWorkspace(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "key.pem")
+	if err := ws.WriteFile(ctx, p, bytes.NewBufferString("secret")); err != nil {
+		t.Fatalf("写入: %v", err)
+	}
+	if err := ws.Chmod(ctx, p, 0o600); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	st, err := ws.Stat(ctx, p)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if st.Mode&0o777 != 0o600 {
+		t.Errorf("权限 = %o, want 600", st.Mode&0o777)
+	}
+	if err := ws.Chmod(ctx, filepath.Join(dir, "missing"), 0o600); !errors.Is(err, ErrRemoteNotFound) {
+		t.Errorf("对不存在的路径设权限应回 ErrRemoteNotFound,得 %v", err)
+	}
+}
