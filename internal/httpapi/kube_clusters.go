@@ -22,11 +22,11 @@ type kubeClusterDTO struct {
 	// CredentialName 冗余展示名(join credentials);便于列表显示。
 	CredentialName string `json:"credentialName"`
 	// Endpoint 是集群 API Server 地址(从 kubeconfig 现读现展示;库里不存,故可能为空)。
-	Endpoint        string `json:"endpoint"`
+	Endpoint         string `json:"endpoint"`
 	NamespaceDefault string `json:"namespaceDefault"`
-	GroupID         string `json:"groupId"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	GroupID          string `json:"groupId"`
+	CreatedAt        string `json:"createdAt"`
+	UpdatedAt        string `json:"updatedAt"`
 }
 
 func toKubeClusterDTO(c *kube.Cluster) kubeClusterDTO {

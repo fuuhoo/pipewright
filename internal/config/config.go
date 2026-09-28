@@ -54,11 +54,11 @@ type Config struct {
 
 // v6.2 阶段 14 配置默认值。
 const (
-	DefaultDataDir           = "./data"
-	DefaultConfigUploadMax   = 1 << 20 // 1MB
-	DefaultCheckTimeoutSec   = 60
-	DefaultCheckConcurrency  = 10
-	DefaultPullTimeoutMult   = 4
+	DefaultDataDir          = "./data"
+	DefaultConfigUploadMax  = 1 << 20 // 1MB
+	DefaultCheckTimeoutSec  = 60
+	DefaultCheckConcurrency = 10
+	DefaultPullTimeoutMult  = 4
 )
 
 // Load 从环境变量读取配置,缺失项回退到合理默认值。

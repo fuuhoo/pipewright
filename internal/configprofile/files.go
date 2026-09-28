@@ -9,10 +9,10 @@ import (
 
 // AtomicWriteFile 按"tmp + fsync + rename"原子写入文件(P0 #3 修订)。
 //
-//   1. 写到 dir/<filename>.tmp.<pid>(同目录,保证 rename atomic)
-//   2. f.Sync() 落盘
-//   3. os.Rename(tmp, final)(POSIX 保证同 fs 上 atomic;失败时删 tmp)
-//   4. dir fsync(确保 dir entry 落盘)
+//  1. 写到 dir/<filename>.tmp.<pid>(同目录,保证 rename atomic)
+//  2. f.Sync() 落盘
+//  3. os.Rename(tmp, final)(POSIX 保证同 fs 上 atomic;失败时删 tmp)
+//  4. dir fsync(确保 dir entry 落盘)
 //
 // 注意:Windows 下 rename 不原子;Linux/Mac 同 fs rename atomic。
 // 本平台主运行环境是 Linux;在 Windows 上运行时接受 best-effort。

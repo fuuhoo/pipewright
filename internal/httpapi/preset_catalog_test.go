@@ -1,6 +1,7 @@
 // 预置目录读取端点(v6.2 R4/R13:流水线只能从预置目录选):
-//   GET /api/build-envs     → 仅已启用环境,且不回运维字段
-//   GET /api/config-profiles → 仅已启用配置,且不回宿主文件路径
+//
+//	GET /api/build-envs     → 仅已启用环境,且不回运维字段
+//	GET /api/config-profiles → 仅已启用配置,且不回宿主文件路径
 //
 // 关键不变式:普通用户(role=user)拿到 200,且看不到 disabled 条目 —— 否则被管理员
 // 下架的环境会继续出现在流水线下拉里。

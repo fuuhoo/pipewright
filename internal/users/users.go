@@ -43,8 +43,8 @@ const (
 
 // 领域错误(错误体不含敏感数据:不打印 hash / 密码 / 内部栈)。
 var (
-	ErrNotFound   = errors.New("users: not found")
-	ErrConflict   = errors.New("users: conflict")
+	ErrNotFound = errors.New("users: not found")
+	ErrConflict = errors.New("users: conflict")
 	// ErrValidation 标记「入参不合规则」这类可直接回传给用户的错误;HTTP 层据此
 	// 回 400 而不是 500(SQL 细节一律不外泄)。
 	ErrValidation = errors.New("users: invalid input")
@@ -150,10 +150,10 @@ func (s *Service) GetByID(id string) (*User, error) {
 
 // ListFilter 用户列表过滤/分页(v6.2 阶段 9:admin 用户管理页)。
 type ListFilter struct {
-	Role           string // "admin" | "user" | ""(不限)
+	Role            string // "admin" | "user" | ""(不限)
 	IncludeDisabled bool   // false=仅 enabled=1(默认)
-	Limit          int    // <=0 → 默认 100;上限 500
-	Offset         int    // >=0
+	Limit           int    // <=0 → 默认 100;上限 500
+	Offset          int    // >=0
 }
 
 // DefaultListLimit / MaxListLimit 列表分页边界。

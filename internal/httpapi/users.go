@@ -1,11 +1,12 @@
 // Package httpapi — 用户管理端点(v6.2 §3.5 + 阶段 9)。
 //
 // 路由(均 admin-only,RequireAdmin + CSRF):
-//   GET    /api/admin/users                  → List(role/includeDisabled/limit/offset)
-//   GET    /api/admin/users/{id}             → GetByID
-//   POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色)
-//   POST   /api/admin/users/{id}/password    → 重置口令
-//   PATCH  /api/admin/users/{id}             → 改描述 / 启用禁用
+//
+//	GET    /api/admin/users                  → List(role/includeDisabled/limit/offset)
+//	GET    /api/admin/users/{id}             → GetByID
+//	POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色)
+//	POST   /api/admin/users/{id}/password    → 重置口令
+//	PATCH  /api/admin/users/{id}             → 改描述 / 启用禁用
 //
 // 不在这里的:内置管理员(bootstrap admin)那一行——它的口令与启用状态由
 // admin_user + 「账户设置」管,上述写端点对它一律 409,理由见 isBootstrapAdminRow。

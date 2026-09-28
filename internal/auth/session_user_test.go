@@ -36,17 +36,17 @@ func TestSessionStore_BindUserAndRole(t *testing.T) {
 // TestSessionStore_BackwardCompatibleEmptyUserAndRole 验证旧会话行 user_id/role
 // 为空(0053 迁移前的数据形态)能正确读出且 IsAdmin() 返回 true(兼容)。
 //
-// 通过直接 INSERT 一行 user_id=''/role='' 的会话行模拟旧数据。
+// 通过直接 INSERT 一行 user_id=""/role="" 的会话行模拟旧数据。
 func TestSessionStore_BackwardCompatibleEmptyUserAndRole(t *testing.T) {
 	db := storetest.OpenDB(t)
 	ss := NewSessionStore(db)
 
 	const (
-		oldToken    = "old-session-token-0000000000000000"
-		oldCSRF     = "old-csrf-0000000000000000000000000"
-		createdAt   = "2020-01-01T00:00:00Z"
-		expiresAt   = "2099-01-01T00:00:00Z"
-		lastSeenAt  = "2020-01-01T00:00:00Z"
+		oldToken   = "old-session-token-0000000000000000"
+		oldCSRF    = "old-csrf-0000000000000000000000000"
+		createdAt  = "2020-01-01T00:00:00Z"
+		expiresAt  = "2099-01-01T00:00:00Z"
+		lastSeenAt = "2020-01-01T00:00:00Z"
 	)
 	if _, err := db.Exec(
 		`INSERT INTO sessions (token, csrf_token, user_id, role, created_at, expires_at, last_seen_at)

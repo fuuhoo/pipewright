@@ -175,7 +175,7 @@ type PipelineStep struct {
 	BuildEnvID string `json:"buildEnvId,omitempty"`
 	// ConfigProfileIDs 是该步要注入容器的配置资源引用(R6,如 .npmrc / settings.xml)。
 	ConfigProfileIDs []string   `json:"configProfileIds,omitempty"`
-	Commands         []string   `json:"commands"` // 多行命令(顺序执行),script 必填且至少一条非空
+	Commands         []string   `json:"commands"`          // 多行命令(顺序执行),script 必填且至少一条非空
 	Env              []BuildVar `json:"env,omitempty"`     // 步骤级环境变量(非 secret 明文 + secret 引用 CredentialID)
 	WorkDir          string     `json:"workDir,omitempty"` // 容器内相对工作目录(相对克隆工作区根;空=工作区根)
 	// TimeoutSeconds 是该步整步执行超时(秒);>0 时执行侧以 context.WithTimeout 套,超时即 kill 容器并判失败。

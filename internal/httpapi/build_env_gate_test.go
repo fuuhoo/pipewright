@@ -1,6 +1,7 @@
 // 流水线保存期的构建环境白名单(#8 · R4):
-//   PUT /api/projects/{id}/pipeline 必须拒绝「没选预置环境 / 选了已删或已禁用环境 /
-//   旧配置镜像不在目录内」的构建类节点,错误码 build_env_required(422)。
+//
+//	PUT /api/projects/{id}/pipeline 必须拒绝「没选预置环境 / 选了已删或已禁用环境 /
+//	旧配置镜像不在目录内」的构建类节点,错误码 build_env_required(422)。
 //
 // 这是唯一的前门 —— 前端选择器只是把这件事变得容易,真正的「不留后门」在这里。
 package httpapi

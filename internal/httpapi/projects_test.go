@@ -316,8 +316,8 @@ func equalStrings(a, b []string) bool {
 	}
 	for i := range a {
 		if a[i] != b[i] {
-		return false
-	}
+			return false
+		}
 	}
 	return true
 }

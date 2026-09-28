@@ -24,7 +24,7 @@ func (f *fakeAuthenticator) Login(username, password string) (*auth.Session, err
 func (f *fakeAuthenticator) Verify(token string) (*auth.Session, error) {
 	return nil, errors.New("unused")
 }
-func (f *fakeAuthenticator) Logout(token string) error    { return nil }
+func (f *fakeAuthenticator) Logout(token string) error      { return nil }
 func (f *fakeAuthenticator) AdminUsername() (string, error) { return f.username, f.err }
 
 // withSessionContext 把 *auth.Session 注入到 ctx,模拟 requireAuth 后的请求上下文。

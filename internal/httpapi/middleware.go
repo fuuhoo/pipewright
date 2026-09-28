@@ -5,10 +5,11 @@
 // /api/admin/* 子组接入。
 //
 // 中间件栈约定(chi):
-//   Use(requireAuth(svc))    → 必须最先,注入 *auth.Session 到 ctx
-//   Use(requireCSRF)         → 必须 requireAuth 之后;写方法比对 csrf
-//   Use(RequireAdmin)        → 必须 requireAuth 之后;非 admin → 403
-//   Use(RequireUser)         → 必须 requireAuth 之后;未登录 → 401
+//
+//	Use(requireAuth(svc))    → 必须最先,注入 *auth.Session 到 ctx
+//	Use(requireCSRF)         → 必须 requireAuth 之后;写方法比对 csrf
+//	Use(RequireAdmin)        → 必须 requireAuth 之后;非 admin → 403
+//	Use(RequireUser)         → 必须 requireAuth 之后;未登录 → 401
 //
 // 为何 RequireAdmin/RequireUser 不内联 requireAuth:router.New 的 Option 模式让
 // 新子组(/api/admin/* 与 /api/personal/*)可共用同一 svc,避免重复装配。
@@ -92,7 +93,7 @@ func requireCSRF(next http.Handler) http.Handler {
 // 行为:
 //   - 无 session(未过 requireAuth)→ 401("请先登录")——避免泄露路由存在性。
 //   - 已登录但非 admin(role=="user")→ 403("forbidden")。
-//   - 旧会话(role=='')→ 放行(向后兼容旧部署;Session.IsAdmin 把 '' 视为 admin)。
+//   - 旧会话(role=="")→ 放行(向后兼容旧部署;Session.IsAdmin 把 "" 视为 admin)。
 //
 // 该函数设计为 http.Handler 形式以直接 chi.Use 挂载;依赖 requireAuth 已先注入 session。
 func RequireAdmin(next http.Handler) http.Handler {

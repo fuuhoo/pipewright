@@ -18,12 +18,12 @@ import (
 
 // SeedProfile 是内置 seed 的一条配置资源。
 type SeedProfile struct {
-	Language   string
-	ConfigType string
-	Name       string
-	TargetPath string
-	Content    string
-	IsDefault  bool
+	Language    string
+	ConfigType  string
+	Name        string
+	TargetPath  string
+	Content     string
+	IsDefault   bool
 	Description string
 }
 

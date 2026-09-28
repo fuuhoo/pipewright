@@ -55,7 +55,7 @@ func TestRequireAdmin_AllowsAdmin(t *testing.T) {
 	}
 }
 
-// TestRequireAdmin_AllowsLegacyEmptyRole 验证旧会话(role='')向后兼容通过。
+// TestRequireAdmin_AllowsLegacyEmptyRole 验证旧会话(role="")向后兼容通过。
 func TestRequireAdmin_AllowsLegacyEmptyRole(t *testing.T) {
 	req := makeReq(http.MethodGet, "/api/admin/foo")
 	req = withSession(req, &auth.Session{Role: "", UserID: ""})
@@ -98,7 +98,7 @@ func TestRequireUser_AllowsUser(t *testing.T) {
 	}
 }
 
-// TestRequireUser_RejectsLegacyEmptyRole 验证 RequireUser 不接受旧会话(role='')。
+// TestRequireUser_RejectsLegacyEmptyRole 验证 RequireUser 不接受旧会话(role="")。
 //
 // 旧会话在 RequireAdmin 通过(向后兼容),但 RequireUser 拒绝(普通用户端点要求明确 role)。
 // 旧会话需登出重登一次才能激活 RequireUser。

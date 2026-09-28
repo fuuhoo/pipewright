@@ -45,9 +45,9 @@ var AllowedExts = map[string]bool{
 
 // 错误。
 var (
-	ErrNotFound     = errors.New("configprofile: not found")
-	ErrConflict     = errors.New("configprofile: conflict (language, config_type, name) duplicate")
-	ErrInvalidInput = errors.New("configprofile: invalid input")
+	ErrNotFound        = errors.New("configprofile: not found")
+	ErrConflict        = errors.New("configprofile: conflict (language, config_type, name) duplicate")
+	ErrInvalidInput    = errors.New("configprofile: invalid input")
 	ErrBuiltinReadonly = errors.New("configprofile: builtin profile is read-only (only description/enabled allowed)")
 )
 
@@ -101,9 +101,9 @@ func IsExtAllowed(filename string) bool {
 
 // ListFilter List 入参。
 type ListFilter struct {
-	Language       string // 精确匹配
-	ConfigType     string
-	IncludeBuiltin bool   // 默认 false(只返回用户可编辑的);true=返回全部
+	Language        string // 精确匹配
+	ConfigType      string
+	IncludeBuiltin  bool // 默认 false(只返回用户可编辑的);true=返回全部
 	IncludeDisabled bool
 }
 

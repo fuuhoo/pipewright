@@ -1,20 +1,21 @@
 // Package httpapi — 构建环境管理端点(v6.2 §3.1 + 阶段 9)。
 //
 // 路由:
-//   GET    /api/admin/build-envs                   → List(过滤)
-//   POST   /api/admin/build-envs                   → Create
-//   GET    /api/admin/build-envs/{id}              → GetByID
-//   PUT    /api/admin/build-envs/{id}              → Update
-//   DELETE /api/admin/build-envs/{id}              → Delete
-//   POST   /api/admin/build-envs/{id}/toggle      → SetEnabled(P0 #4 三态)
-//   POST   /api/admin/build-envs/{id}/check       → 手动镜像检查
-//   POST   /api/admin/build-envs/{id}/pull        → 手动 pull 镜像
-//   POST   /api/admin/build-envs/check-all        → 一键检查全部
-//   POST   /api/admin/build-envs/check-batch      → 检查所选(多选/全选)
-//   GET    /api/admin/build-envs/export           → 整表导出(yaml/json,可含禁用)
-//   POST   /api/admin/build-envs/import           → 整表导入(skip/overwrite,dryRun 预览)
-//   GET    /api/build-envs                       → 已启用环境(普通用户可访问)
-//   GET    /api/build-envs/languages              → 已启用环境去重语言列表(普通用户可访问)
+//
+//	GET    /api/admin/build-envs                   → List(过滤)
+//	POST   /api/admin/build-envs                   → Create
+//	GET    /api/admin/build-envs/{id}              → GetByID
+//	PUT    /api/admin/build-envs/{id}              → Update
+//	DELETE /api/admin/build-envs/{id}              → Delete
+//	POST   /api/admin/build-envs/{id}/toggle      → SetEnabled(P0 #4 三态)
+//	POST   /api/admin/build-envs/{id}/check       → 手动镜像检查
+//	POST   /api/admin/build-envs/{id}/pull        → 手动 pull 镜像
+//	POST   /api/admin/build-envs/check-all        → 一键检查全部
+//	POST   /api/admin/build-envs/check-batch      → 检查所选(多选/全选)
+//	GET    /api/admin/build-envs/export           → 整表导出(yaml/json,可含禁用)
+//	POST   /api/admin/build-envs/import           → 整表导入(skip/overwrite,dryRun 预览)
+//	GET    /api/build-envs                       → 已启用环境(普通用户可访问)
+//	GET    /api/build-envs/languages              → 已启用环境去重语言列表(普通用户可访问)
 //
 // 所有写端点套 RequireAdmin + CSRF;所有 admin 端点走 RequireAdmin。
 // 普通用户端点走 RequireUser(阶段 9 接入 router)。

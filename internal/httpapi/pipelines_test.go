@@ -487,7 +487,9 @@ func TestPipelineSaveRejectsBodyYaml(t *testing.T) {
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	var out struct {
-		Error struct{ Code string `json:"code"` } `json:"error"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	_ = json.Unmarshal(raw, &out)
 	if out.Error.Code != "yaml_direct_edit_disabled" {

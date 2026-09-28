@@ -13,9 +13,9 @@ import (
 const testAdminPwd = "testpass_12345"
 
 // TestAuthUsersSync_Bootstrap_Login_ChangePassword 验证 auth ↔ users 同步:
-//   1) Bootstrap 创建 admin_user 行 → 同时 users 表有 admin 行
-//   2) Login 后 users.last_login_at 被更新
-//   3) ChangePassword 后 users.password_hash 同步
+//  1. Bootstrap 创建 admin_user 行 → 同时 users 表有 admin 行
+//  2. Login 后 users.last_login_at 被更新
+//  3. ChangePassword 后 users.password_hash 同步
 func TestAuthUsersSync_Bootstrap_Login_ChangePassword(t *testing.T) {
 	db := storetest.OpenDB(t)
 	usersSvc := users.NewService(db)

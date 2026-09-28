@@ -155,7 +155,7 @@ func TestVerify_R15_DisabledUserCannotLogin(t *testing.T) {
 	}
 }
 
-// [§5.9] 旧会话(role='')向后兼容:IsAdmin()=true(RequireAdmin 放行)。
+// [§5.9] 旧会话(role="")向后兼容:IsAdmin()=true(RequireAdmin 放行)。
 func TestVerify_LegacySessionBackwardCompatible(t *testing.T) {
 	legacy := &Session{Role: "", UserID: ""}
 	if !legacy.IsAdmin() {

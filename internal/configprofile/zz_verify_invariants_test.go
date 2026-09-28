@@ -95,10 +95,18 @@ func TestVerify_BuiltinFieldWhitelist(t *testing.T) {
 
 	// 2) 改 target_path / content / name / language → 拒
 	for name, f := range map[string]func() *ConfigProfile{
-		"content":     func() *ConfigProfile { return &ConfigProfile{ID: b.ID, Language: b.Language, ConfigType: b.ConfigType, Name: b.Name, TargetPath: b.TargetPath, FilePath: b.FilePath, Content: "hacked", Description: "x", Enabled: true} },
-		"target_path": func() *ConfigProfile { return &ConfigProfile{ID: b.ID, Language: b.Language, ConfigType: b.ConfigType, Name: b.Name, TargetPath: "/etc/passwd", FilePath: b.FilePath, Content: b.Content, IsDefault: b.IsDefault, Description: "x"} },
-		"name":        func() *ConfigProfile { return &ConfigProfile{ID: b.ID, Language: b.Language, ConfigType: b.ConfigType, Name: "renamed", TargetPath: b.TargetPath, FilePath: b.FilePath, Content: b.Content, IsDefault: b.IsDefault, Description: "x"} },
-		"language":    func() *ConfigProfile { return &ConfigProfile{ID: b.ID, Language: "ruby", ConfigType: b.ConfigType, Name: b.Name, TargetPath: b.TargetPath, FilePath: b.FilePath, Content: b.Content, IsDefault: b.IsDefault, Description: "x"} },
+		"content": func() *ConfigProfile {
+			return &ConfigProfile{ID: b.ID, Language: b.Language, ConfigType: b.ConfigType, Name: b.Name, TargetPath: b.TargetPath, FilePath: b.FilePath, Content: "hacked", Description: "x", Enabled: true}
+		},
+		"target_path": func() *ConfigProfile {
+			return &ConfigProfile{ID: b.ID, Language: b.Language, ConfigType: b.ConfigType, Name: b.Name, TargetPath: "/etc/passwd", FilePath: b.FilePath, Content: b.Content, IsDefault: b.IsDefault, Description: "x"}
+		},
+		"name": func() *ConfigProfile {
+			return &ConfigProfile{ID: b.ID, Language: b.Language, ConfigType: b.ConfigType, Name: "renamed", TargetPath: b.TargetPath, FilePath: b.FilePath, Content: b.Content, IsDefault: b.IsDefault, Description: "x"}
+		},
+		"language": func() *ConfigProfile {
+			return &ConfigProfile{ID: b.ID, Language: "ruby", ConfigType: b.ConfigType, Name: b.Name, TargetPath: b.TargetPath, FilePath: b.FilePath, Content: b.Content, IsDefault: b.IsDefault, Description: "x"}
+		},
 	} {
 		if _, err := svc.Update(f()); err == nil {
 			t.Errorf("builtin 改 %s 应被拒(ErrBuiltinReadonly), got nil", name)

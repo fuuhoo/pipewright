@@ -202,7 +202,7 @@ func TestConfigProfileReplaceFileRejects(t *testing.T) {
 	builtin := &configprofile.ConfigProfile{
 		ID: "sec-builtin-http", Language: "node", ConfigType: "npmrc", Name: "内置 npmrc",
 		TargetPath: "/root/.npmrc", FilePath: configprofile.ProfilePath(env.dataDir, "sec-builtin-http", ".npmrc"),
-		Content:    "registry=官方", IsBuiltin: true, Enabled: true,
+		Content: "registry=官方", IsBuiltin: true, Enabled: true,
 	}
 	if _, err := env.svc.Create(builtin); err == nil {
 		t.Fatal("Create 应拒绝内置行")

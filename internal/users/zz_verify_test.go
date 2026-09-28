@@ -36,7 +36,10 @@ func TestList_FiltersAndOrder(t *testing.T) {
 	svc := NewService(db)
 	mustV(t, svc.BootstrapAdminRow("admin", "h"), "bootstrap")
 
-	for _, u := range []struct{ id, name, role string; enabled bool }{
+	for _, u := range []struct {
+		id, name, role string
+		enabled        bool
+	}{
 		{"u-alice", "alice", RoleUser, true},
 		{"u-bob", "bob", RoleUser, false},
 		{"u-carol", "carol", RoleAdmin, true},

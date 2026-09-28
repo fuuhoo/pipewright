@@ -29,7 +29,7 @@ var ErrSessionNotFound = errors.New("auth: session not found or expired")
 //   - admin 登录(从 admin_user 表认证)→ UserID = users.BootstrapAdminRegularUserID,
 //     Role = "admin"
 //   - 普通 user 登录(从 users 表认证)→ UserID = 该用户 id,Role = "user"
-//   - 旧部署未升级前签发的会话行 user_id/role 均为 '' → 这里也填空,
+//   - 旧部署未升级前签发的会话行 user_id/role 均为 "" → 这里也填空,
 //     requireAuth 后由中间件根据 Role 判断;旧会话在登出重登一次前不参与 RBAC 校验
 //     (见 rbac.go RequireAdmin 文档)
 type Session struct {
@@ -44,7 +44,7 @@ type Session struct {
 }
 
 // IsAdmin 报告会话是否为管理员角色。
-// 旧会话(role=''为兼容保留)按 admin 放行;阶段 6 起新会话必填 Role。
+// 旧会话(role=""为兼容保留)按 admin 放行;阶段 6 起新会话必填 Role。
 func (s *Session) IsAdmin() bool {
 	if s == nil {
 		return false

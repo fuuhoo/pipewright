@@ -32,10 +32,10 @@ func (a *Actor) IsAdmin() bool {
 
 // ListFilter 按 scope+owner 过滤凭据列表。
 type ListFilter struct {
-	IncludeGlobal   bool // true=返回 scope='global' 凭据
-	IncludePersonal bool // true=返回 scope='personal' 凭据
+	IncludeGlobal   bool   // true=返回 scope='global' 凭据
+	IncludePersonal bool   // true=返回 scope='personal' 凭据
 	OwnerID         string // 当 IncludePersonal=true 时:若非空则限定 owner_id
-	IncludeDisabled bool // false=仅 enabled=1
+	IncludeDisabled bool   // false=仅 enabled=1
 }
 
 // effectiveFilter 据 Actor 推导安全的 ListFilter:

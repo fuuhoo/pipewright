@@ -85,11 +85,11 @@ func TestVerify_R3_RequiredFields(t *testing.T) {
 	db := storetest.OpenDB(t)
 	svc := NewService(NewSQLiteRepo(db))
 	cases := map[string]*BuildEnv{
-		"缺 language":  {Version: "20", DisplayName: "x", SourceType: SourceOfficial, Image: "i"},
-		"缺 version":   {Language: "n", DisplayName: "x", SourceType: SourceOfficial, Image: "i"},
-		"缺 display":   {Language: "n", Version: "20", SourceType: SourceOfficial, Image: "i"},
-		"缺 image":     {Language: "n", Version: "20", DisplayName: "x", SourceType: SourceOfficial},
-		"source 非法":   {Language: "n", Version: "20", DisplayName: "x", SourceType: "bogus", Image: "i"},
+		"缺 language": {Version: "20", DisplayName: "x", SourceType: SourceOfficial, Image: "i"},
+		"缺 version":  {Language: "n", DisplayName: "x", SourceType: SourceOfficial, Image: "i"},
+		"缺 display":  {Language: "n", Version: "20", SourceType: SourceOfficial, Image: "i"},
+		"缺 image":    {Language: "n", Version: "20", DisplayName: "x", SourceType: SourceOfficial},
+		"source 非法":  {Language: "n", Version: "20", DisplayName: "x", SourceType: "bogus", Image: "i"},
 	}
 	for name, e := range cases {
 		if _, err := svc.Create(e); !errors.Is(err, ErrInvalidInput) {
@@ -111,9 +111,8 @@ func isCode(err error, code string) bool {
 	return errors.As(err, &ve) && ve.Code == code
 }
 
-
 // 回归:`Service.Update` 曾把调用方未提供的 image_check_status(空串)直接落库,
-// 导致 status='' 在 SetEnabled 的 switch 里不命中任何 case → P0#4 三态校验被绕过
+// 导致 status="" 在 SetEnabled 的 switch 里不命中任何 case → P0#4 三态校验被绕过
 // (unchecked 环境可被启用)。锁住修复。
 func TestRegression_UpdatePreservesCheckStatus(t *testing.T) {
 	db := storetest.OpenDB(t)

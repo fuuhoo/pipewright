@@ -95,9 +95,10 @@ func (s *Service) Update(in *BuildEnv) (*BuildEnv, error) {
 func (s *Service) Delete(id string) error { return s.repo.Delete(id) }
 
 // SetEnabled 启用/禁用 — P0 #4 三态校验:
-//   unavailable     → 拒(IMAGE_UNAVAILABLE)
-//   unchecked       → 默认拒(IMAGE_NOT_CHECKED);环境变量 PIPEWRIGHT_ALLOW_UNCHECKED_ENABLE=true 时放行
-//   available/checking → 允许
+//
+//	unavailable     → 拒(IMAGE_UNAVAILABLE)
+//	unchecked       → 默认拒(IMAGE_NOT_CHECKED);环境变量 PIPEWRIGHT_ALLOW_UNCHECKED_ENABLE=true 时放行
+//	available/checking → 允许
 func (s *Service) SetEnabled(id string, enabled bool) error {
 	env, err := s.repo.GetByID(id)
 	if err != nil {

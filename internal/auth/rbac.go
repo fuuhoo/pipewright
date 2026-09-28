@@ -4,13 +4,13 @@
 // /api/admin/* 与 /api/* 端点)留到阶段 8 internal/httpapi.RequireAdmin 抽出。
 //
 // 设计要点(v6.2 §3.4 + 阶段 6 会话扩展):
-//   - Session.Role ∈ {"admin","user"} + 旧部署兼容 '' (按 admin 放行)
+//   - Session.Role ∈ {"admin","user"} + 旧部署兼容 "" (按 admin 放行)
 //   - ActorFromSession 把 *Session 转成 *vault.Actor(供 vault 包 RBAC 调用复用)
 //
 // 中间件约定:
 //   - RequireAuth → 已有 requireAuth(读 cookie → svc.Verify → 注入 Session 到 ctx)
 //   - RequireAdmin → 必须 Session.IsAdmin();否则 403。
-//     旧会话(role='')按 admin 放行,避免升级锁死旧部署的管理员。
+//     旧会话(role="")按 admin 放行,避免升级锁死旧部署的管理员。
 //   - RequireUser  → Session.Role=="user" 或 admin(普通用户端点;admin 可访问作管理调试)。
 //     普通用户端点不接受未登录。
 package auth

@@ -318,8 +318,8 @@ type jobTypeIssue struct {
 	sentinel error
 }
 
-func (e *jobTypeIssue) Error() string  { return e.detail }
-func (e *jobTypeIssue) Unwrap() error  { return e.sentinel }
+func (e *jobTypeIssue) Error() string { return e.detail }
+func (e *jobTypeIssue) Unwrap() error { return e.sentinel }
 
 func issuef(sentinel error, format string, args ...any) error {
 	return &jobTypeIssue{detail: fmt.Sprintf(format, args...), sentinel: sentinel}

@@ -145,8 +145,8 @@ func (s *Service) Bootstrap(username, password string) error {
 //
 // v6.2 阶段 6:先查 admin_user(兼容旧部署);若用户名匹配或 admin 不存在,再查
 // users 表以支持普通用户登录。匹配规则:
-//   1) admin_user.username == username → role="admin",UserID=BootstrapAdminRegularUserID
-//   2) users.username == username AND enabled=1 → role=users.role,UserID=users.id
+//  1. admin_user.username == username → role="admin",UserID=BootstrapAdminRegularUserID
+//  2. users.username == username AND enabled=1 → role=users.role,UserID=users.id
 //
 // 优先 admin_user:旧部署管理员行可能在 users 也有同步行,但 admin_user.id=1 的
 // 语义优先(避免普通用户重名 admin 时被普通用户抢占)。

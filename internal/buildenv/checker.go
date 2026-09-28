@@ -31,15 +31,15 @@ type CredentialRefetch interface {
 //   - ManualPull 用单独 pullSem,避免阻塞自动检查
 //   - sync.Once 防服务重启时多次触发自动检查
 type Checker struct {
-	repo     Repo
-	credRef  CredentialRefetch // optional;为 nil 时 ManualPull 跳过登录
-	bin      string            // docker / nerdctl / podman
-	timeout  time.Duration
-	sem      chan struct{}
-	pullSem  chan struct{}
-	once     sync.Once
-	pullMu      sync.Mutex
-	pullPending map[string]struct{} // 正在排队/拉取中的 envID,防重复触发
+	repo            Repo
+	credRef         CredentialRefetch // optional;为 nil 时 ManualPull 跳过登录
+	bin             string            // docker / nerdctl / podman
+	timeout         time.Duration
+	sem             chan struct{}
+	pullSem         chan struct{}
+	once            sync.Once
+	pullMu          sync.Mutex
+	pullPending     map[string]struct{} // 正在排队/拉取中的 envID,防重复触发
 	checkAllMu      sync.Mutex
 	checkAllRunning bool // 一键检查进行中,防重复触发(409)
 }

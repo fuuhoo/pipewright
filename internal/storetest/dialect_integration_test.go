@@ -117,7 +117,7 @@ func TestErrorClassification(t *testing.T) {
 }
 
 // TestProjectRepoOptional 验证「纯发布项目」(不绑 git 仓库)在两方言都能落库:
-// repo_url 走 NOT NULL DEFAULT '',credential_id 用 NULL 表示「没有凭据」——
+// repo_url 走 NOT NULL DEFAULT "",credential_id 用 NULL 表示「没有凭据」——
 // 空串会撞外键(见上),所以「无凭据」必须是 NULL。
 func TestProjectRepoOptional(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, st *store.Store) {

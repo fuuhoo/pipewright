@@ -73,10 +73,10 @@ func TestParseInvalid(t *testing.T) {
 		"/local/path/repo.git",
 		"./relative/repo",
 		"C:\\repo",
-		"git@host",         // 无 path
-		"git@host:/abs",    // path 以 / 开头 → 视为本地路径
-		"host:path",        // 无 user
-		"ssh://host",       // 无 path 也可连接?hostname 在但 path 空 → 仍算 ssh(go-git 层失败)
+		"git@host",      // 无 path
+		"git@host:/abs", // path 以 / 开头 → 视为本地路径
+		"host:path",     // 无 user
+		"ssh://host",    // 无 path 也可连接?hostname 在但 path 空 → 仍算 ssh(go-git 层失败)
 	} {
 		if r, ok := Parse(raw); ok && raw != "ssh://host" {
 			t.Fatalf("Parse(%q) should be invalid, got %+v", raw, r)
