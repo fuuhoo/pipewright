@@ -180,3 +180,108 @@ describe('FormData body passthrough', () => {
     vi.unstubAllGlobals()
   })
 })
+
+// getLines:服务器状态页的逐台流式指标靠它。坑都在分块边界上 —— 一行 JSON 可能被 TCP
+// 拆成两块、多字节字符可能正好被劈开、最后一行可能不带换行。
+describe('http.getLines (ndjson streaming)', () => {
+  function streamResponse(chunks: Uint8Array[]): Response {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(c)
+        controller.close()
+      },
+    })
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'application/x-ndjson' },
+    })
+  }
+
+  function bytes(...lines: string[]): Uint8Array[] {
+    const enc = new TextEncoder()
+    return lines.map((l) => enc.encode(l))
+  }
+
+  async function collect(url = '/api/x'): Promise<string[]> {
+    const got: string[] = []
+    await http.getLines(url, (line) => got.push(line))
+    return got
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reassembles a line split across chunks and drops the trailing newline', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      streamResponse(bytes('{"a":1}\n{"b"', ':2}\n')),
+    )
+    expect(await collect()).toEqual(['{"a":1}', '{"b":2}'])
+  })
+
+  it('flushes the last line even when the stream ends without a newline', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      streamResponse(bytes('one\n', 'two')),
+    )
+    expect(await collect()).toEqual(['one', 'two'])
+  })
+
+  it('keeps utf-8 text intact when a multi-byte char is split between chunks', async () => {
+    const enc = new TextEncoder()
+    const line = enc.encode('{"host":"北京-1"}\n')
+    // 劈进「北」(E5 8C 97)三字节中间:第一块只含首字节,单独 decode 会出半个字符。
+    const cut = line.findIndex((b) => b >= 0x80) + 1
+    expect(cut).toBeGreaterThan(0)
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      streamResponse([line.slice(0, cut), line.slice(cut)]),
+    )
+    expect(await collect()).toEqual(['{"host":"北京-1"}'])
+  })
+
+  it('skips blank lines (keep-alive newlines must not reach the caller)', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      streamResponse(bytes('\n', 'a\n\n', '\nb\r\n')),
+    )
+    expect(await collect()).toEqual(['a', 'b'])
+  })
+
+  it('requests with the locale header and same-origin credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamResponse(bytes('a\n')))
+    vi.stubGlobal('fetch', fetchMock)
+    await http.getLines('/api/servers/metrics?stream=1', () => undefined)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/servers/metrics?stream=1')
+    expect(init.method).toBe('GET')
+    expect(init.credentials).toBe('same-origin')
+    expect((init.headers as Headers).get('X-Pipewright-Locale')).toBeTruthy()
+  })
+
+  it('surfaces a non-ok stream as HttpError with the error envelope message', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'unauthorized', message: '请先登录' } }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    await expect(collect()).rejects.toMatchObject({
+      status: 403,
+      message: '请先登录',
+    })
+  })
+
+  it('falls back to buffering the whole body when ReadableStream is unavailable', async () => {
+    // jsdom 之外的老环境里 response.body 为 null:内容必须一致,只是不实时。
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/x-ndjson' }),
+      body: null,
+      text: async () => 'a\nb\n',
+    } as unknown as Response)
+    expect(await collect()).toEqual(['a', 'b'])
+  })
+})

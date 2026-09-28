@@ -217,6 +217,8 @@ export function subscribeServerLogs(
 //
 // GET /api/servers/:id/metrics  → ServerMetrics      (single host; read-only)
 // GET /api/servers/metrics      → { items: ServerMetrics[] }  (batch; parallel)
+// GET /api/servers/metrics?stream=1 → NDJSON, one ServerMetrics per line as each
+//                                     host finishes (see streamAllServerMetrics)
 //
 // Metrics are collected over SSH by running a FIXED read-only command whitelist
 // (`cat /proc/loadavg`/`uptime`, `nproc`/`getconf`, `free -b`/`vm_stat`, `df -B1 /`/`df -k /`,
@@ -305,6 +307,25 @@ export async function getServerMetrics(id: string): Promise<ServerMetrics> {
 export async function getAllServerMetrics(): Promise<ServerMetrics[]> {
   const res = await http.get<{ items: ServerMetrics[] }>('/api/servers/metrics')
   return res.items
+}
+
+/**
+ * 逐台流式取全部服务器指标:后端采完一台就下发一行 NDJSON,这里读到一行就回调一次。
+ *
+ * 为什么要它:批量端点得等最慢那台(死机拖满探针超时),整屏空白等着不体面。
+ * resolve 的时机是这一轮全部下发完(或被服务端收尾),所以调用方仍可拿它当「一轮结束」。
+ */
+export async function streamAllServerMetrics(
+  onItem: (metrics: ServerMetrics) => void,
+  options?: { signal?: AbortSignal },
+): Promise<void> {
+  await http.getLines(
+    '/api/servers/metrics?stream=1',
+    (line) => {
+      onItem(JSON.parse(line) as ServerMetrics)
+    },
+    options,
+  )
 }
 
 // ─── Service operations (Story 6-3, FR-17) ───────────────────────────────────

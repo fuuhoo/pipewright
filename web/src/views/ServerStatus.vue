@@ -2,17 +2,18 @@
   ServerStatus.vue — Story 6-1: 多机状态总览(FR-15,服务器层资源指标)
 
   在一个面板看所有已登记服务器的 CPU 负载 / 内存 / 磁盘使用,免逐台 SSH。
-    · 登记服务器列表来自 4-1;指标经 6-1 批量端点并行采集(每台独立)。
+    · 登记服务器列表来自 4-1;指标经 6-1 批量端点**逐台流式**采集(每台独立)。
+    · 一张卡采完就上一张,不等最慢那台(死机要拖满探针超时,不该让健康机陪着空白)。
     · 某台不可达 → 该卡灰显 + 人读错误,排到可达的后面,不连累其它台。
     · 某指标缺失(跨平台 best-effort)→ 该行「不可用」。
-    · 刷新/自动轮询都是**静默**的:不动按钮、不压暗卡片、不清屏,只有首屏才显示骨架。
+    · 刷新/自动轮询都是**静默**的:就地替换已有卡片,不压暗、不清屏,只有首屏才显示骨架。
 
   这是一个**新增**的总览入口,不动 4-1 SettingsServers CRUD、6-2 日志入口。
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getAllServerMetrics, listServers, type ServerMetrics, type Server } from '../api/servers'
+import { streamAllServerMetrics, listServers, type ServerMetrics, type Server } from '../api/servers'
 import { HttpError } from '../api/http'
 import ServerMetricsCard from '../components/ops/ServerMetricsCard.vue'
 import AppButton from '../components/ui/AppButton.vue'
@@ -27,18 +28,22 @@ const loadState = ref<'idle' | 'loading' | 'error'>('idle')
 const loadError = ref('')
 /** 后台刷新失败:旧数据继续留在屏上,只在标题下补一行说明。 */
 const staleError = ref('')
-/** 上一轮成功取数的本地时刻(「更新于 HH:MM:SS」)。 */
+/** 上一轮**全部**采完的本地时刻(「更新于 HH:MM:SS」)。 */
 const updatedAt = ref('')
+/** 逐台上屏:一台一张卡,按 serverId 就地替换(所以刷新既不增卡也不闪)。 */
 const metrics = ref<ServerMetrics[]>([])
+/** serverId → metrics 下标(逐台回调要 O(1) 找到那张卡)。 */
+const indexById = new Map<string, number>()
 /** serverId → 展示名(来自登记列表,用于卡片标题)。 */
 const nameById = ref<Map<string, string>>(new Map())
 /** 有一轮取数在飞:轮询与手动刷新都跳过,避免叠请求。 */
 const inFlight = ref(false)
 
 const reachableCount = computed(() => metrics.value.filter((m) => m.reachable).length)
-const totalCount = computed(() => metrics.value.length)
+/** 分母 = 已登记的台数:卡片逐台上屏的中间态不该把「共几台」忽大忽小。 */
+const totalCount = computed(() => Math.max(nameById.value.size, metrics.value.length))
 
-// 可达的排前面,不可达的沉底(两组内部都保持接口原序 = 登记时间倒序)。
+// 可达的排前面,不可达的沉底(两组内部都保持上屏顺序 = 登记时间倒序)。
 const sortedMetrics = computed(() => {
   const up: ServerMetrics[] = []
   const down: ServerMetrics[] = []
@@ -48,6 +53,24 @@ const sortedMetrics = computed(() => {
 
 function displayName(m: ServerMetrics): string {
   return nameById.value.get(m.serverId) ?? m.serverId
+}
+
+function upsertMetrics(item: ServerMetrics): void {
+  const at = indexById.get(item.serverId)
+  if (at === undefined) {
+    indexById.set(item.serverId, metrics.value.length)
+    metrics.value.push(item)
+    return
+  }
+  metrics.value[at] = item
+}
+
+/** 本轮之后已不存在的服务器(被删 / 收回可见性)从屏上撤掉。 */
+function retainOnly(keep: Set<string>): void {
+  const next = metrics.value.filter((m) => keep.has(m.serverId))
+  indexById.clear()
+  next.forEach((m, i) => indexById.set(m.serverId, i))
+  metrics.value = next
 }
 
 function humanizeLoadError(err: unknown): string {
@@ -62,28 +85,39 @@ function humanizeLoadError(err: unknown): string {
 async function load(): Promise<void> {
   if (inFlight.value) return
   inFlight.value = true
-  // 首屏(屏上还没有任何卡片)才值得走骨架;之后一律静默替换。
+  // 首屏(屏上还没有任何卡片)才值得走骨架;之后一律就地替换。
   const firstLoad = metrics.value.length === 0
   if (firstLoad) {
     loadState.value = 'loading'
     loadError.value = ''
   }
+  // 名单与指标流并行:名单一到位就上屏,免得第一张卡顶着 serverId 当标题。
+  // 剪枝(撤掉已删的服务器)留到整轮结束再做,免得轮中间闪没一张卡。
+  const namesPromise = loadServerNames()
+    .then((m) => {
+      nameById.value = m
+      return m
+    })
+    .catch(() => null)
   try {
-    // 并行:登记列表(取展示名)+ 批量指标。互不阻塞。
-    const [servers, items] = await Promise.all([loadServerNames(), getAllServerMetrics()])
-    nameById.value = servers
-    metrics.value = items
+    await streamAllServerMetrics(upsertMetrics)
+    const names = await namesPromise
+    if (names) retainOnly(new Set(names.keys()))
     staleError.value = ''
     updatedAt.value = new Date().toLocaleTimeString()
     loadState.value = 'idle'
   } catch (err) {
     const msg = humanizeLoadError(err)
-    if (firstLoad) {
+    const names = await namesPromise
+    if (metrics.value.length === 0) {
+      // 屏上什么都没有(含首屏就失败)才走整页错误态。
       loadError.value = msg
       loadState.value = 'error'
     } else {
-      // 后台轮询失败:保留上一轮结果,不把整页换成错误态(那会「变白闪一下」)。
+      // 已上屏的卡留着(这一轮可能已换过几张),只补一行「本轮刷新失败」。
+      if (names) retainOnly(new Set(names.keys()))
       staleError.value = msg
+      loadState.value = 'idle'
     }
   } finally {
     inFlight.value = false
