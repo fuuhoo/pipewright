@@ -10,6 +10,8 @@
 //   POST   /api/admin/build-envs/{id}/check       → 手动镜像检查
 //   POST   /api/admin/build-envs/{id}/pull        → 手动 pull 镜像
 //   POST   /api/admin/build-envs/check-all        → 一键检查全部
+//   GET    /api/admin/build-envs/export           → 整表导出(yaml/json,可含禁用)
+//   POST   /api/admin/build-envs/import           → 整表导入(skip/overwrite,dryRun 预览)
 //   GET    /api/build-envs                       → 已启用环境(普通用户可访问)
 //   GET    /api/build-envs/languages              → 已启用环境去重语言列表(普通用户可访问)
 //
@@ -22,6 +24,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/audit"
@@ -437,6 +441,121 @@ func makeCheckAllBuildEnvsHandler(c *buildenv.Checker, aud audit.Recorder, ac au
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "total": total})
+	}
+}
+
+// makeExportBuildEnvsHandler GET /api/admin/build-envs/export?format=yaml|json&includeDisabled=1。
+//
+// 整表快照(默认含禁用条目,`includeDisabled=0` 只要启用)。文件里只有可移植字段:
+// 不含 credential_id(密文引用,跨实例只会指向不存在的行),也不含 image_check_*
+// (可用性由本机 docker/registry 决定)。读操作,不写审计。
+func makeExportBuildEnvsHandler(svc *buildenv.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "buildenv_unavailable", "构建环境服务未初始化")
+			return
+		}
+		q := r.URL.Query()
+		format := strings.ToLower(strings.TrimSpace(q.Get("format")))
+		if format == "" {
+			format = buildenv.TransferFormatYAML
+		}
+		includeDisabled := !(q.Get("includeDisabled") == "0" || strings.EqualFold(q.Get("includeDisabled"), "false"))
+		items, err := svc.ExportItems(includeDisabled)
+		if err != nil {
+			writeBuildEnvError(w, err)
+			return
+		}
+		content, err := buildenv.Marshal(items, format)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input", buildenv.TransferMessage(err))
+			return
+		}
+		ext := "yaml"
+		if format == buildenv.TransferFormatJSON {
+			ext = "json"
+		}
+		filename := "build-envs-" + time.Now().UTC().Format("20060102-150405") + "." + ext
+		// 一律按文本下发:前端取文本自己造 Blob 下载,JSON 被 fetch 解析成对象就拿不到原文了。
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(content)
+	}
+}
+
+// buildEnvImportReq 是导入请求体。
+//   - content:文件正文(YAML 或 JSON)
+//   - format:  yaml(默认)/ json
+//   - mode:    skip(默认,已存在保留)/ overwrite(已存在原地更新)
+//   - dryRun:  true 只出计划,不写库
+type buildEnvImportReq struct {
+	Content string `json:"content"`
+	Format  string `json:"format"`
+	Mode    string `json:"mode"`
+	DryRun  bool   `json:"dryRun"`
+}
+
+// makeImportBuildEnvsHandler POST /api/admin/build-envs/import。
+//
+// 逐行处理:坏行记 failed 不影响好行(整单不回滚);响应是逐行结果 + 汇总。
+// dryRun 与 pipeline/import 的 save:false 同义 —— 先给管理员看清「会动哪些行」再决定落库。
+// 落库路径要跑镜像检查(文件想启用而库里未检查时),耗时与「一键检查」同量级。
+func makeImportBuildEnvsHandler(svc *buildenv.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "buildenv_unavailable", "构建环境服务未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB:整表条目 + 描述文本足够宽裕
+		var req buildEnvImportReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		format := strings.ToLower(strings.TrimSpace(req.Format))
+		if format == "" {
+			format = buildenv.TransferFormatYAML
+		}
+		items, err := buildenv.ParseTransfer(req.Content, format)
+		if err != nil {
+			code := "invalid_input"
+			if strings.Contains(err.Error(), "解析失败") {
+				code = "invalid_content"
+			}
+			writeError(w, http.StatusBadRequest, code, buildenv.TransferMessage(err))
+			return
+		}
+		mode := strings.ToLower(strings.TrimSpace(req.Mode))
+		if mode == "" {
+			mode = buildenv.ImportModeSkip
+		}
+		if mode != buildenv.ImportModeSkip && mode != buildenv.ImportModeOverwrite {
+			writeError(w, http.StatusBadRequest, "invalid_mode", "mode 只能是 skip 或 overwrite")
+			return
+		}
+		report, err := svc.Import(r.Context(), items, mode, req.DryRun)
+		if err != nil {
+			writeBuildEnvError(w, err)
+			return
+		}
+		if !req.DryRun {
+			recordAuditFromRequest(r, aud, ac, audit.Entry{
+				Action:     audit.ActionBuildEnvImport,
+				TargetType: audit.TargetBuildEnv,
+				TargetID:   "import",
+				Detail: map[string]any{
+					"mode":    mode,
+					"created": report.Summary.Created,
+					"updated": report.Summary.Updated,
+					"skipped": report.Summary.Skipped,
+					"failed":  report.Summary.Failed,
+					"total":   report.Summary.Total,
+				},
+				IP: clientIP(r),
+			})
+		}
+		writeJSON(w, http.StatusOK, report)
 	}
 }
 

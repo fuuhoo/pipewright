@@ -619,6 +619,8 @@ func main() {
 		bin = "docker" // 默认 docker;auto 由 build 包检测,checker 不知道,固定 docker
 	}
 	checker := buildenv.NewChecker(buildEnvRepo, credRef, bin, cfg.CheckConcurrency, cfg.CheckTimeout)
+	// 导入要把文件里的「启用意图」落成可用状态:先真检查一次镜像,可用才过三态门。
+	buildEnvSvc.WithChecker(checker)
 	// v6.2 阶段 15:启动后自动检查所有 build_env 镜像(默认 true;可由 PIPEWRIGHT_AUTO_CHECK_ON_START=false 关闭)。
 	// StartAutoCheck 内部异步且自管超时:这里必须传长期有效的 ctx,
 	// 不能带 defer cancel —— 之前 30s ctx 在调用返回即被取消,启动检查全部失败。

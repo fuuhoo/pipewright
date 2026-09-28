@@ -71,7 +71,10 @@ const (
 	ActionBuildEnvDelete = "build_env_delete"
 	ActionBuildEnvToggle = "build_env_toggle" // enable/disable 切换
 	ActionBuildEnvCheck  = "build_env_check"  // 手动/自动镜像检查
-	ActionBuildEnvPull   = "build_env_pull"   // 手动 pull 镜像
+	// ActionBuildEnvPull 手动 pull 镜像。
+	ActionBuildEnvPull = "build_env_pull"
+	// ActionBuildEnvImport 整表导入(新建/覆盖/跳过逐行留痕在 detail 里)。
+	ActionBuildEnvImport = "build_env_import"
 
 	ActionConfigProfileCreate = "config_profile_create"
 	ActionConfigProfileUpdate = "config_profile_update"

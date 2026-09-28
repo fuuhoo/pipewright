@@ -13,10 +13,16 @@ import (
 // Service 是构建环境领域对外接口(由 httpapi.BuildEnv handler 调用)。
 type Service struct {
 	repo Repo
+	// checker 只在导入的「按文件意图恢复启用态」时用:新建行状态必为 unchecked,
+	// 三态门会拒启用,此时先做一次真检查再争取启用。为 nil 时导入不触发检查。
+	checker *Checker
 }
 
 // NewService 构造 Service。
 func NewService(repo Repo) *Service { return &Service{repo: repo} }
+
+// WithChecker 注入镜像检查器(装配期调用一次;main.go 在 checker 构造后接线)。
+func (s *Service) WithChecker(c *Checker) { s.checker = c }
 
 // Create 构造并保存新构建环境;id 由内部生成(UUID v4)。
 func (s *Service) Create(in *BuildEnv) (*BuildEnv, error) {
