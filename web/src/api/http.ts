@@ -19,6 +19,11 @@ export class HttpError extends Error {
     public readonly status: number,
     public readonly apiError: ApiError | null,
     message: string,
+    /**
+     * 出错时服务端给的整个响应体。多数端点只有 { error },但有些「既要给码又要给数据」
+     * 的响应(如上传偏移对不上时回真实偏移)靠它才拿得到那个数。
+     */
+    public readonly body: unknown = null,
   ) {
     super(message)
     this.name = 'HttpError'
@@ -29,6 +34,13 @@ export class HttpError extends Error {
 function getCookie(name: string): string {
   const match = document.cookie.split(';').find((c) => c.trim().startsWith(name + '='))
   return match ? decodeURIComponent(match.trim().slice(name.length + 1)) : ''
+}
+
+/**
+ * 当前会话的 CSRF 令牌。非 fetch 的请求通道(XHR 上传要逐块进度)自己拼头时用。
+ */
+export function csrfToken(): string {
+  return getCookie('pipewright_csrf')
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -125,6 +137,7 @@ async function request<T>(
       response.status,
       apiError,
       apiError?.message ?? `HTTP ${response.status}`,
+      body,
     )
   }
 

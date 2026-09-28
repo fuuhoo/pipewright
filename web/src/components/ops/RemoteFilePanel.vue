@@ -7,8 +7,11 @@
   三条刻意的设计:
     · **不提供递归删除**。后端只删空目录(409 directory_not_empty),界面也就不给一个
       能清掉整棵目录树的按钮 —— 远程 rm -rf 不该是弹窗里顺手能点到的东西。
-    · **下载交给浏览器**。后端直接回 Content-Disposition,所以是一个 <a href>,
-      不经过 fetch:大文件不该整份进内存,也不必重复实现进度条。
+    · **下载交给浏览器**。后端直接回 Content-Disposition(目录是流式 zip),所以是一个
+      <a href>,不经过 fetch:大文件不该整份进内存,也不必重复实现进度条。
+    · **上传分块且可续**。文件按体积切块逐块推,界面给逐文件进度 + 取消/重试;断了从
+      远端实测偏移接着传,所以 64 GB 的传输不会因为一次网络抖动从头再来(算术在
+      lib/fsUpload,这里只做选择器与渲染)。
     · **正文编辑器是内联的一层**,不是套第二层弹窗:叠层弹窗的焦点/滚动/转义键管理
       在窄分屏里最容易出错,而这里只需要「看正文 + 改 + 存」。
 
@@ -22,15 +25,23 @@ import { useI18n } from 'vue-i18n'
 import {
   fsDownloadUrl,
   fsOp,
+  fsUploadDeps,
   listFs,
   readFsContent,
-  uploadFsFile,
   writeFsContent,
   type FsEntry,
 } from '../../api/serverFs'
 import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
+import ProgressBar from '../ui/ProgressBar.vue'
+import {
+  runUploadSession,
+  sessionProgress,
+  uploadSourcesOf,
+  type UploadItemState,
+  type UploadSessionHandle,
+} from '../../lib/fsUpload'
 import {
   ROOT,
   fileExt,
@@ -85,8 +96,19 @@ const editorDirty = computed(() => editorContent.value !== editorOriginal.value)
 type PromptKind = 'mkdir' | 'rename'
 const prompt = ref<{ kind: PromptKind; target: FsEntry | null; value: string } | null>(null)
 
-const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const dirInput = ref<HTMLInputElement | null>(null)
+/**
+ * 上传队列的渲染态。驱动器每次推进都整份覆盖它(lib 那边是唯一真源),
+ * 所以这里不自己算 offset/计数,免得两份簿记对不上。
+ */
+const uploadItems = ref<UploadItemState[]>([])
+const queueOpen = ref(true)
+/** 驱动器只用来调 retry/cancel,不参与渲染:塞进 ref 会让 Vue 深代理整条回调链。 */
+let session: UploadSessionHandle | null = null
+
+/** 队列里最多渲染这么多行:选一个 5000 文件的目录也值得界面只画一屏。 */
+const QUEUE_ROWS = 200
 
 // ─── 左侧目录树 ─────────────────────────────────────────────────────────────────
 // 只装目录、逐层懒加载:一次列目录若顺手把整棵子树拉平,慢的机器上首屏就得等
@@ -369,34 +391,123 @@ async function removeEntry(e: FsEntry): Promise<void> {
 }
 
 // ─── 上传 ───────────────────────────────────────────────────────────────────────
-function pickFiles(): void {
-  fileInput.value?.click()
+// 一次选择 = 一个批次:批次内共用一条 SSH 连接、按 rel 建出目录结构,断了能从
+// 远端实测偏移接着传(全部算术在 lib/fsUpload 里,这里只喂 File 与渲染进度)。
+// 批次期间不给再选:两个批次抢同一条连接池会把进度搅乱,而用户本来也只看一条队列。
+
+/** 还有块在飞的批次不算结束:一条都失败过也照样要留在队列里等用户点重试。 */
+const uploadActive = computed(
+  () =>
+    session !== null &&
+    uploadItems.value.some((it) => it.status === 'queued' || it.status === 'uploading'),
+)
+
+/** 计数一律现算:retry 会把一项从终态拉回在传,增量维护的数字一定会说谎。 */
+const uploadTally = computed(() => {
+  let ok = 0
+  let failed = 0
+  let canceled = 0
+  for (const it of uploadItems.value) {
+    if (it.status === 'done') ok++
+    else if (it.status === 'error') failed++
+    else if (it.status === 'canceled') canceled++
+  }
+  return { ok, failed, canceled, total: uploadItems.value.length }
+})
+
+const uploadProgress = computed(() => sessionProgress(uploadItems.value))
+
+/** 只渲染前若干行:整批计数照常算,DOM 不为 5000 个文件排队。 */
+const uploadRows = computed(() => uploadItems.value.slice(0, QUEUE_ROWS))
+const uploadHidden = computed(() => Math.max(0, uploadItems.value.length - QUEUE_ROWS))
+
+function startUpload(files: File[]): void {
+  const sources = uploadSourcesOf(files)
+  if (!sources.length) return
+  queueOpen.value = true
+  session = runUploadSession({
+    dir: currentPath.value,
+    files: sources,
+    deps: fsUploadDeps(props.serverId),
+    onUpdate: (items) => {
+      uploadItems.value = items
+    },
+  })
+  void session.finished.then((tally) => {
+    if (tally.ok > 0) {
+      toast.success(t('remoteWorkspace.panel.uploadDone', { n: tally.ok }), {
+        detail: tally.failed ? t('remoteWorkspace.panel.uploadSomeFailed', { n: tally.failed }) : undefined,
+      })
+      // 新落地的文件要重列才看得见:整批问一次,别按文件数打 SSH。
+      void load(currentPath.value, { silent: true })
+      invalidateTree(currentPath.value)
+    } else if (tally.failed > 0) {
+      toast.error(t('remoteWorkspace.panel.uploadFailed'))
+    }
+  })
 }
 
-async function onFilesPicked(ev: Event): Promise<void> {
+function onFilesPicked(ev: Event): void {
   const input = ev.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
-  if (!files.length) return
-  uploading.value = true
-  let ok = 0
-  let detail = ''
-  for (const f of files) {
-    try {
-      await uploadFsFile(props.serverId, currentPath.value, f)
-      ok++
-    } catch (err) {
-      detail = humanize(err)
-    }
-  }
+  // 先清 value:同一个文件再选一次也要算新批次(ChangeEvent 只认变化)。
   input.value = ''
-  uploading.value = false
-  if (ok) {
-    toast.success(t('remoteWorkspace.panel.uploadDone', { n: ok }), { detail: detail || undefined })
-  } else {
-    toast.error(t('remoteWorkspace.panel.uploadFailed'), { detail })
-  }
-  await load(currentPath.value, { silent: true })
+  if (files.length) startUpload(files)
 }
+
+function uploadErrorText(code?: string): string {
+  switch (code) {
+    case 'network':
+    case 'upload_timeout':
+    case 'chunk_in_flight':
+      return t('remoteWorkspace.panel.uploadErrNetwork')
+    case 'upload_busy':
+      return t('remoteWorkspace.panel.uploadErrBusy')
+    case 'upload_not_found':
+    case 'upload_closed':
+    case 'incomplete_upload':
+      return t('remoteWorkspace.panel.uploadErrExpired')
+    case 'forbidden':
+      return t('remoteWorkspace.panel.uploadErrForbidden')
+    case 'fs_unsupported':
+      return t('remoteWorkspace.panel.uploadErrUnsupported')
+    case 'invalid_path':
+    case 'bad_request':
+    case 'duplicate_file':
+    case 'chunk_too_large':
+      return t('remoteWorkspace.panel.uploadErrRejected')
+    default:
+      return t('remoteWorkspace.panel.uploadErrOther')
+  }
+}
+
+function uploadStatusText(it: UploadItemState): string {
+  if (it.status === 'error') return uploadErrorText(it.error)
+  if (it.status === 'done') return t('remoteWorkspace.panel.uploadStateDone')
+  if (it.status === 'canceled') return t('remoteWorkspace.panel.uploadStateCanceled')
+  if (it.status === 'queued') return t('remoteWorkspace.panel.uploadStateQueued')
+  return t('remoteWorkspace.panel.uploadStateUploading')
+}
+
+/** 单行读数:done 一定是 100%(末块进度报不满,别让完成态看着像差一块)。 */
+function uploadRatio(it: UploadItemState): number {
+  if (it.status === 'done') return 100
+  if (it.size <= 0) return 0
+  return Math.min(100, Math.round((it.offset / it.size) * 100))
+}
+
+function uploadVariant(it: UploadItemState): 'default' | 'success' | 'warn' | 'error' {
+  if (it.status === 'done') return 'success'
+  if (it.status === 'error') return 'error'
+  if (it.status === 'canceled') return 'warn'
+  return 'default'
+}
+
+/** 只有排队/在飞的可取消;done 不可动,失败与已取消的改成「重试」。 */
+function uploadCancellable(it: UploadItemState): boolean {
+  return it.status === 'queued' || it.status === 'uploading'
+}
+
 
 onMounted(() => {
   // 空路径 = 该会话的家目录:比从界面猜一个 /root 或 /home 都诚实。
@@ -422,10 +533,36 @@ onMounted(() => {
       <button
         class="fs-ibtn"
         type="button"
-        :disabled="uploading"
-        :title="uploading ? t('remoteWorkspace.panel.uploading') : t('remoteWorkspace.panel.upload')"
-        @click="pickFiles"
-      >⇧</button>
+        :disabled="uploadActive"
+        :title="uploadActive ? t('remoteWorkspace.panel.uploading') : t('remoteWorkspace.panel.uploadFiles')"
+        @click="fileInput?.click()"
+      >
+        <svg class="fs-ibtn-ico" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4.4 2.4h4l3.2 3.2v8h-7.2z" />
+          <path d="M8 12.8V8.2M6.2 10 8 8.2l1.8 1.8" />
+        </svg>
+      </button>
+      <button
+        class="fs-ibtn"
+        type="button"
+        :disabled="uploadActive"
+        :title="uploadActive ? t('remoteWorkspace.panel.uploading') : t('remoteWorkspace.panel.uploadFolder')"
+        @click="dirInput?.click()"
+      >
+        <svg class="fs-ibtn-ico" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2 4.8a1.6 1.6 0 0 1 1.6-1.6h2.2l1.3 1.7h5.3A1.6 1.6 0 0 1 14 6.5v4.9a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4z" />
+          <path d="M8 11.8V7.6M6.2 9.4 8 7.6l1.8 1.8" />
+        </svg>
+      </button>
+      <span class="fs-bar__sep" aria-hidden="true" />
+      <button
+        class="fs-ibtn"
+        type="button"
+        :disabled="!uploadItems.length"
+        :title="queueOpen ? t('remoteWorkspace.panel.queueCollapse') : t('remoteWorkspace.panel.queueExpand')"
+        :aria-pressed="queueOpen"
+        @click="queueOpen = !queueOpen"
+      >≡</button>
       <input
         v-model="pathInput"
         class="fs-path"
@@ -436,6 +573,16 @@ onMounted(() => {
       />
       <span v-if="backend" class="fs-badge" :title="t('remoteWorkspace.panel.backendTitle')">{{ backend }}</span>
       <input ref="fileInput" class="fs-file" type="file" multiple hidden @change="onFilesPicked" />
+      <!-- 整个目录树交给后端按 rel 重建:浏览器只交文件,平台不碰落点以外的东西 -->
+      <input
+        ref="dirInput"
+        class="fs-file"
+        type="file"
+        multiple
+        webkitdirectory
+        hidden
+        @change="onFilesPicked"
+      />
     </div>
 
     <nav class="fs-crumbs" :aria-label="t('remoteWorkspace.panel.crumbsAria')">
@@ -550,11 +697,11 @@ onMounted(() => {
               <td class="col-mtime">{{ formatMtime(e.mtime) }}</td>
               <td class="col-mode">{{ modeToLs(e) }}</td>
               <td class="col-ops">
+                <!-- 目录也给出下载:后端按路径自己判,目录走流式 zip(不落中间文件)。 -->
                 <a
-                  v-if="!e.isDir"
                   class="fs-op"
                   :href="fsDownloadUrl(serverId, e.path)"
-                  :title="t('remoteWorkspace.panel.downloadTitle')"
+                  :title="e.isDir ? t('remoteWorkspace.panel.downloadDirTitle') : t('remoteWorkspace.panel.downloadTitle')"
                 >{{ t('remoteWorkspace.panel.download') }}</a>
                 <button v-if="!e.isDir" class="fs-op" type="button" @click="openEditor(e.path)">{{ t('remoteWorkspace.panel.edit') }}</button>
                 <button class="fs-op" type="button" @click="startRename(e)">{{ t('remoteWorkspace.panel.rename') }}</button>
@@ -565,6 +712,65 @@ onMounted(() => {
         </table>
       </section>
     </div>
+
+    <!-- 上传队列:整批一条按字节加权的总进度 + 逐文件一行(取消/重试都在行内) -->
+    <section v-if="uploadItems.length" class="fs-queue" :aria-label="t('remoteWorkspace.panel.queueAria')">
+      <header class="fs-queue__head">
+        <span class="fs-queue__title">
+          {{ t('remoteWorkspace.panel.queueTitle', { ok: uploadTally.ok, total: uploadTally.total }) }}
+        </span>
+        <span v-if="uploadTally.failed" class="fs-queue__warn">
+          {{ t('remoteWorkspace.panel.uploadSomeFailed', { n: uploadTally.failed }) }}
+        </span>
+        <ProgressBar
+          class="fs-queue__bar"
+          :value="Math.round(uploadProgress.ratio * 100)"
+          :variant="uploadTally.failed ? 'warn' : 'default'"
+          :label="t('remoteWorkspace.panel.queueAria')"
+        />
+        <span class="fs-queue__bytes">
+          {{ formatBytes(uploadProgress.bytes) }} / {{ formatBytes(uploadProgress.total) }}
+        </span>
+        <span class="grow" />
+        <button v-if="uploadActive" class="fs-btn" type="button" @click="session?.cancelAll()">
+          {{ t('remoteWorkspace.panel.queueCancelAll') }}
+        </button>
+        <button v-else class="fs-btn" type="button" @click="uploadItems = []">
+          {{ t('remoteWorkspace.panel.queueClear') }}
+        </button>
+      </header>
+
+      <ul v-if="queueOpen" class="fs-queue__list">
+        <li v-for="it in uploadRows" :key="it.key" class="fs-queue__row">
+          <span class="fs-queue__name" :title="it.rel">{{ it.rel }}</span>
+          <ProgressBar
+            class="fs-queue__prog"
+            :value="uploadRatio(it)"
+            :variant="uploadVariant(it)"
+            :label="it.rel"
+          />
+          <span class="fs-queue__state" :class="`fs-queue__state--${it.status}`">
+            {{ uploadStatusText(it) }}
+          </span>
+          <span class="fs-queue__num">{{ formatBytes(it.offset) }} / {{ formatBytes(it.size) }}</span>
+          <button
+            v-if="uploadCancellable(it)"
+            class="fs-op"
+            type="button"
+            @click="session?.cancel(it.key)"
+          >{{ t('remoteWorkspace.panel.cancel') }}</button>
+          <button
+            v-else-if="it.status === 'error' || it.status === 'canceled'"
+            class="fs-op"
+            type="button"
+            @click="session?.retry(it.key)"
+          >{{ t('remoteWorkspace.panel.uploadRetry') }}</button>
+        </li>
+        <li v-if="uploadHidden" class="fs-queue__more">
+          {{ t('remoteWorkspace.panel.queueMore', { n: uploadHidden }) }}
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
@@ -789,6 +995,111 @@ onMounted(() => {
   fill: none;
   stroke: var(--color-faint);
   stroke-width: 1.2;
+}
+
+/* 工具条里的描线图标:跟 .fs-ibtn 一起变亮/变灰,免得每个图标各配一套颜色。 */
+.fs-ibtn-ico {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ─── 上传队列 ─── 面板底部的固定条:总进度一行,明细逐行可滚 */
+.fs-queue {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--rounded-sm);
+  background: var(--color-inset);
+}
+.fs-queue__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-label);
+  color: var(--color-dim);
+}
+.fs-queue__title {
+  flex-shrink: 0;
+  color: var(--color-text);
+}
+.fs-queue__warn {
+  flex-shrink: 0;
+  color: var(--color-amber, var(--color-dim));
+}
+.fs-queue__bar {
+  flex: 0 1 180px;
+  min-width: 60px;
+}
+.fs-queue__bytes {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+.fs-queue__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* 明细要有界:选一个上千文件的目录时,列表本身不能把面板顶到看不见终端。 */
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fs-queue__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-label);
+  color: var(--color-dim);
+}
+.fs-queue__name {
+  flex: 0 1 40%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+.fs-queue__prog {
+  flex: 1 1 80px;
+  min-width: 48px;
+}
+.fs-queue__state {
+  flex-shrink: 0;
+  width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-queue__state--error {
+  color: var(--color-red, var(--color-dim));
+}
+.fs-queue__state--canceled {
+  color: var(--color-amber, var(--color-dim));
+}
+.fs-queue__state--done {
+  color: var(--color-green, var(--color-dim));
+}
+.fs-queue__num {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+.fs-queue__more {
+  font-size: var(--text-label);
+  color: var(--color-faint);
+  padding-left: 2px;
 }
 
 .fs-editor,
