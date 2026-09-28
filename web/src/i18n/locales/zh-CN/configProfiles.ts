@@ -41,6 +41,15 @@ export default {
   contentHint: '可直接编辑;保存时原子写盘(tmp + fsync + rename),任一步失败整笔回滚。',
   builtinHint: '内置配置仅可修改说明与启用状态,不可改内容或路径。',
 
+  // 编辑弹窗:查看文件正文 / 重新上传覆盖
+  contentLoading: '正文加载中…',
+  replaceHint: '可重新上传文件覆盖当前正文;支持 {exts},单文件上限 {max}。',
+  fileWillReplace: '已选「{name}」,保存后将覆盖当前文件正文(文本框里的改动不生效)。',
+  builtinContentHint: '内置配置的文件正文只读;需要自定义请新建一条配置资源。',
+  contentFromDb: '磁盘上的文件读不到,下面显示的是数据库冗余快照,可能与构建时真正注入容器的内容不一致。',
+  errLoadContent: '读取文件内容失败',
+  errTooLarge: '文件超过 {max},请精简后再上传',
+
   save: '保存',
   saving: '保存中…',
   cancel: '取消',

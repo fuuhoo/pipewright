@@ -5,20 +5,24 @@
  * 覆盖 §3.3:
  *   - CRUD;内置行(is_builtin)仅可改 description/enabled → 403 builtin_readonly
  *   - multipart 上传(扩展名白名单 + 大小上限,后端 PIPEWRIGHT_CONFIG_UPLOAD_MAX_SIZE)
+ *   - 编辑时读详情看文件正文(正文以磁盘权威副本为准),并可重新上传覆盖同一行
  *   - 磁盘权威副本在 DATA_DIR/config_profiles/<id>/,DB content 为冗余快照
  */
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   listConfigProfiles,
+  getConfigProfile,
   createConfigProfile,
   updateConfigProfile,
   deleteConfigProfile,
   uploadConfigProfile,
+  replaceConfigProfileFile,
   isExtAllowed,
   CONFIG_UPLOAD_EXTS,
 } from '../../api/configProfiles'
 import type { ConfigProfile, ConfigProfileInput } from '../../api/configProfiles'
+import { exceedsUploadLimit, submitMode } from '../../lib/configProfileFile'
 import { HttpError } from '../../api/http'
 
 const { t } = useI18n()
@@ -53,16 +57,21 @@ const emptyForm = (): ConfigProfileInput => ({
 const form = ref<ConfigProfileInput>(emptyForm())
 const editingBuiltin = ref(false)
 
+// 编辑弹窗的文件态:正文靠详情接口单独取(列表不带),来源决定是否可信。
+const detailLoading = ref(false)
+const contentSource = ref<'disk' | 'db'>('disk')
+
 function openAdd(): void {
   editingId.value = null
   editingBuiltin.value = false
   form.value = emptyForm()
   formFile.value = null
   formBanner.value = ''
+  contentSource.value = 'disk'
   modalOpen.value = true
 }
 
-function openEdit(p: ConfigProfile): void {
+async function openEdit(p: ConfigProfile): Promise<void> {
   editingId.value = p.id
   editingBuiltin.value = p.isBuiltin
   // 内置行回传全部原值,只放开 description/enabled(后端同样会校验白名单)。
@@ -78,7 +87,19 @@ function openEdit(p: ConfigProfile): void {
   }
   formFile.value = null
   formBanner.value = ''
+  contentSource.value = 'disk'
   modalOpen.value = true
+  detailLoading.value = true
+  try {
+    const detail = await getConfigProfile(p.id)
+    form.value.content = detail.content
+    contentSource.value = detail.contentSource
+  } catch (err) {
+    // 取不到正文只影响文件区:说明/启停照样能改,所以不关弹窗、不阻断编辑
+    formBanner.value = msg(err, 'configProfiles.errLoadContent')
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 // ─── delete ─────────────────────────────────────────────────────────────────
@@ -88,7 +109,7 @@ const deleting = ref<ConfigProfile | null>(null)
 const deleteSubmitting = ref(false)
 const deleteBanner = ref('')
 
-// ─── upload (并入新建弹窗:选了文件就走 multipart 上传,忽略 content 文本框) ───
+// ─── upload (选了文件就走 multipart:新建是上传,编辑是覆盖同一行) ───
 
 const formFile = ref<File | null>(null)
 const acceptExts = CONFIG_UPLOAD_EXTS.join(',')
@@ -98,6 +119,12 @@ function onFormFilePick(ev: Event): void {
   const file = input.files?.[0] ?? null
   if (file && !isExtAllowed(file.name)) {
     formBanner.value = t('configProfiles.errExt', { exts: extsText })
+    formFile.value = null
+    input.value = ''
+    return
+  }
+  if (file && exceedsUploadLimit(file.size)) {
+    formBanner.value = t('configProfiles.errTooLarge', { max: maxText })
     formFile.value = null
     input.value = ''
     return
@@ -135,20 +162,35 @@ async function submitForm(): Promise<void> {
   formSubmitting.value = true
   formBanner.value = ''
   try {
-    if (editingId.value) {
-      await updateConfigProfile(editingId.value, form.value)
-    } else if (formFile.value) {
-      await uploadConfigProfile({
-        file: formFile.value,
-        language: form.value.language,
-        configType: form.value.configType,
-        name: form.value.name,
-        targetPath: form.value.targetPath,
-        description: form.value.description,
-        isDefault: form.value.isDefault,
-      })
-    } else {
-      await createConfigProfile(form.value)
+    const id = editingId.value
+    switch (submitMode(!!id, !!formFile.value)) {
+      case 'update': {
+        // 内置行正文只读:content 传空 = 让后端沿用原正文(详情里的正文可能来自磁盘,
+        // 原样回传会被字段白名单判成「改内容」→ 403)。
+        const payload = editingBuiltin.value ? { ...form.value, content: '' } : form.value
+        await updateConfigProfile(id!, payload)
+        break
+      }
+      case 'replace':
+        await replaceConfigProfileFile(id!, {
+          file: formFile.value!,
+          targetPath: form.value.targetPath,
+        })
+        break
+      case 'upload':
+        await uploadConfigProfile({
+          file: formFile.value!,
+          language: form.value.language,
+          configType: form.value.configType,
+          name: form.value.name,
+          targetPath: form.value.targetPath,
+          description: form.value.description,
+          isDefault: form.value.isDefault,
+        })
+        break
+      case 'create':
+        await createConfigProfile(form.value)
+        break
     }
     modalOpen.value = false
     await load()
@@ -283,30 +325,41 @@ async function confirmDelete(): Promise<void> {
             />
             <small>{{ t('configProfiles.targetPathHint') }}</small>
           </label>
-          <label v-if="!editingBuiltin" class="field field--wide">
+          <div v-if="!editingBuiltin" class="field field--wide">
             <span>{{ t('configProfiles.fieldContent') }}</span>
-            <input
-              v-if="!editingId"
-              type="file"
-              :accept="acceptExts"
-              @change="onFormFilePick"
-            />
-            <small v-if="!editingId">
+            <input type="file" :accept="acceptExts" @change="onFormFilePick" />
+            <small v-if="formFile">
               {{
-                formFile
-                  ? t('configProfiles.uploadOk') + ': ' + formFile.name
-                  : t('configProfiles.uploadHint', { exts: extsText, max: maxText })
+                editingId
+                  ? t('configProfiles.fileWillReplace', { name: formFile.name })
+                  : t('configProfiles.uploadOk') + ': ' + formFile.name
               }}
             </small>
+            <small v-else-if="editingId">
+              {{ t('configProfiles.replaceHint', { exts: extsText, max: maxText }) }}
+            </small>
+            <small v-else>{{ t('configProfiles.uploadHint', { exts: extsText, max: maxText }) }}</small>
             <textarea
               v-if="!formFile"
               v-model="form.content"
               rows="10"
               class="mono"
-              :disabled="!!formFile"
+              :disabled="detailLoading"
+              :placeholder="detailLoading ? t('configProfiles.contentLoading') : ''"
             />
             <small v-if="!formFile">{{ t('configProfiles.contentHint') }}</small>
-          </label>
+            <small v-if="!formFile && editingId && contentSource === 'db'" class="note--warn">
+              {{ t('configProfiles.contentFromDb') }}
+            </small>
+          </div>
+          <div v-else class="field field--wide">
+            <span>{{ t('configProfiles.fieldContent') }}</span>
+            <pre class="file-view mono">{{ detailLoading ? t('configProfiles.contentLoading') : form.content }}</pre>
+            <small>{{ t('configProfiles.builtinContentHint') }}</small>
+            <small v-if="contentSource === 'db'" class="note--warn">
+              {{ t('configProfiles.contentFromDb') }}
+            </small>
+          </div>
           <label class="field field--wide">
             <span>{{ t('configProfiles.fieldDescription') }}</span>
             <input v-model="form.description" type="text" />
@@ -545,6 +598,23 @@ async function confirmDelete(): Promise<void> {
 }
 .field textarea {
   resize: vertical;
+}
+.file-view {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.note--warn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
 }
 .field small {
   color: var(--color-faint);
