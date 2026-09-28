@@ -145,6 +145,11 @@ type Service interface {
 	// Exec 通用执行:对指定服务器经 SSH 跑 cmd(程序 + 参数,**array 不拼 shell**,AC-SEC-02),
 	// 返回 stdout/stderr/exitCode。超时经 ctx。供 Epic 4 部署 / Epic 6 运维复用。
 	Exec(ctx context.Context, serverID string, cmd []string) (*ExecResult, error)
+	// ExecBatch 在同一条 SSH 连接上依次跑多条 array 命令(语义同 Exec:array 化、脱敏、
+	// 凭据即用即弃),返回与 cmds 同序的结果。供指标采集这类「一台机器连跑数条只读命令」使用:
+	// 逐条 Exec 会重复拨号 + 握手数次,复用连接只剩一次。连接层面失败时返回已完成的部分结果
+	// + error;命令非零退出不是 error,照常落在那条结果的 ExitCode 里。
+	ExecBatch(ctx context.Context, serverID string, cmds [][]string) ([]*ExecResult, error)
 	// ExecStream 流式执行(Story 6.2 append):经 SSH session 跑 cmd 并返回 stdout 的流(供
 	// 实时 tail -f / journalctl -f)。调用方读到底或关闭 ReadCloser 即释放 SSH session;ctx
 	// 取消亦关 session(防泄漏/挂死)。cmd 同样是 array,经各参数 shell 转义(AC-SEC-02)。
@@ -191,6 +196,14 @@ type SSHDialer interface {
 	// RunWithStdin 同 Run,但把 stdin 接到远端命令的标准输入(供 `cat > file` 流式上传)。
 	// stdin 读尽即关闭远端 stdin;返回退出码/输出。连接/认证失败映射为 ErrUnreachable / ErrAuth。
 	RunWithStdin(ctx context.Context, addr string, cfg SSHConfig, cmd []string, stdin io.Reader) (*ExecResult, error)
+}
+
+// batchDialer 是 SSHDialer 的可选扩展:在**一条**连接(TCP 拨号 + 密钥交换 + 认证各一次)上
+// 依次开多个 session 跑多条命令。支持它的拨号器让 Service.ExecBatch 免去重复拨号;
+// 不支持的(如测试里的假拨号器)由 ExecBatch 自动退回逐条 Run。
+// 契约同 Run:非零退出不算 error;连接/上下文层面的失败才算 error。
+type batchDialer interface {
+	RunBatch(ctx context.Context, addr string, cfg SSHConfig, cmds [][]string) ([]*ExecResult, error)
 }
 
 // SSHConfig 是拨号所需的最小认证材料(进程内,用完即弃)。
@@ -474,25 +487,79 @@ func (s *service) Exec(ctx context.Context, serverID string, cmd []string) (*Exe
 	if len(cmd) == 0 {
 		return nil, fmt.Errorf("target: empty command")
 	}
-	srv, err := s.Get(ctx, serverID)
+	addr, cfg, err := s.sshTarget(ctx, serverID)
 	if err != nil {
 		return nil, err
 	}
-	if s.vault == nil {
-		return nil, ErrVaultUnconfigured
+
+	res, runErr := s.dialer.Run(ctx, addr, cfg, cmd)
+
+	// 显式清明文引用,尽早不可达(明文不留)。
+	cfg.PrivateKey = ""
+	cfg.Password = ""
+
+	if runErr != nil {
+		return nil, runErr
+	}
+	return res, nil
+}
+
+// ExecBatch 在一次 SSH 连接上依次跑多条 array 命令(每条命令的 array 化、脱敏、凭据即用即弃
+// 语义与 Exec 完全一致),结果与 cmds 同序。
+//
+// 存在的理由:一条 Exec 等于一整轮 TCP 拨号 + 密钥交换 + 认证。像指标采集那样对同一台机器连跑
+// 六七条只读命令时,逐条 Exec 会把这台机器拨号六七次,握手时间远超命令本身 —— 复用一条连接后
+// 只剩一次拨号,凭据也只解密一次。
+//
+// 拨号器不支持连接复用(测试里的假拨号器)时自动退回逐条 Run:结果一致,只是省不掉重复拨号。
+// 连接层面失败时返回已完成的部分结果 + error(单条命令非零退出不是错误,照常落在那条结果里)。
+func (s *service) ExecBatch(ctx context.Context, serverID string, cmds [][]string) ([]*ExecResult, error) {
+	if len(cmds) == 0 {
+		return nil, fmt.Errorf("target: empty command batch")
+	}
+	addr, cfg, err := s.sshTarget(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { cfg.PrivateKey = ""; cfg.Password = "" }()
+
+	if bd, ok := s.dialer.(batchDialer); ok {
+		return bd.RunBatch(ctx, addr, cfg, cmds)
 	}
 
-	// 取凭据明文(私钥或口令)。明文仅进程内,Exec 返回前清引用。
+	results := make([]*ExecResult, 0, len(cmds))
+	for _, cmd := range cmds {
+		res, runErr := s.dialer.Run(ctx, addr, cfg, cmd)
+		if runErr != nil {
+			return results, runErr
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
+// sshTarget 按 serverID 取登记信息与凭据明文,装配拨号所需的 (addr, SSHConfig)。
+// 明文只存在于返回的 cfg 中,调用方用完必须清(见 Exec / ExecBatch 的收尾)。
+func (s *service) sshTarget(ctx context.Context, serverID string) (string, SSHConfig, error) {
+	srv, err := s.Get(ctx, serverID)
+	if err != nil {
+		return "", SSHConfig{}, err
+	}
+	if s.vault == nil {
+		return "", SSHConfig{}, ErrVaultUnconfigured
+	}
+
+	// 取凭据明文(私钥或口令)。明文仅进程内,返回前由调用方清引用。
 	secret, err := s.vault.Get(srv.CredentialID)
 	if err != nil {
 		switch {
 		case errors.Is(err, vault.ErrVaultUnconfigured):
-			return nil, ErrVaultUnconfigured
+			return "", SSHConfig{}, ErrVaultUnconfigured
 		case errors.Is(err, vault.ErrNotFound):
-			return nil, ErrCredentialNotFound
+			return "", SSHConfig{}, ErrCredentialNotFound
 		default:
 			// 解密等内部错误:不泄漏细节,统一按认证错误对待。
-			return nil, ErrAuth
+			return "", SSHConfig{}, ErrAuth
 		}
 	}
 
@@ -502,20 +569,9 @@ func (s *service) Exec(ctx context.Context, serverID string, cmd []string) (*Exe
 	} else {
 		cfg.Password = secret
 	}
-
-	addr := fmt.Sprintf("%s:%d", srv.Host, srv.Port)
-	res, runErr := s.dialer.Run(ctx, addr, cfg, cmd)
-
-	// 显式清明文引用,尽早不可达(明文不留)。
 	secret = ""
-	cfg.PrivateKey = ""
-	cfg.Password = ""
-	_ = secret
 
-	if runErr != nil {
-		return nil, runErr
-	}
-	return res, nil
+	return fmt.Sprintf("%s:%d", srv.Host, srv.Port), cfg, nil
 }
 
 // Upload 把 content 流式写到目标机 remotePath(Story 8-16:制品库部署真字节)。

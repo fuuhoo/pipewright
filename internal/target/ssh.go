@@ -68,6 +68,62 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 		return nil, err
 	}
 
+	client, timing, err := dial(ctx, addr, cfg, auth)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = client.Close() }()
+
+	res, cmdDur, runErr := execSession(ctx, client, cmd)
+	timing.Command = cmdDur
+	if runErr != nil {
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
+			return nil, &timedErr{err: runErr, timing: timing}
+		}
+		return nil, fmt.Errorf("%w", ErrUnreachable)
+	}
+	return res, nil
+}
+
+// RunBatch 在**一条** SSH 连接上依次跑多条命令(每条各自一条 session),结果与 cmds 同序等长。
+//
+// 为什么需要它:一次 Run 意味着一整轮 TCP 拨号 + 密钥交换 + 认证 + 收尾。像指标采集那样
+// 一台机器要跑六七条只读命令时,逐条 Run 会把同一台机器拨号六七次,光握手就吃掉数秒 ——
+// 这才是「刷新状态很慢」的大头,命令本身都是毫秒级。连接复用后只剩一次拨号。
+//
+// 失败语义:单条命令非零退出**不是**错误(退出码与输出照常落在那一条结果里,其它条不受影响);
+// 只有连接层面(拨号/握手/认证)或 ctx 超时/取消才返回 error。此时前面已跑完的结果仍随 error
+// 一并返回(切片长度 = 已完成的条数),调用方可就用手上这部分。
+func (sshDialer) RunBatch(ctx context.Context, addr string, cfg SSHConfig, cmds [][]string) ([]*ExecResult, error) {
+	auth, err := authMethods(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	client, _, err := dial(ctx, addr, cfg, auth)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = client.Close() }()
+
+	results := make([]*ExecResult, 0, len(cmds))
+	for _, cmd := range cmds {
+		res, _, runErr := execSession(ctx, client, cmd)
+		if runErr != nil {
+			if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
+				return results, runErr
+			}
+			return results, fmt.Errorf("%w", ErrUnreachable)
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
+// dial 建立一条 SSH 连接(TCP 拨号 + 握手 + 认证),返回 client 与各阶段耗时。
+// 错误一律映射为领域错误(ErrUnreachable / ErrAuth / ctx 错误),绝不含地址与凭据。
+func dial(ctx context.Context, addr string, cfg SSHConfig, auth []ssh.AuthMethod) (*ssh.Client, PhaseTiming, error) {
+	var timing PhaseTiming
 	clientCfg := &ssh.ClientConfig{
 		User: cfg.User,
 		Auth: auth,
@@ -76,13 +132,12 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 		Timeout:         resolveTimeout(ctx),
 	}
 
-	var timing PhaseTiming
 	// 经 net.Dialer 让 TCP 拨号也尊重 ctx 取消/超时。
 	t0 := time.Now()
 	d := net.Dialer{Timeout: clientCfg.Timeout}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("%w", classifyDialErr(err))
+		return nil, timing, fmt.Errorf("%w", classifyDialErr(err))
 	}
 	timing.Dial = time.Since(t0)
 
@@ -90,15 +145,19 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, clientCfg)
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("%w", classifyHandshakeErr(err))
+		return nil, timing, fmt.Errorf("%w", classifyHandshakeErr(err))
 	}
 	timing.Handshake = time.Since(t1)
-	client := ssh.NewClient(sshConn, chans, reqs)
-	defer func() { _ = client.Close() }()
+	return ssh.NewClient(sshConn, chans, reqs), timing, nil
+}
 
+// execSession 在已有 client 上开一条 session 跑 cmd,返回结果与命令阶段耗时。
+// AC-SEC-02:cmd 是 array,经 quoteArgs 逐参数 POSIX 转义后才交给远端,调用方不拼 shell。
+// 远端非零退出 → 结果里带 ExitCode、error 为 nil(与 Run 一致,由调用方按语义降级)。
+func execSession(ctx context.Context, client *ssh.Client, cmd []string) (*ExecResult, time.Duration, error) {
 	session, err := client.NewSession()
 	if err != nil {
-		return nil, fmt.Errorf("%w", ErrUnreachable)
+		return nil, 0, err
 	}
 	defer func() { _ = session.Close() }()
 
@@ -106,30 +165,22 @@ func (sshDialer) Run(ctx context.Context, addr string, cfg SSHConfig, cmd []stri
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
-	// AC-SEC-02:array → 安全转义的单行命令(各参数 %q POSIX 转义),不让调用方拼 shell。
-	t2 := time.Now()
+	t0 := time.Now()
 	runErr := runWithContext(ctx, session, quoteArgs(cmd))
-	timing.Command = time.Since(t2)
+	dur := time.Since(t0)
 
-	res := &ExecResult{
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
+	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	var exitErr *ssh.ExitError
+	if errors.As(runErr, &exitErr) {
+		// 远端命令以非零退出:不是连接错误,exitCode 据实回传。
+		res.ExitCode = exitErr.ExitStatus()
+		return res, dur, nil
 	}
-
 	if runErr != nil {
-		var exitErr *ssh.ExitError
-		if errors.As(runErr, &exitErr) {
-			// 远端命令以非零退出:不是连接错误,exitCode 据实回传。
-			res.ExitCode = exitErr.ExitStatus()
-			return res, nil
-		}
-		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
-			return nil, &timedErr{err: runErr, timing: timing}
-		}
-		return nil, fmt.Errorf("%w", ErrUnreachable)
+		return res, dur, runErr
 	}
 	res.ExitCode = 0
-	return res, nil
+	return res, dur, nil
 }
 
 // RunWithStdin 同 Run,但把 stdin 接到远端命令标准输入(供 `cat > file` 流式上传产物字节)。

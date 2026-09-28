@@ -196,6 +196,13 @@ func (fakeHookTarget) Test(context.Context, string) (*target.TestResult, error) 
 func (fakeHookTarget) Exec(context.Context, string, []string) (*target.ExecResult, error) {
 	return &target.ExecResult{}, nil
 }
+func (fakeHookTarget) ExecBatch(_ context.Context, _ string, cmds [][]string) ([]*target.ExecResult, error) {
+	out := make([]*target.ExecResult, 0, len(cmds))
+	for range cmds {
+		out = append(out, &target.ExecResult{})
+	}
+	return out, nil
+}
 func (fakeHookTarget) ExecStream(context.Context, string, []string) (io.ReadCloser, error) {
 	return nil, nil
 }

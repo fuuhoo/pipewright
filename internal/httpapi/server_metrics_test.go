@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/huangchengsir/pipewright/internal/target"
@@ -85,6 +86,80 @@ func TestParseSwapBytes(t *testing.T) {
 	// 无 Swap 行 → false。
 	if _, _, ok := parseSwapBytes("Mem:  1 2 3\n"); ok {
 		t.Fatalf("no swap line should be false")
+	}
+}
+
+func TestParseVMStat(t *testing.T) {
+	out := "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n" +
+		"Pages free:                              100000.\n" +
+		"Pages active:                            200000.\n" +
+		"Pages inactive:                           50000.\n" +
+		"Pages speculative:                         1000.\n" +
+		"Pages wired down:                         30000.\n" +
+		"Pages occupied by compressor:             10000.\n"
+	pg, pageSize, ok := parseVMStat(out)
+	if !ok || pageSize != 16384 {
+		t.Fatalf("parseVMStat = %+v,%d,%v", pg, pageSize, ok)
+	}
+	if pg.free != 100000 || pg.active != 200000 || pg.wired != 30000 || pg.compressed != 10000 {
+		t.Fatalf("page counts = %+v", pg)
+	}
+	// 缺必需项(无 wired 行)→ false,不给半截口径。
+	if _, _, ok := parseVMStat("Pages free: 1.\nPages active: 2.\n"); ok {
+		t.Fatalf("missing wired should be false")
+	}
+	if _, _, ok := parseVMStat(""); ok {
+		t.Fatalf("empty should be false")
+	}
+}
+
+// macOS 的页计数抬头可能被 vm_stat 换成大写单位(`page size of 4.1K bytes`),
+// 那时抬头解析不出数字 → 用 4096 假设兜底(vm_stat 输出里唯一出现 K/M/G 的地方就是它)。
+func TestParseVMStatFallbackPageSize(t *testing.T) {
+	out := "Mach Virtual Memory Statistics: (page size of 4.1K bytes)\n" +
+		"Pages free:     1000.\nPages active:   2000.\nPages wired down: 500.\n"
+	pg, pageSize, ok := parseVMStat(out)
+	if !ok || pageSize != 4096 || pg.active != 2000 {
+		t.Fatalf("parseVMStat fallback = %+v,%d,%v", pg, pageSize, ok)
+	}
+}
+
+func TestParseSwapUsage(t *testing.T) {
+	out := "total = 1048576.00M  used = 32768.50M  free = 1015807.50M"
+	used, total, ok := parseSwapUsage(out)
+	if !ok || total != 1048576*1024*1024 || used != int64(32768.5*1024*1024) {
+		t.Fatalf("parseSwapUsage = %d,%d,%v", used, total, ok)
+	}
+	// 未启用 swap(total=0)→ false,UI 不渲染 swap 行。
+	if _, _, ok := parseSwapUsage("total = 0.00M  used = 0.00M  free = 0.00M"); ok {
+		t.Fatalf("zero swap should be false")
+	}
+	for _, bad := range []string{"", "some = 1.00M", "total = x  used = 1M"} {
+		if _, _, ok := parseSwapUsage(bad); ok {
+			t.Fatalf("parseSwapUsage(%q) should be false", bad)
+		}
+	}
+}
+
+func TestParseSizeWithUnit(t *testing.T) {
+	cases := map[string]int64{
+		"1024":   1024,
+		"1.5K":   1536,
+		"2MiB":   2 * 1024 * 1024,
+		"32768M": 32768 * 1024 * 1024,
+		"1G":     1024 * 1024 * 1024,
+		"0.00M":  0,
+	}
+	for in, want := range cases {
+		got, ok := parseSizeWithUnit(in)
+		if !ok || got != want {
+			t.Fatalf("parseSizeWithUnit(%q) = %d,%v want %d", in, got, ok, want)
+		}
+	}
+	for _, bad := range []string{"", "abc", "-1M", "12petab", "="} {
+		if v, ok := parseSizeWithUnit(bad); ok {
+			t.Fatalf("parseSizeWithUnit(%q) should fail, got %d", bad, v)
+		}
 	}
 }
 
@@ -202,7 +277,8 @@ func linuxLikeDialer() cmdDialer {
 	}}
 }
 
-// macLikeDialer 模拟 macOS:无 /proc/loadavg、无 nproc、无 free、df -B1 不识别 → 各自回退。
+// macLikeDialer 模拟 macOS:无 /proc/loadavg、无 nproc、无 free、df -B1 不识别 → 各自回退
+// (内存走 vm_stat + sysctl hw.memsize)。
 func macLikeDialer() cmdDialer {
 	return cmdDialer{fn: func(cmd []string) (*target.ExecResult, error) {
 		switch {
@@ -216,6 +292,17 @@ func macLikeDialer() cmdDialer {
 			return &target.ExecResult{Stdout: "10\n", ExitCode: 0}, nil
 		case cmd[0] == "free":
 			return &target.ExecResult{Stderr: "free: command not found", ExitCode: 127}, nil
+		case cmd[0] == "vm_stat":
+			return &target.ExecResult{Stdout: "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n" +
+				"Pages free:                              100000.\n" +
+				"Pages active:                            200000.\n" +
+				"Pages inactive:                           50000.\n" +
+				"Pages wired down:                         30000.\n" +
+				"Pages occupied by compressor:             10000.\n", ExitCode: 0}, nil
+		case cmd[0] == "sysctl" && len(cmd) >= 3 && cmd[2] == "hw.memsize":
+			return &target.ExecResult{Stdout: "34359738368\n", ExitCode: 0}, nil
+		case cmd[0] == "sysctl" && len(cmd) >= 3 && cmd[2] == "vm.swapusage":
+			return &target.ExecResult{Stdout: "total = 1024.00M  used = 256.50M  free = 767.50M\n", ExitCode: 0}, nil
 		case cmd[0] == "df" && len(cmd) >= 2 && cmd[1] == "-B1":
 			return &target.ExecResult{Stderr: "df: illegal option -- B", ExitCode: 1}, nil
 		case cmd[0] == "df" && len(cmd) >= 2 && cmd[1] == "-k":
@@ -285,9 +372,21 @@ func TestServerMetricsMacFallback(t *testing.T) {
 	if out.CPU.Cores == nil || *out.CPU.Cores != 10 {
 		t.Fatalf("cores fallback wrong: %+v", out.CPU)
 	}
-	// free missing → memory null (AC: 该指标 null 不报错)
-	if out.Memory != nil {
-		t.Fatalf("memory should be null on macOS: %+v", out.Memory)
+	// free 缺失 → 走 vm_stat + hw.memsize(macOS 口径):页大小 16384。
+	wantUsed := (200000 + 30000 + 10000) * 16384 // active + wired + 压缩页(不可回收缓存)
+	wantCache := 34359738368 - 100000*16384      // 总量 - 空闲页 = 含可回收缓存
+	if out.Memory == nil {
+		t.Fatalf("memory should be resolved from vm_stat: %s", raw)
+	}
+	if out.Memory.TotalBytes != 34359738368 || out.Memory.UsedBytes != int64(wantUsed) {
+		t.Fatalf("memory(vm_stat) = %+v, want total 34359738368 used %d", out.Memory, wantUsed)
+	}
+	if out.Memory.UsedWithCacheBytes != int64(wantCache) {
+		t.Fatalf("usedWithCache = %d, want %d", out.Memory.UsedWithCacheBytes, wantCache)
+	}
+	if out.Memory.SwapTotalBytes != 1024*1024*1024 || out.Memory.SwapUsedBytes != int64(256.5*1024*1024) {
+		t.Fatalf("swap = %d/%d, want %d/%d", out.Memory.SwapUsedBytes, out.Memory.SwapTotalBytes,
+			int64(256.5*1024*1024), int64(1024*1024*1024))
 	}
 	// df -k fallback
 	if out.Disk == nil || out.Disk.TotalBytes != 1000000*1024 || out.Disk.UsedBytes != 400000*1024 {
@@ -379,4 +478,117 @@ func TestAllServerMetricsBatchIndependent(t *testing.T) {
 	if !body.Items[0].Reachable || body.Items[0].Disk == nil {
 		t.Fatalf("item should be reachable with disk: %+v", body.Items[0])
 	}
+}
+
+// countingBatchDialer 实现 target 的可选 batchDialer,并数出每条命令是怎么来的:
+// 指标采集的正确形态 = 探针 1 次 Run(一整轮拨号)+ 其余命令 1 次 RunBatch(同一条连接)。
+// 若哪天有人把采集改回逐条 Exec,这里会立刻涨成近十次 Run —— 那正是「刷新很慢」的病因。
+type countingBatchDialer struct {
+	mu      sync.Mutex
+	runs    int
+	batches int
+	cmds    [][]string
+}
+
+func (d *countingBatchDialer) record(cmd []string) *target.ExecResult {
+	d.mu.Lock()
+	d.cmds = append(d.cmds, cmd)
+	d.mu.Unlock()
+	res, _ := linuxLikeDialer().fn(cmd)
+	return res
+}
+
+func (d *countingBatchDialer) Run(_ context.Context, _ string, _ target.SSHConfig, cmd []string) (*target.ExecResult, error) {
+	d.mu.Lock()
+	d.runs++
+	d.mu.Unlock()
+	return d.record(cmd), nil
+}
+
+func (d *countingBatchDialer) RunBatch(_ context.Context, _ string, _ target.SSHConfig, cmds [][]string) ([]*target.ExecResult, error) {
+	d.mu.Lock()
+	d.batches++
+	d.mu.Unlock()
+	out := make([]*target.ExecResult, 0, len(cmds))
+	for _, cmd := range cmds {
+		out = append(out, d.record(cmd))
+	}
+	return out, nil
+}
+
+func (d *countingBatchDialer) RunStream(_ context.Context, _ string, _ target.SSHConfig, _ []string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (d *countingBatchDialer) RunInteractive(_ context.Context, _ string, _ target.SSHConfig, _ []string) (target.Session, error) {
+	return nil, nil
+}
+
+func (d *countingBatchDialer) RunWithStdin(_ context.Context, _ string, _ target.SSHConfig, cmd []string, _ io.Reader) (*target.ExecResult, error) {
+	return d.record(cmd), nil
+}
+
+func (d *countingBatchDialer) counts() (runs, batches int, cmds [][]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.runs, d.batches, d.cmds
+}
+
+func TestServerMetricsUsesOneConnectionPerHost(t *testing.T) {
+	d := &countingBatchDialer{}
+	srv, client, csrf := setupServerAPI(t, d)
+	credID := newSSHCredAPI(t, client, srv.URL, csrf, "pw")
+	id := createServerAPI(t, client, srv.URL, csrf, credID)
+
+	get := func() serverMetricsDTO {
+		t.Helper()
+		resp, err := client.Get(srv.URL + "/api/servers/" + id + "/metrics")
+		if err != nil {
+			t.Fatalf("GET metrics: %v", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d: %s", resp.StatusCode, raw)
+		}
+		var out serverMetricsDTO
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return out
+	}
+
+	if out := get(); !out.Reachable || out.Memory == nil || out.Disk == nil {
+		t.Fatalf("首轮采集指标不全: %+v", out)
+	}
+	runs, batches, cmds := d.counts()
+	if runs != 1 || batches != 1 {
+		t.Fatalf("应当只拨号一次(探针)+ 一次批量, got runs=%d batches=%d", runs, batches)
+	}
+	if got := countCmd(cmds, "dmidecode"); got != 1 {
+		t.Fatalf("首轮应探测一次物理内存(dmidecode), got %d", got)
+	}
+
+	// 第二轮:仍然只「探针 + 一批」,且物理总量已缓存 → 不再跑 dmidecode。
+	if out := get(); out.Memory == nil || out.Memory.TotalBytes <= 0 {
+		t.Fatalf("二轮内存指标丢失: %+v", out)
+	}
+	runs, batches, cmds = d.counts()
+	if runs != 2 || batches != 2 {
+		t.Fatalf("两轮合计应为 runs=2 batches=2, got runs=%d batches=%d", runs, batches)
+	}
+	if got := countCmd(cmds, "dmidecode"); got != 1 {
+		t.Fatalf("物理内存应只探测一次(其余走缓存), got %d", got)
+	}
+}
+
+// countCmd 数出记录里程序名为 name 的命令条数。
+func countCmd(cmds [][]string, name string) int {
+	n := 0
+	for _, c := range cmds {
+		if len(c) > 0 && c[0] == name {
+			n++
+		}
+	}
+	return n
 }

@@ -23,29 +23,45 @@ import (
 // 容错纪律:
 //   - 某台不可达 / 认证失败 → 该台 reachable:false + 人读 error,**不 500**,不连累其它台。
 //   - 单个指标命令缺失 / 输出格式异常 → 该指标 null(指针为 nil),不报错、不影响其它指标
-//     (跨平台 best-effort:Linux 优先,macOS/不支持 → 该指标 null)。
+//     (跨平台 best-effort:Linux 与 macOS/BSD 各有自己的命令路径,都不支持才 null)。
+//   - 一台机器**只拨号一次**:探针验可达,其余命令在同一条连接上跑完(见 collectServerMetrics)。
 //   - 批量端点逐台并行采集,有界并发(信号量防 N 台同时 SSH 打爆)。
 
 const (
 	// metricsConcurrency 是批量采集的最大并发 SSH 数(有界,防打爆)。
 	metricsConcurrency = 6
-	// metricsCmdTimeout 是单台采集的整体超时(三条只读命令串行跑,够宽松)。
-	metricsCmdTimeout = 15 * time.Second
+	// metricsProbeTimeout 是「这台机器可达吗」那一次拨号 + 命令的预算。不可达的主机(端口被
+	// 过滤、主机下线)会一直挂到超时,这个值就是刷新最慢那台的代价 —— 必须明显小于整轮采集,
+	// 否则一台死机器把全页拖到 15s。
+	metricsProbeTimeout = 5 * time.Second
+	// metricsBatchTimeout 是复用同一条连接跑完全部指标命令的预算。命令本身都是毫秒级,
+	// 预算主要给慢链路留余量。
+	metricsBatchTimeout = 8 * time.Second
 	// metricsOutMax 是单条命令 stdout 解析前的截断上限(防超大输出撑爆内存;指标输出本就极小)。
 	metricsOutMax = 64 * 1024
 )
 
 // 采集命令(AC-SEC-02:固定静态 array,绝不含任何用户输入)。
-//   - loadavg:`cat /proc/loadavg`(Linux);macOS 无 /proc → 回退 `uptime` 解析。
-//   - cores:`nproc`(Linux);缺失则回退 `getconf _NPROCESSORS_ONLN`(跨平台,含 macOS)。
-//   - memory:`free -b`(Linux);macOS 无 free → 该指标 null(契约允许)。
-//   - disk:`df -B1 /`(Linux);macOS 不识别 -B1 → 回退 `df -k /`(KiB)再换算字节。跨平台可真回显。
+//
+// 一台机器只拨号一次、在这条连接上把下表全跑完,再按「哪个平台有哪个命令」逐个解析:
+// 不必先判 OS,也天然获得跨平台回退(Linux 缺 uptime、macOS 缺 free 都能落到另一条上)。
+// 多跑几条「本机没有、直接非零退出」的命令只多几个 session 往返(毫秒级),比多拨一次号便宜得多。
+//   - loadavg:`cat /proc/loadavg`(Linux);macOS 无 /proc → 回退 `uptime`。
+//   - cores:`nproc`;缺失回退 `getconf _NPROCESSORS_ONLN`(含 macOS)。
+//   - memory:`free -b`(Linux);macOS/BSD 无 free → `vm_stat` + `sysctl hw.memsize`。
+//   - swap:`free -b` 的 Swap 行;macOS → `sysctl vm.swapusage`。
+//   - disk:`df -B1 /`;不识别 -B1(老 macOS)→ 回退 `df -k /`(KiB)换算字节。
+//   - dmidecode:仅 Linux 且缓存里没有该主机物理总量时才追加(需 root)。
 var (
+	cmdUname      = []string{"uname", "-s"}
 	cmdLoadavg    = []string{"cat", "/proc/loadavg"}
 	cmdUptime     = []string{"uptime"}
 	cmdNproc      = []string{"nproc"}
 	cmdGetconfCPU = []string{"getconf", "_NPROCESSORS_ONLN"}
 	cmdFreeBytes  = []string{"free", "-b"}
+	cmdVMStat     = []string{"vm_stat"}
+	cmdMemSize    = []string{"sysctl", "-n", "hw.memsize"}
+	cmdSwapUsage  = []string{"sysctl", "-n", "vm.swapusage"}
 	cmdDfBytes    = []string{"df", "-B1", "/"}
 	cmdDfKiB      = []string{"df", "-k", "/"}
 	// 物理/分配内存(SMBIOS Type 17 内存设备容量之和)。`free` 的 MemTotal 是内核
@@ -54,6 +70,47 @@ var (
 	// dmidecode / 虚拟化未暴露 SMBIOS → 采集失败 → physicalTotalBytes 为 0(不展示)。
 	cmdDmidecodeMem = []string{"dmidecode", "-t", "17"}
 )
+
+// 指标命令的固定顺序 = 结果切片下标(见 metricPlan)。新增命令往末尾加,别插中间。
+const (
+	idxLoadavg = iota
+	idxUptime
+	idxNproc
+	idxGetconfCPU
+	idxFreeBytes
+	idxVMStat
+	idxMemSize
+	idxSwapUsage
+	idxDfBytes
+	idxDfKiB
+	idxCount // 基数组长度,供校验/追加用
+)
+
+// idxDmidecodeMem 是物理内存命令在「本轮需要重新探测」时追加到计划末尾的下标。
+const idxDmidecodeMem = idxCount
+
+var metricPlanBase = [][]string{
+	cmdLoadavg,
+	cmdUptime,
+	cmdNproc,
+	cmdGetconfCPU,
+	cmdFreeBytes,
+	cmdVMStat,
+	cmdMemSize,
+	cmdSwapUsage,
+	cmdDfBytes,
+	cmdDfKiB,
+}
+
+// metricPlan 组本轮要跑的命令;needPhys 为真时末尾追加 dmidecode。
+func metricPlan(needPhys bool) [][]string {
+	if !needPhys {
+		return metricPlanBase
+	}
+	plan := make([][]string, 0, idxDmidecodeMem+1)
+	plan = append(plan, metricPlanBase...)
+	return append(plan, cmdDmidecodeMem)
+}
 
 // cpuMetric / memoryMetric / diskMetric 是各维度指标 DTO(冻结契约字段形状)。
 // 任一维度采集/解析失败 → 整段为 null(指针 nil),不影响其它维度。
@@ -98,27 +155,41 @@ type serverMetricsDTO struct {
 // DTO.reachable=false + 人读 error(批量端点据此让单台失败不连累全局)。
 // 第二个返回值是「定位类」错误(服务器/凭据不存在、保险库未配),仅供单台端点映射 422/503;
 // 批量端点忽略它(逐台独立,定位类对某台亦只表现为该台 reachable:false)。
+//
+// 两轮动作,不是一轮一条命令:
+//  1. 探可达:`uname -s` 一次拨号(短超时)——它的连接/定位错误决定 reachable。
+//  2. 采集:其余命令在同一条 SSH 连接上跑完(ExecBatch),只再开若干 session。
+//
+// 第 2 步是关键:逐条 Exec 等于把同一台机器拨号 + 握手 + 认证近十次,时间全花在重复建连上
+// (实测整批 15s,单机六七条命令串行拨号);复用连接后单机降到一两百毫秒量级。
 func collectServerMetrics(ctx context.Context, svc target.Service, id string) (serverMetricsDTO, error) {
 	out := serverMetricsDTO{ServerID: id, CollectedAt: time.Now().UTC().Format(time.RFC3339)}
 
-	cctx, cancel := context.WithTimeout(ctx, metricsCmdTimeout)
-	defer cancel()
-
-	// 先探一条命令确认可达(用 loadavg/uptime 的探测当连通性判断)。任何定位/连接/认证类失败
-	// → reachable:false。后续各指标命令独立,失败仅该指标 null。
-	cpu, reachErr := collectCPU(cctx, svc, id)
-	if reachErr != nil {
+	pctx, cancelProbe := context.WithTimeout(ctx, metricsProbeTimeout)
+	_, probeErr := svc.Exec(pctx, id, cmdUname)
+	cancelProbe()
+	if probeErr != nil {
 		out.Reachable = false
-		out.Error = humanMetricsError(reachErr)
-		if isLocateError(reachErr) {
-			return out, reachErr
+		out.Error = humanMetricsError(probeErr)
+		if isLocateError(probeErr) {
+			return out, probeErr
 		}
 		return out, nil
 	}
 	out.Reachable = true
-	out.CPU = cpu
-	out.Memory = collectMemory(cctx, svc, id)
-	out.Disk = collectDisk(cctx, svc, id)
+
+	// 物理总量是静态硬件量:缓存命中就不再跑 dmidecode(见 wantPhysicalProbe)。
+	needPhys := wantPhysicalProbe(id)
+	bctx, cancelBatch := context.WithTimeout(ctx, metricsBatchTimeout)
+	defer cancelBatch()
+
+	// 探针已确认这台可达,故此处只看结果:连接中途断/超时 → 已跑完的部分仍解析,缺的维度自然
+	// 落为 null(单条命令非零退出从来不是错误,由解析层按空输出降级)。
+	results, _ := svc.ExecBatch(bctx, id, metricPlan(needPhys))
+
+	out.CPU = readCPU(results)
+	out.Memory = readMemory(results, id, needPhys)
+	out.Disk = readDisk(results)
 	return out, nil
 }
 
@@ -130,76 +201,75 @@ func isLocateError(err error) bool {
 		errors.Is(err, target.ErrVaultUnconfigured)
 }
 
-// runMetricCmd 跑一条采集命令并返回截断后的 stdout。第二个返回值是「连接/定位类」错误
-// (供 reachable 判定);命令非零退出 / 命令不存在不算连接错误(返回 stdout + nil err,
-// 由解析层据空/异常输出降级为 null)。
-func runMetricCmd(ctx context.Context, svc target.Service, id string, cmd []string) (string, error) {
-	res, err := svc.Exec(ctx, id, cmd)
-	if err != nil {
-		return "", err
+// stdoutAt 取下标处命令的 stdout(截断到 metricsOutMax);该条没跑到 / 为 nil → 空串。
+func stdoutAt(results []*target.ExecResult, i int) string {
+	if i < 0 || i >= len(results) || results[i] == nil {
+		return ""
 	}
-	out := res.Stdout
+	out := results[i].Stdout
 	if len(out) > metricsOutMax {
 		out = out[:metricsOutMax]
 	}
-	return out, nil
+	return out
 }
 
-// collectCPU 取 CPU 负载 + 核数。loadavg 兼跑连通性探测:其连接/定位类错误向上传递(决定
-// reachable)。负载/核数任一解析失败 → 该子字段 nil(但 cpu 段仍返回,不影响 reachable)。
-func collectCPU(ctx context.Context, svc target.Service, id string) (*cpuMetric, error) {
+// readCPU 取 CPU 负载 + 核数:各维度独立,解析失败即子字段 nil。
+func readCPU(results []*target.ExecResult) *cpuMetric {
 	m := &cpuMetric{}
-
-	// loadavg:优先 /proc/loadavg;失败(macOS 无)再尝试 uptime。第一条命令的连接/认证类错误
-	// 决定 reachable,故此处把它的 err 上抛。
-	out, err := runMetricCmd(ctx, svc, id, cmdLoadavg)
-	if err != nil {
-		return nil, err
-	}
-	if v, ok := parseLoadavg(out); ok {
+	if v, ok := parseLoadavg(stdoutAt(results, idxLoadavg)); ok {
 		m.Loadavg1 = &v
-	} else {
-		// /proc/loadavg 不存在(命令非零退出,out 多为空)→ 回退 uptime(macOS 等)。
-		if up, upErr := runMetricCmd(ctx, svc, id, cmdUptime); upErr == nil {
-			if v, ok := parseUptimeLoadavg(up); ok {
-				m.Loadavg1 = &v
-			}
-		}
+	} else if v, ok := parseUptimeLoadavg(stdoutAt(results, idxUptime)); ok { // macOS 无 /proc/loadavg
+		m.Loadavg1 = &v
 	}
-
-	// cores:nproc 优先,失败回退 getconf。
-	if np, npErr := runMetricCmd(ctx, svc, id, cmdNproc); npErr == nil {
-		if c, ok := parseInt(np); ok {
-			m.Cores = &c
-		}
+	if c, ok := parseInt(stdoutAt(results, idxNproc)); ok {
+		m.Cores = &c
+	} else if c, ok := parseInt(stdoutAt(results, idxGetconfCPU)); ok { // 无 nproc(macOS/BSD)
+		m.Cores = &c
 	}
-	if m.Cores == nil {
-		if gc, gcErr := runMetricCmd(ctx, svc, id, cmdGetconfCPU); gcErr == nil {
-			if c, ok := parseInt(gc); ok {
-				m.Cores = &c
-			}
-		}
-	}
-	return m, nil
+	return m
 }
 
-// collectMemory 取内存 used/total(字节)。解析失败(如 macOS 无 free)→ nil。
-func collectMemory(ctx context.Context, svc target.Service, id string) *memoryMetric {
-	out, err := runMetricCmd(ctx, svc, id, cmdFreeBytes)
-	if err != nil {
+// readMemory 取内存 used/total(字节)。Linux 走 `free -b`,macOS/BSD 走 `vm_stat` + hw.memsize;
+// 两条路都解析不出来 → nil(契约允许某维度缺失)。
+func readMemory(results []*target.ExecResult, id string, probedPhys bool) *memoryMetric {
+	if used, withCache, total, ok := parseFreeBytes(stdoutAt(results, idxFreeBytes)); ok {
+		m := &memoryMetric{UsedBytes: used, UsedWithCacheBytes: withCache, TotalBytes: total}
+		// Swap 与内存来自同一份 `free -b`:解析 Swap 行(未配置 swap → 0/0)。
+		if su, st, sok := parseSwapBytes(stdoutAt(results, idxFreeBytes)); sok {
+			m.SwapUsedBytes, m.SwapTotalBytes = su, st
+		}
+		m.PhysicalTotalBytes = physicalTotalLinux(id, total, probedPhys, stdoutAt(results, idxDmidecodeMem))
+		return m
+	}
+	return readMemoryDarwin(results)
+}
+
+// readMemoryDarwin 用 vm_stat(页计数)+ sysctl hw.memsize(物理总量)凑出 macOS/BSD 的内存口径。
+// 任一必需项缺失 → nil(没有分母就不画百分比,别给半截数据)。
+func readMemoryDarwin(results []*target.ExecResult) *memoryMetric {
+	total, okTotal := parseInt(stdoutAt(results, idxMemSize))
+	pg, pageSize, okPages := parseVMStat(stdoutAt(results, idxVMStat))
+	if !okTotal || !okPages || total <= 0 {
 		return nil
 	}
-	used, usedWithCache, total, ok := parseFreeBytes(out)
-	if !ok {
-		return nil
+	t64 := int64(total)
+	// 「已用(不含可回收缓存)」对齐 Linux 的 used 列:活跃 + 内核常驻 + 压缩页 —— 压缩页
+	// 不是可回收缓存,算进已用才与活动监视器的内存压力一致。
+	used := (pg.active + pg.wired + pg.compressed) * pageSize
+	if used < 0 || used > t64 {
+		used = 0
 	}
-	m := &memoryMetric{UsedBytes: used, UsedWithCacheBytes: usedWithCache, TotalBytes: total}
-	// Swap 与内存来自同一份 `free -b`:解析 Swap 行(未配置 swap → 0/0)。
-	if su, st, sok := parseSwapBytes(out); sok {
+	m := &memoryMetric{
+		UsedBytes: used,
+		// 含缓存口径:总量 - 空闲页(macOS 的 inactive/speculative 就是可回收缓存)。
+		UsedWithCacheBytes: t64 - pg.free*pageSize,
+		TotalBytes:         t64,
+		// macOS 的 hw.memsize 就是物理总量,与 TotalBytes 同源。
+		PhysicalTotalBytes: t64,
+	}
+	if su, st, sok := parseSwapUsage(stdoutAt(results, idxSwapUsage)); sok {
 		m.SwapUsedBytes, m.SwapTotalBytes = su, st
 	}
-	// 物理/分配总量:静态硬件量,经 host 级缓存避免每次轮询都跑一次 SSH dmidecode。
-	m.PhysicalTotalBytes = cachedPhysicalTotal(ctx, svc, id, total)
 	return m
 }
 
@@ -207,7 +277,9 @@ func collectMemory(ctx context.Context, svc target.Service, id string) *memoryMe
 //
 // dmidecode 取的物理/分配内存是静态量(不随负载变),但采集页可能每 10s 轮询一次。
 // 按 serverID 缓存:成功值(>0)长期复用;失败(非 root / 无 dmidecode / SSH 抖动)缓存
-// 一个冷却期,避免对失败主机每轮都重拨 SSH。进程重启即清空,自然容纳极少见的换内存。
+// 一个冷却期,避免对失败主机每轮都重跑。进程重启即清空,自然容纳极少见的换内存。
+//
+// 缓存只决定「本轮要不要把 dmidecode 加进命令计划」,因此读取必须在发批次之前、写入在解析之后。
 type physMemEntry struct {
 	bytes    int64 // >0:已知物理总量;0:探测过但取不到
 	probedAt time.Time
@@ -221,48 +293,49 @@ var (
 // physMemRetryCooldown:对「取不到」的主机多久重试一次 dmidecode(成功值不受此限,永久缓存)。
 const physMemRetryCooldown = 10 * time.Minute
 
-// cachedPhysicalTotal 返回该主机物理/分配内存(字节),0 表示取不到。memTotal 用于
-// 合理性校验(物理量应 ≥ 内核可用量)。SSH 调用在不持锁时进行,不串行化各主机。
-func cachedPhysicalTotal(ctx context.Context, svc target.Service, id string, memTotal int64) int64 {
+// wantPhysicalProbe 报告本轮是否需要把 dmidecode 加进命令计划:没有成功的缓存,
+// 且(没探过 或 失败的冷却期已过)。
+func wantPhysicalProbe(id string) bool {
 	now := time.Now()
-
 	physMemMu.Lock()
-	if e, hit := physMemCache[id]; hit {
-		// 成功值永久有效;失败值在冷却期内复用(不重拨)。
-		if e.bytes > 0 || now.Sub(e.probedAt) < physMemRetryCooldown {
-			physMemMu.Unlock()
+	defer physMemMu.Unlock()
+	e, hit := physMemCache[id]
+	if !hit {
+		return true
+	}
+	return e.bytes <= 0 && now.Sub(e.probedAt) >= physMemRetryCooldown
+}
+
+// physicalTotalLinux 返回该 Linux 主机物理/分配内存(字节),0 表示取不到。probed 为真时
+// 解析本轮 dmidecode 输出并写缓存;否则复用缓存。memTotal 用于合理性校验(物理量应 ≥ 内核可用量)。
+func physicalTotalLinux(id string, memTotal int64, probed bool, dmiOut string) int64 {
+	if !probed {
+		physMemMu.Lock()
+		defer physMemMu.Unlock()
+		if e, hit := physMemCache[id]; hit && e.bytes >= memTotal {
 			return e.bytes
 		}
+		return 0
 	}
-	physMemMu.Unlock()
 
-	// 探测(不持锁):dmidecode 需 root,失败一律记 0,绝不连累已成功的 free 口径。
 	var phys int64
-	if dmiOut, dmiErr := runMetricCmd(ctx, svc, id, cmdDmidecodeMem); dmiErr == nil {
-		if p, pok := parseDmidecodeMemBytes(dmiOut); pok && p >= memTotal {
-			phys = p
-		}
+	if p, ok := parseDmidecodeMemBytes(dmiOut); ok && p >= memTotal {
+		phys = p
 	}
-
 	physMemMu.Lock()
-	physMemCache[id] = physMemEntry{bytes: phys, probedAt: now}
+	physMemCache[id] = physMemEntry{bytes: phys, probedAt: time.Now()}
 	physMemMu.Unlock()
 	return phys
 }
 
-// collectDisk 取根分区 used/total(字节)。`df -B1 /` 优先;macOS 不识别 -B1 → 回退 `df -k /`
-// 换算字节(KiB×1024)。解析失败 → nil。
-func collectDisk(ctx context.Context, svc target.Service, id string) *diskMetric {
-	if out, err := runMetricCmd(ctx, svc, id, cmdDfBytes); err == nil {
-		if used, total, ok := parseDf(out, 1); ok {
-			return &diskMetric{Path: "/", UsedBytes: used, TotalBytes: total}
-		}
+// readDisk 取根分区 used/total(字节):`df -B1 /` 优先,不识别 -B1 时回退 `df -k /` 换算。
+// 解析失败 → nil。
+func readDisk(results []*target.ExecResult) *diskMetric {
+	if used, total, ok := parseDf(stdoutAt(results, idxDfBytes), 1); ok {
+		return &diskMetric{Path: "/", UsedBytes: used, TotalBytes: total}
 	}
-	// 回退 df -k(KiB)。
-	if out, err := runMetricCmd(ctx, svc, id, cmdDfKiB); err == nil {
-		if used, total, ok := parseDf(out, 1024); ok {
-			return &diskMetric{Path: "/", UsedBytes: used, TotalBytes: total}
-		}
+	if used, total, ok := parseDf(stdoutAt(results, idxDfKiB), 1024); ok {
+		return &diskMetric{Path: "/", UsedBytes: used, TotalBytes: total}
 	}
 	return nil
 }
@@ -380,6 +453,146 @@ func parseSwapBytes(s string) (used, total int64, ok bool) {
 		return u, t, true
 	}
 	return 0, 0, false
+}
+
+// vmStatPages 是 vm_stat 里我们关心的四类页计数(单位:页,不含页大小)。
+type vmStatPages struct {
+	free       int64
+	active     int64
+	wired      int64
+	compressed int64
+}
+
+// parseVMStat 解析 macOS/BSD 的 `vm_stat` 输出:页大小从抬头
+// 「(page size of 16384 bytes)」取(缺省按 4096),页计数从各「Pages xxx:」行取。
+// 必需项(free/active/wired)任一缺失 → false(宁可不显示,也不给半截口径)。
+func parseVMStat(s string) (vmStatPages, int64, bool) {
+	pageSize := int64(4096)
+	pg := vmStatPages{}
+	got := map[string]bool{}
+
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// 抬头「(page size of 16384 bytes)」:它不是「键: 数值」行,必须先单独取,否则会被
+		// 下面的数值解析跳过,页大小就静默退化成 4096 假设。
+		if strings.Contains(strings.ToLower(trimmed), "page size of") {
+			if ps, ok := pageSizeFromHeader(trimmed); ok {
+				pageSize = ps
+			}
+			continue
+		}
+		c := strings.Index(trimmed, ":")
+		if c < 0 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(trimmed[:c]))
+		// 数值行末尾常带 '.'(`Pages free:  104855.`),取第一个 token 并去掉它。
+		fields := strings.Fields(trimmed[c+1:])
+		if len(fields) == 0 {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSuffix(fields[0], "."), 10, 64)
+		if err != nil || n < 0 {
+			continue
+		}
+		switch key {
+		case "pages free":
+			pg.free, got["free"] = n, true
+		case "pages active":
+			pg.active, got["active"] = n, true
+		case "pages wired down":
+			pg.wired, got["wired"] = n, true
+		case "pages occupied by compressor":
+			pg.compressed = n
+		}
+	}
+	if !got["free"] || !got["active"] || !got["wired"] {
+		return vmStatPages{}, 0, false
+	}
+	return pg, pageSize, true
+}
+
+// pageSizeFromHeader 从「Mach Virtual Memory Statistics: (page size of 16384 bytes)」取页字节数。
+func pageSizeFromHeader(line string) (int64, bool) {
+	i := strings.Index(strings.ToLower(line), "page size of")
+	if i < 0 {
+		return 0, false
+	}
+	rest := strings.Fields(line[i+len("page size of"):])
+	if len(rest) == 0 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(rest[0], 10, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseSwapUsage 解析 macOS 的 `sysctl -n vm.swapusage`:
+//
+//	total = 1048576.00M  used = 32768.00M  free = 1015808.00M
+//
+// total/used 任一项取不到 → false;total=0(未启用 swap)也算 false,UI 同样不渲染 swap 行。
+func parseSwapUsage(s string) (used, total int64, ok bool) {
+	fields := strings.Fields(s)
+	var gotTotal, gotUsed bool
+	for i := 0; i+2 < len(fields); i++ {
+		if fields[i+1] != "=" {
+			continue
+		}
+		v, vok := parseSizeWithUnit(fields[i+2])
+		if !vok {
+			continue
+		}
+		switch strings.ToLower(fields[i]) {
+		case "total":
+			total, gotTotal = v, true
+		case "used":
+			used, gotUsed = v, true
+		}
+	}
+	if !gotTotal || !gotUsed || total <= 0 {
+		return 0, 0, false
+	}
+	return used, total, true
+}
+
+// parseSizeWithUnit 解析带 K/M/G/T(或 KB/KiB/…)后缀的容量数字,按二进制 1024 进位换算字节。
+// 支持小数(vm.swapusage 就打印 `32768.00M`);无后缀按字节。
+func parseSizeWithUnit(tok string) (int64, bool) {
+	t := strings.ToLower(strings.TrimSpace(tok))
+	i := len(t)
+	for i > 0 && (t[i-1] < '0' || t[i-1] > '9') && t[i-1] != '.' {
+		i--
+	}
+	num, unit := t[:i], t[i:]
+	f, err := strconv.ParseFloat(num, 64)
+	if err != nil || f < 0 {
+		return 0, false
+	}
+	mult, mok := sizeUnitMultiplier(unit)
+	if !mok {
+		return 0, false
+	}
+	return int64(f * float64(mult)), true
+}
+
+// sizeUnitMultiplier 把容量单位后缀换算为字节倍数;空后缀 = 字节。
+func sizeUnitMultiplier(unit string) (int64, bool) {
+	switch unit {
+	case "":
+		return 1, true
+	case "k", "kb", "kib":
+		return 1024, true
+	case "m", "mb", "mib":
+		return 1024 * 1024, true
+	case "g", "gb", "gib":
+		return 1024 * 1024 * 1024, true
+	case "t", "tb", "tib":
+		return 1024 * 1024 * 1024 * 1024, true
+	}
+	return 0, false
 }
 
 // parseDmidecodeMemBytes 解析 `dmidecode -t 17` 输出,累加各「已装」内存设备的 Size

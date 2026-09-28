@@ -73,6 +73,19 @@ func (f *fakeTarget) Exec(_ context.Context, _ string, cmd []string) (*target.Ex
 	return &target.ExecResult{ExitCode: 0}, nil
 }
 
+// ExecBatch 满足 target.Service:逐个走 Exec,调用记录与单条 Exec 一致。
+func (f *fakeTarget) ExecBatch(ctx context.Context, serverID string, cmds [][]string) ([]*target.ExecResult, error) {
+	out := make([]*target.ExecResult, 0, len(cmds))
+	for _, cmd := range cmds {
+		res, err := f.Exec(ctx, serverID, cmd)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, res)
+	}
+	return out, nil
+}
+
 func (f *fakeTarget) Upload(_ context.Context, _ string, content io.Reader, remotePath string) error {
 	f.uploads = append(f.uploads, remotePath)
 	b, _ := io.ReadAll(content)
@@ -415,6 +428,9 @@ func TestRemoveCaddyIdempotentNoSuchContainer(t *testing.T) {
 type errTarget struct{ err error }
 
 func (e *errTarget) Exec(context.Context, string, []string) (*target.ExecResult, error) {
+	return nil, e.err
+}
+func (e *errTarget) ExecBatch(context.Context, string, [][]string) ([]*target.ExecResult, error) {
 	return nil, e.err
 }
 func (e *errTarget) Upload(context.Context, string, io.Reader, string) error { return e.err }

@@ -67,6 +67,19 @@ func (s *stubTarget) Exec(ctx context.Context, serverID string, cmd []string) (*
 	return &target.ExecResult{ExitCode: 0}, nil
 }
 
+// ExecBatch 满足 target.Service:逐个走 Exec,调用记录与单条 Exec 一致。
+func (s *stubTarget) ExecBatch(ctx context.Context, serverID string, cmds [][]string) ([]*target.ExecResult, error) {
+	out := make([]*target.ExecResult, 0, len(cmds))
+	for _, cmd := range cmds {
+		res, err := s.Exec(ctx, serverID, cmd)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, res)
+	}
+	return out, nil
+}
+
 // ExecStream 满足 target.Service 接口(Story 6.2 append);部署不用流式,桩返回 not-supported。
 func (s *stubTarget) ExecStream(context.Context, string, []string) (io.ReadCloser, error) {
 	return nil, errors.New("execstream not supported in stub")
