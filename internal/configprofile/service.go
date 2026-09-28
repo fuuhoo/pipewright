@@ -99,15 +99,79 @@ func (s *Service) Upload(in *UploadInput) (*ConfigProfile, error) {
 // GetByID 单条;不存在 → ErrNotFound。
 func (s *Service) GetByID(id string) (*ConfigProfile, error) { return s.repo.GetByID(id) }
 
+// ReplaceFileInput 是「重新上传文件」的扁平入参(替换已有配置资源的文件)。
+type ReplaceFileInput struct {
+	ID         string
+	Filename   string // 上传时的原始文件名,只用于扩展名白名单
+	Content    []byte
+	TargetPath string // 空 = 沿用该行现有的容器内路径
+}
+
+// ReplaceFile 用上传的文件替换已有配置资源的权威副本;除文件(和可选 target_path)外
+// 其余字段保持原值。
+//   - is_builtin=1 → ErrBuiltinReadonly(内置行仍只能改 description/enabled)
+//   - 扩展名不在白名单 / 内容为空 → ErrInvalidInput
+//   - 磁盘落名沿用 target_path 基名(与 Upload/Create 同一套规则)
+func (s *Service) ReplaceFile(in *ReplaceFileInput) (*ConfigProfile, error) {
+	old, err := s.repo.GetByID(in.ID)
+	if err != nil {
+		return nil, err
+	}
+	if old.IsBuiltin {
+		return nil, ErrBuiltinReadonly
+	}
+	if !IsExtAllowed(in.Filename) {
+		return nil, wrapErr(ErrInvalidInput, "扩展名不在白名单内(允许:.xml/.conf/.npmrc/.ini/.env/.toml/.yaml/.yml)")
+	}
+	if strings.TrimSpace(string(in.Content)) == "" {
+		return nil, wrapErr(ErrInvalidInput, "上传文件内容为空")
+	}
+	target := strings.TrimSpace(in.TargetPath)
+	if target == "" {
+		target = old.TargetPath
+	}
+	return s.Update(&ConfigProfile{
+		ID:          old.ID,
+		Language:    old.Language,
+		ConfigType:  old.ConfigType,
+		Name:        old.Name,
+		TargetPath:  target,
+		Content:     string(in.Content),
+		IsDefault:   old.IsDefault,
+		Description: old.Description,
+		Enabled:     old.Enabled,
+		CreatedBy:   old.CreatedBy,
+	})
+}
+
+// ContentForView 详情页展示用:优先磁盘权威副本,读不到才回退 DB 冗余快照;
+// 第二个返回值标明是否来自磁盘,免得界面把过期快照说成当前生效内容。
+func (s *Service) ContentForView(p *ConfigProfile) (string, bool) {
+	if p.FilePath == "" {
+		return p.Content, false
+	}
+	b, err := os.ReadFile(p.FilePath)
+	if err != nil {
+		return p.Content, false
+	}
+	return string(b), true
+}
+
 // List 按 filter。
 func (s *Service) List(filter ListFilter) ([]*ConfigProfile, error) { return s.repo.List(filter) }
 
 // Update 更新;is_builtin=1 行只允许 description / enabled(P0 #3 字段白名单)。
 // 其他字段变更请求返回 ErrBuiltinReadonly。
+// in.Content 留空表示「不改文件」:沿用原正文,也不重写磁盘。
 func (s *Service) Update(in *ConfigProfile) (*ConfigProfile, error) {
 	old, err := s.repo.GetByID(in.ID)
 	if err != nil {
 		return nil, err
+	}
+	// content 留空 = 「这次不动文件」,沿用磁盘/DB 原值。
+	// 编辑弹窗只在改文件时才带 content;否则内置行会被白名单判成改内容 → 403。
+	if strings.TrimSpace(in.Content) == "" {
+		in.Content = old.Content
 	}
 	if old.IsBuiltin {
 		// 字段白名单:仅 description / enabled 可改
@@ -159,6 +223,10 @@ func (s *Service) Update(in *ConfigProfile) (*ConfigProfile, error) {
 
 	if err := s.repo.Update(in); err != nil {
 		return nil, err
+	}
+	// target_path 基名变了 → 文件写到新路径,旧文件留着只会让目录越攒越多
+	if !old.IsBuiltin && old.FilePath != "" && old.FilePath != in.FilePath {
+		_ = RemoveFile(old.FilePath)
 	}
 	return s.repo.GetByID(in.ID)
 }

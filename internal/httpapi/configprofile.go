@@ -1,15 +1,18 @@
 // Package httpapi — 配置资源管理端点(v6.2 §3.2 + 阶段 9)。
 //
 // 路由(均 admin-only,RequireAdmin + CSRF):
-//   GET    /api/admin/config-profiles             → List(过滤 language/configType/enabled)
-//   POST   /api/admin/config-profiles             → Create(管理员手填 content)
-//   GET    /api/admin/config-profiles/{id}        → GetByID
-//   PUT    /api/admin/config-profiles/{id}        → Update(builtin 行只允许改 description/enabled)
-//   DELETE /api/admin/config-profiles/{id}        → Delete(builtin 不可删)
-//   POST   /api/admin/config-profiles/upload      → multipart 上传(扩展名白名单)
+//
+//	GET    /api/admin/config-profiles             → List(过滤 language/configType/enabled)
+//	POST   /api/admin/config-profiles             → Create(管理员手填 content)
+//	GET    /api/admin/config-profiles/{id}        → GetByID(详情多带 content + contentSource)
+//	PUT    /api/admin/config-profiles/{id}        → Update(builtin 行只允许改 description/enabled;content 留空=不动文件)
+//	DELETE /api/admin/config-profiles/{id}        → Delete(builtin 不可删)
+//	POST   /api/admin/config-profiles/upload      → multipart 上传(新建,扩展名白名单)
+//	POST   /api/admin/config-profiles/{id}/upload → multipart 重新上传(覆盖已有行的文件)
 //
 // 普通用户端点(RequireUser):
-//   GET    /api/config-profiles?language=java     → 已启用配置列表
+//
+//	GET    /api/config-profiles?language=java     → 已启用配置列表
 package httpapi
 
 import (
@@ -61,6 +64,14 @@ func toConfigProfileDTO(p *configprofile.ConfigProfile) configProfileDTO {
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// configProfileDetailDTO 是详情响应体:列表字段 + 文件正文。
+// contentSource = "disk"(权威副本)/ "db"(磁盘文件读不到,回退到 DB 冗余快照)。
+type configProfileDetailDTO struct {
+	configProfileDTO
+	Content       string `json:"content"`
+	ContentSource string `json:"contentSource"`
 }
 
 // makeListConfigProfilesHandler GET /api/admin/config-profiles。
@@ -122,6 +133,7 @@ func makeListEnabledConfigProfilesHandler(svc *configprofile.Service) http.Handl
 }
 
 // makeGetConfigProfileHandler GET /api/admin/config-profiles/{id}。
+// 详情比列表多带文件正文(content 只在 admin 详情暴露;列表保持精简)。
 func makeGetConfigProfileHandler(svc *configprofile.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -134,7 +146,16 @@ func makeGetConfigProfileHandler(svc *configprofile.Service) http.HandlerFunc {
 			writeConfigProfileError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toConfigProfileDTO(out))
+		content, fromDisk := svc.ContentForView(out)
+		source := "db"
+		if fromDisk {
+			source = "disk"
+		}
+		writeJSON(w, http.StatusOK, configProfileDetailDTO{
+			configProfileDTO: toConfigProfileDTO(out),
+			Content:          content,
+			ContentSource:    source,
+		})
 	}
 }
 
@@ -260,6 +281,29 @@ func makeDeleteConfigProfileHandler(svc *configprofile.Service, aud audit.Record
 	}
 }
 
+// readConfigProfileFileForm 解析 multipart 并取出 file 字段(新建上传 / 重新上传共用)。
+// 已写错误响应时返回 ok=false。
+func readConfigProfileFileForm(w http.ResponseWriter, r *http.Request) (string, []byte, bool) {
+	const maxUpload = 1 << 20 // 1MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload+4096)
+	if err := r.ParseMultipartForm(maxUpload); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "multipart 解析失败: "+err.Error())
+		return "", nil, false
+	}
+	f, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "缺少 file 字段")
+		return "", nil, false
+	}
+	defer func() { _ = f.Close() }()
+	content, err := io.ReadAll(f)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "读上传文件失败: "+err.Error())
+		return "", nil, false
+	}
+	return header.Filename, content, true
+}
+
 // makeUploadConfigProfileHandler POST /api/admin/config-profiles/upload。
 // multipart/form-data:file (content) + language/configType/name/targetPath。
 func makeUploadConfigProfileHandler(svc *configprofile.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
@@ -268,21 +312,8 @@ func makeUploadConfigProfileHandler(svc *configprofile.Service, aud audit.Record
 			writeError(w, http.StatusServiceUnavailable, "configprofile_unavailable", "配置资源服务未初始化")
 			return
 		}
-		const maxUpload = 1 << 20 // 1MB
-		r.Body = http.MaxBytesReader(w, r.Body, maxUpload+4096)
-		if err := r.ParseMultipartForm(maxUpload); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "multipart 解析失败: "+err.Error())
-			return
-		}
-		f, header, err := r.FormFile("file")
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "缺少 file 字段")
-			return
-		}
-		defer func() { _ = f.Close() }()
-		content, err := io.ReadAll(f)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "读上传文件失败: "+err.Error())
+		filename, content, ok := readConfigProfileFileForm(w, r)
+		if !ok {
 			return
 		}
 		in := &configprofile.UploadInput{
@@ -290,7 +321,7 @@ func makeUploadConfigProfileHandler(svc *configprofile.Service, aud audit.Record
 			ConfigType:  r.FormValue("configType"),
 			Name:        r.FormValue("name"),
 			TargetPath:  r.FormValue("targetPath"),
-			Filename:    header.Filename,
+			Filename:    filename,
 			Content:     content,
 			Description: r.FormValue("description"),
 			IsDefault:   r.FormValue("isDefault") == "true",
@@ -311,12 +342,53 @@ func makeUploadConfigProfileHandler(svc *configprofile.Service, aud audit.Record
 				"language":   out.Language,
 				"configType": out.ConfigType,
 				"name":       out.Name,
-				"filename":   header.Filename,
+				"filename":   filename,
 				"size":       len(content),
 			},
 			IP: clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, toConfigProfileDTO(out))
+	}
+}
+
+// makeReplaceConfigProfileFileHandler POST /api/admin/config-profiles/{id}/upload。
+// multipart/form-data:file(新正文)+ 可选 targetPath;language/configType/name 等保持行内原值。
+// 内置行(is_builtin=1)走不到这里:403 builtin_readonly。
+func makeReplaceConfigProfileFileHandler(svc *configprofile.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "configprofile_unavailable", "配置资源服务未初始化")
+			return
+		}
+		filename, content, ok := readConfigProfileFileForm(w, r)
+		if !ok {
+			return
+		}
+		out, err := svc.ReplaceFile(&configprofile.ReplaceFileInput{
+			ID:         chi.URLParam(r, "id"),
+			Filename:   filename,
+			Content:    content,
+			TargetPath: r.FormValue("targetPath"),
+		})
+		if err != nil {
+			writeConfigProfileError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionConfigProfileReplace,
+			TargetType: audit.TargetConfigProfile,
+			TargetID:   out.ID,
+			Detail: map[string]any{
+				"language":   out.Language,
+				"configType": out.ConfigType,
+				"name":       out.Name,
+				"filename":   filename,
+				"targetPath": out.TargetPath,
+				"size":       len(content),
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, toConfigProfileDTO(out))
 	}
 }
 

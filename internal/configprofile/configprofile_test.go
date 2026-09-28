@@ -2,6 +2,7 @@ package configprofile_test
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -278,5 +279,204 @@ func TestMigration0052(t *testing.T) {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(1) FROM config_profiles`).Scan(&n); err != nil {
 		t.Fatalf("表不可读: %v", err)
+	}
+}
+
+// createForTest 建一条非内置配置资源并回读(带 FilePath 的完整行)。
+func createForTest(t *testing.T, svc *configprofile.Service) *configprofile.ConfigProfile {
+	t.Helper()
+	created, err := svc.Create(mkInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := svc.GetByID(created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	return got
+}
+
+// seedBuiltinForTest 直插一条内置行并写好磁盘副本(Create 拒绝 is_builtin=1)。
+func seedBuiltinForTest(t *testing.T, svc *configprofile.Service) *configprofile.ConfigProfile {
+	t.Helper()
+	in := mkInput()
+	in.ID = "sec-test-builtin"
+	in.Name = "内置行" // 与 mkInput 的 (language,configType,name) 区分,便于同测并存
+	in.IsBuiltin = true
+	in.Content = "内置正文"
+	in.FilePath = configprofile.ProfilePath(svc.DataDir(), in.ID, filepath.Base(in.TargetPath))
+	if err := configprofile.NewSQLiteRepo(sharedDB(t)).Create(in); err != nil {
+		t.Fatalf("seed builtin: %v", err)
+	}
+	if err := configprofile.AtomicWriteFile(in.FilePath, []byte(in.Content), 0o644); err != nil {
+		t.Fatalf("seed builtin 写文件: %v", err)
+	}
+	got, err := svc.GetByID(in.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	return got
+}
+
+// TestReplaceFile_OverwritesDisk 重新上传只换正文:磁盘副本、DB 快照同步,身份字段不动,
+// 落盘文件名仍取 target_path 基名(与 Create/Upload 同一套规则)。
+func TestReplaceFile_OverwritesDisk(t *testing.T) {
+	svc := newService(t)
+	old := createForTest(t, svc)
+
+	out, err := svc.ReplaceFile(&configprofile.ReplaceFileInput{
+		ID:       old.ID,
+		Filename: "公司私服配置.xml",
+		Content:  []byte("<settings><mirror/></settings>"),
+	})
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if filepath.Base(out.FilePath) != "settings.xml" {
+		t.Fatalf("落盘文件名应取 target_path 基名: %s", out.FilePath)
+	}
+	if out.Language != old.Language || out.Name != old.Name || out.TargetPath != old.TargetPath {
+		t.Fatalf("身份字段被改动: %+v", out)
+	}
+	if out.Description != old.Description || out.IsDefault != old.IsDefault || out.Enabled != old.Enabled {
+		t.Fatalf("其余字段应保持不变: %+v", out)
+	}
+	disk, err := svc.ReadDiskContent(out)
+	if err != nil {
+		t.Fatalf("read disk: %v", err)
+	}
+	if disk != "<settings><mirror/></settings>" {
+		t.Fatalf("磁盘正文未替换: %q", disk)
+	}
+	if out.Content != disk {
+		t.Fatal("DB 快照与磁盘副本不一致")
+	}
+}
+
+// TestReplaceFile_TargetPathMovesFile 换 target_path 时写到新文件名,旧文件清掉不留垃圾。
+func TestReplaceFile_TargetPathMovesFile(t *testing.T) {
+	svc := newService(t)
+	old := createForTest(t, svc)
+
+	out, err := svc.ReplaceFile(&configprofile.ReplaceFileInput{
+		ID:         old.ID,
+		Filename:   "config.xml",
+		Content:    []byte("<new/>"),
+		TargetPath: "/root/.m2/settings-alt.xml",
+	})
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if out.TargetPath != "/root/.m2/settings-alt.xml" {
+		t.Fatalf("target_path 未更新: %s", out.TargetPath)
+	}
+	if _, err := os.Stat(out.FilePath); err != nil {
+		t.Fatalf("新文件缺: %v", err)
+	}
+	if _, err := os.Stat(old.FilePath); !os.IsNotExist(err) {
+		t.Fatalf("旧文件应被清掉: %v", err)
+	}
+}
+
+// TestReplaceFile_Rejects 内置行 / 非法扩展名 / 空正文都要拒。
+func TestReplaceFile_Rejects(t *testing.T) {
+	svc := newService(t)
+	builtin := seedBuiltinForTest(t, svc)
+	row := createForTest(t, svc)
+
+	cases := []struct {
+		name string
+		in   *configprofile.ReplaceFileInput
+		want error
+	}{
+		{"builtin", &configprofile.ReplaceFileInput{ID: builtin.ID, Filename: "a.xml", Content: []byte("x")}, configprofile.ErrBuiltinReadonly},
+		{"badExt", &configprofile.ReplaceFileInput{ID: row.ID, Filename: "a.exe", Content: []byte("x")}, configprofile.ErrInvalidInput},
+		{"empty", &configprofile.ReplaceFileInput{ID: row.ID, Filename: "a.xml", Content: []byte("  \n")}, configprofile.ErrInvalidInput},
+	}
+	for _, c := range cases {
+		if _, err := svc.ReplaceFile(c.in); !errors.Is(err, c.want) {
+			t.Fatalf("%s: err = %v, want %v", c.name, err, c.want)
+		}
+	}
+	if _, err := svc.ReplaceFile(&configprofile.ReplaceFileInput{ID: "no-such-id", Filename: "a.xml", Content: []byte("x")}); !errors.Is(err, configprofile.ErrNotFound) {
+		t.Fatalf("不存在的 id: err = %v, want ErrNotFound", err)
+	}
+	// 拒绝路径不能碰原文件
+	got, _ := svc.GetByID(row.ID)
+	if disk, err := svc.ReadDiskContent(got); err != nil || disk != row.Content {
+		t.Fatalf("失败请求改动了文件: %q %v", disk, err)
+	}
+}
+
+// TestUpdate_EmptyContentKeepsFile 编辑弹窗没动正文时 PUT 传空 content:
+// 既不能报「content 必填」,也不能把磁盘文件清空。
+func TestUpdate_EmptyContentKeepsFile(t *testing.T) {
+	svc := newService(t)
+	row := createForTest(t, svc)
+
+	in := *row
+	in.Content = ""
+	in.Description = "只改说明"
+	out, err := svc.Update(&in)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if out.Content != row.Content {
+		t.Fatalf("空 content 应沿用原正文: %q", out.Content)
+	}
+	if out.Description != "只改说明" {
+		t.Fatalf("description 未更新: %q", out.Description)
+	}
+	disk, err := svc.ReadDiskContent(out)
+	if err != nil || disk != row.Content {
+		t.Fatalf("磁盘文件被动过: %q %v", disk, err)
+	}
+}
+
+// TestUpdate_BuiltinEmptyContentAllowsDescription 内置行同理:空 content 不算改正文,
+// 所以「改说明 / 启停」仍然放行,而带非空不同 content 的请求照旧 403 语义。
+func TestUpdate_BuiltinEmptyContentAllowsDescription(t *testing.T) {
+	svc := newService(t)
+	row := seedBuiltinForTest(t, svc)
+
+	in := *row
+	in.Content = ""
+	in.Description = "新说明"
+	in.Enabled = false
+	if _, err := svc.Update(&in); err != nil {
+		t.Fatalf("内置行改说明应放行: %v", err)
+	}
+	got, _ := svc.GetByID(row.ID)
+	if got.Description != "新说明" || got.Enabled {
+		t.Fatalf("未生效: %+v", got)
+	}
+	if got.Content != "内置正文" {
+		t.Fatalf("内置正文被改动: %q", got.Content)
+	}
+}
+
+// TestContentForView 详情展示优先磁盘副本;磁盘读不到才回退 DB 快照并标明来源。
+func TestContentForView(t *testing.T) {
+	svc := newService(t)
+	row := createForTest(t, svc)
+
+	// 磁盘与 DB 故意不一致:以磁盘为准(运行时注入的就是磁盘那份)
+	if err := configprofile.AtomicWriteFile(row.FilePath, []byte("磁盘上的正文"), 0o644); err != nil {
+		t.Fatalf("write disk: %v", err)
+	}
+	content, fromDisk := svc.ContentForView(row)
+	if !fromDisk || content != "磁盘上的正文" {
+		t.Fatalf("应回磁盘内容: %q fromDisk=%v", content, fromDisk)
+	}
+
+	if err := os.Remove(row.FilePath); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	content, fromDisk = svc.ContentForView(row)
+	if fromDisk {
+		t.Fatal("文件丢失时不能标成磁盘来源")
+	}
+	if content != row.Content {
+		t.Fatalf("应回退到 DB 快照: %q", content)
 	}
 }

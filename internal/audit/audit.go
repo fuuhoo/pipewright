@@ -79,7 +79,10 @@ const (
 	ActionConfigProfileCreate = "config_profile_create"
 	ActionConfigProfileUpdate = "config_profile_update"
 	ActionConfigProfileDelete = "config_profile_delete"
-	ActionConfigProfileUpload = "config_profile_upload" // multipart 上传文件
+	ActionConfigProfileUpload = "config_profile_upload" // multipart 上传文件(新建)
+	// ActionConfigProfileReplace 给已有配置资源重新上传文件:覆盖的是构建期真读的那份文件,
+	// 与「新建一条」的风险不同,所以单独留痕而不是复用 upload。
+	ActionConfigProfileReplace = "config_profile_replace"
 
 	ActionUserInvite = "user_invite" // 创建邀请 token
 	ActionUserCreate = "user_create" // 邀请注册落地

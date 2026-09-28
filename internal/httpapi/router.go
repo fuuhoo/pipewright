@@ -88,28 +88,28 @@ type options struct {
 	runnerConfig     runner.Service
 	servers          target.Service
 	// kubeClusters 是「集群目标」这一条腿(K8s 发布直连 API server,不经目标机 SSH)。
-	kubeClusters     kube.Service
-	notifications    notify.Service
-	deployer         deploy.Service
-	anomaly          anomaly.Service
-	anomalyInterval  int // 后台定时检测间隔(秒);0=已关闭。供前端显示节奏。
-	anomalyCooldown  int // 同条件告警去重冷却窗口(秒)。
-	metricsHistory   metrics.Service
-	oauth            oauth.Service
-	approvalCoord    *approval.Coordinator
-	approvalStore    *approval.Store
-	approvalSigner   *approval.Signer
-	promotionStore   *promotion.Store
-	environments     *deployenv.Service
-	doraMetrics      run.MetricsService
-	templates        library.TemplateService
-	varGroups        library.VarGroupService
-	customNodes      library.CustomNodeService
-	artifactStore    *artifactstore.Store
-	retention        *retention.Service
-	proxy            proxy.Service
-	dnsProviders     dnsprovider.Service
-	previewEnvs      PreviewService
+	kubeClusters    kube.Service
+	notifications   notify.Service
+	deployer        deploy.Service
+	anomaly         anomaly.Service
+	anomalyInterval int // 后台定时检测间隔(秒);0=已关闭。供前端显示节奏。
+	anomalyCooldown int // 同条件告警去重冷却窗口(秒)。
+	metricsHistory  metrics.Service
+	oauth           oauth.Service
+	approvalCoord   *approval.Coordinator
+	approvalStore   *approval.Store
+	approvalSigner  *approval.Signer
+	promotionStore  *promotion.Store
+	environments    *deployenv.Service
+	doraMetrics     run.MetricsService
+	templates       library.TemplateService
+	varGroups       library.VarGroupService
+	customNodes     library.CustomNodeService
+	artifactStore   *artifactstore.Store
+	retention       *retention.Service
+	proxy           proxy.Service
+	dnsProviders    dnsprovider.Service
+	previewEnvs     PreviewService
 	// v6.2 阶段 9:新增领域服务。
 	buildEnvSvc   *buildenv.Service
 	buildEnvCheck *buildenv.Checker
@@ -557,6 +557,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			adminR.Put("/config-profiles/{id}", makeUpdateConfigProfileHandler(cpSvc, aud, authn))
 			adminR.Delete("/config-profiles/{id}", makeDeleteConfigProfileHandler(cpSvc, aud, authn))
 			adminR.Post("/config-profiles/upload", makeUploadConfigProfileHandler(cpSvc, aud, authn))
+			// 给已有配置重新上传文件(覆盖磁盘权威副本)
+			adminR.Post("/config-profiles/{id}/upload", makeReplaceConfigProfileFileHandler(cpSvc, aud, authn))
 
 			// users 管理(建号 / 重置口令 / 改描述与启停;完整邀请注册留到后续 story)
 			adminR.Get("/users", makeListUsersHandler(o.usersSvc))
