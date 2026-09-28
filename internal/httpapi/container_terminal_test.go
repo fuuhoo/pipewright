@@ -68,6 +68,54 @@ func TestBuildContainerExecCmd(t *testing.T) {
 	}
 }
 
+func TestValidateHostShell(t *testing.T) {
+	cases := []struct {
+		name    string
+		shell   string
+		wantErr bool
+		want    string
+	}{
+		// 空 = 自动优选(不再是硬编码 /bin/sh)。
+		{"空串走自动", "", false, ""},
+		{"白名单 shell 原样", "/bin/bash", false, "/bin/bash"},
+		{"裸名 shell 原样", "bash", false, "bash"},
+		{"非白名单拒", "/usr/bin/python", true, ""},
+		{"注入拒", "sh;id", true, ""},
+		{"带参数拒", "bash -c id", true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := validateHostShell(c.shell)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("validateHostShell(%q) err=%v wantErr=%v", c.shell, err, c.wantErr)
+			}
+			if !c.wantErr && got != c.want {
+				t.Fatalf("shell = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestAutoHostShellArgv(t *testing.T) {
+	argv := autoHostShellArgv()
+	if len(argv) != 3 || argv[0] != "/bin/sh" || argv[1] != "-c" {
+		t.Fatalf("argv = %v, want [/bin/sh -c <script>]", argv)
+	}
+	script := argv[2]
+	// 候选顺序是这条改动的全部语义:bash 先于 zsh,zsh 先于登录 shell 兜底。
+	iBash, iZsh, iShell := strings.Index(script, "bash"), strings.Index(script, "zsh"), strings.Index(script, "$SHELL")
+	if !(iBash >= 0 && iBash < iZsh && iZsh < iShell) {
+		t.Fatalf("候选顺序不对: bash=%d zsh=%d $SHELL=%d script=%q", iBash, iZsh, iShell, script)
+	}
+	if !strings.Contains(script, "exec ") {
+		t.Fatalf("应以 exec 起 shell(PTY 前台进程就是 shell 本身): %q", script)
+	}
+	// 整段是常量脚本且不含单引号:过 shellQuote 后仍是**一个** argv,不会被拆成多条命令。
+	if strings.Contains(script, "'") {
+		t.Fatalf("脚本不该含单引号(会破坏 array 化的转义前提): %q", script)
+	}
+}
+
 func TestParseResize(t *testing.T) {
 	cols, rows, ok := parseResize([]byte(`{"type":"resize","cols":120,"rows":40}`))
 	if !ok || cols != 120 || rows != 40 {
@@ -368,6 +416,62 @@ func TestContainerTerminalHappyPath(t *testing.T) {
 	e := res.Entries[0]
 	if e.TargetID != id || e.Detail["containerId"] != "myapp" {
 		t.Fatalf("审计内容不符: targetID=%q detail=%v", e.TargetID, e.Detail)
+	}
+}
+
+// --- 主机终端的 shell 归属:没给 shell 让远端优选,给了就原样 ---
+
+func TestServerTerminalHostShellResolution(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		wantCmd    []string
+		wantAudits string
+	}{
+		{"没给 shell 走自动优选", "", autoHostShellArgv(), "auto"},
+		{"给了 bash 原样起", "?shell=/bin/bash", []string{"/bin/bash"}, "/bin/bash"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dialer := &fakeInteractiveDialer{}
+			srv, client, csrf, rec := setupTerminalAPI(t, dialer)
+			id := newServerAPI(t, client, srv.URL, csrf)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			hdr := http.Header{}
+			for _, ck := range client.Jar.Cookies(mustParseURL(t, srv.URL)) {
+				hdr.Add("Cookie", ck.Name+"="+ck.Value)
+			}
+			u := wsURL(srv.URL) + "/api/servers/" + id + "/terminal" + c.query
+			conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPHeader: hdr})
+			if err != nil {
+				t.Fatalf("WS dial: %v", err)
+			}
+			defer conn.Close(websocket.StatusNormalClosure, "")
+
+			// 先跑一个回显往返:handler 是「起会话 → 写审计 → 双向泵」,能回显就说明审计已落。
+			if err := conn.Write(ctx, websocket.MessageText, []byte("pwd\n")); err != nil {
+				t.Fatalf("write input: %v", err)
+			}
+			if got := readWSUntil(t, ctx, conn, "pwd"); !strings.Contains(got, "pwd") {
+				t.Fatalf("echo not received, got %q", got)
+			}
+
+			if cmd := dialer.cmd(); !equalStrSlice(cmd, c.wantCmd) {
+				t.Fatalf("cmd = %q, want %q", cmd, c.wantCmd)
+			}
+			res, err := rec.List(context.Background(), audit.ListFilter{Action: audit.ActionServerTerminal})
+			if err != nil {
+				t.Fatalf("audit list: %v", err)
+			}
+			if len(res.Entries) != 1 {
+				t.Fatalf("审计应有 1 条 server_terminal, got %d", len(res.Entries))
+			}
+			if got, _ := res.Entries[0].Detail["shell"].(string); got != c.wantAudits {
+				t.Fatalf("审计 shell = %q, want %q", got, c.wantAudits)
+			}
+		})
 	}
 }
 

@@ -37,7 +37,7 @@ const (
 	wsReadLimit = 1 << 20 // 1 MiB
 	// ptyReadChunk 是从 SSH PTY 读出转发到 WS 的缓冲块大小。
 	ptyReadChunk = 32 * 1024
-	// termShellDefault 是未指定 shell 时的默认登录 shell。
+	// termShellDefault 是容器终端未指定 shell 时的默认(容器不一定装 bash,sh 最稳)。
 	termShellDefault = "/bin/sh"
 )
 
@@ -152,15 +152,30 @@ func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *a
 	}
 }
 
-// validateHostShell 校验主机 shell(白名单);空则默认登录 shell。供主机终端(无容器)使用。
+// validateHostShell 校验主机 shell(白名单)。空串 = 交给 autoHostShellArgv 在远端就地选一个
+// 可用的(优先 bash/zsh),而不是硬写 /bin/sh —— 大多数机器都装了 bash,默认给它才能让终端有
+// 补全与提示符钩子。
 func validateHostShell(shell string) (string, error) {
 	if shell == "" {
-		shell = termShellDefault
+		return "", nil
 	}
 	if _, ok := allowedShells[shell]; !ok {
 		return "", errors.New("非法 shell(不在允许白名单内)")
 	}
 	return shell, nil
+}
+
+// autoHostShellArgv 是未指定 shell 时的远端自选命令:bash / zsh 优先(只有这两个有提示符钩子,
+// 上下联动与补全靠它们),其次账号登录 shell,最后 /bin/sh 兜底。
+//
+// 整段是常量脚本:候选路径全部写死,不含任何用户输入,过 quoteArgs 后原样成为一个 argv。
+// 用 exec 是为了让 PTY 的前台进程就是那个 shell 本身(退出即会话结束,中间不剩一层 sh)。
+// 起手解释器取 /bin/sh:它比 bash 更普遍,也正是本来的默认 shell,不引入新的前置要求。
+func autoHostShellArgv() []string {
+	return []string{"/bin/sh", "-c",
+		`for s in bash /bin/bash /usr/bin/bash zsh /bin/zsh /usr/bin/zsh; do ` +
+			`command -v "$s" >/dev/null 2>&1 && exec "$s"; done; ` +
+			`if [ -n "$SHELL" ] && [ -x "$SHELL" ]; then exec "$SHELL"; fi; exec /bin/sh`}
 }
 
 // makeServerTerminalHandler 返回 GET /api/servers/{id}/terminal handler —— **主机 shell** 终端
@@ -200,8 +215,14 @@ func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *acce
 		sessCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// 主机 shell:cmd 仅为 [shell](array,无拼接)。
-		sess, err := svc.ExecInteractive(sessCtx, id, []string{shell})
+		// 主机 shell:显式选过就按白名单原样起,没选则在远端挑一个可用的(cmd 始终是 array,无拼接)。
+		cmd := []string{shell}
+		auditShell := shell
+		if shell == "" {
+			cmd = autoHostShellArgv()
+			auditShell = "auto"
+		}
+		sess, err := svc.ExecInteractive(sessCtx, id, cmd)
 		if err != nil {
 			_ = conn.Close(websocket.StatusInternalError, truncateWSReason(humanTerminalError(terminalLocale(r), err)))
 			return
@@ -213,7 +234,7 @@ func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *acce
 			Action:     audit.ActionServerTerminal,
 			TargetType: audit.TargetServer,
 			TargetID:   id,
-			Detail:     map[string]any{"shell": shell, "target": "host"},
+			Detail:     map[string]any{"shell": auditShell, "target": "host"},
 			IP:         clientIP(r),
 		})
 
