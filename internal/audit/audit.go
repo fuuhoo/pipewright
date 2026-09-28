@@ -54,6 +54,11 @@ const (
 	ActionSystemPrune        = "system_prune"
 	ActionContainerTerminal  = "container_terminal"
 	ActionServerTerminal     = "server_terminal"
+	// 远程文件面板(「远程」弹窗下半屏):与 *_op 同族,一种资源一个 action,
+	// 具体动作落在 detail.op(save/upload/download/mkdir/remove/rename)。
+	// 单列而不并进 server_terminal,是因为事后追查「谁把这台机上的文件改了什么」
+	// 要能只看文件线;detail 只带路径与字节数,绝不带正文(可能是密钥)。
+	ActionServerFS = "server_fs"
 	// 流水线模板 + 变量组(FR-8-13 复用基座)。
 	ActionTemplateCreate = "template_create"
 	ActionTemplateDelete = "template_delete"
