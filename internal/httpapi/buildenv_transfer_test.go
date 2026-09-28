@@ -9,6 +9,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,18 +26,24 @@ import (
 
 // setupTransferServer 构造带构建环境服务的 admin server;withChecker=false 时
 // 传 nil checker(导入的「先检查再启用」路径自然跳过,断言只看落库结果)。
-func setupTransferServer(t *testing.T) (*httptest.Server, *buildenv.Service) {
+func setupTransferServer(t *testing.T, withChecker bool) (*httptest.Server, *buildenv.Service) {
 	t.Helper()
 	st := storetest.Open(t)
 	svc := auth.NewService(st.DB, nil, users.NewService(st.DB))
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	bSvc := buildenv.NewService(buildenv.NewSQLiteRepo(st.DB))
+	repo := buildenv.NewSQLiteRepo(st.DB)
+	bSvc := buildenv.NewService(repo)
+	var chk *buildenv.Checker
+	if withChecker {
+		// bin 指向不存在的命令:任何真探测都会失败,但测试只走「行不存在」分支,不会 exec。
+		chk = buildenv.NewChecker(repo, nil, "definitely-not-a-real-binary", 2, 0)
+	}
 	srv := httptest.NewServer(New(testWebFSAuth(), svc,
 		WithVault(vault.New(st.DB, testMasterKey())),
 		WithAudit(audit.New(st.DB, mask.NewMasker(), nil)),
-		WithBuildEnvs(bSvc, nil),
+		WithBuildEnvs(bSvc, chk),
 		WithUsers(users.NewService(st.DB)),
 	))
 	t.Cleanup(srv.Close)
@@ -66,7 +73,7 @@ func createEnvViaAPI(t *testing.T, client *http.Client, srv *httptest.Server, cs
 
 // TestExportBuildEnvs 导出:文本下发 + 附件名 + 不含凭据/检查态;includeDisabled=0 只要启用行。
 func TestExportBuildEnvs(t *testing.T) {
-	srv, _ := setupTransferServer(t)
+	srv, _ := setupTransferServer(t, false)
 	client, csrf := adminSession(t, srv)
 	createEnvViaAPI(t, client, srv, csrf,
 		`{"language":"impx","version":"1","displayName":"Imp X 1","description":"带凭据的启用行","sourceType":"custom","image":"registry.internal/impx:1","credentialId":"cred-secret-id","enabled":true}`)
@@ -119,7 +126,7 @@ func TestExportBuildEnvs(t *testing.T) {
 
 // TestImportBuildEnvs_DryRunWritesNothing 预览逐行给计划,但一行都不落库。
 func TestImportBuildEnvs_DryRunWritesNothing(t *testing.T) {
-	srv, bSvc := setupTransferServer(t)
+	srv, bSvc := setupTransferServer(t, false)
 	client, csrf := adminSession(t, srv)
 
 	body := `{"dryRun":true,"content":"version: 1\nbuildEnvs:\n  - language: impx\n    version: \"9\"\n    displayName: Imp X 9\n    image: impx:9\n"}`
@@ -156,7 +163,7 @@ func TestImportBuildEnvs_DryRunWritesNothing(t *testing.T) {
 
 // TestImportBuildEnvs_SkipKeepsRow 跳过模式不动现有行(id、镜像、凭据都不变)。
 func TestImportBuildEnvs_SkipKeepsRow(t *testing.T) {
-	srv, bSvc := setupTransferServer(t)
+	srv, bSvc := setupTransferServer(t, false)
 	client, csrf := adminSession(t, srv)
 	created := createEnvViaAPI(t, client, srv, csrf,
 		`{"language":"impx","version":"1","displayName":"Keep me","sourceType":"custom","image":"registry.internal/impx:1","credentialId":"cred-keep","enabled":true}`)
@@ -193,7 +200,7 @@ func TestImportBuildEnvs_SkipKeepsRow(t *testing.T) {
 // TestImportBuildEnvs_OverwriteKeepsIDAndCredential 覆盖模式沿用同一行 id 与凭据引用;
 // 未检查的镜像仍不能直接启用(P0 #4 不因导入开后门)。
 func TestImportBuildEnvs_OverwriteKeepsIDAndCredential(t *testing.T) {
-	srv, bSvc := setupTransferServer(t)
+	srv, bSvc := setupTransferServer(t, false)
 	client, csrf := adminSession(t, srv)
 	created := createEnvViaAPI(t, client, srv, csrf,
 		`{"language":"impx","version":"1","displayName":"Old","sourceType":"custom","image":"registry.internal/impx:1","credentialId":"cred-x","enabled":true}`)
@@ -235,7 +242,7 @@ func TestImportBuildEnvs_OverwriteKeepsIDAndCredential(t *testing.T) {
 
 // TestImportBuildEnvs_BadRequests 坏内容/坏 mode/未登录/非 admin 的入口表现。
 func TestImportBuildEnvs_BadRequests(t *testing.T) {
-	srv, _ := setupTransferServer(t)
+	srv, _ := setupTransferServer(t, false)
 	client, csrf := adminSession(t, srv)
 
 	cases := []struct {
@@ -294,4 +301,61 @@ func countEnvLanguage(t *testing.T, svc *buildenv.Service, language string) int 
 func toString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// TestCheckBatchBuildEnvs 批量检查:入参先校验,再谈 checker 是否装配。
+func TestCheckBatchBuildEnvs(t *testing.T) {
+	srv, _ := setupTransferServer(t, true)
+	client, csrf := adminSession(t, srv)
+
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/admin/build-envs/check-batch", csrf, `{"ids":[]}`)
+	raw := readAll(t, resp)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(raw, "empty_selection") {
+		t.Fatalf("空选应 400 empty_selection: %d %s", resp.StatusCode, raw)
+	}
+
+	// 重复 id 去重后只查一条;不存在的行以「构建环境不存在」回显,不整单报错。
+	resp1 := doJSON(t, client, http.MethodPost, srv.URL+"/api/admin/build-envs/check-batch", csrf,
+		`{"ids":["nope-1","nope-1"]}`)
+	raw1 := readAll(t, resp1)
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("check-batch status = %d: %s", resp1.StatusCode, raw1)
+	}
+	var batch struct {
+		Items []buildenv.BatchCheckItem `json:"items"`
+		OK    int                       `json:"ok"`
+		Total int                       `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(raw1), &batch); err != nil {
+		t.Fatalf("decode: %v\n%s", err, raw1)
+	}
+	if batch.Total != 1 || len(batch.Items) != 1 || batch.OK != 0 {
+		t.Fatalf("去重/汇总不符: %s", raw1)
+	}
+	if batch.Items[0].Status != buildenv.StatusUnavailable || !strings.Contains(batch.Items[0].Error, "不存在") {
+		t.Fatalf("缺行要说明原因: %+v", batch.Items[0])
+	}
+
+	many := make([]string, maxBatchCheckIDs+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("missing-env-%04d", i)
+	}
+	body, _ := json.Marshal(map[string]any{"ids": many})
+	resp2 := doJSON(t, client, http.MethodPost, srv.URL+"/api/admin/build-envs/check-batch", csrf, string(body))
+	raw2 := readAll(t, resp2)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest || !strings.Contains(raw2, "too_many_ids") {
+		t.Fatalf("超上限应 400 too_many_ids: %d %s", resp2.StatusCode, raw2)
+	}
+
+	// checker 未装配 → 503(与其它依赖缺失端点一致)。
+	noChkSrv, _ := setupTransferServer(t, false)
+	c2, csrf2 := adminSession(t, noChkSrv)
+	resp3 := doJSON(t, c2, http.MethodPost, noChkSrv.URL+"/api/admin/build-envs/check-batch", csrf2, `{"ids":["x"]}`)
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("checker 未装配应 503, got %d", resp3.StatusCode)
+	}
 }

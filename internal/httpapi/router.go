@@ -544,6 +544,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			adminR.Post("/build-envs/{id}/check", makeCheckBuildEnvHandler(bSvc, bChk, aud, authn))
 			adminR.Post("/build-envs/{id}/pull", makePullBuildEnvHandler(bChk, aud, authn))
 			adminR.Post("/build-envs/check-all", makeCheckAllBuildEnvsHandler(bChk, aud, authn))
+			adminR.Post("/build-envs/check-batch", makeCheckBatchBuildEnvsHandler(bChk, aud, authn))
 			// 整表导入/导出(静态段,chi 优先于 /{id};导出是读操作不含 CSRF)
 			adminR.Get("/build-envs/export", makeExportBuildEnvsHandler(bSvc))
 			adminR.Post("/build-envs/import", makeImportBuildEnvsHandler(bSvc, aud, authn))

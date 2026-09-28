@@ -274,6 +274,56 @@ func (c *Checker) CheckAll(ctx context.Context) (int, int, error) {
 	return available, len(envs), nil
 }
 
+// BatchCheckItem 选中环境逐行检查结论(前端表格直接渲染)。
+type BatchCheckItem struct {
+	ID       string `json:"id"`
+	Language string `json:"language"`
+	Version  string `json:"version"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+}
+
+// CheckBatch 只检查选中的若干环境(前端多选/全选)。
+// 并发仍走 c.sem(默认 10),与 CheckAll 同一条检查路径,只是范围由调用方给。
+//   - 浏览器断开不中断在途检查(否则行会卡在 checking)
+//   - 不存在的 id 在结果里以 status=unavailable + 原因回显,不整单报错
+func (c *Checker) CheckBatch(ctx context.Context, ids []string) ([]BatchCheckItem, error) {
+	ctx = context.WithoutCancel(ctx)
+	out := make([]BatchCheckItem, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		env, err := c.repo.GetByID(id)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				out[i] = BatchCheckItem{ID: id, Status: StatusUnavailable, Error: "构建环境不存在或已被删除"}
+				continue
+			}
+			return nil, err
+		}
+		if env == nil {
+			out[i] = BatchCheckItem{ID: id, Status: StatusUnavailable, Error: "构建环境不存在或已被删除"}
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, e *BuildEnv) {
+			defer wg.Done()
+			res, err := c.Check(ctx, e)
+			item := BatchCheckItem{ID: e.ID, Language: e.Language, Version: e.Version}
+			if err != nil {
+				item.Status = StatusUnavailable
+				item.Error = truncate(err.Error(), 512)
+				log.Printf("[buildenv] CheckBatch %s/%s 失败:%v", e.Language, e.Version, err)
+			} else {
+				item.Status = res.Status
+				item.Error = res.Error
+			}
+			out[idx] = item
+		}(i, env)
+	}
+	wg.Wait()
+	return out, nil
+}
+
 // CredentialLite 是 checker 内部的轻量凭据载体(只用于 ManualPull 的 docker login)。
 type CredentialLite struct {
 	Username string

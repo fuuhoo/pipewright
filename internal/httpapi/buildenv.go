@@ -10,6 +10,7 @@
 //   POST   /api/admin/build-envs/{id}/check       → 手动镜像检查
 //   POST   /api/admin/build-envs/{id}/pull        → 手动 pull 镜像
 //   POST   /api/admin/build-envs/check-all        → 一键检查全部
+//   POST   /api/admin/build-envs/check-batch      → 检查所选(多选/全选)
 //   GET    /api/admin/build-envs/export           → 整表导出(yaml/json,可含禁用)
 //   POST   /api/admin/build-envs/import           → 整表导入(skip/overwrite,dryRun 预览)
 //   GET    /api/build-envs                       → 已启用环境(普通用户可访问)
@@ -23,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -556,6 +558,71 @@ func makeImportBuildEnvsHandler(svc *buildenv.Service, aud audit.Recorder, ac au
 			})
 		}
 		writeJSON(w, http.StatusOK, report)
+	}
+}
+
+// maxBatchCheckIDs 一次批量检查的行数上限(与全选场景对齐,再大就该走「一键检查」)。
+const maxBatchCheckIDs = 200
+
+// makeCheckBatchBuildEnvsHandler POST /api/admin/build-envs/check-batch。
+// body {"ids":[...]}:只检查选中的行(前端多选/全选),上限 200 条。
+// 同步等全部检查完成,与「一键检查」同量级耗时;并发由 checker 的信号量兜住。
+func makeCheckBatchBuildEnvsHandler(c *buildenv.Checker, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if c == nil {
+			writeError(w, http.StatusServiceUnavailable, "checker_unavailable", "镜像检查器未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			IDs []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		ids := make([]string, 0, len(req.IDs))
+		seen := map[string]bool{}
+		for _, id := range req.IDs {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			writeError(w, http.StatusBadRequest, "empty_selection", "请先勾选要检查的构建环境")
+			return
+		}
+		if len(ids) > maxBatchCheckIDs {
+			writeError(w, http.StatusBadRequest, "too_many_ids",
+				fmt.Sprintf("一次最多检查 %d 个(当前 %d 个)", maxBatchCheckIDs, len(ids)))
+			return
+		}
+		results, err := c.CheckBatch(r.Context(), ids)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "check_failed", "批量检查失败")
+			return
+		}
+		ok := 0
+		for _, res := range results {
+			if res.Status == buildenv.StatusAvailable || res.Status == buildenv.StatusPullable {
+				ok++
+			}
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionBuildEnvCheck,
+			TargetType: audit.TargetBuildEnv,
+			TargetID:   "batch",
+			Detail:     map[string]any{"selected": len(ids), "ok": ok},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":   results,
+			"ok":      ok,
+			"total":   len(results),
+			"skipped": len(results) - ok,
+		})
 	}
 }
 
