@@ -12,6 +12,8 @@
  *   POST   /api/admin/build-envs/:id/pull   → 202 { status: 'checking', error, output }
  *   POST   /api/admin/build-envs/check-all  → { ok, total }
  *   POST   /api/admin/build-envs/check-batch → { items, ok, total, skipped }
+ *   GET    /api/admin/build-envs/export      → 文本(yaml/json;附件下载)
+ *   POST   /api/admin/build-envs/import      → ImportReport(dryRun 可预览)
  *
  * 普通用户端点(RequireUser):
  *   GET    /api/build-envs                   → { items: PresetBuildEnv[] }(仅启用)
@@ -169,6 +171,40 @@ export async function listEnabledBuildEnvs(params?: {
   return res.items ?? []
 }
 
+/** 导出/导入文件格式。导出走文本下发,所以这里拿到的是文件原文(不是解析后的对象)。 */
+export type TransferFormat = 'yaml' | 'json'
+
+/** 冲突处理:skip=已存在行不动;overwrite=已存在行原地更新(沿用同一行 id)。 */
+export type ImportMode = 'skip' | 'overwrite'
+
+/** 逐行结果动作;dryRun 时同样这四个值,含义变成「打算这么处理」。 */
+export type ImportRowAction = 'created' | 'updated' | 'skipped' | 'failed'
+
+export interface ImportRowResult {
+  index: number
+  language: string
+  version: string
+  action: ImportRowAction
+  enabled: boolean
+  id?: string
+  reason?: string
+}
+
+export interface ImportSummary {
+  total: number
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+}
+
+export interface ImportReport {
+  dryRun: boolean
+  mode: ImportMode
+  summary: ImportSummary
+  results: ImportRowResult[]
+}
+
 /** 批量检查的单行结果:检查失败(id 不存在等)也带在 items 里,不会整批报错。 */
 export interface BatchCheckItem {
   id: string
@@ -183,6 +219,36 @@ export interface BatchCheckResult {
   ok: number
   total: number
   skipped: number
+}
+
+/**
+ * 导出整表为文件原文(默认含禁用条目)。后端用 text/plain 下发,
+ * 附件名由前端按同样规则拼(buildEnvExportFilename),避免依赖响应头。
+ */
+export async function exportBuildEnvText(params?: {
+  format?: TransferFormat
+  includeDisabled?: boolean
+}): Promise<string> {
+  const q = new URLSearchParams()
+  q.set('format', params?.format ?? 'yaml')
+  if (params?.includeDisabled === false) q.set('includeDisabled', '0')
+  const res = await http.get<string>(`/api/admin/build-envs/export?${q.toString()}`)
+  return typeof res === 'string' ? res : JSON.stringify(res, null, 2)
+}
+
+/** 导入整表;dryRun=true 只取预览,不写库。 */
+export async function importBuildEnvs(input: {
+  content: string
+  format?: TransferFormat
+  mode?: ImportMode
+  dryRun?: boolean
+}): Promise<ImportReport> {
+  return http.post<ImportReport>('/api/admin/build-envs/import', {
+    content: input.content,
+    format: input.format ?? 'yaml',
+    mode: input.mode ?? 'skip',
+    dryRun: input.dryRun ?? false,
+  })
 }
 
 /** 批量检查所选(前端多选/全选)。同步等全部检查结束,耗时与「一键检查」同量级。 */

@@ -7,6 +7,7 @@
  *   - 镜像来源 official(官方短名)/ custom(任意地址,系统不拼接 — R8)
  *   - P0 #4 三态:unchecked 拒启用、unavailable 强制禁用、available 放行
  *   - 手动检查 / 手动拉取 / 一键检查 / 多选或全选批量检查
+ *   - 整表导出(可选格式与是否含禁用)+ 导入(先预览,跳过/覆盖两种冲突策略)
  *
  * 权限:路由 meta.adminOnly + AppShell 菜单 role 隔离双保险。
  */
@@ -22,8 +23,26 @@ import {
   pullBuildEnv,
   checkAllBuildEnvs,
   checkBuildEnvsBatch,
+  exportBuildEnvText,
+  importBuildEnvs,
 } from '../../api/buildEnvs'
-import type { BuildEnv, BuildEnvInput, ImageCheckStatus } from '../../api/buildEnvs'
+import type {
+  BuildEnv,
+  BuildEnvInput,
+  ImageCheckStatus,
+  ImportMode,
+  ImportReport,
+  TransferFormat,
+} from '../../api/buildEnvs'
+import {
+  batchCheckLabel,
+  buildEnvExportFilename,
+  detectTransferFormat,
+  exceedsImportLimit,
+  formatImportSummary,
+  importActionLabel,
+  importModeLabel,
+} from '../../lib/buildEnvTransfer'
 import { listCredentials, usableCredentials } from '../../api/credentials'
 import type { Credential } from '../../api/credentials'
 import { HttpError } from '../../api/http'
@@ -371,12 +390,115 @@ async function onCheckSelected(): Promise<void> {
   }
   try {
     const res = await checkBuildEnvsBatch(ids)
-    rowBanner.value = t('buildEnvs.checkSelectedDone', { ok: res.ok, total: res.total })
+    rowBanner.value = batchCheckLabel(res.ok, res.total)
   } catch (err) {
     rowBanner.value = errMsg(err, 'buildEnvs.errCheckSelected')
   } finally {
     await load()
     checkingSelected.value = false
+  }
+}
+
+// ─── 导出 ───────────────────────────────────────────────────────────────────
+
+const exportFormat = ref<TransferFormat>('yaml')
+const exportIncludeDisabled = ref(true)
+const exporting = ref(false)
+
+/** 造一个临时链接把文本交给浏览器下载(后端用 text/plain 下发,拿到的就是文件原文)。 */
+function downloadTextFile(filename: string, content: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+async function onExport(): Promise<void> {
+  exporting.value = true
+  rowBanner.value = ''
+  try {
+    const text = await exportBuildEnvText({
+      format: exportFormat.value,
+      includeDisabled: exportIncludeDisabled.value,
+    })
+    const filename = buildEnvExportFilename(exportFormat.value, new Date())
+    downloadTextFile(filename, text)
+    // 条数按当前列表口径算(页面就是这份数据的权威视图),不去解析刚生成的文本。
+    const n = envs.value.filter((e) => exportIncludeDisabled.value || e.enabled).length
+    rowBanner.value = t('buildEnvs.exportDone', { n, filename })
+  } catch (err) {
+    rowBanner.value = errMsg(err, 'buildEnvs.errExport')
+  } finally {
+    exporting.value = false
+  }
+}
+
+// ─── 导入 ───────────────────────────────────────────────────────────────────
+
+const importOpen = ref(false)
+const importContent = ref('')
+const importFormat = ref<TransferFormat>('yaml')
+const importMode = ref<ImportMode>('skip')
+const importBusy = ref(false)
+const importBanner = ref('')
+const importReport = ref<ImportReport | null>(null)
+
+function openImport(): void {
+  importContent.value = ''
+  importFormat.value = 'yaml'
+  importMode.value = 'skip'
+  importReport.value = null
+  importBanner.value = ''
+  importOpen.value = true
+}
+
+async function onPickImportFile(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importFormat.value = detectTransferFormat(file.name)
+  importBanner.value = ''
+  importContent.value = await file.text()
+  // 上限与后端 MaxBytesReader 一致:超了先在本地说清,别等 400 的含糊报错。
+  if (exceedsImportLimit(importContent.value)) {
+    importBanner.value = t('buildEnvs.importTooLarge')
+  }
+  input.value = ''
+}
+
+/** 跑一次导入;dryRun=true 只取预览(与后端约定一致,一行都不写)。 */
+async function runImport(dryRun: boolean): Promise<void> {
+  if (!importContent.value.trim()) {
+    importBanner.value = t('buildEnvs.importEmpty')
+    return
+  }
+  if (exceedsImportLimit(importContent.value)) {
+    importBanner.value = t('buildEnvs.importTooLarge')
+    return
+  }
+  importBusy.value = true
+  importBanner.value = ''
+  try {
+    importReport.value = await importBuildEnvs({
+      content: importContent.value,
+      format: importFormat.value,
+      mode: importMode.value,
+      dryRun,
+    })
+    if (!dryRun) {
+      await load()
+      // 行可能已被覆盖或删除,选中的 id 要跟着实际列表收一遍。
+      selectedIds.value = selectedIds.value.filter((id) => envs.value.some((e) => e.id === id))
+    }
+  } catch (err) {
+    importBanner.value = errMsg(err, 'buildEnvs.errImport')
+    importReport.value = null
+  } finally {
+    importBusy.value = false
   }
 }
 </script>
@@ -389,6 +511,23 @@ async function onCheckSelected(): Promise<void> {
         <p class="view-sub">{{ t('buildEnvs.desc') }}</p>
       </div>
       <div class="header-actions">
+        <div class="opt-group">
+          <label class="field field--inline">
+            <span class="sr-only">{{ t('buildEnvs.exportFormat') }}</span>
+            <select v-model="exportFormat">
+              <option value="yaml">YAML</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label class="opt">
+            <input v-model="exportIncludeDisabled" type="checkbox" />
+            <span>{{ t('buildEnvs.exportIncludeDisabled') }}</span>
+          </label>
+          <button class="btn" :disabled="exporting" @click="onExport">
+            {{ exporting ? t('buildEnvs.exporting') : t('buildEnvs.export') }}
+          </button>
+        </div>
+        <button class="btn" @click="openImport">{{ t('buildEnvs.import') }}</button>
         <button
           class="btn"
           :disabled="checkingSelected || selectedIds.length === 0"
@@ -596,6 +735,109 @@ async function onCheckSelected(): Promise<void> {
         </footer>
       </div>
     </div>
+
+    <!-- ── import ── -->
+    <div v-if="importOpen" class="modal-mask" @click.self="importOpen = false">
+      <div class="modal" role="dialog" :aria-label="t('buildEnvs.importTitle')">
+        <h2 class="modal-title">{{ t('buildEnvs.importTitle') }}</h2>
+        <p class="modal-body">{{ t('buildEnvs.importDesc') }}</p>
+        <p class="note note--warn">{{ t('buildEnvs.importNoCredential') }}</p>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>{{ t('buildEnvs.importFormat') }}</span>
+            <select v-model="importFormat">
+              <option value="yaml">YAML</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>{{ t('buildEnvs.importFile') }}</span>
+            <input
+              type="file"
+              accept=".yaml,.yml,.json"
+              @change="onPickImportFile($event)"
+            />
+          </label>
+
+          <div class="field field--wide">
+            <span>{{ t('buildEnvs.importMode') }}</span>
+            <div class="radio-row">
+              <label class="opt">
+                <input v-model="importMode" type="radio" value="skip" name="import-mode" />
+                <span>{{ importModeLabel('skip') }}</span>
+              </label>
+              <label class="opt">
+                <input v-model="importMode" type="radio" value="overwrite" name="import-mode" />
+                <span>{{ importModeLabel('overwrite') }}</span>
+              </label>
+            </div>
+            <small>{{ t('buildEnvs.importModeHint') }}</small>
+          </div>
+
+          <label class="field field--wide">
+            <span>{{ t('buildEnvs.importContent') }}</span>
+            <textarea
+              v-model="importContent"
+              class="mono-area"
+              rows="10"
+              spellcheck="false"
+              :placeholder="t('buildEnvs.importPlaceholder')"
+            ></textarea>
+          </label>
+        </div>
+
+        <p v-if="importBanner" class="banner banner--err">{{ importBanner }}</p>
+
+        <div v-if="importReport" class="import-result">
+          <p class="import-summary">
+            {{ formatImportSummary(importReport.summary) }}
+            <span class="cell-dim">· {{ importModeLabel(importReport.mode) }}</span>
+          </p>
+          <p class="note">
+            {{
+              importReport.dryRun
+                ? t('buildEnvs.importPreviewNote')
+                : t('buildEnvs.importAppliedNote', { n: importReport.summary.total })
+            }}
+          </p>
+          <table class="grid grid--sm">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>{{ t('buildEnvs.colEnv') }}</th>
+                <th>{{ t('buildEnvs.colAction') }}</th>
+                <th>{{ t('buildEnvs.colEnabled') }}</th>
+                <th>{{ t('buildEnvs.colReason') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in importReport.results" :key="r.index">
+                <td>{{ r.index + 1 }}</td>
+                <td class="mono">{{ r.language }} / {{ r.version }}</td>
+                <td>
+                  <span class="pill" :class="`pill--${r.action}`">
+                    {{ importActionLabel(r.action) }}
+                  </span>
+                </td>
+                <td>{{ r.enabled ? t('buildEnvs.enabledShort') : t('buildEnvs.disabledShort') }}</td>
+                <td class="cell-dim cell--wrap">{{ r.reason || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <footer class="modal-actions">
+          <button class="btn" @click="importOpen = false">{{ t('buildEnvs.cancel') }}</button>
+          <button class="btn" :disabled="importBusy" @click="runImport(true)">
+            {{ importBusy ? t('buildEnvs.importWorking') : t('buildEnvs.importPreview') }}
+          </button>
+          <button class="btn btn--primary" :disabled="importBusy" @click="runImport(false)">
+            {{ importBusy ? t('buildEnvs.importWorking') : t('buildEnvs.importConfirm') }}
+          </button>
+        </footer>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -625,6 +867,37 @@ async function onCheckSelected(): Promise<void> {
   flex-wrap: wrap;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+/* 导出的一组选项:格式 + 是否含禁用 + 按钮,靠得近一点表示"这三样是一件事" */
+.opt-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+.opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-label);
+  color: var(--color-dim);
+  cursor: pointer;
+}
+.field--inline {
+  gap: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .banner {
@@ -834,11 +1107,87 @@ async function onCheckSelected(): Promise<void> {
   color: var(--color-faint);
   font-size: var(--text-small, 0.85em);
 }
+/* 选项类控件(radio/checkbox)不吃 .field 的输入框样式,否则会被画出框线 */
+.opt input[type='radio'],
+.opt input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--color-primary);
+}
+.radio-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
 /* 勾选列:只放一个框,宽度收紧,别挤掉环境/镜像两列。用 .grid 前缀压过 `.grid th` 的左对齐。 */
 .grid th.col-check,
 .grid td.col-check {
   width: 34px;
   text-align: center;
+}
+
+.mono-area {
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-small, 0.85em);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.note {
+  font-size: var(--text-small, 0.85em);
+  color: var(--color-faint);
+  margin-bottom: 12px;
+}
+.note--warn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(234, 179, 8, 0.12);
+  color: #a16207;
+}
+
+.import-result {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+.import-summary {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+.grid--sm th,
+.grid--sm td {
+  padding: 6px 8px;
+  font-size: var(--text-small, 0.85em);
+}
+.cell--wrap {
+  max-width: 340px;
+  word-break: break-word;
+}
+
+.pill--created {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+.pill--updated {
+  background: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+}
+.pill--skipped {
+  background: rgba(120, 120, 120, 0.16);
+  color: var(--color-dim);
+}
+.pill--failed {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
 }
 </style>
