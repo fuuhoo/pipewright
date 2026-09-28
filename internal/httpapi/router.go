@@ -900,16 +900,25 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 自己 docker exec 自由探索(不绑死容器;很多服务器没 docker)。WS 升级,同源校验 + shell
 		// 白名单;审计 server_terminal。比 /servers/{id} 多一段,不会被吞。
 		ar.Get("/servers/{id}/terminal", makeServerTerminalHandler(sv, aud, o.access))
-		// 远程文件面板(「远程」弹窗的下半屏:列目录 / 读正文 / 存正文 / 下载 / 上传 / 改名)。
+		// 远程文件面板(「远程」弹窗的下半屏:列目录 / 读正文 / 存正文 / 下载(文件或整个目录)/ 上传 / 改名)。
 		// 每条路由**含 GET**都按 ActOperate 把关 —— 读主机上任意文件不是平台语义的「查看」,
 		// 它与开终端等价(实现见 server_fs.go 头注释)。写与下载留审计,detail 只有路径与体积。
 		// 比 /servers/{id} 多一段,不会被吞。
+		//
+		// 上传是一条会话式分块的路(fs_upload.go):begin 开批次并拨好一条连接,chunk 逐块追加
+		// (裸请求体,不落平台磁盘),status 问远端实测偏移,complete 改名落地,abort 清半成品。
+		// 这样大文件既不吃平台盘,断线也能接着传而不是从头再来。
+		fsUploads := newFSUploadStore()
 		ar.Get("/servers/{id}/fs", makeFSListHandler(sv, o.access))
 		ar.Get("/servers/{id}/fs/content", makeFSContentHandler(sv, o.access))
 		ar.Post("/servers/{id}/fs/content", makeFSWriteHandler(sv, o.access, aud, authn))
 		ar.Get("/servers/{id}/fs/download", makeFSDownloadHandler(sv, o.access, aud, authn))
-		ar.Post("/servers/{id}/fs/upload", makeFSUploadHandler(sv, o.access, aud, authn))
 		ar.Post("/servers/{id}/fs/op", makeFSOpHandler(sv, o.access, aud, authn))
+		ar.Post("/servers/{id}/fs/upload/begin", makeFSUploadBeginHandler(sv, o.access, fsUploads))
+		ar.Put("/servers/{id}/fs/upload/chunk", makeFSUploadChunkHandler(sv, o.access, fsUploads))
+		ar.Get("/servers/{id}/fs/upload/status", makeFSUploadStatusHandler(sv, o.access, fsUploads))
+		ar.Post("/servers/{id}/fs/upload/complete", makeFSUploadCompleteHandler(sv, o.access, fsUploads, aud, authn))
+		ar.Post("/servers/{id}/fs/upload/abort", makeFSUploadAbortHandler(sv, o.access, fsUploads, aud, authn))
 		// 通知渠道(Story 5.1;FR-19)。nf 为 nil 时 handler 返回 503。
 		// GET(列表/详情)过 auth;POST/PUT/DELETE/test 为写方法,过 auth + CSRF。
 		// 敏感字段(SMTP 密码)加密入库、响应仅 hasPassword。test 须在 {id} 路由内单独注册。

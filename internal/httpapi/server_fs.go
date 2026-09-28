@@ -40,8 +40,6 @@ const (
 	fsTextReadLimit = 1 << 20 // 1 MiB
 	// fsJSONBodyLimit 是「保存正文」请求体上限(编辑器里手打的文本,给 1 MiB 富余)。
 	fsJSONBodyLimit = 8 << 20
-	// fsMultipartMemory 是 multipart 解析驻留内存的上限,超出落临时文件后仍流式转发远端。
-	fsMultipartMemory = 32 << 20
 	// fsPathMax 是路径长度上限(远超正常需要,只为挡住把整份文件当路径提交的误操作)。
 	fsPathMax = 4096
 	// fsMetaTimeout 是列目录/取属性这类轻操作的超时。
@@ -101,25 +99,13 @@ var fsOps = map[string]struct{}{
 
 // openFS 校验权限并开一个远程文件工作区;失败时已写好状态码,返回 false。
 // 调用方拿到 true 后必须 defer ws.Close()。
+//
+// 权限与存在性判定与上传批次共用 requireFSAccess 那一份,两条路不会一个放行一个拦。
 func openFS(w http.ResponseWriter, r *http.Request, svc target.Service, acc *access.Service, id string) (target.Workspace, bool) {
-	if svc == nil {
-		writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
+	if !requireFSAccess(w, r, svc, acc, id) {
 		return nil, false
 	}
-	if !requireTerminalOperate(w, r, acc, id) {
-		return nil, false
-	}
-	opener, ok := svc.(target.WorkspaceOpener)
-	if !ok {
-		writeError(w, http.StatusNotImplemented, "fs_unsupported", "当前部署不支持远程文件操作")
-		return nil, false
-	}
-	// 先认服务器:不存在(404)不该被伪装成「连不上」。OpenWorkspace 内部也是这个顺序。
-	if _, err := svc.Get(r.Context(), id); err != nil {
-		writeServerError(w, err)
-		return nil, false
-	}
-	ws, err := opener.OpenWorkspace(r.Context(), id)
+	ws, err := dialWorkspace(r.Context(), svc, id)
 	if err != nil {
 		writeFSError(w, err)
 		return nil, false
@@ -161,12 +147,15 @@ func fsPathParam(r *http.Request, name string) (string, error) {
 	return p, nil
 }
 
-// sanitizeRemoteName 把客户端传来的文件名折成一个安全的**基名**:去掉一切路径分隔符与前导
-// `-`(防被当参数)、拒掉 `.`/`..`/空。上传的落点由服务端 join,不让客户端塞路径。
+// sanitizeRemoteName 把客户端传来的文件名折成一个安全的**基名**:去掉一切路径分隔符,
+// 拒掉 `.`/`..`/空。上传的落点由服务端 join,不让客户端塞路径。
+//
+// 点开头是合法文件名(`.env`、`.gitignore`),不能连点一起削 —— 传文件夹时那是整批
+// 静默改名,用户看到的是「我传的配置呢」。
 func sanitizeRemoteName(name string) (string, error) {
 	n := path.Base(strings.ReplaceAll(name, "\\", "/"))
-	n = strings.TrimLeft(n, "/.")
-	if n == "" || n == ".." {
+	n = strings.Trim(n, "/")
+	if n == "" || n == "." || n == ".." {
 		return "", errors.New("文件名非法")
 	}
 	if len(n) > 255 {
@@ -311,7 +300,13 @@ func makeFSWriteHandler(svc target.Service, acc *access.Service, aud audit.Recor
 	}
 }
 
-// makeFSDownloadHandler GET /api/servers/{id}/fs/download?path= —— 流式下载。
+// makeFSDownloadHandler GET /api/servers/{id}/fs/download?path= —— 流式下载(文件或整个目录)。
+//
+// 目录走平台侧流式 zip(见 fs_zip.go):边读边写,不把整棵树或单个大文件压在内存里,
+// 也不要求远端有 tar。文件走原样字节流,带 Content-Length 让浏览器画百分比。
+//
+// 超时口径:这里不用 fsDataTimeout 那种「总时长封顶」。10 GiB 该传多久取决于链路带宽,
+// 平台猜不出来;真正该断的是「静默太久」—— 看门狗两分钟没字节流动就拆连接。
 func makeFSDownloadHandler(svc target.Service, acc *access.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -330,8 +325,13 @@ func makeFSDownloadHandler(svc target.Service, acc *access.Service, aud audit.Re
 		}
 		defer func() { _ = ws.Close() }()
 
-		ctx, cancel := context.WithTimeout(r.Context(), fsDataTimeout)
+		// 这条工作区是本次请求独享的,所以看门狗到期时可以直接关掉它:
+		// 阻塞在 SSH channel 上的读会立刻以错误返回,流不会挂着不放。
+		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
+		watch := newIdleWatch(fsStreamIdle, func() { cancel(); _ = ws.Close() })
+		defer watch.stop()
+		touch := watch.touch
 
 		resolved, err := ws.Realpath(ctx, p)
 		if err != nil {
@@ -343,10 +343,42 @@ func makeFSDownloadHandler(svc target.Service, acc *access.Service, aud audit.Re
 			writeFSError(w, err)
 			return
 		}
+		name := sanitizeOrBase(resolved)
+
+		auditOp := func(op string, extra map[string]any) {
+			detail := map[string]any{"op": op, "path": resolved}
+			for k, v := range extra {
+				detail[k] = v
+			}
+			recordAuditFromRequest(r, aud, ac, audit.Entry{
+				Action:     audit.ActionServerFS,
+				TargetType: audit.TargetServer,
+				TargetID:   id,
+				Detail:     detail,
+				IP:         clientIP(r),
+			})
+		}
+
 		if st.IsDir {
-			writeError(w, http.StatusBadRequest, "not_a_file", "目录不能直接下载")
+			// 目录:先落头(名字是 <目录名>.zip),再把整棵树流式写进响应。
+			// 响应头一发出去就没法改状态码,所以条目/深度撞上限时只能掐断连接 ——
+			// 一个看起来完整其实少一半的压缩包,比一次失败的下载危险得多。
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name+".zip"))
+			w.WriteHeader(http.StatusOK)
+			zs, err := streamZipDir(ctx, w, ws, resolved, touch)
+			if err != nil {
+				if errors.Is(err, errZipTooMany) {
+					auditOp("download_zip", map[string]any{"entries": zs.entries, "bytes": zs.bytes, "error": err.Error()})
+					panic(http.ErrAbortHandler)
+				}
+				auditOp("download_zip", map[string]any{"entries": zs.entries, "bytes": zs.bytes, "error": err.Error()})
+				return
+			}
+			auditOp("download_zip", map[string]any{"entries": zs.entries, "bytes": zs.bytes, "skippedLinks": zs.skippedLinks})
 			return
 		}
+
 		rc, err := ws.OpenRead(ctx, resolved)
 		if err != nil {
 			writeFSError(w, err)
@@ -356,81 +388,27 @@ func makeFSDownloadHandler(svc target.Service, acc *access.Service, aud audit.Re
 
 		// 头必须在写第一字节之前定好:Content-Disposition 里的名字经 sanitizeRemoteName
 		// 去过换行/引号,否则是一个响应头注入点。
-		name := sanitizeOrBase(resolved)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		if st.Size > 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(st.Size, 10))
 		}
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.Copy(w, rc)
-
-		recordAuditFromRequest(r, aud, ac, audit.Entry{
-			Action:     audit.ActionServerFS,
-			TargetType: audit.TargetServer,
-			TargetID:   id,
-			Detail:     map[string]any{"op": "download", "path": resolved, "bytes": st.Size},
-			IP:         clientIP(r),
-		})
+		n, err := io.Copy(w, &touchingReader{r: rc, touch: touch})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			auditOp("download", map[string]any{"bytes": n, "error": err.Error()})
+			return
+		}
+		auditOp("download", map[string]any{"bytes": n})
 	}
 }
 
-// makeFSUploadHandler POST /api/servers/{id}/fs/upload —— multipart 上传到指定目录。
-// 表单:file(文件)+ dir(目标目录)。落点由服务端 join,文件名取自 sanitizeRemoteName。
-func makeFSUploadHandler(svc target.Service, acc *access.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		if err := r.ParseMultipartForm(fsMultipartMemory); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "上传表单解析失败:"+err.Error())
-			return
-		}
-		dir := r.FormValue("dir")
-		if len(dir) > fsPathMax {
-			writeError(w, http.StatusBadRequest, "invalid_path", "目标目录过长")
-			return
-		}
-		f, header, err := r.FormFile("file")
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "缺少 file 字段")
-			return
-		}
-		defer func() { _ = f.Close() }()
-		name, err := sanitizeRemoteName(header.Filename)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_filename", err.Error())
-			return
-		}
-		dest := path.Join(dir, name)
-
-		ws, ok := openFS(w, r, svc, acc, id)
-		if !ok {
-			return
-		}
-		defer func() { _ = ws.Close() }()
-
-		ctx, cancel := context.WithTimeout(r.Context(), fsDataTimeout)
-		defer cancel()
-
-		auditOp := func(size int64, ok bool) {
-			recordAuditFromRequest(r, aud, ac, audit.Entry{
-				Action:     audit.ActionServerFS,
-				TargetType: audit.TargetServer,
-				TargetID:   id,
-				Detail:     map[string]any{"op": "upload", "path": dest, "bytes": size, "ok": ok},
-				IP:         clientIP(r),
-			})
-		}
-
-		// 流式转发:上传字节经 stdin 落远端临时名再 rename,不整份进内存(与 Upload 同纪律)。
-		if err := ws.WriteFile(ctx, dest, f); err != nil {
-			auditOp(0, false)
-			writeFSError(w, err)
-			return
-		}
-		auditOp(header.Size, true)
-		writeJSON(w, http.StatusOK, fsResultDTO{OK: true, Path: dest, Bytes: header.Size, Backend: ws.Backend()})
-	}
-}
+// makeFSUploadHandler POST /api/servers/{id}/fs/upload —— 已被会话式分块上传取代
+// (begin / chunk / status / complete / abort,实现见 fs_upload.go)。
+//
+// 换掉而不是加一条:multipart 超过内存上限的部分会先落到平台本机磁盘再转发远端,
+// 平台盘于是成了上传缓存;而且一次 POST 要么整份成要么全废,断线就前功尽弃。
+// 界面上「传文件」和「传文件夹」现在是同一个动作的两半,共用一套逐块进度与续传。
 
 // makeFSOpHandler POST /api/servers/{id}/fs/op —— 建目录 / 删除 / 改名(枚举白名单)。
 func makeFSOpHandler(svc target.Service, acc *access.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
