@@ -6,11 +6,11 @@
  *   - CRUD(language/version/display_name/description/image/credential/sort_order)
  *   - 镜像来源 official(官方短名)/ custom(任意地址,系统不拼接 — R8)
  *   - P0 #4 三态:unchecked 拒启用、unavailable 强制禁用、available 放行
- *   - 手动检查 / 手动拉取 / 一键检查
+ *   - 手动检查 / 手动拉取 / 一键检查 / 多选或全选批量检查
  *
  * 权限:路由 meta.adminOnly + AppShell 菜单 role 隔离双保险。
  */
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   listBuildEnvs,
@@ -21,6 +21,7 @@ import {
   checkBuildEnv,
   pullBuildEnv,
   checkAllBuildEnvs,
+  checkBuildEnvsBatch,
 } from '../../api/buildEnvs'
 import type { BuildEnv, BuildEnvInput, ImageCheckStatus } from '../../api/buildEnvs'
 import { listCredentials, usableCredentials } from '../../api/credentials'
@@ -184,6 +185,8 @@ async function load(): Promise<void> {
     // 主列表是权威内容;凭据下拉只是可选项(仅 custom 镜像需要),单独加载且允许失败
     // —— vault 未配置(master key 缺失)时不应让整页变成错误态。
     envs.value = await listBuildEnvs({ includeDisabled: true })
+    // 行可能被别的会话删掉了:勾选集要跟权威列表对齐,否则「检查所选」会带上不存在的 id。
+    selectedIds.value = selectedIds.value.filter((id) => envs.value.some((e) => e.id === id))
     loadState.value = 'idle'
   } catch (err) {
     loadError.value = errMsg(err, 'buildEnvs.errLoad')
@@ -335,6 +338,47 @@ async function onCheckAll(): Promise<void> {
     checkingAll.value = false
   }
 }
+
+// ─── 多选 + 批量检查 ────────────────────────────────────────────────────────
+
+const selectedIds = ref<string[]>([])
+
+const allSelected = computed(
+  () => envs.value.length > 0 && selectedIds.value.length === envs.value.length,
+)
+
+function toggleSelected(id: string, checked: boolean): void {
+  const next = new Set(selectedIds.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  selectedIds.value = [...next]
+}
+
+function toggleSelectAll(checked: boolean): void {
+  selectedIds.value = checked ? envs.value.map((e) => e.id) : []
+}
+
+const checkingSelected = ref(false)
+
+async function onCheckSelected(): Promise<void> {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  checkingSelected.value = true
+  rowBanner.value = ''
+  // 与「检查全部」同样的即时反馈:先把勾选行置「检查中」,后端返回后按行落定。
+  for (const e of envs.value) {
+    if (ids.includes(e.id)) e.imageCheckStatus = 'checking'
+  }
+  try {
+    const res = await checkBuildEnvsBatch(ids)
+    rowBanner.value = t('buildEnvs.checkSelectedDone', { ok: res.ok, total: res.total })
+  } catch (err) {
+    rowBanner.value = errMsg(err, 'buildEnvs.errCheckSelected')
+  } finally {
+    await load()
+    checkingSelected.value = false
+  }
+}
 </script>
 
 <template>
@@ -345,6 +389,17 @@ async function onCheckAll(): Promise<void> {
         <p class="view-sub">{{ t('buildEnvs.desc') }}</p>
       </div>
       <div class="header-actions">
+        <button
+          class="btn"
+          :disabled="checkingSelected || selectedIds.length === 0"
+          @click="onCheckSelected"
+        >
+          {{
+            checkingSelected
+              ? t('buildEnvs.checking')
+              : t('buildEnvs.checkSelected', { n: selectedIds.length })
+          }}
+        </button>
         <button class="btn" :disabled="checkingAll" @click="onCheckAll">
           {{ checkingAll ? t('buildEnvs.checking') : t('buildEnvs.checkAll') }}
         </button>
@@ -365,6 +420,14 @@ async function onCheckAll(): Promise<void> {
     <table v-else class="grid">
       <thead>
         <tr>
+          <th class="col-check">
+            <input
+              type="checkbox"
+              :checked="allSelected"
+              :aria-label="t('buildEnvs.selectAll')"
+              @change="toggleSelectAll(($event.target as HTMLInputElement).checked)"
+            />
+          </th>
           <th>{{ t('buildEnvs.colEnv') }}</th>
           <th>{{ t('buildEnvs.colImage') }}</th>
           <th>{{ t('buildEnvs.colStatus') }}</th>
@@ -374,6 +437,14 @@ async function onCheckAll(): Promise<void> {
       </thead>
       <tbody>
         <tr v-for="e in envs" :key="e.id">
+          <td class="col-check">
+            <input
+              type="checkbox"
+              :checked="selectedIds.includes(e.id)"
+              :aria-label="e.displayName"
+              @change="toggleSelected(e.id, ($event.target as HTMLInputElement).checked)"
+            />
+          </td>
           <td>
             <div class="cell-strong">{{ e.displayName }}</div>
             <div class="cell-dim">
@@ -549,7 +620,10 @@ async function onCheckAll(): Promise<void> {
 }
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   flex-shrink: 0;
 }
 
@@ -759,5 +833,12 @@ async function onCheckAll(): Promise<void> {
 .field small {
   color: var(--color-faint);
   font-size: var(--text-small, 0.85em);
+}
+
+/* 勾选列:只放一个框,宽度收紧,别挤掉环境/镜像两列。用 .grid 前缀压过 `.grid th` 的左对齐。 */
+.grid th.col-check,
+.grid td.col-check {
+  width: 34px;
+  text-align: center;
 }
 </style>

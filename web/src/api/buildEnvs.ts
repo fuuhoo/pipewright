@@ -11,6 +11,7 @@
  *   POST   /api/admin/build-envs/:id/check  → { status, error }
  *   POST   /api/admin/build-envs/:id/pull   → 202 { status: 'checking', error, output }
  *   POST   /api/admin/build-envs/check-all  → { ok, total }
+ *   POST   /api/admin/build-envs/check-batch → { items, ok, total, skipped }
  *
  * 普通用户端点(RequireUser):
  *   GET    /api/build-envs                   → { items: PresetBuildEnv[] }(仅启用)
@@ -166,4 +167,25 @@ export async function listEnabledBuildEnvs(params?: {
   const qs = q.toString()
   const res = await http.get<{ items: PresetBuildEnv[] }>(`/api/build-envs${qs ? `?${qs}` : ''}`)
   return res.items ?? []
+}
+
+/** 批量检查的单行结果:检查失败(id 不存在等)也带在 items 里,不会整批报错。 */
+export interface BatchCheckItem {
+  id: string
+  language: string
+  version: string
+  status: ImageCheckStatus
+  error?: string
+}
+
+export interface BatchCheckResult {
+  items: BatchCheckItem[]
+  ok: number
+  total: number
+  skipped: number
+}
+
+/** 批量检查所选(前端多选/全选)。同步等全部检查结束,耗时与「一键检查」同量级。 */
+export async function checkBuildEnvsBatch(ids: string[]): Promise<BatchCheckResult> {
+  return http.post<BatchCheckResult>('/api/admin/build-envs/check-batch', { ids })
 }

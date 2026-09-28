@@ -44,6 +44,10 @@ export default {
   pull: 'Pull',
   pulling: 'Pulling…',
   checkAll: 'Check all',
+  selectAll: 'Seleccionar todo',
+  checkSelected: 'Comprobar seleccionados ({n})',
+  checkSelectedDone: 'Comprobación de la selección terminada: {ok}/{total} disponibles',
+  errCheckSelected: 'Error en la comprobación por lotes',
   enable: 'Enable',
   disable: 'Disable',
   editAction: 'Edit',
@@ -72,4 +76,5 @@ export default {
   deleteOk: 'Deleted',
   savedOk: 'Saved',
   toggleOk: 'Enabled state updated',
+
 }

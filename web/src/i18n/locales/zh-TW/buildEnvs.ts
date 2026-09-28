@@ -44,6 +44,10 @@ export default {
   pull: 'Pull',
   pulling: 'Pulling…',
   checkAll: 'Check all',
+  selectAll: '全選',
+  checkSelected: '檢查所選({n})',
+  checkSelectedDone: '所選檢查完成:{ok}/{total} 可用',
+  errCheckSelected: '批次檢查失敗',
   enable: 'Enable',
   disable: 'Disable',
   editAction: 'Edit',
@@ -72,4 +76,5 @@ export default {
   deleteOk: 'Deleted',
   savedOk: 'Saved',
   toggleOk: 'Enabled state updated',
+
 }

@@ -44,6 +44,10 @@ export default {
   pull: 'Pull',
   pulling: 'Pulling…',
   checkAll: 'Check all',
+  selectAll: 'すべて選択',
+  checkSelected: '選択中を検査({n})',
+  checkSelectedDone: '選択中の検査が完了: {ok}/{total} が利用可能',
+  errCheckSelected: '一括検査に失敗しました',
   enable: 'Enable',
   disable: 'Disable',
   editAction: 'Edit',
@@ -72,4 +76,5 @@ export default {
   deleteOk: 'Deleted',
   savedOk: 'Saved',
   toggleOk: 'Enabled state updated',
+
 }

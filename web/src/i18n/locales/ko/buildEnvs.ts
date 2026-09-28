@@ -44,6 +44,10 @@ export default {
   pull: 'Pull',
   pulling: 'Pulling…',
   checkAll: 'Check all',
+  selectAll: '전체 선택',
+  checkSelected: '선택 항목 점검({n})',
+  checkSelectedDone: '선택 항목 점검 완료: {ok}/{total} 사용 가능',
+  errCheckSelected: '일괄 점검 실패',
   enable: 'Enable',
   disable: 'Disable',
   editAction: 'Edit',
@@ -72,4 +76,5 @@ export default {
   deleteOk: 'Deleted',
   savedOk: 'Saved',
   toggleOk: 'Enabled state updated',
+
 }
