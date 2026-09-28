@@ -3,6 +3,8 @@ export default {
   title: 'Remote workspace',
   close: 'Close',
   openFullscreen: 'Open in full terminal',
+  enterFullscreen: 'Fullscreen',
+  exitFullscreen: 'Exit fullscreen',
   resize: 'Drag to resize the terminal / file split',
 
   connecting: 'Connecting…',

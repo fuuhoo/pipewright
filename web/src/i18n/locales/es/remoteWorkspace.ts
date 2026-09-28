@@ -3,6 +3,8 @@ export default {
   title: 'Espacio de trabajo remoto',
   close: 'Cerrar',
   openFullscreen: 'Abrir en terminal a pantalla completa',
+  enterFullscreen: 'Pantalla completa',
+  exitFullscreen: 'Salir de pantalla completa',
   resize: 'Arrastra para ajustar la proporción entre terminal y archivos',
 
   connecting: 'Conectando…',

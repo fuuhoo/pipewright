@@ -3,6 +3,8 @@ export default {
   title: 'Espace de travail distant',
   close: 'Fermer',
   openFullscreen: 'Ouvrir dans le terminal plein écran',
+  enterFullscreen: 'Plein écran',
+  exitFullscreen: 'Quitter le plein écran',
   resize: 'Glisser pour ajuster le ratio terminal / fichiers',
 
   connecting: 'Connexion…',

@@ -3,6 +3,8 @@ export default {
   title: '远程工作区',
   close: '关闭',
   openFullscreen: '在大屏终端打开',
+  enterFullscreen: '全屏',
+  exitFullscreen: '退出全屏',
   resize: '拖动调整终端与文件面板的比例',
 
   connecting: '连接中…',

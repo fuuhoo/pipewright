@@ -3,6 +3,8 @@ export default {
   title: 'Remote-Arbeitsbereich',
   close: 'Schließen',
   openFullscreen: 'Im Vollterminal öffnen',
+  enterFullscreen: 'Vollbild',
+  exitFullscreen: 'Vollbild beenden',
   resize: 'Ziehen, um das Verhältnis von Terminal und Dateibereich zu ändern',
 
   connecting: 'Verbinden…',

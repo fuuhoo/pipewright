@@ -3,6 +3,8 @@ export default {
   title: '遠端工作區',
   close: '關閉',
   openFullscreen: '在大螢幕終端機開啟',
+  enterFullscreen: '全螢幕',
+  exitFullscreen: '退出全螢幕',
   resize: '拖曳以調整終端機與檔案面板的比例',
 
   connecting: '連線中…',

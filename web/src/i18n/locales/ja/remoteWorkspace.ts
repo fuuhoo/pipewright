@@ -3,6 +3,8 @@ export default {
   title: 'リモートワークスペース',
   close: '閉じる',
   openFullscreen: '全画面ターミナルで開く',
+  enterFullscreen: '全画面',
+  exitFullscreen: '全画面を終了',
   resize: 'ドラッグしてターミナルとファイルパネルの比率を変更',
 
   connecting: '接続中…',

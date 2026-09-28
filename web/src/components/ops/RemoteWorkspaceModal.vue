@@ -52,6 +52,18 @@ const termHeight = computed(() => `${(split.value * 100).toFixed(2)}%`)
 /** 终端上报的当前目录:文件面板跟着走。 */
 const terminalCwd = ref(ROOT)
 
+/**
+ * 全屏铺满:文件面板要同时容下目录树 + 六列表格,1180px 的卡片宽度不够看。
+ * 只换外壳尺寸,内部分屏比例照旧 —— 退出全屏不该把用户调好的布局也一起丢掉。
+ */
+const fullscreen = ref(false)
+
+function toggleFullscreen(): void {
+  fullscreen.value = !fullscreen.value
+  // 外壳尺寸突变后让终端重新 fit(ResizeObserver 也会兜这一刀,双保险)。
+  termPane.value?.focus()
+}
+
 function onTerminalCwd(path: string): void {
   terminalCwd.value = path
 }
@@ -112,6 +124,11 @@ function onKeydown(e: KeyboardEvent): void {
   // 终端里按 Esc 是 shell/vi 的按键,不该顺手关掉整个弹窗。
   const el = e.target as HTMLElement | null
   if (el?.closest?.('.term-pane')) return
+  // 全屏时 Esc 先退回卡片大小:铺满整屏后「关掉」和「缩回去」都该有反悔的路。
+  if (fullscreen.value) {
+    fullscreen.value = false
+    return
+  }
   emit('close')
 }
 
@@ -127,8 +144,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rw-backdrop" :class="{ 'rw-backdrop--dragging': dragging }" @click.self="emit('close')">
-    <div class="rw-modal" role="dialog" aria-modal="true" :aria-label="t('remoteWorkspace.title')">
+  <div class="rw-backdrop" :class="{ 'rw-backdrop--dragging': dragging, 'rw-backdrop--full': fullscreen }" @click.self="emit('close')">
+    <div
+      class="rw-modal"
+      :class="{ 'rw-modal--full': fullscreen }"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('remoteWorkspace.title')"
+    >
       <header class="rw-head">
         <div class="rw-head-text">
           <h3 class="rw-title">{{ t('remoteWorkspace.title') }}</h3>
@@ -137,6 +160,16 @@ onBeforeUnmount(() => {
         <a class="rw-fullscreen" :href="`/servers/${serverId}/terminal`" target="_blank" rel="noopener">
           {{ t('remoteWorkspace.openFullscreen') }}
         </a>
+        <button
+          class="rw-icon-btn"
+          type="button"
+          :aria-label="fullscreen ? t('remoteWorkspace.exitFullscreen') : t('remoteWorkspace.enterFullscreen')"
+          :title="fullscreen ? t('remoteWorkspace.exitFullscreen') : t('remoteWorkspace.enterFullscreen')"
+          :aria-pressed="fullscreen"
+          @click="toggleFullscreen"
+        >
+          <span class="rw-icon-btn__glyph" aria-hidden="true">{{ fullscreen ? '⤡' : '⤢' }}</span>
+        </button>
         <button class="rw-close" type="button" :aria-label="t('remoteWorkspace.close')" @click="emit('close')">×</button>
       </header>
 
@@ -191,6 +224,10 @@ onBeforeUnmount(() => {
   user-select: none;
   cursor: row-resize;
 }
+/* 全屏:去掉四周留白,弹窗外壳就是整个视口。 */
+.rw-backdrop--full {
+  padding: 0;
+}
 
 .rw-modal {
   width: min(1180px, 100%);
@@ -203,6 +240,14 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
   overflow: hidden;
+}
+/* 写在 .rw-modal 之后:同特异度,靠顺序覆盖掉卡片尺寸与圆角。 */
+.rw-modal--full {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .rw-head {
@@ -260,6 +305,28 @@ onBeforeUnmount(() => {
 .rw-close:hover {
   background: var(--color-inset, #f3f4f6);
   color: var(--color-text);
+}
+/* 全屏开关:和 × 同尺寸,免得顶栏两个按钮一高一低。 */
+.rw-icon-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted, #6b7280);
+  cursor: pointer;
+}
+.rw-icon-btn:hover {
+  background: var(--color-inset, #f3f4f6);
+  color: var(--color-text);
+}
+.rw-icon-btn__glyph {
+  font-size: 15px;
+  line-height: 1;
 }
 
 .rw-body {

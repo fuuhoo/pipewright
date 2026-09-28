@@ -3,6 +3,8 @@ export default {
   title: '원격 작업 공간',
   close: '닫기',
   openFullscreen: '전체 화면 터미널에서 열기',
+  enterFullscreen: '전체 화면',
+  exitFullscreen: '전체 화면 종료',
   resize: '드래그하여 터미널과 파일 패널 비율 조절',
 
   connecting: '연결 중…',
