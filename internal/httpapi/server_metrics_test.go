@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -591,6 +592,150 @@ func TestAllServerMetricsBatchIndependent(t *testing.T) {
 	}
 	if !body.Items[0].Reachable || body.Items[0].Disk == nil {
 		t.Fatalf("item should be reachable with disk: %+v", body.Items[0])
+	}
+}
+
+// slowProbeDialer:一台快(即时回显),一台慢(探针挂到超时才报不可达 —— 死机器的真实形态)。
+// 用来量「批量端点等不等最慢那台」:默认 JSON 必须等齐,?stream=1 不该等。
+type slowProbeDialer struct {
+	slowAddr string
+	delay    time.Duration
+}
+
+func (d slowProbeDialer) Run(_ context.Context, addr string, _ target.SSHConfig, cmd []string) (*target.ExecResult, error) {
+	if addr == d.slowAddr && len(cmd) > 0 && cmd[0] == "uname" {
+		time.Sleep(d.delay)
+		return nil, target.ErrUnreachable
+	}
+	return linuxLikeDialer().fn(cmd)
+}
+
+func (d slowProbeDialer) RunStream(_ context.Context, _ string, _ target.SSHConfig, _ []string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (d slowProbeDialer) RunInteractive(_ context.Context, _ string, _ target.SSHConfig, _ []string) (target.Session, error) {
+	return nil, nil
+}
+
+func (d slowProbeDialer) RunWithStdin(ctx context.Context, addr string, cfg target.SSHConfig, cmd []string, _ io.Reader) (*target.ExecResult, error) {
+	return d.Run(ctx, addr, cfg, cmd)
+}
+
+// createServerAtAPI 登记一台指定 host 的服务器,返回 id。
+func createServerAtAPI(t *testing.T, client *http.Client, srvURL, csrf, credID, name, host string) string {
+	t.Helper()
+	body := `{"name":"` + name + `","host":"` + host + `","port":22,"user":"deploy","credentialId":"` + credID + `"}`
+	resp := doJSON(t, client, http.MethodPost, srvURL+"/api/servers", csrf, body)
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var s map[string]any
+	_ = json.Unmarshal(raw, &s)
+	id, _ := s["id"].(string)
+	if id == "" {
+		t.Fatalf("create server %s failed: %s", name, raw)
+	}
+	return id
+}
+
+func TestAllServerMetricsStreamIsProgressive(t *testing.T) {
+	const slowDelay = 1200 * time.Millisecond
+	d := slowProbeDialer{slowAddr: "10.255.255.2:22", delay: slowDelay}
+	srv, client, csrf := setupServerAPI(t, d)
+	credID := newSSHCredAPI(t, client, srv.URL, csrf, "pw")
+	fastID := createServerAtAPI(t, client, srv.URL, csrf, credID, "fast", "127.0.0.1")
+	slowID := createServerAtAPI(t, client, srv.URL, csrf, credID, "slow", "10.255.255.2")
+
+	resp, err := client.Get(srv.URL + "/api/servers/metrics?stream=1")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/x-ndjson") {
+		t.Fatalf("content-type = %q, want application/x-ndjson", ct)
+	}
+
+	// 逐行读:每行是一台的完整 DTO,顺序 = 完成顺序(不是登记顺序)。
+	type frame struct {
+		id      string
+		reach   bool
+		arrived time.Duration
+	}
+	start := time.Now()
+	var frames []frame
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		var dto serverMetricsDTO
+		if err := json.Unmarshal(sc.Bytes(), &dto); err != nil {
+			t.Fatalf("unmarshal line %q: %v", sc.Text(), err)
+		}
+		frames = append(frames, frame{dto.ServerID, dto.Reachable, time.Since(start)})
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scan stream: %v", err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("want 2 frames, got %d: %+v", len(frames), frames)
+	}
+	// 核心断言:快的那台在慢台探针还没结束前就已经下发 —— 首屏不必等齐。
+	if frames[0].id != fastID || !frames[0].reach {
+		t.Fatalf("first frame should be the fast reachable host, got %+v", frames[0])
+	}
+	if frames[0].arrived >= slowDelay {
+		t.Fatalf("fast frame arrived at %v, want < %v (stream waited for the slow host)", frames[0].arrived, slowDelay)
+	}
+	if frames[1].id != slowID || frames[1].reach || frames[1].arrived < slowDelay {
+		t.Fatalf("second frame should be the slow host reported unreachable after its probe, got %+v", frames[1])
+	}
+	if frames[1].arrived-slowDelay > 5*time.Second {
+		t.Fatalf("slow frame way late: %v", frames[1].arrived)
+	}
+}
+
+func TestAllServerMetricsJSONStillWaitsForAll(t *testing.T) {
+	// 默认形态(Dashboard 用)语义不变:一次 JSON、等全部采完,且不可达那台也在 items 里。
+	// 这条同时守住 stream 改造没把老路径改成「少台」。
+	const slowDelay = 400 * time.Millisecond
+	d := slowProbeDialer{slowAddr: "10.255.255.2:22", delay: slowDelay}
+	srv, client, csrf := setupServerAPI(t, d)
+	credID := newSSHCredAPI(t, client, srv.URL, csrf, "pw")
+	fastID := createServerAtAPI(t, client, srv.URL, csrf, credID, "fast", "127.0.0.1")
+	slowID := createServerAtAPI(t, client, srv.URL, csrf, credID, "slow", "10.255.255.2")
+
+	start := time.Now()
+	resp, err := client.Get(srv.URL + "/api/servers/metrics")
+	if err != nil {
+		t.Fatalf("batch request: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type = %q, want application/json", ct)
+	}
+	var body struct {
+		Items []serverMetricsDTO `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal: %v: %s", err, raw)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("want 2 items, got %d: %s", len(body.Items), raw)
+	}
+	byID := map[string]serverMetricsDTO{}
+	for _, it := range body.Items {
+		byID[it.ServerID] = it
+	}
+	if !byID[fastID].Reachable || byID[fastID].System == nil {
+		t.Fatalf("fast host should be reachable with system info: %+v", byID[fastID])
+	}
+	if byID[slowID].Reachable || byID[slowID].Error == "" {
+		t.Fatalf("slow host should be unreachable with human error: %+v", byID[slowID])
+	}
+	if elapsed := time.Since(start); elapsed < slowDelay {
+		t.Fatalf("JSON form must wait for the slowest host: %v < %v", elapsed, slowDelay)
 	}
 }
 
