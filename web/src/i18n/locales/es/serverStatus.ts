@@ -3,6 +3,8 @@ export default {
   subtitle: 'Carga de CPU, memoria y uso de disco de todos los servidores registrados, recopilados en tiempo real por SSH',
   reachableSummary: '{reachable}/{total} accesibles',
   autoRefresh: 'Se actualiza cada {n} s',
+  updatedAt: 'Actualizado a las {time}',
+  staleError: 'No se pudo actualizar; se muestra el último resultado correcto: {msg}',
   loadingAria: 'Cargando el estado de los servidores',
   errTitle: 'Error al cargar el estado de los servidores',
   errConnect: 'No se puede conectar con el servidor. Comprueba que el backend esté en ejecución e inténtalo de nuevo.',

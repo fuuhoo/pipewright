@@ -3,6 +3,8 @@ export default {
   subtitle: 'CPU-Last, Speicher- und Festplattennutzung aller registrierten Server, live über SSH erfasst',
   reachableSummary: '{reachable}/{total} erreichbar',
   autoRefresh: 'Aktualisiert automatisch alle {n} s',
+  updatedAt: 'Aktualisiert um {time}',
+  staleError: 'Aktualisierung fehlgeschlagen; angezeigt wird das letzte erfolgreiche Ergebnis: {msg}',
   loadingAria: 'Serverstatus wird geladen',
   errTitle: 'Laden des Serverstatus fehlgeschlagen',
   errConnect: 'Verbindung zum Server nicht möglich. Prüfe, ob das Backend läuft, und versuche es erneut.',

@@ -3,6 +3,8 @@ export default {
   subtitle: '등록된 모든 서버의 CPU 부하, 메모리, 디스크 사용량을 SSH로 실시간 수집',
   reachableSummary: '{reachable}/{total} 연결 가능',
   autoRefresh: '{n}초마다 자동 새로 고침',
+  updatedAt: '갱신 시각 {time}',
+  staleError: '새로 고침 실패, 이전 결과를 표시 중: {msg}',
   loadingAria: '서버 상태를 불러오는 중',
   errTitle: '서버 상태를 불러오지 못했습니다',
   errConnect: '서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인한 후 다시 시도하세요.',

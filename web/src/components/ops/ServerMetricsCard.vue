@@ -6,7 +6,7 @@
     · CPU:1 分钟负载 + 核数(负载相对核数着色:>1×核数 偏红、>0.7× 偏黄)
     · 内存 used/total 进度条 + 人读字节
     · 磁盘 used/total 进度条 + 人读字节
-    · 某指标 null → 该行标「不可用」(跨平台 best-effort,如 macOS 无 free → memory 不可用)
+    · 某指标 null → 该行标「不可用」(跨平台 best-effort:该机没有对应命令/解析不出才缺)
     · 不可达 → 整卡灰显 + 人读错误(绝不含凭据明文)
 
   复用 1-6 ui:ProgressBar(进度条)。徽标用本组件内联(reachable 语义,非 6-state run 状态)。

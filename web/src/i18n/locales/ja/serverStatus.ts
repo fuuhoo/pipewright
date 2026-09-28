@@ -3,6 +3,8 @@ export default {
   subtitle: '登録済みのすべてのサーバーの CPU 負荷・メモリ・ディスク使用量を、SSH 経由でリアルタイムに収集',
   reachableSummary: '{reachable}/{total} 到達可能',
   autoRefresh: '{n} 秒ごとに自動更新',
+  updatedAt: '更新時刻 {time}',
+  staleError: '更新に失敗しました。前回表示している内容: {msg}',
   loadingAria: 'サーバーの状態を読み込み中',
   errTitle: 'サーバーの状態の読み込みに失敗しました',
   errConnect: 'サーバーに接続できません。バックエンドが稼働しているか確認してから再試行してください。',

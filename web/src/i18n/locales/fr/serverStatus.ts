@@ -3,6 +3,8 @@ export default {
   subtitle: "Charge CPU, mémoire et utilisation du disque de tous les serveurs enregistrés, collectées en temps réel via SSH",
   reachableSummary: '{reachable}/{total} joignables',
   autoRefresh: 'Actualisation automatique toutes les {n} s',
+  updatedAt: 'Mis à jour à {time}',
+  staleError: 'Échec de l’actualisation ; dernier résultat obtenu : {msg}',
   loadingAria: "Chargement de l'état des serveurs",
   errTitle: "Échec du chargement de l'état des serveurs",
   errConnect: "Impossible de se connecter au serveur. Vérifiez que le backend est en cours d'exécution, puis réessayez.",

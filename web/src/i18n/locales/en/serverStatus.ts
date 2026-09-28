@@ -3,6 +3,8 @@ export default {
   subtitle: 'CPU load, memory and disk usage for all registered servers, collected live over SSH',
   reachableSummary: '{reachable}/{total} reachable',
   autoRefresh: 'Auto-refreshes every {n}s',
+  updatedAt: 'Updated {time}',
+  staleError: 'Refresh failed; showing the last successful result: {msg}',
   loadingAria: 'Loading server status',
   errTitle: 'Failed to load server status',
   errConnect: 'Cannot connect to the server. Check that the backend is running and try again.',

@@ -3,6 +3,8 @@ export default {
   subtitle: '所有已登記伺服器的 CPU 負載、記憶體與磁碟使用,經 SSH 即時採集',
   reachableSummary: '{reachable}/{total} 可達',
   autoRefresh: '每 {n} 秒自動重新整理',
+  updatedAt: '更新於 {time}',
+  staleError: '重新整理失敗,目前顯示的是上一次的結果:{msg}',
   loadingAria: '正在載入伺服器狀態',
   errTitle: '載入伺服器狀態失敗',
   errConnect: '無法連線到伺服器,請檢查後端是否執行後重試',

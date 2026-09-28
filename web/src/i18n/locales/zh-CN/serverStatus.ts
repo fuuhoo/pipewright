@@ -3,6 +3,8 @@ export default {
   subtitle: '所有已登记服务器的 CPU 负载、内存与磁盘使用,经 SSH 实时采集',
   reachableSummary: '{reachable}/{total} 可达',
   autoRefresh: '每 {n} 秒自动刷新',
+  updatedAt: '更新于 {time}',
+  staleError: '刷新失败,当前显示的是上一次的结果:{msg}',
   loadingAria: '正在加载服务器状态',
   errTitle: '加载服务器状态失败',
   errConnect: '无法连接到服务器,请检查后端是否运行后重试',
