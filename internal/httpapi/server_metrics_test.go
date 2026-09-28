@@ -3,11 +3,13 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/huangchengsir/pipewright/internal/target"
 )
@@ -236,8 +238,67 @@ func TestParseInt(t *testing.T) {
 	}
 }
 
-// --- per-command dialer:让集成测试按命令返回不同输出 ---
+func TestParseOSRelease(t *testing.T) {
+	// PRETTY_NAME 优先(带引号、可能含空格)。
+	if v, ok := parseOSRelease("NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.2 LTS\"\n"); !ok || v != "Ubuntu 24.04.2 LTS" {
+		t.Fatalf("parseOSReleasePRETTY = %q,%v", v, ok)
+	}
+	// 精简镜像只有 NAME。
+	if v, ok := parseOSRelease("NAME=\"Alpine Linux\"\nID=alpine\n"); !ok || v != "Alpine Linux" {
+		t.Fatalf("parseOSReleaseNAME = %q,%v", v, ok)
+	}
+	for _, bad := range []string{"", "\n\n", "ID=ubuntu\nHOME_URL=\"https://x\"\n"} {
+		if _, ok := parseOSRelease(bad); ok {
+			t.Fatalf("parseOSRelease(%q) should be false", bad)
+		}
+	}
+}
 
+func TestParseSwVers(t *testing.T) {
+	out := "ProductName:\t\tmacOS\nProductVersion:\t\t15.5\nBuildVersion:\t\t24F74\n"
+	if v, ok := parseSwVers(out); !ok || v != "macOS 15.5" {
+		t.Fatalf("parseSwVers = %q,%v", v, ok)
+	}
+	// 只有版本号也认(Linux 上 sw_vers 不存在 → 空输出 false)。
+	if v, ok := parseSwVers("ProductVersion:\t\t15.5\n"); !ok || v != "15.5" {
+		t.Fatalf("parseSwVers version-only = %q,%v", v, ok)
+	}
+	for _, bad := range []string{"", "sw_vers: command not found", "SomeOther:\tx\n"} {
+		if _, ok := parseSwVers(bad); ok {
+			t.Fatalf("parseSwVers(%q) should be false", bad)
+		}
+	}
+}
+
+func TestParseProcUptime(t *testing.T) {
+	if v, ok := parseProcUptime("123456.78 234567.89\n"); !ok || v != 123456 {
+		t.Fatalf("parseProcUptime = %d,%v", v, ok)
+	}
+	for _, bad := range []string{"", "abc 1", "-1 2"} {
+		if _, ok := parseProcUptime(bad); ok {
+			t.Fatalf("parseProcUptime(%q) should be false", bad)
+		}
+	}
+}
+
+func TestParseBoottimeUptime(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	// sec 后的数字带尾逗号(C 结构体字面量)。
+	if v, ok := parseBoottimeUptime("{ sec = 1799913600, usec = 511774 } Mon Sep 21 17:13:47 2026", now); !ok || v != 86400 {
+		t.Fatalf("parseBoottimeUptime = %d,%v want 86400", v, ok)
+	}
+	// 主机时钟超前(启动时刻在 now 之后)→ 0 而不是负数。
+	if v, ok := parseBoottimeUptime("{ sec = 1800009999, usec = 0 } Fri Jan 1 00:00:00 2038", now); !ok || v != 0 {
+		t.Fatalf("clock skew should clamp to 0, got %d,%v", v, ok)
+	}
+	for _, bad := range []string{"", "nope", "{ sec = 0, usec = 0 }"} {
+		if _, ok := parseBoottimeUptime(bad, now); ok {
+			t.Fatalf("parseBoottimeUptime(%q) should be false", bad)
+		}
+	}
+}
+
+// --- per-command dialer:让集成测试按命令返回不同输出 ---
 type cmdDialer struct {
 	// byCmd 按命令首参(程序名 + 关键参数)路由 stdout / exitCode。
 	fn func(cmd []string) (*target.ExecResult, error)
@@ -271,10 +332,28 @@ func linuxLikeDialer() cmdDialer {
 			return &target.ExecResult{Stdout: "              total        used        free\nMem:    17179869184  4123456789  1000000000\n", ExitCode: 0}, nil
 		case cmd[0] == "df" && len(cmd) >= 2 && cmd[1] == "-B1":
 			return &target.ExecResult{Stdout: "Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/sda1 494384795648 123456789012 370927006636 25% /\n", ExitCode: 0}, nil
+		// 系统信息:Linux 有 uname 各字段、/etc/os-release、/proc/uptime;sw_vers 不存在。
+		case cmd[0] == "uname":
+			out := map[string]string{
+				"-s": "Linux\n", "-r": "6.6.87-orbstack\n", "-m": "x86_64\n", "-n": "pw-node-1\n",
+			}[lastArg(cmd)]
+			return &target.ExecResult{Stdout: out, ExitCode: 0}, nil
+		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/etc/os-release":
+			return &target.ExecResult{Stdout: "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.2 LTS\"\n", ExitCode: 0}, nil
+		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/proc/uptime":
+			return &target.ExecResult{Stdout: "123456.78 234567.89\n", ExitCode: 0}, nil
 		default:
 			return &target.ExecResult{Stdout: "", Stderr: "command not found", ExitCode: 127}, nil
 		}
 	}}
+}
+
+// lastArg 取命令最后一个参数(uname -s / -r / -m / -n 的分派键)。
+func lastArg(cmd []string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+	return cmd[len(cmd)-1]
 }
 
 // macLikeDialer 模拟 macOS:无 /proc/loadavg、无 nproc、无 free、df -B1 不识别 → 各自回退
@@ -307,6 +386,22 @@ func macLikeDialer() cmdDialer {
 			return &target.ExecResult{Stderr: "df: illegal option -- B", ExitCode: 1}, nil
 		case cmd[0] == "df" && len(cmd) >= 2 && cmd[1] == "-k":
 			return &target.ExecResult{Stdout: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk1 1000000 400000 600000 40% /\n", ExitCode: 0}, nil
+		// 系统信息:macOS 有 uname 各字段与 sw_vers,没有 /etc/os-release、/proc/uptime;
+		// 运行时长退 kern.boottime(启动时刻 = now − 2 天,用固定偏移便于断言)。
+		case cmd[0] == "uname":
+			out := map[string]string{
+				"-s": "Darwin\n", "-r": "24.5.0\n", "-m": "arm64\n", "-n": "pw-mac-1\n",
+			}[lastArg(cmd)]
+			return &target.ExecResult{Stdout: out, ExitCode: 0}, nil
+		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/etc/os-release":
+			return &target.ExecResult{Stderr: "No such file or directory", ExitCode: 1}, nil
+		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/proc/uptime":
+			return &target.ExecResult{Stderr: "No such file or directory", ExitCode: 1}, nil
+		case cmd[0] == "sw_vers":
+			return &target.ExecResult{Stdout: "ProductName:\t\tmacOS\nProductVersion:\t\t15.5\nBuildVersion:\t\t24F74\n", ExitCode: 0}, nil
+		case cmd[0] == "sysctl" && len(cmd) >= 3 && cmd[2] == "kern.boottime":
+			boot := time.Now().Unix() - 2*86400
+			return &target.ExecResult{Stdout: fmt.Sprintf("{ sec = %d, usec = 511774 } Mon Sep 21 17:13:47 2026\n", boot), ExitCode: 0}, nil
 		default:
 			return &target.ExecResult{ExitCode: 127}, nil
 		}
@@ -342,6 +437,14 @@ func TestServerMetricsLinux(t *testing.T) {
 	}
 	if out.Disk == nil || out.Disk.Path != "/" || out.Disk.TotalBytes != 494384795648 || out.Disk.UsedBytes != 123456789012 {
 		t.Fatalf("disk wrong: %+v", out.Disk)
+	}
+	if out.System == nil {
+		t.Fatalf("system 段应存在(可达就有)")
+	}
+	if out.System.OS != "Linux" || out.System.Distro != "Ubuntu 24.04.2 LTS" ||
+		out.System.Kernel != "6.6.87-orbstack" || out.System.Arch != "x86_64" ||
+		out.System.Hostname != "pw-node-1" || out.System.UptimeSeconds != 123456 {
+		t.Fatalf("system 字段不符: %+v", out.System)
 	}
 	if out.CollectedAt == "" {
 		t.Fatalf("collectedAt empty")
@@ -392,6 +495,17 @@ func TestServerMetricsMacFallback(t *testing.T) {
 	if out.Disk == nil || out.Disk.TotalBytes != 1000000*1024 || out.Disk.UsedBytes != 400000*1024 {
 		t.Fatalf("disk fallback wrong: %+v", out.Disk)
 	}
+	// 系统信息:发行版走 sw_vers(该机没有 /etc/os-release),运行时长走 kern.boottime(now − 2 天)。
+	if out.System == nil {
+		t.Fatalf("system 段应存在(可达就有)")
+	}
+	if out.System.OS != "Darwin" || out.System.Distro != "macOS 15.5" ||
+		out.System.Kernel != "24.5.0" || out.System.Arch != "arm64" || out.System.Hostname != "pw-mac-1" {
+		t.Fatalf("system 字段不符: %+v", out.System)
+	}
+	if d := out.System.UptimeSeconds - 2*86400; d < -5 || d > 5 {
+		t.Fatalf("uptimeSeconds = %d, want ≈%d(kern.boottime 换算)", out.System.UptimeSeconds, 2*86400)
+	}
 }
 
 func TestServerMetricsUnreachableNot500(t *testing.T) {
@@ -417,7 +531,7 @@ func TestServerMetricsUnreachableNot500(t *testing.T) {
 	if out.Error == "" {
 		t.Fatalf("want human error")
 	}
-	if out.CPU != nil || out.Memory != nil || out.Disk != nil {
+	if out.CPU != nil || out.Memory != nil || out.Disk != nil || out.System != nil {
 		t.Fatalf("metrics should be null when unreachable: %+v", out)
 	}
 }

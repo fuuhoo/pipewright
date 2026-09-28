@@ -60,10 +60,25 @@ func TestE2EServerMetricsRealProc(t *testing.T) {
 		t.Fatalf("磁盘值不合理: used=%d total=%d", dto.Disk.UsedBytes, dto.Disk.TotalBytes)
 	}
 
-	t.Logf("真指标 OK: load=%.2f cores=%d mem=%d/%d disk=%d/%d",
+	// 系统信息:真 alpine 有 uname 各字段、/etc/os-release、/proc/uptime → 应全解析出来。
+	if dto.System == nil {
+		t.Fatalf("system 段应非 nil(可达机器)")
+	}
+	if dto.System.OS != "Linux" || dto.System.Kernel == "" || dto.System.Arch == "" || dto.System.Hostname == "" {
+		t.Fatalf("system 标识不全: %+v", dto.System)
+	}
+	if !strings.Contains(strings.ToLower(dto.System.Distro), "alpine") {
+		t.Fatalf("distro 应从真 /etc/os-release 解析: %q", dto.System.Distro)
+	}
+	if dto.System.UptimeSeconds <= 0 {
+		t.Fatalf("uptimeSeconds 应从真 /proc/uptime 解析: %d", dto.System.UptimeSeconds)
+	}
+
+	t.Logf("真指标 OK: load=%.2f cores=%d mem=%d/%d disk=%d/%d system=%s/%s/%s up=%ds",
 		*dto.CPU.Loadavg1, *dto.CPU.Cores,
 		dto.Memory.UsedBytes, dto.Memory.TotalBytes,
-		dto.Disk.UsedBytes, dto.Disk.TotalBytes)
+		dto.Disk.UsedBytes, dto.Disk.TotalBytes,
+		dto.System.Distro, dto.System.Kernel, dto.System.Arch, dto.System.UptimeSeconds)
 }
 
 // TestE2EServerLogsTailFile 验服务日志 tail:容器内常驻进程真写日志,经 ExecStream(tail -f)读到真实行。

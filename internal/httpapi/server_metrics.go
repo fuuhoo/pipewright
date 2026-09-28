@@ -52,6 +52,10 @@ const (
 //   - swap:`free -b` 的 Swap 行;macOS → `sysctl vm.swapusage`。
 //   - disk:`df -B1 /`;不识别 -B1(老 macOS)→ 回退 `df -k /`(KiB)换算字节。
 //   - dmidecode:仅 Linux 且缓存里没有该主机物理总量时才追加(需 root)。
+//   - 系统信息:`uname -r/-m/-n` + `/etc/os-release`(Linux)/ `sw_vers`(macOS) +
+//     `/proc/uptime`(Linux)/ `sysctl kern.boottime`(macOS/BSD)。
+//     `uname` 必须一个字段一次:GNU/BSD/busybox 对 `-srmn` 这类组合参数**按各自固定顺序**
+//     输出(macOS 与 busybox 实测都打成 `s n r m`,不是请求的 `s r m n`),拼一行没法稳定拆字段。
 var (
 	cmdUname      = []string{"uname", "-s"}
 	cmdLoadavg    = []string{"cat", "/proc/loadavg"}
@@ -64,6 +68,16 @@ var (
 	cmdSwapUsage  = []string{"sysctl", "-n", "vm.swapusage"}
 	cmdDfBytes    = []string{"df", "-B1", "/"}
 	cmdDfKiB      = []string{"df", "-k", "/"}
+	// 系统信息(静态标识,不随负载变)。
+	cmdUnameRelease = []string{"uname", "-r"}
+	cmdUnameMachine = []string{"uname", "-m"}
+	cmdUnameNode    = []string{"uname", "-n"}
+	// Linux 发行版名PRETTY_NAME;macOS 无 /etc/os-release → 回退 sw_vers。
+	cmdOSRelease = []string{"cat", "/etc/os-release"}
+	cmdSwVers    = []string{"sw_vers"}
+	// 运行时长:/proc/uptime 第一列(Linux);macOS/BSD 无 /proc → kern.boottime 换 now-启动时刻。
+	cmdProcUptime   = []string{"cat", "/proc/uptime"}
+	cmdKernBoottime = []string{"sysctl", "-n", "kern.boottime"}
 	// 物理/分配内存(SMBIOS Type 17 内存设备容量之和)。`free` 的 MemTotal 是内核
 	// **可用**总量(已扣固件/内核保留),通常略小于物理装机量;dmidecode 读 SMBIOS
 	// 得「物理/分配」总量,与 PVE 等宿主面板显示的总量一致。需 root;非 root / 无
@@ -83,6 +97,13 @@ const (
 	idxSwapUsage
 	idxDfBytes
 	idxDfKiB
+	idxUnameRelease
+	idxUnameMachine
+	idxUnameNode
+	idxOSRelease
+	idxSwVers
+	idxProcUptime
+	idxKernBoottime
 	idxCount // 基数组长度,供校验/追加用
 )
 
@@ -100,6 +121,13 @@ var metricPlanBase = [][]string{
 	cmdSwapUsage,
 	cmdDfBytes,
 	cmdDfKiB,
+	cmdUnameRelease,
+	cmdUnameMachine,
+	cmdUnameNode,
+	cmdOSRelease,
+	cmdSwVers,
+	cmdProcUptime,
+	cmdKernBoottime,
 }
 
 // metricPlan 组本轮要跑的命令;needPhys 为真时末尾追加 dmidecode。
@@ -138,6 +166,24 @@ type diskMetric struct {
 	TotalBytes int64  `json:"totalBytes"`
 }
 
+// systemMetric 是该机的静态标识(发行版/内核/架构/主机名/运行时长)。
+// 逐字段 best-effort:采不到的字段留空串 / 0,UI 跳过不显示;整段为 null 只在该机不可达时出现。
+type systemMetric struct {
+	// 内核名(`uname -s` 探针输出):Linux / Darwin 等。探针成功就一定有值。
+	OS string `json:"os"`
+	// 人读发行版:Linux 取 /etc/os-release 的 PRETTY_NAME(退 NAME),macOS 取 sw_vers 的
+	// ProductName + ProductVersion(如「macOS 15.5」)。
+	Distro string `json:"distro"`
+	// 内核版本(`uname -r`),如 6.6.87-orbstack / 24.5.0。
+	Kernel string `json:"kernel"`
+	// CPU 架构(`uname -m`),如 x86_64 / arm64 / aarch64。
+	Arch string `json:"arch"`
+	// 机器自己报的主机名(`uname -n`),可能与登记名不同。
+	Hostname string `json:"hostname"`
+	// 开机至今秒数(Linux 读 /proc/uptime;macOS/BSD 用 kern.boottime 换算)。0 = 采不到。
+	UptimeSeconds int64 `json:"uptimeSeconds"`
+}
+
 // serverMetricsDTO 是单台服务器指标响应体(冻结契约)。
 //   - reachable:false 时 cpu/memory/disk 为 null,error 人读非空。
 //   - reachable:true 时各指标独立:解析失败的维度为 null,其余正常。
@@ -148,6 +194,7 @@ type serverMetricsDTO struct {
 	CPU         *cpuMetric    `json:"cpu"`
 	Memory      *memoryMetric `json:"memory"`
 	Disk        *diskMetric   `json:"disk"`
+	System      *systemMetric `json:"system"`
 	CollectedAt string        `json:"collectedAt"`
 }
 
@@ -166,7 +213,7 @@ func collectServerMetrics(ctx context.Context, svc target.Service, id string) (s
 	out := serverMetricsDTO{ServerID: id, CollectedAt: time.Now().UTC().Format(time.RFC3339)}
 
 	pctx, cancelProbe := context.WithTimeout(ctx, metricsProbeTimeout)
-	_, probeErr := svc.Exec(pctx, id, cmdUname)
+	probeRes, probeErr := svc.Exec(pctx, id, cmdUname)
 	cancelProbe()
 	if probeErr != nil {
 		out.Reachable = false
@@ -177,6 +224,8 @@ func collectServerMetrics(ctx context.Context, svc target.Service, id string) (s
 		return out, nil
 	}
 	out.Reachable = true
+	// 探针的 uname -s 白捡一份内核名,不必再跑一次。
+	osName := firstToken(probeRes.Stdout)
 
 	// 物理总量是静态硬件量:缓存命中就不再跑 dmidecode(见 wantPhysicalProbe)。
 	needPhys := wantPhysicalProbe(id)
@@ -190,6 +239,7 @@ func collectServerMetrics(ctx context.Context, svc target.Service, id string) (s
 	out.CPU = readCPU(results)
 	out.Memory = readMemory(results, id, needPhys)
 	out.Disk = readDisk(results)
+	out.System = readSystem(results, osName, time.Now())
 	return out, nil
 }
 
@@ -704,6 +754,144 @@ func extractDfTotalsUsed(fields []string) (total, used int64, ok bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+// readSystem 组装系统标识:内核名来自探针(必得),其余字段逐条 best-effort。
+// 采集不到就留空 / 0,UI 跳过该段,不显示「不可用」这类噪音。
+func readSystem(results []*target.ExecResult, osName string, now time.Time) *systemMetric {
+	m := &systemMetric{
+		OS:       osName,
+		Kernel:   firstLine(stdoutAt(results, idxUnameRelease)),
+		Arch:     firstLine(stdoutAt(results, idxUnameMachine)),
+		Hostname: firstLine(stdoutAt(results, idxUnameNode)),
+	}
+	// 发行版:Linux 读 /etc/os-release;macOS/BSD 没有该文件 → 退 sw_vers。
+	if d, ok := parseOSRelease(stdoutAt(results, idxOSRelease)); ok {
+		m.Distro = d
+	} else if d, ok := parseSwVers(stdoutAt(results, idxSwVers)); ok {
+		m.Distro = d
+	}
+	// 运行时长:Linux 有 /proc/uptime;macOS/BSD 无 /proc → 用 kern.boottime 换算。
+	if s, ok := parseProcUptime(stdoutAt(results, idxProcUptime)); ok {
+		m.UptimeSeconds = s
+	} else if s, ok := parseBoottimeUptime(stdoutAt(results, idxKernBoottime), now); ok {
+		m.UptimeSeconds = s
+	}
+	return m
+}
+
+// firstToken 取输出的第一个空白分隔 token(去空白);空 → ""。
+func firstToken(s string) string {
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return ""
+	}
+	return f[0]
+}
+
+// firstLine 取第一行的首 token,并截到 128 字节(防异常输出把响应体撑大)。
+func firstLine(s string) string {
+	line := strings.TrimSpace(s)
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	t := strings.TrimSpace(line)
+	if len(t) > 128 {
+		t = t[:128]
+	}
+	return t
+}
+
+// parseOSRelease 从 /etc/os-release 取人读发行版名:PRETTY_NAME 优先(「Ubuntu 24.04.2 LTS」),
+// 退 NAME(部分精简镜像只有 NAME)。键值都按 shell 赋值语法 `KEY=value` 取,值去外层引号。
+// 该文件是**只读解析**,绝不执行。两样都没有 → false(交给上层退 sw_vers)。
+func parseOSRelease(s string) (string, bool) {
+	var name string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		key, val, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		val = strings.Trim(strings.TrimSpace(val), `"`)
+		if val == "" {
+			continue
+		}
+		switch key {
+		case "PRETTY_NAME":
+			return val, true
+		case "NAME":
+			name = val
+		}
+	}
+	return name, name != ""
+}
+
+// parseSwVers 把 macOS 的 sw_vers 输出(ProductName / ProductVersion / BuildVersion 三行)
+// 拼成「macOS 15.5」。任一行有值即成功;两行都没有 → false。
+func parseSwVers(s string) (string, bool) {
+	var product, version string
+	for _, line := range strings.Split(s, "\n") {
+		key, val, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		if val == "" {
+			continue
+		}
+		switch key {
+		case "ProductName":
+			product = val
+		case "ProductVersion":
+			version = val
+		}
+	}
+	switch {
+	case product != "" && version != "":
+		return product + " " + version, true
+	case version != "":
+		return version, true
+	case product != "":
+		return product, true
+	}
+	return "", false
+}
+
+// parseProcUptime 取 /proc/uptime 第一列(开机至今秒,浮点)→ 整数秒。
+func parseProcUptime(s string) (int64, bool) {
+	tok := firstToken(s)
+	if tok == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(tok, 64)
+	if err != nil || f < 0 {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+// parseBoottimeUptime 从 macOS/BSD 的 `sysctl -n kern.boottime` 算运行秒数。
+// 输出形如 `{ sec = 1758000000, usec = 511774 } Mon Sep 21 17:13:47 2026`:取 `sec =` 后的
+// 启动时刻(**带尾逗号**,那是 C 结构体字面量),用 now 相减(now 由调用方传入,单测可喂固定时钟)。
+// 主机时钟比本机还晚(倒挂)→ 0,不显示负运行时长。
+func parseBoottimeUptime(s string, now time.Time) (int64, bool) {
+	fields := strings.Fields(s)
+	for i := 0; i+2 < len(fields); i++ {
+		if fields[i] != "sec" || fields[i+1] != "=" {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSuffix(fields[i+2], ","), 10, 64)
+		if err != nil || n <= 0 {
+			return 0, false
+		}
+		up := now.Unix() - n
+		if up < 0 {
+			up = 0
+		}
+		return up, true
+	}
+	return 0, false
 }
 
 // humanMetricsError 把领域错误映射为人读文案(绝不含凭据明文/内部栈)。

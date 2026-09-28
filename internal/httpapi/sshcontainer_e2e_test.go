@@ -114,7 +114,9 @@ exec /usr/sbin/sshd -D -e`
 		t.Fatalf("解析容器端口失败: %q", line)
 	}
 
-	c.waitReady(t, 60*time.Second)
+	// 就绪预算要覆盖 bootstrap 里的 `apk add openssh`:容器是**边起边装**的,网络慢的机器上
+	// 光装包就接近 2 分钟(本机实测 87s),60s 会稳定误报「sshd 起不来」而把整个 e2e 拖成假失败。
+	c.waitReady(t, 180*time.Second)
 	return c
 }
 
