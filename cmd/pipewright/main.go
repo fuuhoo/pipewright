@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -74,6 +75,14 @@ func main() {
 	}
 
 	cfg := config.Load()
+
+	// 监听地址允许用命令行覆盖环境变量,优先级 --addr/--port > PIPEWRIGHT_ADDR > :8080。
+	// 解析逻辑与平台无关,所以 Windows 上 `pipewright.exe --port 9090` 和 Linux 的 `--port 9090` 行为一致。
+	listenAddr, addrErr := listenAddrFromArgs(os.Args[1:], cfg.Addr)
+	if addrErr != nil {
+		log.Fatalf("启动参数: %v", addrErr)
+	}
+	cfg.Addr = listenAddr
 
 	// git over SSH 主机密钥策略:默认不校验(内网自托管 Git 可用);
 	// PIPEWRIGHT_GIT_SSH_KNOWN_HOSTS 指定 known_hosts 后收紧为未知主机拒绝。
@@ -718,6 +727,73 @@ func main() {
 	previewSweeper.Stop()
 	pool.Stop(shutdownCtx)
 	log.Printf("[run] worker pool stopped")
+}
+
+// listenAddrFromArgs 用 --addr / --port 覆盖基础监听地址(base 通常来自 PIPEWRIGHT_ADDR)。
+// `--addr :9090` 与 `--addr=:9090` 都收,单横线同样有效(照顾 Windows 的 `-port 9090` 写法);
+// --port 只替换端口、保留主机部分,因此与 --addr 同时出现时结果也与书写顺序无关。
+func listenAddrFromArgs(args []string, base string) (string, error) {
+	addr, port := base, ""
+	for i := 0; i < len(args); i++ {
+		name, value, isFlag := splitArgFlag(args[i])
+		if !isFlag {
+			continue
+		}
+		switch name {
+		case "addr":
+			v, err := argValue(args, &i, value, name)
+			if err != nil {
+				return "", err
+			}
+			if _, _, err := net.SplitHostPort(v); err != nil {
+				return "", fmt.Errorf("--addr 要写成 主机:端口(监听所有网卡把主机留空,如 :9090):%q", v)
+			}
+			addr = v
+		case "port":
+			v, err := argValue(args, &i, value, name)
+			if err != nil {
+				return "", err
+			}
+			if _, err := strconv.Atoi(v); err != nil {
+				return "", fmt.Errorf("--port 要是一个数字端口:%q", v)
+			}
+			port = v
+		}
+	}
+	if port == "" {
+		return addr, nil
+	}
+	host := ""
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	} else if addr != "" {
+		host = addr // 地址里没带端口(如 PIPEWRIGHT_ADDR=localhost)时整体当主机看待
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+// splitArgFlag 拆出参数名和 `=` 形式的值;不带前导横线的 token 不是参数。
+func splitArgFlag(a string) (name, value string, isFlag bool) {
+	if !strings.HasPrefix(a, "-") || a == "-" || a == "--" {
+		return "", "", false
+	}
+	trimmed := strings.TrimLeft(a, "-")
+	if eq := strings.IndexByte(trimmed, '='); eq >= 0 {
+		return trimmed[:eq], trimmed[eq+1:], true
+	}
+	return trimmed, "", true
+}
+
+// argValue 取值:`--x=v` 直接用 v,否则消费后一个 token(`--x v`)。
+func argValue(args []string, i *int, value, name string) (string, error) {
+	if value != "" {
+		return value, nil
+	}
+	if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
+		return "", fmt.Errorf("--%s 缺值,例:pipewright --%s :9090", name, name)
+	}
+	*i++
+	return args[*i], nil
 }
 
 // envDurationSeconds 读取 name 环境变量(整数秒)为 time.Duration;未设/非法 → def。

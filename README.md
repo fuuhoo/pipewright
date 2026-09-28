@@ -147,6 +147,14 @@ Open **Settings → System** and click "Check for updates" to query the latest r
 
 A normal install only needs the first two (plus `PIPEWRIGHT_PUBLIC_URL` if you run behind a reverse proxy); everything else has a sane default.
 
+The listen address can also be set on the command line, which wins over `PIPEWRIGHT_ADDR` (works the same on Linux/macOS/Windows; both `--flag value` and `--flag=value`, and a single dash, are accepted):
+
+| Flag | Description | Example |
+|---|---|---|
+| `--addr` | Full listen address; leave the host empty to bind every interface | `pipewright --addr :9090`, `pipewright --addr 127.0.0.1:9090` |
+| `--port` | Port only, keeping the host part of the current address | `pipewright.exe --port 9090` |
+| `--version` | Print version/commit/build date and exit (before any side effects) | `pipewright --version` |
+
 **Core**
 
 | Variable | Description | Default |
