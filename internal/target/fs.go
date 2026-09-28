@@ -21,11 +21,13 @@ import (
 // 点一下等半秒;而解析 `ls` / `stat` 的输出在 GNU / BSD / BusyBox 三种实现下字段与
 // 日期格式都不同(指标采集已经为此写过一堆平台回退)。SFTP 是 sshd 自带的子系统,
 // 给的是结构化属性,不碰 shell,自然也没有注入面 —— 路径只作为协议参数传递。
+// 没有 sftp-server 的机器才退到 fs_exec.go 那套 shell 兜底:能用,但慢且解析脆弱。
 //
 // 生命周期:一次 OpenWorkspace = 一条 SSH 连接,调用方 Close 即释放;不缓存连接
 // (弹窗开着时并发请求数很小,连接池的失效检测复杂度暂时不值得)。
 //
-// AC-SEC-01/02:凭据仍经 vault 即用即弃;本文件不接受任何拼进 shell 的字符串。
+// AC-SEC-01/02:凭据仍经 vault 即用即弃;本文件不接受任何拼进 shell 的字符串
+// (兜底实现 fs_exec.go 同样只把路径作 array 参数转义,绝不把输入插值进脚本)。
 
 // 远程文件层的领域错误(映射成人读 HTTP 文案,绝不含远端 stderr 细节)。
 var (
@@ -35,6 +37,10 @@ var (
 	ErrRemoteNotFound = errors.New("target: 远程路径不存在")
 	// ErrRemotePermission 是远端拒绝读写(权限 / 只读挂载)。
 	ErrRemotePermission = errors.New("target: 远程路径权限不足")
+	// ErrRemoteNotDirectory 是路径存在但不是目录(列目录 / 建目录撞上了文件)。
+	ErrRemoteNotDirectory = errors.New("target: 远程路径不是目录")
+	// ErrRemoteNotEmpty 是删目录时目录非空 —— 这层刻意不提供递归删除。
+	ErrRemoteNotEmpty = errors.New("target: 远程目录非空")
 )
 
 // FileStat 是远端一个路径的可见属性。零值 MtimeUnix=0 表示对端没给时间。
@@ -110,8 +116,10 @@ func (s *service) OpenWorkspace(ctx context.Context, serverID string) (Workspace
 	return fd.OpenFS(ctx, addr, cfg)
 }
 
-// OpenFS 实现 fsDialer:拨一条连接,优先挂 SFTP 子系统。
-// sshd 未启用 sftp-server(最小镜像 / dropbear 常见)时返回可辨的错误,由上层降级。
+// OpenFS 实现 fsDialer:拨一条连接,优先挂 SFTP 子系统;
+// sshd 未启用 sftp-server(最小镜像 / dropbear 常见)时**用同一条连接**降级到 exec 兜底。
+//
+// 为什么复用而不重拨:SFTP 握手失败时连接是好的,再拨一次只是白付一轮 TCP+KEX+认证。
 func (sshDialer) OpenFS(ctx context.Context, addr string, cfg SSHConfig) (Workspace, error) {
 	auth, err := authMethods(cfg)
 	if err != nil {
@@ -123,9 +131,12 @@ func (sshDialer) OpenFS(ctx context.Context, addr string, cfg SSHConfig) (Worksp
 	}
 	sc, err := sftp.NewClient(client)
 	if err != nil {
-		_ = client.Close()
-		// 子系统不可用不是「连不上」:连接是好的,只是这台 sshd 没开 sftp-server。
-		return nil, fmt.Errorf("%w: %s", ErrFSUnsupported, err)
+		w, werr := newExecWorkspace(ctx, client)
+		if werr != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("%w: %s", ErrFSUnsupported, err)
+		}
+		return w, nil
 	}
 	return &sftpWorkspace{ssh: client, sftp: sc}, nil
 }
