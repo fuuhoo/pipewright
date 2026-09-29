@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ServerContainers } from '../api/containers'
-import { SERVER_ALL, resolveServerScope, scopedGroups, scopeTone, preferredFirst } from './containerScope'
+import {
+  SERVER_ALL,
+  SERVER_USABLE,
+  resolveServerScope,
+  scopedGroups,
+  reachableFirst,
+  scopeTone,
+  preferredFirst,
+} from './containerScope'
 
 function group(serverId: string, over: Partial<ServerContainers> = {}): ServerContainers {
   return {
@@ -20,6 +28,13 @@ function group(serverId: string, over: Partial<ServerContainers> = {}): ServerCo
 describe('resolveServerScope', () => {
   it('没选机器时就是全部', () => {
     expect(resolveServerScope(SERVER_ALL, [group('a'), group('b')])).toBe(SERVER_ALL)
+  })
+
+  it('「仅看可用的」是稳定档位:不因为机器掉线/回来就被打回全部', () => {
+    expect(resolveServerScope(SERVER_USABLE, [group('a'), group('b')])).toBe(SERVER_USABLE)
+    // 全掉光也保持这一档(屏上是空态提示,而不是偷偷换口径把死机摊回来)。
+    expect(resolveServerScope(SERVER_USABLE, [group('a', { reachable: false })])).toBe(SERVER_USABLE)
+    expect(resolveServerScope(SERVER_USABLE, [])).toBe(SERVER_USABLE)
   })
 
   it('选中的机器还在聚合里则保持不变', () => {
@@ -46,8 +61,44 @@ describe('scopedGroups', () => {
     expect(scopedGroups(groups, 'b').map((g) => g.serverId)).toEqual(['b'])
   })
 
+  it('「仅看可用的」把连不上的剔掉,连得上但没装 docker 的留着(它仍可被点开看错误)', () => {
+    const mixed = [group('a'), group('dead', { reachable: false, runtime: '' }), group('nodk', { runtime: '' })]
+    expect(scopedGroups(mixed, SERVER_USABLE).map((g) => g.serverId)).toEqual(['a', 'nodk'])
+  })
+
   it('范围里没有的机器 → 空范围(由 resolveServerScope 先拦,这里不静默变全部)', () => {
     expect(scopedGroups(groups, 'gone')).toEqual([])
+  })
+})
+
+describe('reachableFirst', () => {
+  it('在线的排前面、离线的沉底,两组内部保持上屏顺序', () => {
+    const groups = [
+      group('dead1', { reachable: false }),
+      group('up1'),
+      group('dead2', { reachable: false }),
+      group('up2'),
+    ]
+    expect(reachableFirst(groups).map((g) => g.serverId)).toEqual(['up1', 'up2', 'dead1', 'dead2'])
+  })
+
+  it('全在线 / 全离线时顺序不动(不为了排序把卡片搅来搅去)', () => {
+    const up = [group('a'), group('b')]
+    expect(reachableFirst(up).map((g) => g.serverId)).toEqual(['a', 'b'])
+    const down = [group('a', { reachable: false }), group('b', { reachable: false })]
+    expect(reachableFirst(down).map((g) => g.serverId)).toEqual(['a', 'b'])
+  })
+
+  it('返回新数组,聚合源不被就地重排', () => {
+    const groups = [group('dead', { reachable: false }), group('up')]
+    const out = reachableFirst(groups)
+    expect(out).not.toBe(groups)
+    expect(groups.map((g) => g.serverId)).toEqual(['dead', 'up'])
+  })
+
+  it('逐台流式的中间态:后到的在线机插到已上屏的离线机前面', () => {
+    const arrived = [group('fast', { reachable: false })]
+    expect(reachableFirst([...arrived, group('slow')]).map((g) => g.serverId)).toEqual(['slow', 'fast'])
   })
 })
 

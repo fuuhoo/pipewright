@@ -9,18 +9,35 @@ import type { ServerContainers } from '../api/containers'
 
 /** 哨兵:不切换、看全部。真实机器 ID 是 UUID,不会撞上这个值。 */
 export const SERVER_ALL = 'all'
+/** 哨兵:只看连得上的那几台(死机在总览里除了占位没有别的作用)。 */
+export const SERVER_USABLE = '~usable'
 
-export type ServerScope = typeof SERVER_ALL | string
+export type ServerScope = typeof SERVER_ALL | typeof SERVER_USABLE | string
 
 /** 每轮聚合都换一批新对象,所以「选中的机器还在不在」得每次现查,不能存副本。 */
 export function resolveServerScope(scope: ServerScope, groups: readonly ServerContainers[]): ServerScope {
-  if (scope === SERVER_ALL) return SERVER_ALL
+  if (scope === SERVER_ALL || scope === SERVER_USABLE) return scope
   return groups.some((g) => g.serverId === scope) ? scope : SERVER_ALL
 }
 
-export function scopedGroups<T extends { serverId: string }>(groups: readonly T[], scope: ServerScope): T[] {
+export function scopedGroups<T extends { serverId: string; reachable: boolean }>(
+  groups: readonly T[],
+  scope: ServerScope,
+): T[] {
   if (scope === SERVER_ALL) return [...groups]
+  if (scope === SERVER_USABLE) return groups.filter((g) => g.reachable)
   return groups.filter((g) => g.serverId === scope)
+}
+
+/**
+ * 在线的排前面、离线的沉底(与服务器状态页同一口径)。两组内部保持上屏顺序,所以逐台流式
+ * 上来的卡不会因为排序而反复换位 —— 只有「可达 / 不可达」这一档决定前后。
+ */
+export function reachableFirst<T extends { reachable: boolean }>(groups: readonly T[]): T[] {
+  const up: T[] = []
+  const down: T[] = []
+  for (const g of groups) (g.reachable ? up : down).push(g)
+  return up.length && down.length ? [...up, ...down] : [...groups]
 }
 
 /** 切换按钮上的状态点:连不上(红)/ 连着但没装 docker(琥珀)/ 可用(绿)。 */

@@ -5,6 +5,8 @@ export default {
     unreachable: '不可达',
     noRuntime: '无容器运行时',
     runningCount: '{running}/{total} 运行',
+    foldPanel: '收起这台服务器',
+    unfoldPanel: '展开这台服务器',
     // tab 标签
     tabContainers: '容器',
     tabImages: '镜像',

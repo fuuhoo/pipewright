@@ -43,7 +43,7 @@ import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { NIcon } from 'naive-ui'
-import { BrandDocker, AlertTriangle } from '@vicons/tabler'
+import { BrandDocker, AlertTriangle, ChevronDown, ChevronRight } from '@vicons/tabler'
 import {
   stateBucket,
   stateMeta,
@@ -67,9 +67,12 @@ const props = defineProps<{
   bulkMode: boolean
   /** 父持有的选择集;key = `${serverId}::${containerName}`。 */
   selectedSet: Set<string>
+  /** 父持有的折叠集(按 serverId):在集合里 = 这台卡片正文收起,只留标题行。 */
+  foldedSet: Set<string>
 }>()
 const emit = defineEmits<{
   (e: 'changed'): void
+  (e: 'toggle-fold'): void
   (e: 'logs', c: ContainerInfo): void
   (e: 'terminal', c: ContainerInfo): void
   (e: 'diagnose', c: ContainerInfo): void
@@ -83,6 +86,10 @@ const { t } = useI18n()
 
 type TabKey = 'containers' | 'images' | 'stacks' | 'volumes' | 'networks' | 'domains'
 const tab = ref<TabKey>('containers')
+
+// 折叠态由页面持有(集合里有这台 = 正文收起),这样页头能一键折叠/展开全部卡片。
+// 卡片 key 是 serverId,轮询只 patch 不重建实例,折叠态因此跨轮询保留。
+const folded = computed(() => props.foldedSet.has(props.group.serverId))
 
 // 运行时显示名:首字母大写(docker → Docker)。
 const runtimeLabel = computed(() =>
@@ -692,7 +699,7 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 </script>
 
 <template>
-  <article class="panel">
+  <article class="panel" :class="{ 'panel--folded': folded }">
     <header class="panel__head">
       <div class="panel__id">
         <h2 class="panel__name">{{ name }}</h2>
@@ -716,6 +723,20 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
         <span v-if="group.reachable && group.runtime" class="panel__count mono">
           {{ t('opsServer.card.runningCount', { running: group.running, total: group.total }) }}
         </span>
+        <button
+          v-if="group.reachable && group.runtime"
+          class="fold"
+          type="button"
+          :aria-expanded="!folded"
+          :aria-label="folded ? t('opsServer.card.unfoldPanel') : t('opsServer.card.foldPanel')"
+          :title="folded ? t('opsServer.card.unfoldPanel') : t('opsServer.card.foldPanel')"
+          @click="emit('toggle-fold')"
+        >
+          <NIcon :size="16">
+            <ChevronRight v-if="folded" />
+            <ChevronDown v-else />
+          </NIcon>
+        </button>
       </div>
     </header>
 
@@ -723,7 +744,8 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
     <p v-if="!group.reachable" class="panel__hint panel__hint--down">⚠ {{ group.error }}</p>
     <p v-else-if="!group.runtime" class="panel__hint">{{ group.error }}</p>
 
-    <template v-else>
+    <!-- 折叠时整块正文(tabs + 各 tab 内容)不渲染,卡片只留标题行 -->
+    <template v-else-if="!folded">
       <!-- 卡片内 tab:容器 / 镜像 -->
       <div class="card-tabs" role="tablist">
         <button class="ctab" :class="{ 'ctab--active': tab === 'containers' }" role="tab" @click="switchTab('containers')">
@@ -1103,6 +1125,28 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
   font-size: var(--text-micro);
   color: var(--color-dim);
   font-variant-numeric: tabular-nums;
+}
+.fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--rounded-sm);
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-dim);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+.fold:hover {
+  color: var(--color-text);
+  border-color: var(--color-text);
+}
+/* 折叠后正文为空,标题下那条分隔线会贴在卡片底边,去掉。 */
+.panel--folded .panel__head {
+  border-bottom: none;
 }
 .rt-badge {
   display: inline-flex;

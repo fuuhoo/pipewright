@@ -68,6 +68,25 @@ export async function getAllContainers(): Promise<ServerContainers[]> {
   return res.items ?? []
 }
 
+/**
+ * 逐台流式取全部服务器的容器:后端采完一台就下发一行 NDJSON,读到一行就回调一次。
+ *
+ * 为什么要它:批量端点要等最慢那台(死机拖满探针超时)才能整屏出结果。resolve 的时机
+ * 是这一轮全部下发完,所以调用方仍可拿它当「一轮结束」。
+ */
+export async function streamAllContainers(
+  onItem: (item: ServerContainers) => void,
+  options?: { signal?: AbortSignal },
+): Promise<void> {
+  await http.getLines(
+    '/api/servers/containers?stream=1',
+    (line) => {
+      onItem(JSON.parse(line) as ServerContainers)
+    },
+    options,
+  )
+}
+
 /** Fetch the container inventory for a single server. */
 export async function getServerContainers(id: string): Promise<ServerContainers> {
   return http.get<ServerContainers>(`/api/servers/${id}/containers`)

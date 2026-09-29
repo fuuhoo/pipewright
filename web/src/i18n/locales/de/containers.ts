@@ -3,6 +3,8 @@ export default {
   subtitle: 'Container und Images pro Host über alle registrierten Server hinweg verwalten',
   countSummary: '· Insgesamt {total} Container · {running} laufen',
   autoRefresh: '· Aktualisiert sich automatisch alle {n} s',
+  updatedAt: '· Aktualisiert {time}',
+  staleError: 'Aktualisierung fehlgeschlagen: {msg} (angezeigt werden die Daten der letzten erfolgreichen Abfrage)',
 
   aiAssistant: '✦ KI-Assistent',
   prune: '🧹 Aufräumen',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: 'Server',
   serverFilterAria: 'Ansicht nach Server wechseln',
   serverAll: 'Alle Server',
+  serverUsable: 'Nur erreichbare',
 
   filterAria: 'Container nach Status filtern',
   filterAll: 'Alle',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: 'Container nach Name / Image suchen',
   searchAria: 'Container nach Name oder Image suchen',
   searchClear: 'Suche löschen',
+  foldAll: 'Alle einklappen',
+  unfoldAll: 'Alle ausklappen',
 
   bulkAria: 'Stapelaktionen',
   bulkSelected: 'Ausgewählt',

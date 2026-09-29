@@ -3,6 +3,8 @@ export default {
   subtitle: '登録済みの全サーバーを横断し、ホストごとにコンテナとイメージを管理',
   countSummary: '· 合計 {total} 個のコンテナ · {running} 起動中',
   autoRefresh: '· {n} 秒ごとに自動更新',
+  updatedAt: '· 更新時刻 {time}',
+  staleError: '今回の更新に失敗しました：{msg}（前回成功時のデータを表示中）',
 
   aiAssistant: '✦ AI アシスタント',
   prune: '🧹 クリーンアップ',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: 'サーバー',
   serverFilterAria: 'この画面に表示するサーバーを切り替える',
   serverAll: '全サーバー',
+  serverUsable: '接続できるサーバーのみ',
 
   filterAria: '状態でコンテナを絞り込み',
   filterAll: 'すべて',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: '名前 / イメージでコンテナを検索',
   searchAria: '名前またはイメージでコンテナを検索',
   searchClear: '検索をクリア',
+  foldAll: 'すべて折りたたむ',
+  unfoldAll: 'すべて展開',
 
   bulkAria: '一括操作',
   bulkSelected: '選択中',

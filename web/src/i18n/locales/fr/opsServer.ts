@@ -4,6 +4,8 @@ export default {
     unreachable: 'Injoignable',
     noRuntime: 'Aucun runtime de conteneur',
     runningCount: '{running}/{total} en cours',
+    foldPanel: 'Réduire ce serveur',
+    unfoldPanel: 'Déployer ce serveur',
     tabContainers: 'Conteneurs',
     tabImages: 'Images',
     tabStacks: 'Stacks',

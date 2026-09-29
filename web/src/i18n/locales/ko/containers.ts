@@ -3,6 +3,8 @@ export default {
   subtitle: '등록된 모든 서버를 가로질러 호스트별로 컨테이너와 이미지를 관리',
   countSummary: '· 총 {total}개 컨테이너 · {running}개 실행 중',
   autoRefresh: '· {n}초마다 자동 새로 고침',
+  updatedAt: '· 업데이트 {time}',
+  staleError: '이번 새로 고침 실패: {msg}(마지막 성공 데이터 표시 중)',
 
   aiAssistant: '✦ AI 어시스턴트',
   prune: '🧹 정리',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: '서버',
   serverFilterAria: '이 화면에 표시할 서버 전환',
   serverAll: '전체 서버',
+  serverUsable: '연결 가능한 서버만',
 
   filterAria: '상태별로 컨테이너 필터링',
   filterAll: '전체',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: '이름 / 이미지로 컨테이너 검색',
   searchAria: '이름 또는 이미지로 컨테이너 검색',
   searchClear: '검색 지우기',
+  foldAll: '모두 접기',
+  unfoldAll: '모두 펼치기',
 
   bulkAria: '일괄 작업',
   bulkSelected: '선택됨',

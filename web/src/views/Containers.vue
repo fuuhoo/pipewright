@@ -7,11 +7,20 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { getAllContainers, type ServerContainers, type ContainerInfo } from '../api/containers'
+import { streamAllContainers, type ServerContainers, type ContainerInfo } from '../api/containers'
 import { listServers, serviceAction, type Server, type ServiceAction } from '../api/servers'
 import { HttpError } from '../api/http'
 import { stateBucket, type StateBucket } from '../lib/containerState'
-import { SERVER_ALL, resolveServerScope, scopedGroups, scopeTone, preferredFirst, type ServerScope } from '../lib/containerScope'
+import {
+  SERVER_ALL,
+  SERVER_USABLE,
+  resolveServerScope,
+  scopedGroups,
+  reachableFirst,
+  scopeTone,
+  preferredFirst,
+  type ServerScope,
+} from '../lib/containerScope'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import AppButton from '../components/ui/AppButton.vue'
@@ -36,29 +45,47 @@ const confirm = useConfirm()
 
 const loadState = ref<LoadState>('idle')
 const loadError = ref('')
+/** 后台刷新失败:旧数据留在屏上,只在标题下补一行说明。 */
+const staleError = ref('')
+/** 上一轮**全部**采完的本地时刻(「更新于 HH:MM:SS」)。 */
+const updatedAt = ref('')
 const groups = ref<ServerContainers[]>([])
+/** serverId → groups 下标(逐台回调要 O(1) 找到那张卡)。 */
+const indexById = new Map<string, number>()
+/** 有一轮取数在飞:轮询与手动刷新都跳过,免得叠请求。 */
+const inFlight = ref(false)
 const serverById = ref<Map<string, Server>>(new Map())
-const refreshing = ref(false)
 
 const POLL_MS = 12_000
 let timer: ReturnType<typeof setInterval> | null = null
 
 // ─── 服务器切换 ───────────────────────────────────────────────────────────────
-// 聚合是一屏摊开所有机器,机器一多就要滚动找,所以给一个「全部 / 只看这台」的范围。
+// 聚合是一屏摊开所有机器,机器一多就要滚动找,所以给一个「全部 / 只看这台 / 仅看可用的」范围。
 // 范围只切展示与统计口径,不改权限:候选永远来自后端已收敛过的聚合结果。
 const serverScope = ref<ServerScope>(SERVER_ALL)
 
+/** 在线的在前、离线的沉底(与服务器状态页同一口径);切换范围不改变这个顺序。 */
+const orderedGroups = computed(() => reachableFirst(groups.value))
 /** 每轮聚合都换一批新对象;选中的机器掉了就自动回落「全部」(按钮高亮与内容始终一致)。 */
-const scope = computed(() => resolveServerScope(serverScope.value, groups.value))
-const scopeGroups = computed(() => scopedGroups(groups.value, scope.value))
+const scope = computed(() => resolveServerScope(serverScope.value, orderedGroups.value))
+const scopeGroups = computed(() => scopedGroups(orderedGroups.value, scope.value))
 /** 一台机时没什么可切的,这一行就不占地方。 */
-const showScopeBar = computed(() => groups.value.length > 1)
+const showScopeBar = computed(() => orderedGroups.value.length > 1)
+/** 有离线机器才值得给「仅看可用的」这一档(否则它跟「全部」是同一屏,纯噪音)。 */
+const hasOffline = computed(() => orderedGroups.value.some((g) => !g.reachable))
+const reachableCount = computed(() => orderedGroups.value.filter((g) => g.reachable).length)
+/** 分母 = 已登记的台数:逐台上屏的中间态不该让「共几台」忽大忽小。 */
+const registeredCount = computed(() => Math.max(serverById.value.size, orderedGroups.value.length))
 
 // ─── 聚合统计(口径 = 当前切换范围)────────────────────────────────────────────
 const totalContainers = computed(() => scopeGroups.value.reduce((n, g) => n + g.total, 0))
 const runningContainers = computed(() => scopeGroups.value.reduce((n, g) => n + g.running, 0))
 const stoppedContainers = computed(() => totalContainers.value - runningContainers.value)
 const coveredServers = computed(() => scopeGroups.value.filter((g) => g.reachable && g.runtime).length)
+/** 范围覆盖的台数:整体范围用登记数当分母(逐台上屏时才有稳定基准)。 */
+const scopeTotal = computed(() =>
+  scope.value === SERVER_ALL || scope.value === SERVER_USABLE ? registeredCount.value : scopeGroups.value.length,
+)
 
 function serverName(id: string): string {
   return serverById.value.get(id)?.name ?? id
@@ -103,6 +130,27 @@ function filterCount(key: StateFilter): number {
 // ─── 文本搜索 ─────────────────────────────────────────────────────────────────
 // 透传给各 ServerCard,与状态筛选叠加(按名字 / 镜像,忽略大小写)。
 const searchText = ref('')
+
+// ─── 卡片折叠 ─────────────────────────────────────────────────────────────────
+// 折叠集由页面持有,卡片只读自己那一项 —— 这样页头才能一键折叠/展开当前范围的全部卡片。
+// 范围外的 id 保留:切回那台时还是折叠着,这正是逐台看时的连续性。
+const folded = ref<Set<string>>(new Set())
+// 只有连得上且有运行时的卡片有正文可折(卡片内那个按钮也是这个条件)。
+const foldableIds = computed(() =>
+  scopeGroups.value.filter((g) => g.reachable && g.runtime).map((g) => g.serverId),
+)
+const allFolded = computed(
+  () => foldableIds.value.length > 0 && foldableIds.value.every((id) => folded.value.has(id)),
+)
+function toggleFold(serverId: string): void {
+  const next = new Set(folded.value)
+  if (next.has(serverId)) next.delete(serverId)
+  else next.add(serverId)
+  folded.value = next
+}
+function foldAll(): void {
+  folded.value = allFolded.value ? new Set() : new Set(foldableIds.value)
+}
 
 // ─── 批量操作 ─────────────────────────────────────────────────────────────────
 // 父统一持有选择集;key = `${serverId}::${containerName}`。ServerCard 上报勾选,父加 serverId。
@@ -243,30 +291,76 @@ function openInspect(serverId: string, c: ContainerInfo): void {
 const showPrune = ref(false)
 
 // ─── 加载 ─────────────────────────────────────────────────────────────────────
+/** 逐台上屏:一台一张卡,按 serverId 就地替换(所以刷新既不增卡也不闪)。 */
+function upsertGroup(item: ServerContainers): void {
+  const at = indexById.get(item.serverId)
+  if (at === undefined) {
+    indexById.set(item.serverId, groups.value.length)
+    groups.value.push(item)
+    return
+  }
+  groups.value[at] = item
+}
+
+/** 本轮之后已不存在的服务器(被删 / 收回可见性)从屏上撤掉。 */
+function retainOnly(keep: Set<string>): void {
+  const next = groups.value.filter((g) => keep.has(g.serverId))
+  indexById.clear()
+  next.forEach((g, i) => indexById.set(g.serverId, i))
+  groups.value = next
+}
+
+function humanizeLoadError(err: unknown): string {
+  if (err instanceof HttpError) {
+    return err.status === 0
+      ? t('containers.errConnect')
+      : (err.apiError?.message ?? t('containers.errLoadStatus', { status: err.status }))
+  }
+  return t('containers.errLoadRetry')
+}
+
+/**
+ * 拉一轮聚合:容器走逐台流式(采完一台就上一张卡),名单并行取。
+ * 刷新是**静默**的 —— 不压暗、不清屏,只有首屏(屏上还没有任何卡)才显示骨架。
+ */
 async function load(): Promise<void> {
+  if (inFlight.value) return
   const firstLoad = groups.value.length === 0
-  loadState.value = 'loading'
-  loadError.value = ''
-  if (!firstLoad) refreshing.value = true
+  if (firstLoad) {
+    loadState.value = 'loading'
+    loadError.value = ''
+  }
+  inFlight.value = true
+  const namesPromise = listServers()
+    .then((servers) => {
+      const m = new Map<string, Server>()
+      for (const s of servers) m.set(s.id, s)
+      serverById.value = m
+      return m
+    })
+    .catch(() => null)
   try {
-    const [servers, items] = await Promise.all([listServers(), getAllContainers()])
-    const m = new Map<string, Server>()
-    for (const s of servers) m.set(s.id, s)
-    serverById.value = m
-    groups.value = items
+    await streamAllContainers(upsertGroup)
+    const names = await namesPromise
+    if (names) retainOnly(new Set(names.keys()))
+    staleError.value = ''
+    updatedAt.value = new Date().toLocaleTimeString()
     loadState.value = 'idle'
   } catch (err) {
-    if (err instanceof HttpError) {
-      loadError.value =
-        err.status === 0
-          ? t('containers.errConnect')
-          : (err.apiError?.message ?? t('containers.errLoadStatus', { status: err.status }))
+    const msg = humanizeLoadError(err)
+    const names = await namesPromise
+    if (groups.value.length === 0) {
+      // 屏上什么都没有(含首屏就失败)才走整页错误态。
+      loadError.value = msg
+      loadState.value = 'error'
     } else {
-      loadError.value = t('containers.errLoadRetry')
+      // 已上屏的卡留着(这一轮可能已换过几张),只补一行「本轮刷新失败」。
+      if (names) retainOnly(new Set(names.keys()))
+      staleError.value = msg
+      loadState.value = 'idle'
     }
-    loadState.value = 'error'
   } finally {
-    refreshing.value = false
+    inFlight.value = false
   }
 }
 
@@ -290,7 +384,9 @@ onUnmounted(() => {
             {{ t('containers.countSummary', { total: totalContainers, running: runningContainers }) }}
           </span>
           <span class="view-sub__count">{{ t('containers.autoRefresh', { n: POLL_MS / 1000 }) }}</span>
+          <span v-if="updatedAt" class="view-sub__count">{{ t('containers.updatedAt', { time: updatedAt }) }}</span>
         </p>
+        <p v-if="staleError" class="view-sub__stale">{{ t('containers.staleError', { msg: staleError }) }}</p>
       </div>
       <div class="header-actions">
         <AppButton variant="ai" @click="showAi = true">{{ t('containers.aiAssistant') }}</AppButton>
@@ -332,7 +428,7 @@ onUnmounted(() => {
     />
 
     <template v-else>
-      <!-- 服务器切换:一台一张卡,机器多了不用滚动找 -->
+      <!-- 服务器切换:一台一张卡,机器多了不用滚动找;在线的排前面、离线的沉底 -->
       <div v-if="showScopeBar" class="scope-bar" role="group" :aria-label="t('containers.serverFilterAria')">
         <span class="scope-bar__label">{{ t('containers.serverFilterLabel') }}</span>
         <button
@@ -342,10 +438,21 @@ onUnmounted(() => {
           @click="serverScope = SERVER_ALL"
         >
           {{ t('containers.serverAll') }}
-          <span class="scope-chip__count">{{ groups.length }}</span>
+          <span class="scope-chip__count">{{ registeredCount }}</span>
+        </button>
+        <!-- 死机摊在总览里除了占位没有别的作用:给一档只看连得上的 -->
+        <button
+          v-if="hasOffline"
+          class="scope-chip"
+          :class="{ 'scope-chip--active': scope === SERVER_USABLE }"
+          :aria-pressed="scope === SERVER_USABLE"
+          @click="serverScope = SERVER_USABLE"
+        >
+          {{ t('containers.serverUsable') }}
+          <span class="scope-chip__count">{{ reachableCount }}</span>
         </button>
         <button
-          v-for="g in groups"
+          v-for="g in orderedGroups"
           :key="g.serverId"
           class="scope-chip"
           :class="{ 'scope-chip--active': scope === g.serverId }"
@@ -374,7 +481,7 @@ onUnmounted(() => {
           <span class="kpi__label">{{ t('containers.kpiStopped') }}</span>
         </div>
         <div class="kpi kpi--hosts">
-          <span class="kpi__num">{{ coveredServers }}<span class="kpi__den">/{{ scopeGroups.length }}</span></span>
+          <span class="kpi__num">{{ coveredServers }}<span class="kpi__den">/{{ scopeTotal }}</span></span>
           <span class="kpi__label">{{ t('containers.kpiHosts') }}</span>
         </div>
       </section>
@@ -394,15 +501,28 @@ onUnmounted(() => {
             <span class="filter-chip__count">{{ filterCount(f.key) }}</span>
           </button>
         </div>
-        <div class="search-box">
-          <input
-            v-model="searchText"
-            type="search"
-            class="search-box__input"
-            :placeholder="t('containers.searchPlaceholder')"
-            :aria-label="t('containers.searchAria')"
-          />
-          <button v-if="searchText" class="search-box__clear" :title="t('containers.searchClear')" @click="searchText = ''">✕</button>
+        <div class="controls-right">
+          <div class="search-box">
+            <input
+              v-model="searchText"
+              type="search"
+              class="search-box__input"
+              :placeholder="t('containers.searchPlaceholder')"
+              :aria-label="t('containers.searchAria')"
+            />
+            <button v-if="searchText" class="search-box__clear" :title="t('containers.searchClear')" @click="searchText = ''">✕</button>
+          </div>
+          <!-- 机器一多,逐台点折叠太累:一档开关按当前范围整体收起/放开 -->
+          <button
+            v-if="foldableIds.length > 1"
+            class="fold-all"
+            type="button"
+            :aria-pressed="allFolded"
+            :title="t(allFolded ? 'containers.unfoldAll' : 'containers.foldAll')"
+            @click="foldAll"
+          >
+            {{ t(allFolded ? 'containers.unfoldAll' : 'containers.foldAll') }}
+          </button>
         </div>
       </div>
 
@@ -426,8 +546,8 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 逐台卡片(卡片内自带 容器/镜像 tab;只渲染切换范围内的机器) -->
-      <section class="cards" :aria-label="t('containers.cardsAria')" :aria-busy="refreshing || undefined">
+      <!-- 逐台卡片(卡片内自带 容器/镜像 tab;只渲染切换范围内的机器)。后台刷新就地换卡,不压暗。 -->
+      <section class="cards" :aria-label="t('containers.cardsAria')">
         <ServerCard
           v-for="g in scopeGroups"
           :key="g.serverId"
@@ -438,6 +558,8 @@ onUnmounted(() => {
           :search="searchText"
           :bulk-mode="bulkMode"
           :selected-set="selected"
+          :folded-set="folded"
+          @toggle-fold="toggleFold(g.serverId)"
           @toggle-select="(name) => toggleSelect(g.serverId, name)"
           @changed="load"
           @logs="(c) => openLogs(g.serverId, c)"
@@ -528,6 +650,12 @@ onUnmounted(() => {
   color: var(--color-faint);
   font-variant-numeric: tabular-nums;
 }
+/* 后台刷新失败:旧数据还在屏上,这里只补一行警示,不清屏、不压暗。 */
+.view-sub__stale {
+  margin: 4px 0 0;
+  font-size: var(--text-label);
+  color: var(--color-warn);
+}
 
 /* 筛选段 + 搜索同一行 */
 .controls-row {
@@ -543,6 +671,30 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* 右侧一组:文本搜索 + 一键折叠 */
+.controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fold-all {
+  flex-shrink: 0;
+  font-size: var(--text-label);
+  font-weight: 600;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+.fold-all:hover {
+  color: var(--color-text);
+  border-color: var(--color-text);
 }
 
 /* 文本搜索 */
@@ -798,15 +950,11 @@ onUnmounted(() => {
   color: var(--color-faint);
 }
 
-/* 卡片列表 */
+/* 卡片列表(刷新不压暗:静默就地替换) */
 .cards {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  transition: opacity var(--duration-fast) var(--ease-out-expo);
-}
-.cards[aria-busy='true'] {
-  opacity: 0.7;
 }
 
 .skeletons {

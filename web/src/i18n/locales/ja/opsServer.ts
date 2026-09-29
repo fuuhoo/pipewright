@@ -4,6 +4,8 @@ export default {
     unreachable: '到達不可',
     noRuntime: 'コンテナランタイムなし',
     runningCount: '{running}/{total} 実行中',
+    foldPanel: 'このサーバーを折りたたむ',
+    unfoldPanel: 'このサーバーを展開する',
     tabContainers: 'コンテナ',
     tabImages: 'イメージ',
     tabStacks: 'Stacks',

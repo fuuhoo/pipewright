@@ -3,6 +3,8 @@ export default {
   subtitle: '跨所有已登记服务器,按主机管理容器与镜像',
   countSummary: '· 共 {total} 个容器 · {running} 运行中',
   autoRefresh: '· 每 {n} 秒自动刷新',
+  updatedAt: '· 更新于 {time}',
+  staleError: '本轮刷新失败:{msg}(屏上仍是上一次成功采集的结果)',
 
   aiAssistant: '✦ AI 助手',
   prune: '🧹 清理',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: '服务器',
   serverFilterAria: '按服务器切换这一屏看哪台',
   serverAll: '全部服务器',
+  serverUsable: '仅看可用的',
 
   filterAria: '按状态筛选容器',
   filterAll: '全部',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: '按名字 / 镜像搜索容器',
   searchAria: '按名字或镜像搜索容器',
   searchClear: '清除搜索',
+  foldAll: '全部折叠',
+  unfoldAll: '全部展开',
 
   bulkAria: '批量操作',
   bulkSelected: '已选',

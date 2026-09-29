@@ -3,6 +3,8 @@ export default {
   subtitle: 'Gérez les conteneurs et les images par hôte sur tous les serveurs enregistrés',
   countSummary: '· {total} conteneurs au total · {running} en cours d’exécution',
   autoRefresh: '· Actualisation automatique toutes les {n} s',
+  updatedAt: '· Mis à jour {time}',
+  staleError: 'Échec de cette actualisation : {msg} (données de la dernière collecte réussie)',
 
   aiAssistant: '✦ Assistant IA',
   prune: '🧹 Nettoyer',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: 'Serveur',
   serverFilterAria: 'Choisir le serveur affiché',
   serverAll: 'Tous les serveurs',
+  serverUsable: 'Serveurs joignables',
 
   filterAria: 'Filtrer les conteneurs par état',
   filterAll: 'Tous',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: 'Rechercher des conteneurs par nom / image',
   searchAria: 'Rechercher des conteneurs par nom ou image',
   searchClear: 'Effacer la recherche',
+  foldAll: 'Tout réduire',
+  unfoldAll: 'Tout déployer',
 
   bulkAria: 'Actions par lot',
   bulkSelected: 'Sélectionnés',

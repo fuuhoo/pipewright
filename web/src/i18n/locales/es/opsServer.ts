@@ -4,6 +4,8 @@ export default {
     unreachable: 'Inaccesible',
     noRuntime: 'Sin entorno de contenedores',
     runningCount: '{running}/{total} en ejecución',
+    foldPanel: 'Contraer este servidor',
+    unfoldPanel: 'Expandir este servidor',
     tabContainers: 'Contenedores',
     tabImages: 'Imágenes',
     tabStacks: 'Stacks',

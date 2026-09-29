@@ -4,6 +4,8 @@ export default {
     unreachable: '연결 불가',
     noRuntime: '컨테이너 런타임 없음',
     runningCount: '{running}/{total} 실행 중',
+    foldPanel: '이 서버 접기',
+    unfoldPanel: '이 서버 펼치기',
     tabContainers: '컨테이너',
     tabImages: '이미지',
     tabStacks: 'Stacks',

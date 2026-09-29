@@ -3,6 +3,8 @@ export default {
   subtitle: '跨所有已登記伺服器,按主機管理容器與映像',
   countSummary: '· 共 {total} 個容器 · {running} 執行中',
   autoRefresh: '· 每 {n} 秒自動重新整理',
+  updatedAt: '· 更新於 {time}',
+  staleError: '本輪重新整理失敗:{msg}(螢幕上仍是上一次成功採集的結果)',
 
   aiAssistant: '✦ AI 助手',
   prune: '🧹 清理',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: '伺服器',
   serverFilterAria: '依伺服器切換這一屏看哪台',
   serverAll: '全部伺服器',
+  serverUsable: '僅看可用的',
 
   filterAria: '依狀態篩選容器',
   filterAll: '全部',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: '依名稱 / 映像搜尋容器',
   searchAria: '依名稱或映像搜尋容器',
   searchClear: '清除搜尋',
+  foldAll: '全部摺疊',
+  unfoldAll: '全部展開',
 
   bulkAria: '批次操作',
   bulkSelected: '已選',

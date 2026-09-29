@@ -4,6 +4,8 @@ export default {
     unreachable: 'Unreachable',
     noRuntime: 'No container runtime',
     runningCount: '{running}/{total} running',
+    foldPanel: 'Collapse this server',
+    unfoldPanel: 'Expand this server',
     tabContainers: 'Containers',
     tabImages: 'Images',
     tabStacks: 'Stacks',

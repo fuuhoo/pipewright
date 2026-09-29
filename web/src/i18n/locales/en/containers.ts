@@ -3,6 +3,8 @@ export default {
   subtitle: 'Manage containers and images per host across all registered servers',
   countSummary: '· {total} containers total · {running} running',
   autoRefresh: '· Auto-refreshes every {n}s',
+  updatedAt: '· Updated {time}',
+  staleError: 'This refresh failed: {msg} (the screen still shows the last successful collection)',
 
   aiAssistant: '✦ AI Assistant',
   prune: '🧹 Prune',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: 'Server',
   serverFilterAria: 'Switch which server this page shows',
   serverAll: 'All servers',
+  serverUsable: 'Reachable only',
 
   filterAria: 'Filter containers by state',
   filterAll: 'All',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: 'Search containers by name / image',
   searchAria: 'Search containers by name or image',
   searchClear: 'Clear search',
+  foldAll: 'Collapse all',
+  unfoldAll: 'Expand all',
 
   bulkAria: 'Bulk actions',
   bulkSelected: 'Selected',

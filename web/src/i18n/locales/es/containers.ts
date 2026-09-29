@@ -3,6 +3,8 @@ export default {
   subtitle: 'Gestiona contenedores e imágenes por host en todos los servidores registrados',
   countSummary: '· {total} contenedores en total · {running} en ejecución',
   autoRefresh: '· Se actualiza cada {n} s',
+  updatedAt: '· Actualizado {time}',
+  staleError: 'Falló esta actualización: {msg} (se muestran los datos de la última consulta correcta)',
 
   aiAssistant: '✦ Asistente de IA',
   prune: '🧹 Limpiar',
@@ -28,6 +30,7 @@ export default {
   serverFilterLabel: 'Servidor',
   serverFilterAria: 'Cambiar qué servidor muestra esta vista',
   serverAll: 'Todos los servidores',
+  serverUsable: 'Solo alcanzables',
 
   filterAria: 'Filtrar contenedores por estado',
   filterAll: 'Todos',
@@ -38,6 +41,8 @@ export default {
   searchPlaceholder: 'Buscar contenedores por nombre / imagen',
   searchAria: 'Buscar contenedores por nombre o imagen',
   searchClear: 'Borrar búsqueda',
+  foldAll: 'Contraer todo',
+  unfoldAll: 'Expandir todo',
 
   bulkAria: 'Acciones por lote',
   bulkSelected: 'Seleccionados',

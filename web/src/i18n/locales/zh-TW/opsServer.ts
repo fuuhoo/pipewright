@@ -4,6 +4,8 @@ export default {
     unreachable: '無法連線',
     noRuntime: '無容器執行環境',
     runningCount: '{running}/{total} 執行中',
+    foldPanel: '收起這台伺服器',
+    unfoldPanel: '展開這台伺服器',
     tabContainers: '容器',
     tabImages: '映像',
     tabStacks: 'Stacks',
