@@ -30,6 +30,7 @@ export default {
     expandTree: 'Expand directory tree',
     collapseTree: 'Collapse directory tree',
     treeAria: 'Directory tree',
+    treeResize: 'Drag to resize the directory tree (or use the arrow keys)',
     treeExpand: 'Expand this folder',
     treeCollapse: 'Collapse this folder',
 

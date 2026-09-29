@@ -30,6 +30,7 @@ export default {
     expandTree: 'Afficher l’arborescence',
     collapseTree: 'Masquer l’arborescence',
     treeAria: 'Arborescence',
+    treeResize: 'Faire glisser pour ajuster la largeur de l’arborescence (ou les flèches)',
     treeExpand: 'Développer ce dossier',
     treeCollapse: 'Réduire ce dossier',
 

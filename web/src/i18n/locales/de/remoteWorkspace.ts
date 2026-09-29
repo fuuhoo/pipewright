@@ -30,6 +30,7 @@ export default {
     expandTree: 'Verzeichnisbaum einblenden',
     collapseTree: 'Verzeichnisbaum ausblenden',
     treeAria: 'Verzeichnisbaum',
+    treeResize: 'Breite des Verzeichnisbaums ziehen (auch mit den Pfeiltasten)',
     treeExpand: 'Diesen Ordner öffnen',
     treeCollapse: 'Diesen Ordner schließen',
 

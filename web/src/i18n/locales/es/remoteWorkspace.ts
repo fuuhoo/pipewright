@@ -30,6 +30,7 @@ export default {
     expandTree: 'Mostrar el árbol de directorios',
     collapseTree: 'Ocultar el árbol de directorios',
     treeAria: 'Árbol de directorios',
+    treeResize: 'Arrastra para ajustar el ancho del árbol (o usa las flechas)',
     treeExpand: 'Expandir esta carpeta',
     treeCollapse: 'Contraer esta carpeta',
 

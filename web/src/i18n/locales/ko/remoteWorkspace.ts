@@ -30,6 +30,7 @@ export default {
     expandTree: '디렉터리 트리 펼치기',
     collapseTree: '디렉터리 트리 접기',
     treeAria: '디렉터리 트리',
+    treeResize: '드래그로 트리 너비 조절(방향키로도 조절 가능)',
     treeExpand: '이 폴더 펼침',
     treeCollapse: '이 폴더 접음',
 

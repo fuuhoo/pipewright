@@ -24,7 +24,7 @@
   请求,所以它是懒的 —— 导航到哪一层才展开到哪一层。
 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   fsDownloadUrl,
@@ -179,6 +179,100 @@ function makeNode(name: string, path: string): TreeNode {
 
 const treeRoot = ref<TreeNode>(makeNode(ROOT, ROOT))
 const treeCollapsed = ref(false)
+
+// ─── 树宽可拖 ───────────────────────────────────────────────────────────────────
+// 固定 190px 在目录名长的机器上会把名字截成猜不出的一截,而表格那侧也要留够列宽。
+// 宽度存 localStorage:这台机日志目录深、那台机部署目录名长,调过一次就该记住
+// (和远程弹窗那条上下分隔条同一个道理)。
+const TREE_W_KEY = 'pw-remote-tree-w'
+const TREE_W_DEFAULT = 190
+const TREE_W_MIN = 140
+const TREE_W_MAX = 520
+/** 右列至少留这么多:再窄整列文件名都要横向滚,那就别给拖。 */
+const LIST_W_MIN = 260
+
+const cols = ref<HTMLElement | null>(null)
+const treeWidth = ref(readTreeWidth())
+const treeDragging = ref(false)
+const treePaneStyle = computed(() => `0 0 ${treeWidth.value}px`)
+
+function readTreeWidth(): number {
+  const raw = Number(localStorage.getItem(TREE_W_KEY))
+  return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : TREE_W_DEFAULT
+}
+
+/** 上界同时受绝对上限和「当前这栏还剩多少给列表」约束。 */
+function clampTreeWidth(w: number, avail: number): number {
+  const hi = Math.max(TREE_W_MIN, Math.min(TREE_W_MAX, avail - LIST_W_MIN))
+  return Math.round(Math.min(hi, Math.max(TREE_W_MIN, w)))
+}
+
+function availWidth(): number {
+  const rect = cols.value?.getBoundingClientRect()
+  return rect && rect.width > 0 ? rect.width : Number.POSITIVE_INFINITY
+}
+
+let dragStartX = 0
+let dragStartW = 0
+
+function onTreeDragStart(e: PointerEvent): void {
+  if (e.button !== 0) return
+  treeDragging.value = true
+  dragStartX = e.clientX
+  dragStartW = treeWidth.value
+  e.preventDefault()
+  window.addEventListener('pointermove', onTreeDragMove)
+  window.addEventListener('pointerup', onTreeDragEnd)
+}
+
+function onTreeDragMove(e: PointerEvent): void {
+  treeWidth.value = clampTreeWidth(dragStartW + (e.clientX - dragStartX), availWidth())
+}
+
+function saveTreeWidth(): void {
+  try {
+    localStorage.setItem(TREE_W_KEY, String(treeWidth.value))
+  } catch {
+    /* 隐私模式 / 配额:这次拖出来的宽度只活在当前会话 */
+  }
+}
+
+function onTreeDragEnd(): void {
+  treeDragging.value = false
+  window.removeEventListener('pointermove', onTreeDragMove)
+  window.removeEventListener('pointerup', onTreeDragEnd)
+  saveTreeWidth()
+}
+
+// 键盘也该能调:鼠标不便用的场景不该被一条拖不动的分隔条锁死。
+function onTreeDragKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  e.preventDefault()
+  treeWidth.value = clampTreeWidth(treeWidth.value + (e.key === 'ArrowLeft' ? -16 : 16), availWidth())
+  saveTreeWidth()
+}
+
+// 弹窗退出全屏 / 窗口变窄时,可用宽度会小于已存的树宽:把它夹回去,别把列表挤没。
+// ResizeObserver 只观察 .fs-cols 自身宽度(它由外层定,不随树宽变),不会自激循环。
+function clampTreeToBox(): void {
+  const next = clampTreeWidth(treeWidth.value, availWidth())
+  if (next !== treeWidth.value) treeWidth.value = next
+}
+
+let colsRo: ResizeObserver | null = null
+
+onMounted(() => {
+  if (!cols.value || typeof ResizeObserver === 'undefined') return
+  colsRo = new ResizeObserver(clampTreeToBox)
+  colsRo.observe(cols.value)
+})
+
+onBeforeUnmount(() => {
+  colsRo?.disconnect()
+  colsRo = null
+  window.removeEventListener('pointermove', onTreeDragMove)
+  window.removeEventListener('pointerup', onTreeDragEnd)
+})
 
 /** 深度优先摊平成可渲染行:折叠的节点连子树一起跳过。 */
 const treeRows = computed(() => {
@@ -706,9 +800,14 @@ onMounted(() => {
     <p v-if="unsupported" class="fs-note">{{ t('remoteWorkspace.panel.unsupported') }}</p>
     <p v-else-if="errorText && !editing" class="fs-note fs-note--err">{{ errorText }}</p>
 
-    <div class="fs-cols">
+    <div ref="cols" class="fs-cols" :class="{ 'fs-cols--dragging': treeDragging }">
       <!-- 目录树:只列目录、点开哪层加载哪层 -->
-      <aside v-if="!unsupported && !treeCollapsed" class="fs-tree" :aria-label="t('remoteWorkspace.panel.treeAria')">
+      <aside
+        v-if="!unsupported && !treeCollapsed"
+        class="fs-tree"
+        :style="{ flex: treePaneStyle }"
+        :aria-label="t('remoteWorkspace.panel.treeAria')"
+      >
         <div v-for="row in treeRows" :key="row.node.path" class="fs-tree__row" :style="{ '--depth': String(row.depth) }">
           <button
             class="fs-tree__twisty"
@@ -729,6 +828,21 @@ onMounted(() => {
           </button>
         </div>
       </aside>
+
+      <!-- 树宽分隔条:跟弹窗那条上下分隔条同一套交互(鼠标拖 + 方向键微调)。 -->
+      <div
+        v-if="!unsupported && !treeCollapsed"
+        class="fs-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        tabindex="0"
+        :aria-label="t('remoteWorkspace.panel.treeResize')"
+        :title="t('remoteWorkspace.panel.treeResize')"
+        @pointerdown="onTreeDragStart"
+        @keydown="onTreeDragKeydown"
+      >
+        <span class="fs-resizer__grip" aria-hidden="true" />
+      </div>
 
       <!-- 内联编辑层 -->
       <section v-if="editing" class="fs-editor">
@@ -1066,13 +1180,47 @@ onMounted(() => {
 .fs-crumbs__sep {
   color: var(--color-faint);
 }
-/* 两栏:左目录树,右列表/编辑器。树固定宽度,列表吃掉余下空间。 */
+/* 两栏:左目录树(宽度可拖,拖完记住),右列表/编辑器吃掉余下空间。 */
 .fs-cols {
   display: flex;
   align-items: stretch;
   gap: 8px;
   flex: 1 1 auto;
   min-height: 0;
+}
+/* 拖动时整块不许选中文本:指针快速扫过目录名会糊出一片高亮。 */
+.fs-cols--dragging {
+  user-select: none;
+}
+/* 分隔条:视觉上只有一根发丝线,命中区靠负边距吃掉两侧栏间距撑到 17px ——
+   1px 的线手指拖不中。 */
+.fs-resizer {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 17px;
+  margin: 0 -8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+}
+.fs-resizer__grip {
+  width: 1px;
+  height: 26px;
+  border-radius: 1px;
+  background: var(--color-line-strong, #cbd5e1);
+  opacity: 0.6;
+  transition: height 0.12s ease, opacity 0.12s ease;
+}
+.fs-resizer:hover .fs-resizer__grip,
+.fs-resizer:focus-visible .fs-resizer__grip {
+  height: 100%;
+  opacity: 1;
+  background: var(--color-primary, var(--color-accent));
+}
+.fs-resizer:focus-visible {
+  outline: 2px solid var(--color-accent, #7fe3f0);
+  outline-offset: -2px;
 }
 .fs-tree {
   flex: 0 0 190px;

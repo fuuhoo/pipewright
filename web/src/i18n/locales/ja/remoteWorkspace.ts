@@ -30,6 +30,7 @@ export default {
     expandTree: 'ディレクトリツリーを表示',
     collapseTree: 'ディレクトリツリーを隠す',
     treeAria: 'ディレクトリツリー',
+    treeResize: 'ドラッグでツリーの幅を調整(矢印キーでも調整可)',
     treeExpand: 'このフォルダを開く',
     treeCollapse: 'このフォルダを閉じる',
 

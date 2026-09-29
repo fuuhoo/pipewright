@@ -30,6 +30,7 @@ export default {
     expandTree: '展開目錄樹',
     collapseTree: '收起目錄樹',
     treeAria: '目錄樹',
+    treeResize: '拖曳調整目錄樹寬度(或按左右方向鍵)',
     treeExpand: '展開該目錄',
     treeCollapse: '收起該目錄',
 

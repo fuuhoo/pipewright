@@ -30,6 +30,7 @@ export default {
     expandTree: '展开目录树',
     collapseTree: '收起目录树',
     treeAria: '目录树',
+    treeResize: '拖动调整目录树宽度(或按左右方向键)',
     treeExpand: '展开该目录',
     treeCollapse: '收起该目录',
 
