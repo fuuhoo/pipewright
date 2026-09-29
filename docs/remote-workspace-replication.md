@@ -44,9 +44,10 @@
 | HTTP | `internal/httpapi/server_fs.go` | 列表 / 读正文 / 写正文 / 下载 / `op(mkdir·remove·rename)` |
 | HTTP | `internal/httpapi/fs_upload.go` | 会话式分块上传（begin/chunk/status/complete/abort） |
 | HTTP | `internal/httpapi/fs_zip.go` | 目录流式打包 + "静默即断"看门狗 |
-| HTTP | `internal/httpapi/container_terminal.go:176-264` | 主机 shell 终端 WS（`makeServerTerminalHandler`） |
-| HTTP | `internal/httpapi/access_guard.go:128` | `requireTerminalOperate`（GET 也按"操作"档判） |
-| 路由 | `internal/httpapi/router.go:902,913-921` | 挂上述端点 |
+| HTTP | `internal/httpapi/container_terminal.go:214-269` | 主机 shell 终端 WS（`makeServerTerminalHandler`） |
+| HTTP | `internal/httpapi/terminal_recorder.go` | 命令级留痕：提示符钩子脚本 + OSC 5522 解析 + 会话审计（`server_command`） |
+| HTTP | `internal/httpapi/access_guard.go:131` | `requireTerminalOperate`（GET 也按"操作"档判） |
+| 路由 | `internal/httpapi/router.go:919-943` | 挂上述端点 |
 
 ### 前端（Vue 3 + TS）
 
@@ -54,7 +55,7 @@
 |---|---|---|
 | 接口层 | `web/src/api/serverFs.ts` | 每个端点一个函数；**逐块上传用 XHR 不用 fetch** |
 | 接口层 | `web/src/api/servers.ts:485-540` | `openServerTerminal` + 共用 WS 泵（`openTerminalWS`） |
-| 纯逻辑 | `web/src/lib/serverFs.ts` | 路径/排序/字节/时间/权限串/`shellQuote`/`cdCommand`/OSC7/注入钩子脚本 |
+| 纯逻辑 | `web/src/lib/serverFs.ts` | 路径/排序/字节/时间/权限串/`shellQuote`/`cdCommand`/OSC7 解析 |
 | 纯逻辑 | `web/src/lib/fsUpload.ts` | **上传会话驱动器**：切块、并发、退避、续传、取消、重试 |
 | 纯逻辑 | `web/src/lib/fsTransfers.ts` | 传输记录行折算 + 会话内（内存）存储 |
 | 组件 | `web/src/components/ops/RemoteWorkspaceModal.vue` | 外壳：布局、上下分隔条、全屏、Esc、双向联动接线 |
@@ -262,7 +263,7 @@ sftp-server 上 `SSH_FXP_RENAME` 对已存在目标直接回 `SSH_FX_FAILURE` �
 
 ## 5. 终端 WebSocket（主机 shell）
 
-`GET /api/servers/{id}/terminal?shell=&locale=`（`container_terminal.go:202-264`）。
+`GET /api/servers/{id}/terminal?shell=&locale=`（`container_terminal.go:214-269`）。
 **这是全平台唯一的 WS 升级点**，其余实时流都走 SSE —— 复刻时保持这个约束，
 WS 只服务交互式终端。
 
@@ -271,18 +272,19 @@ WS 只服务交互式终端。
 - 升级是 GET，先过会话鉴权（未登录 → 401，不会升级），再过 `requireTerminalOperate`
   （终端 = 在目标机跑任意命令，按**操作**档，不是查看档）。
 - **同源校验代替 CSRF**：GET 豁免 CSRF，因此以 `OriginPatterns: [r.Host]` 拒绝跨站 Origin，防跨站 WS 劫持
-  （`originPatterns`，`container_terminal.go:376-384`）。
+  （`originPatterns`，`container_terminal.go:387-393`）。
 - `shell` 走**枚举白名单** `allowedShells`（`/bin/sh|/bin/bash|/bin/ash|/bin/zsh|/usr/bin/{sh,bash,zsh}|sh|bash`）；
   不在表内 → 400 `invalid_shell`（升级前用普通 HTTP 状态码拒绝）。
 - **命令 array 化**：`cmd = []string{shell}`，绝不拼 shell 字符串。
 - 语言：浏览器不能给 WS 升级请求设自定义头，所以前端用 `?locale=` 带；服务端
   回退 `Accept-Language` → 默认语言（`terminalLocale`）。
-- 握手成功（PTY 已建立）后写审计 `server_terminal {shell, target:"host"}`；
-  **自动模式审计里如实记 `"auto"`**，别记成 `/bin/sh` 骗过后面的追责（`container_terminal.go:158-162`）。
+- 握手成功（PTY 已建立）后写审计 `server_terminal {shell, kind:"host", op:"start"}`；
+  **自动模式审计里如实记 `"auto"`**，别记成 `/bin/sh` 骗过后面的追责（`container_terminal.go:247-251` + `259-261`）。
+  这场会话里每执行掉一条命令再补一行 `server_command`，收尾补一条 `op:"end"` 汇总 —— 细节见 §8.4。
 
 ### 5.2 未指定 shell 时"在远端现挑"
 
-`autoHostShellArgv()`（`container_terminal.go:195-200`）—— 整段是**常量脚本**，候选路径写死、
+`autoHostShellArgv()`（`container_terminal.go:200-205`）—— 整段是**常量脚本**，候选路径写死、
 不含任何用户输入、也不含单引号，因此过 `quoteArgs` 后仍是一个 argv：
 
 ```sh
@@ -292,7 +294,8 @@ WS 只服务交互式终端。
 ```
 
 三个要点：
-1. 优先 bash/zsh —— **只有这两个有提示符钩子**，上下联动与补全靠它们。
+1. 优先 bash/zsh —— **只有这两个有提示符钩子**，上下联动与补全靠它们；其余 shell 一条命令也报不上来
+   （见 §8.4，审计里以 `hook=silent` 如实留痕）。
 2. 起手解释器是 `/bin/sh`：它比 bash 普遍得多（Alpine 上就是 ash），不引入新的前置要求。
 3. 用 `exec` 起 shell：PTY 的前台进程就是 shell 本身，退出即会话结束，中间不剩一层 sh。
 
@@ -307,7 +310,7 @@ WS 只服务交互式终端。
 | 浏览器 → 服务端 | 文本帧 | **resize 控制帧**：`{"type":"resize","cols":N,"rows":M}` |
 | 服务端 → 浏览器 | 二进制帧 | PTY 输出，按 32 KiB 块（`ptyReadChunk`）转发 |
 
-- `parseResize`（`container_terminal.go:329-343`）：必须以 `{` 起头且 `type=="resize"` 才算控制帧，
+- `parseResize`（`container_terminal.go:338-352`）：必须以 `{` 起头且 `type=="resize"` 才算控制帧，
   否则当普通输入 —— 这个"快速短路 + 宽容失败"的顺序别改，不然用户敲 `{` 会被吞。
 - 双向泵 `pumpTerminal`：任一方向出错/结束就 `cancel`，解除另一方向的阻塞读/写；
   `defer` 关 WS + 关会话（不泄漏 goroutine）。远端异常中止以 close 帧人读告知（`session ended`），
@@ -570,17 +573,41 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 面板 → 终端:  点目录/面包屑/手填路径 → emit('cd') → 往 PTY 打 cd '<转义后的路径>'\r
 ```
 
-- 注入脚本在**连接成功那一刻**发（`onOpen`），并且"先让 shell 装上钩子，再清一次行"由
-  `TerminalPane` 的 `inst.reset()` 在 connect 前完成，免得注入回显留在提示符前。
-- 脚本正文（`lib/serverFs.ts:168-174`）：
+- 钩子**由服务端注入**（`internal/httpapi/terminal_recorder.go` 的 `commandHookScript`，在 SSH 会话
+  建好之后、开始双向泵之前往 PTY stdin 写那一行）。前端不参与：谁连上来都同一份钩子，也不会
+  因为前端漏发就录不到。（早期版本是前端 `onOpen` 里 `send(cwdReportScript())`，注入脚本还散在
+  `lib/serverFs.ts` 里 —— 移回服务端后这两处都删了。）
+- 一次注入干两件事：① OSC 7 报 cwd（文件面板联动）；② 私有 OSC 5522 报
+  「刚才那条命令 / 当时的目录 / 退出码 / 当时生效的账号」，服务端在输出流上顺路解出来落审计。
+  字节**只读不改写**，转给前端的流一个不动。
+- 脚本正文的形状（细节见该文件的注释）：
 
   ```sh
-  if [ -n "$BASH_VERSION" ]; then export PROMPT_COMMAND='printf "\033]7;file://%s%s\007" "$HOSTNAME" "$PWD"';
-  elif [ -n "$ZSH_VERSION" ]; then precmd() { printf "\033]7;file://%s%s\007" "$HOSTNAME" "$PWD"; }; fi\r
+  __pw_cmd(){ … }; __pw_report(){ local e=$? c u; c=$(__pw_cmd); …;
+    printf '\033]7;file://%s%s\007' "${HOSTNAME:-local}" "$PWD";
+    printf '\033]5522;%s\007' "$(printf '%s\037%s\037%s\037%s' "$u" "$PWD" "$c" "$e" | base64 | tr -d '\n')";
+    [ -n "${__pw_prev:-}" ] && eval "$__pw_prev"; return $e; };
+  PROMPT_COMMAND=__pw_report   # bash；zsh 改成 precmd(){ __pw_report; }
   ```
 
-  **`PROMPT_COMMAND` 的值必须单引号包住**：双引号会在赋值那一刻就把 `$PWD` 展开成登录目录，
-  之后每次上报的都是同一个旧路径，面板再也跟不上终端。（这条是踩出来的。）
+  踩过的四条，缺一条钩子就静默不工作：
+  1. **整段是一行，且以真 CR(0x0D) 结尾**：PTY 是行编辑，写成字面 `\r` 的话 shell 收到的是
+     普通字符，这行永远不提交，钩子装不上还看不出报错。
+  2. `PROMPT_COMMAND` 赋的是**函数名**，值里不留 `$PWD` —— 内联表达式的坑还在（双引号会在赋值
+     那一刻展开，之后每次报的都是登录目录），换成函数名等于把求值推到每次提示符。
+  3. bash 分支先把原 `PROMPT_COMMAND` 存进 `__pw_prev` 再在钩子尾部 `eval` 回去，并 `return $e`
+     原样交回上一条的退出码 —— 直接覆盖会静默废掉用户自己的提示符钩子（macOS bash 3.2 实测）。
+  4. **整段绝不能出现裸 `!`**：交互式 zsh 会对它做历史展开，整行注入直接 `event not found` 而
+     不执行，钩子于是静默失效。去掉 `history` 行首编号用 `sed`，不是 `${h%%[![:space:]]*}`。
+- 「刚执行的那条」按 shell 分开取（pty 实测，别想当然）：bash 3.2 在 `PROMPT_COMMAND` 里
+  `fc -ln -1` 拿到的是**上上一条**（事件号已经往前走），`history 1` 才对；zsh 反过来 ——
+  `fc -ln -1` 正是刚跑完那条，而它的 `history` 是 `fc -l` 的别名。`HISTTIMEFORMAT` 要在子 shell
+  里清掉，否则用户设了它时首行是 `#时间戳`。
+- 载荷走 **base64**：命令行可能是任意 UTF-8（中文路径很常见），而 base64 字母表不含
+  ESC/BEL/US，框架字符绝不会被内容伪造。分隔符用 `\037`(US)。
+- 已知边界（都写在审计里，不假装全知）：只有 bash/zsh 有提示符钩子，dash/ash 一条都报不上来，
+  会话结束的汇总行记 `hook=silent`；用户 `unset PROMPT_COMMAND` / `set +o history` 可以回避回报；
+  远端把命令排除在历史之外（`HISTCONTROL=ignorespace`/`HISTIGNORE`）时报上来的可能是上一条。
 - 解析端：`parser.registerOscHandler(7, …)`，`pathFromOsc7` 容忍 `OSC 7 ; file://host/path` 与
   `file://host/path` 两种形状，取 `file://` 之后第一个 `/` 起的路径并 `decodeURIComponent`
   （**解失败就用原文**，不让一个坏转义把整条联动打死）；handler 返回 `true` = 已消费，
@@ -595,7 +622,8 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 - `cdCommand` 用 **`\r` 而不是 `\n`**（PTY 行编辑认 CR 回车）；路径经 `shellQuote`
   （整串包进单引号，内部单引号换成 `'\''`）—— 面板里点的是远端给的字符串，里面什么都可能有一一
   不转义就是一个命令注入点。
-- 换 shell（下拉）时整条重连，钩子随之重注。
+- 换 shell（下拉）时整条重连，服务端随之重注钩子。注入失败不致命：会话照常能用，只是汇总行
+  记 `hook=silent`（写日志告警，不把终端换成报错页）。
 
 ---
 
@@ -609,12 +637,19 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
    —— 但**上传的相对落点必须消毒**（§4.6），因为那批请求不允许"任意路径"这层含义。
 3. **命令一律 array 化 + 逐参数转义**，shell 与容器 ID 走白名单；WS 用同源校验代替 CSRF。
 4. **凭据即用即弃**，绝不进 WS 帧/日志/审计；错误响应只给人读文案，不带远端 stderr 原文与栈。
-5. **审计只记动作/路径/字节数，绝不记正文**（`server_fs.go:286-289`）；上传逐块不记，逐文件记。
+5. **文件类审计只记动作/路径/字节数，绝不记正文**（`server_fs.go:283-288`）；上传逐块不记，逐文件记。
    动作名：`server_fs`（op 在 detail 里：save/upload/upload_abort/mkdir/remove/rename/download/download_zip）、
-   `server_terminal`、`container_terminal`。
-6. **不给递归删除**：能力层只删空目录（409），界面因此也不放按钮。
-7. **下载文件名过消毒**再进 `Content-Disposition`（响应头注入面）。
-8. 隐藏半成品用点前缀临时名，用户列目录看不见、也手抖删不到；覆盖写/落地都走"临时名 + 原子改名"。
+   `server_terminal`、`container_terminal`、`server_command`。
+   —— 分界线是"**正文**"而不是"字符串"：文件正文可能是密钥、配置或业务数据，一律不进审计；
+   而**命令行本身就是终端审计的对象**，它记的是"执行掉了什么"，与文件正文是两类东西（§8.4）。
+6. **终端记的是 shell 报上来的那条命令，不是用户敲进 WS 的字节**。理由：敲进的字节里混着口令
+   （sudo/ssh/passwd 的交互输入走同一条通道），录下来等于把手输口令写进 append-only 审计表；
+   而 `mask.Masker` 只替换登记过的密钥值，猜不到用户当场输了什么。
+   回报里带的 `cwd/exit/user` 是白送的上下文；`actor`（平台登录用户）与 `loginUser`（登记的 SSH 用户）
+   与 `user`（当时生效的 OS 账号）三个身份各记各的，`su` / 进容器之后也一眼分得清是谁做的。
+7. **不给递归删除**：能力层只删空目录（409），界面因此也不放按钮。
+8. **下载文件名过消毒**再进 `Content-Disposition`（响应头注入面）。
+9. 隐藏半成品用点前缀临时名，用户列目录看不见、也手抖删不到；覆盖写/落地都走"临时名 + 原子改名"。
 
 ---
 
@@ -635,6 +670,10 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 | 后端 | `fsZipMaxEntries / fsZipMaxDepth / zipCopyBuf` | 20000 / 64 / 256 KiB |
 | 后端 | `fsChunkMaxBytes / fsUploadMaxFiles / fsUploadMaxBatches / fsUploadIdleTTL / fsUploadMaxDepth` | 64 MiB / 5000 / 64 / 30min / 32 |
 | 后端 | `ptyReadChunk / wsReadLimit / close reason 截断` | 32 KiB / 1 MiB / 120 字节 |
+| 后端 | OSC 号 | cwd 用既有的 `OSC 7`；命令回报用私有 `OSC 5522`（不撞任何既有约定，前端 xterm 遇到不认识的就丢） |
+| 后端 | `cmdPayloadMax / cmdTextMax / cmdPerSessionMax` | 8 KiB / 1000 字节（截断打 `truncated`）/ 2000 条·场 |
+| 后端 | `cmdFieldSep / cmdSentinel` | `\x1f`(US，base64 前分隔) / `__pw_report`（钩子自报那一行，吞掉不入库） |
+| 后端 | `auditDetachedTimeout` | 3s（hijack 之后写审计用的独立 ctx 超时） |
 | 后端 | 临时名 | 覆盖写 `p + ".pipewright-tmp"`；上传 `.pipewright-up-<uploadId[:12]>.tmp` |
 
 ---
@@ -706,23 +745,27 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 **M3 终端 WS**
 15. 主机 shell：白名单 + auto 脚本（bash/zsh → $SHELL → /bin/sh，全用 `exec`）。
 16. 双向泵 + resize 控制帧 + 32 KiB 块 + close 帧人读文案（i18n）+ 握手后写审计（auto 记 `auto`）。
+17. 命令级留痕：起会话后往 PTY stdin 注入一行钩子（`terminal_recorder.go` 的 `commandHookScript`），
+    在 PTY→WS 的字节流上**只读不改写**地解 OSC 5522 → 每条命令落 `server_command`（detail 带
+    cmd/cwd/exit/user/loginUser/kind/containerId/session），会话收尾再补一行汇总（`hook`/`commands`/`ms`）。
 
 **M4 前端接口与纯逻辑**
-17. `serverFs.ts`：端点一一映射；逐块 XHR（进度 + CSRF 头 + locale 头 + AbortSignal）。
-18. `lib/serverFs.ts`：路径归一/parent/join/crumbs/排序/字节/mtime(0→空串)/`modeToLs`/`fileExt`/
-    `shellQuote`/`cdCommand`(`\r`)/`pathFromOsc7`/`cwdReportScript`(单引号!).
-19. `lib/fsUpload.ts`：驱动器（§6.4 的 9 条行为，逐条写单测）。
-20. `lib/fsTransfers.ts`：记录行折算 + 内存存储 + 上限裁剪（先丢落定再丢在传）。
+18. `serverFs.ts`：端点一一映射；逐块 XHR（进度 + CSRF 头 + locale 头 + AbortSignal）。
+19. `lib/serverFs.ts`：路径归一/parent/join/crumbs/排序/字节/mtime(0→空串)/`modeToLs`/`fileExt`/
+    `shellQuote`/`cdCommand`(`\r`)/`pathFromOsc7`。（提示符钩子在服务端，见 M3 第 17 步 ——
+    前端曾经有个 `cwdReportScript`，已删；别再把它加回来。）
+20. `lib/fsUpload.ts`：驱动器（§6.4 的 9 条行为，逐条写单测）。
+21. `lib/fsTransfers.ts`：记录行折算 + 内存存储 + 上限裁剪（先丢落定再丢在传）。
 
 **M5 组件**
-21. `TerminalPane`（xterm 动态加载 + 字体两段式重测 + refit 收敛 + OSC7 + 选中即复制 + expose runCd）。
-22. `RemoteFilePanel`（工具栏/面包屑/树(懒+reveal seq+invalidate)/表格/内联编辑/内联 op 表单/队列/记录）。
-23. `RemoteWorkspaceModal`（上下分屏 + 两条可拖 + 全屏 + Esc 三规则 + 双向联动接线 + 防回声）。
-24. 入口按钮（卡片/列表行 → `remoteId` → `v-if` 挂载；`hostLabel = user@host:port`）。
+22. `TerminalPane`（xterm 动态加载 + 字体两段式重测 + refit 收敛 + OSC7 + 选中即复制 + expose runCd）。
+23. `RemoteFilePanel`（工具栏/面包屑/树(懒+reveal seq+invalidate)/表格/内联编辑/内联 op 表单/队列/记录）。
+24. `RemoteWorkspaceModal`（上下分屏 + 两条可拖 + 全屏 + Esc 三规则 + 双向联动接线 + 防回声）。
+25. 入口按钮（卡片/列表行 → `remoteId` → `v-if` 挂载；`hostLabel = user@host:port`）。
 
 **M6 文案与测试**
-25. i18n 全键 ×8 语种（有 parity 测试就先补键再补翻译）。
-26. 跑 §15 的测试集；再跑 §16 的真机冒烟。
+26. i18n 全键 ×8 语种（有 parity 测试就先补键再补翻译）。
+27. 跑 §15 的测试集；再跑 §16 的真机冒烟。
 
 ---
 
@@ -746,7 +789,7 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 | 14 | 点文件是"整棵子树拉平"→ 首屏等几十次 SSH | 目录树只列目录、点开哪层问哪层；失败保持 `null` 可重试 |
 | 15 | 树停在旧快照骗人 | 建目录/改名/删除/上传后 `invalidateTree(那一层)` |
 | 16 | 面板 cd → 终端回报同一路径 → 面板又列一次（自激） | 双向都先归一比对，**路径真的变了才动** |
-| 17 | `PROMPT_COMMAND` 用双引号 → 永远上报登录时的旧目录 | **必须单引号**包住 printf 串 |
+| 17 | `PROMPT_COMMAND` 里直接写 printf（还用了双引号）→ 永远上报登录时的旧目录 | 赋**函数名**，把求值推到每次提示符；函数里 `printf` 的格式串用**单引号** |
 | 18 | 一连上就弹"该 shell 不支持联动" | 自动模式给 4 秒窗口，以"是否真的报过 cwd"为唯一证据 |
 | 19 | 往 PTY 打 `cd "路径"` → 注入面 / 回车不生效 | 单引号 POSIX 引用（内部 `'`→`'\''`），结尾 **`\r`** 不是 `\n` |
 | 20 | 逐块新建 TextDecoder 把 ANSI 序列切碎 | 常驻一个 decoder + `{stream:true}` |
@@ -770,6 +813,10 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 | 38 | 逐块刷满审计表 | 只逐文件记 `complete/abort` |
 | 39 | GET 被中间件判成"查看"档，等于开放读任意文件 | 文件路由显式按 operate 判 |
 | 40 | 跨站 WS 劫持 | GET 豁免 CSRF ⇒ 用 `OriginPatterns=[Host]` 同源校验，且握手前完成鉴权 |
+| 41 | 注入脚本里出现裸 `!` → 交互式 zsh 做历史展开，整行 `event not found` **不执行**，钩子静默失效 | 不用 `${h%%[![:space:]]*}` 这类写法；折行首编号交给 `sed` |
+| 42 | 注入行结尾写成字面 `\r`（两个字符）→ shell 收到普通字符，这行永远不提交，钩子装不上且不报错 | 结尾必须是**真 CR(0x0D)** |
+| 43 | bash 里用 `fc -ln -1` 取"刚执行那条"（zsh 的习惯）→ 拿到的是**上上一条**，审计全滞后一格 | 按 shell 分开取：bash `HISTTIMEFORMAT='' history 1 \| sed 's/^ *[0-9][0-9]*  //'`，zsh `fc -ln -1` |
+| 44 | 录"用户敲进 WS 的字节"当命令 → sudo/ssh 的交互口令一起进 append-only 审计表 | 只录 shell 在提示符上回报的那条；字节流**只读不改写**地捎带解 OSC，转给前端的流一个不动 |
 
 ---
 
@@ -785,7 +832,9 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 | `internal/httpapi/server_fs_test.go` | 每个端点的状态码/DTO/鉴权档 |
 | `internal/httpapi/fs_upload_test.go` | begin 整批拒绝、409 offset_mismatch 续传、空文件、权限保留、回收 |
 | `internal/httpapi/fs_zip_test.go` | 流式 zip：软链跳过、空目录、条目上限掐断、store/deflate |
-| `web/src/lib/serverFs.test.ts` | 路径/排序/字节/时间/权限串/`shellQuote`/OSC7/钩子脚本 |
+| `internal/httpapi/container_terminal_test.go` | 两条终端 WS 的鉴权/白名单/命令 array 化/审计 |
+| `internal/httpapi/terminal_recorder_test.go` | 钩子脚本形状（无裸 `!`、真 CR 结尾）、OSC 5522 解码（脏载荷/自报/截断）、跨块拼接、每会话上限、`cutUTF8`、端到端命令落审计与 `hook=silent` |
+| `web/src/lib/serverFs.test.ts` | 路径/排序/字节/时间/权限串/`shellQuote`/OSC7 解析 |
 | `web/src/lib/fsUpload.test.ts` | 注入 deps 跑断线重连、退避、409 重定位、取消清半成品、retry |
 | `web/src/lib/fsTransfers.test.ts` | 行折算、批次身份、原位覆盖、上限裁剪先丢落定 |
 
@@ -796,15 +845,17 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 1. 空 `path` → 家目录（不是 `/root`/`/home` 猜一个）。
 2. `pwd` 切目录 → 面板 1 秒内跟随；面板点目录 → 终端里出现 `cd '<路径>'` 且 `pwd` 对得上；
    来回点**不出现**重复列目录（防回声生效）。
-3. 用 `dash`/`ash` 登录 shell（显式选 `/bin/sh`）→ 4 秒后出现"无提示符钩子"提示，面板仍可自己导航。
+3. 用 `dash`/`ash` 登录 shell（显式选 `/bin/sh`）→ 4 秒后出现"无提示符钩子"提示，面板仍可自己导航；
+   这场会话的 end 汇总行记 `hook=silent`、`commands=0`（"没录到"这件事本身要留痕）。
 4. 无 sftp-server 的机器（dropbear / 最小镜像）→ backend 徽标显示 `exec`，时间列按 `stat` 方言有无给值。
 5. 上传：①单个 4 MiB 以下走满 4 MiB 档；②传一个 >64 MiB 的分块文件，中途拔网 → 状态变 `upload_timeout`/
    网络 → 点重试，从 status 的实测偏移接着推，落地字节与原文一致；③选整个含子目录的文件夹 →
    远端目录树按 `rel` 重建；④零字节文件能落地；⑤覆盖一个 600 权限的文件后权限仍是 600。
 6. 下载：单文件百分比（有 Content-Length）；目录 → `<名>.zip`，空子目录在包里有，软链不在包里。
 7. 删除一个非空目录 → 409，界面文案说的是"空目录才删得掉"。
-8. 关弹窗 → `lsof` 看平台侧没有残留到该机的 SSH 连接；`/api/audit` 里有 `server_terminal` 与 `server_fs` 行，
-   detail 里**没有正文**。
+8. 关弹窗 → `lsof` 看平台侧没有残留到该机的 SSH 连接；`/api/audit` 里有 `server_terminal`、`server_command`
+   与 `server_fs` 行：`server_command` 的 detail 带 `cmd/cwd/exit/user`，`server_*` 的 detail 里**没有文件正文**；
+   同一次连接的三行（start/命令/end）用同一个 `session` 串得起来，end 行的 `commands` 与命令行数对得上。
 9. 全屏 / 退出全屏：分屏比例保持；退出全屏时目录树宽度被夹回，不被挤没。
 10. 键盘：分隔条 Tab 聚焦后 ↑/↓；目录树分隔条 ←/→；Esc 在终端里不关窗、全屏时先缩回。
 
