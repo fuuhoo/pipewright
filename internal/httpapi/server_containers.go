@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -227,6 +226,11 @@ func makeServerContainersHandler(svc target.Service) http.HandlerFunc {
 // makeAllServerContainersHandler 返回 GET /api/servers/containers(认证,只读;批量聚合)。
 // 逐台并行采集(有界并发),各自独立:某台失败仅该台 reachable:false,不连累其它台、不 500。
 // 聚合范围 = actor 可见分组内的服务器(否则私有组的机器会借这个总览漏出去)。
+//
+// 两种响应形态(与 /servers/metrics 同一套约定,共用 server_stream.go):
+//   - 默认 JSON `{items:[…]}`:等全部采完一次性返回,按登记顺序。
+//   - `?stream=1` NDJSON(一行一台,采完即 flush):首屏不必等最慢那台 —— 可达机几百毫秒就出卡,
+//     死机拖满探针超时也只压住它自己那一张。
 func makeAllServerContainersHandler(svc target.Service, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -243,20 +247,35 @@ func makeAllServerContainersHandler(svc target.Service, acc *access.Service) htt
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return
 		}
-
-		items := make([]serverContainersDTO, len(servers))
-		sem := make(chan struct{}, containersConcurrency)
-		var wg sync.WaitGroup
+		ids := make([]string, len(servers))
 		for i, srv := range servers {
-			wg.Add(1)
-			go func(i int, id string) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				items[i], _ = collectServerContainers(r.Context(), svc, id)
-			}(i, srv.ID)
+			ids[i] = srv.ID
 		}
-		wg.Wait()
-		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		events := runHostPool(r.Context(), ids, containersConcurrency, func(ctx context.Context, id string) serverContainersDTO {
+			// 逐台独立:定位类错误(服务器/凭据不存在、保险库未配)在某台也只表现为
+			// 该台 reachable:false(忽略 locErr)。
+			dto, _ := collectServerContainers(ctx, svc, id)
+			return dto
+		})
+
+		if !wantsNDJSONStream(r) {
+			items := drainHostStream(events, len(ids), func(i int) serverContainersDTO {
+				return offlineContainersDTO(ids[i], "采集未完成")
+			})
+			writeJSON(w, http.StatusOK, map[string]any{"items": items})
+			return
+		}
+		writeNDJSONStream(r.Context(), w, events, len(ids))
+	}
+}
+
+// offlineContainersDTO 是「没采到」的兜底行(客户端断开/采集被取消):与不可达同形态
+// (reachable:false + 人读 error + 空清单),绝不吐各字段皆零值的假样本。
+func offlineContainersDTO(id, reason string) serverContainersDTO {
+	return serverContainersDTO{
+		ServerID:    id,
+		Error:       reason,
+		Containers:  []containerDTO{},
+		CollectedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }

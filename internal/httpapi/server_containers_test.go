@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/huangchengsir/pipewright/internal/target"
 )
@@ -176,8 +180,154 @@ func TestAllServerContainers_BatchAggregate(t *testing.T) {
 	}
 }
 
-// --- 生命周期 action 白名单扩展(docker pause/unpause/kill/rm) ---
+// slowDockerDialer 是一台快(即时回显两个容器)、一台慢(SSH 挂到判不可达 —— 死机器的真实形态)
+// 的拨号器,用来量容器聚合端点「等不等最慢那台」:默认 JSON 必须等齐,?stream=1 不该等。
+type slowDockerDialer struct {
+	slowAddr string
+	delay    time.Duration
+}
 
+func (d slowDockerDialer) Run(_ context.Context, addr string, _ target.SSHConfig, cmd []string) (*target.ExecResult, error) {
+	if addr == d.slowAddr && len(cmd) >= 2 && cmd[0] == "docker" && cmd[1] == "ps" {
+		time.Sleep(d.delay)
+		return nil, target.ErrUnreachable
+	}
+	return dockerLikeDialer().fn(cmd)
+}
+
+func (d slowDockerDialer) RunStream(_ context.Context, _ string, _ target.SSHConfig, _ []string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (d slowDockerDialer) RunInteractive(_ context.Context, _ string, _ target.SSHConfig, _ []string) (target.Session, error) {
+	return nil, nil
+}
+
+func (d slowDockerDialer) RunWithStdin(ctx context.Context, addr string, cfg target.SSHConfig, cmd []string, _ io.Reader) (*target.ExecResult, error) {
+	return d.Run(ctx, addr, cfg, cmd)
+}
+
+func TestAllServerContainersStreamIsProgressive(t *testing.T) {
+	const slowDelay = 1200 * time.Millisecond
+	d := slowDockerDialer{slowAddr: "10.255.255.2:22", delay: slowDelay}
+	srv, client, csrf := setupServerAPI(t, d)
+	credID := newSSHCredAPI(t, client, srv.URL, csrf, "pw")
+	fastID := createServerAtAPI(t, client, srv.URL, csrf, credID, "fast", "127.0.0.1")
+	slowID := createServerAtAPI(t, client, srv.URL, csrf, credID, "slow", "10.255.255.2")
+
+	resp, err := client.Get(srv.URL + "/api/servers/containers?stream=1")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/x-ndjson") {
+		t.Fatalf("content-type = %q, want application/x-ndjson", ct)
+	}
+
+	type frame struct {
+		id      string
+		reach   bool
+		total   int
+		arrived time.Duration
+	}
+	start := time.Now()
+	var frames []frame
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		var dto serverContainersDTO
+		if err := json.Unmarshal(sc.Bytes(), &dto); err != nil {
+			t.Fatalf("unmarshal line %q: %v", sc.Text(), err)
+		}
+		frames = append(frames, frame{dto.ServerID, dto.Reachable, dto.Total, time.Since(start)})
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scan stream: %v", err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("want 2 frames, got %d: %+v", len(frames), frames)
+	}
+	// 核心断言:快的那台在慢台还没判死之前就已经下发 —— 首屏不必等齐。
+	if frames[0].id != fastID || !frames[0].reach || frames[0].total != 2 {
+		t.Fatalf("first frame should be the fast reachable host with 2 containers, got %+v", frames[0])
+	}
+	if frames[0].arrived >= slowDelay {
+		t.Fatalf("fast frame arrived at %v, want < %v (stream waited for the slow host)", frames[0].arrived, slowDelay)
+	}
+	if frames[1].id != slowID || frames[1].reach {
+		t.Fatalf("second frame should be the slow unreachable host, got %+v", frames[1])
+	}
+}
+
+// 默认 JSON 形态按「名单顺序」返回(= /api/servers 那一份),不是采集完成顺序:前端每轮刷新要
+// 把卡片排在同一位子上,顺序跟着谁先采完走就会每轮乱跳。名单本身是 created_at DESC, id,
+// 同秒登记的两台靠 id 定序 —— 所以断言比对名单,不硬写登记先后。
+func TestAllServerContainersBatchFollowsListOrder(t *testing.T) {
+	d := slowDockerDialer{slowAddr: "10.255.255.2:22", delay: 300 * time.Millisecond}
+	srv, client, csrf := setupServerAPI(t, d)
+	credID := newSSHCredAPI(t, client, srv.URL, csrf, "pw")
+	slowID := createServerAtAPI(t, client, srv.URL, csrf, credID, "slow-first", "10.255.255.2")
+	fastID := createServerAtAPI(t, client, srv.URL, csrf, credID, "fast", "127.0.0.1")
+
+	lresp, err := client.Get(srv.URL + "/api/servers")
+	if err != nil {
+		t.Fatalf("list request: %v", err)
+	}
+	lraw, _ := io.ReadAll(lresp.Body)
+	lresp.Body.Close()
+	if lresp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d: %s", lresp.StatusCode, lraw)
+	}
+	var list struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(lraw, &list); err != nil {
+		t.Fatalf("unmarshal list: %v: %s", err, lraw)
+	}
+	if len(list.Items) != 2 || list.Items[0].ID != slowID && list.Items[0].ID != fastID {
+		t.Fatalf("名单应是刚登记的两台, got %s", lraw)
+	}
+	want := []string{list.Items[0].ID, list.Items[1].ID}
+
+	resp, err := client.Get(srv.URL + "/api/servers/containers")
+	if err != nil {
+		t.Fatalf("batch request: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, raw)
+	}
+	var body struct {
+		Items []serverContainersDTO `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal: %v: %s", err, raw)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("want 2 items, got %d", len(body.Items))
+	}
+	for i := range want {
+		if body.Items[i].ServerID != want[i] {
+			t.Fatalf("items 顺序 = [%s, %s], want 名单顺序 [%s, %s]",
+				body.Items[0].ServerID, body.Items[1].ServerID, want[0], want[1])
+		}
+	}
+	// 慢机器仍要如实报不可达,而不是被快机器「带过去」。
+	slow := body.Items[0]
+	if slow.ServerID == fastID {
+		slow = body.Items[1]
+	}
+	if slow.Reachable || slow.Error == "" {
+		t.Fatalf("慢机器应报 unreachable + 人读 error: %+v", slow)
+	}
+}
+
+// --- 生命周期 action 白名单扩展(docker pause/unpause/kill/rm) ---
 func TestValidateServiceParams_DockerLifecycleWidened(t *testing.T) {
 	ok := []string{"restart", "stop", "start", "pause", "unpause", "kill", "rm"}
 	for _, a := range ok {
