@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/huangchengsir/pipewright/internal/auth"
 	"github.com/huangchengsir/pipewright/internal/i18n"
 	"github.com/huangchengsir/pipewright/internal/target"
 )
@@ -104,7 +106,7 @@ func buildContainerExecCmd(containerID, shell string) []string {
 // **唯一的 WS 升级点**。已由 /api 组套了 requireAuth(未登录 → 401,不会升级)。本 handler 再做
 // 同源(Origin)校验,然后 WS↔SSH(PTY)双向泵:WS 文本帧 → stdin;PTY 输出 → WS 二进制帧;
 // resize 控制帧(JSON {type:"resize",cols,rows})→ WindowChange。
-func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *access.Service) http.HandlerFunc {
+func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *access.Service, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
@@ -123,8 +125,10 @@ func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *a
 			return
 		}
 
-		// 先确认服务器存在(在升级为 WS 之前给出标准 HTTP 状态码)。
-		if _, err := svc.Get(r.Context(), id); err != nil {
+		// 先确认服务器存在(在升级为 WS 之前给出标准 HTTP 状态码)。留下的 srv 供审计记
+		// 「以哪个 SSH 账号登进去」(见 terminalAudit)。
+		srv, err := svc.Get(r.Context(), id)
+		if err != nil {
 			writeServerError(w, err)
 			return
 		}
@@ -160,16 +164,17 @@ func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *a
 		if auditShell == "" {
 			auditShell = "auto"
 		}
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
-			Action:     audit.ActionContainerTerminal,
-			TargetType: audit.TargetServer,
-			TargetID:   id,
-			Detail:     map[string]any{"containerId": containerID, "shell": auditShell},
-			IP:         clientIP(r),
-		})
+		ta := newTerminalAudit(r, ac, aud, id, srv.Name, srv.User, "container", containerID, auditShell)
+		tr := newTerminalCommandRecorder(ta.command)
+		ta.start(audit.ActionContainerTerminal)
+		// 装上命令回报钩子(机制与边界见 terminal_recorder.go)。注入失败不致命:会话照常能用,
+		// 只是收尾汇总行会记 hook=silent。
+		if _, werr := sess.Write([]byte(commandHookScript())); werr != nil {
+			log.Printf("[terminal] 警告:注入命令审计钩子失败(server=%s container=%s): %v", id, containerID, werr)
+		}
+		defer ta.end(audit.ActionContainerTerminal, tr)
 
-		pumpTerminal(sessCtx, cancel, conn, sess)
+		pumpTerminal(sessCtx, cancel, conn, sess, tr.observe)
 	}
 }
 
@@ -206,7 +211,7 @@ func autoHostShellArgv() []string {
 // cmd array 化(仅 [shell],无拼接);凭据 vault 即用即弃;握手成功写审计(server_terminal)。
 // 注意:服务器注册的 SSH 凭据本就具宿主机权限(容器模式的 docker exec 亦在宿主跑),主机 shell
 // 不扩大信任边界,只是把既有权限诚实暴露。
-func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *access.Service) http.HandlerFunc {
+func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *access.Service, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
@@ -222,7 +227,8 @@ func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *acce
 		if !requireTerminalOperate(w, r, acc, id) {
 			return
 		}
-		if _, err := svc.Get(r.Context(), id); err != nil {
+		srv, err := svc.Get(r.Context(), id)
+		if err != nil {
 			writeServerError(w, err)
 			return
 		}
@@ -250,25 +256,25 @@ func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *acce
 		}
 		defer func() { _ = sess.Close() }()
 
-		recordAudit(r.Context(), aud, audit.Entry{
-			Actor:      auditActor,
-			Action:     audit.ActionServerTerminal,
-			TargetType: audit.TargetServer,
-			TargetID:   id,
-			Detail:     map[string]any{"shell": auditShell, "target": "host"},
-			IP:         clientIP(r),
-		})
+		ta := newTerminalAudit(r, ac, aud, id, srv.Name, srv.User, "host", "", auditShell)
+		tr := newTerminalCommandRecorder(ta.command)
+		ta.start(audit.ActionServerTerminal)
+		if _, werr := sess.Write([]byte(commandHookScript())); werr != nil {
+			log.Printf("[terminal] 警告:注入命令审计钩子失败(server=%s): %v", id, werr)
+		}
+		defer ta.end(audit.ActionServerTerminal, tr)
 
-		pumpTerminal(sessCtx, cancel, conn, sess)
+		pumpTerminal(sessCtx, cancel, conn, sess, tr.observe)
 	}
 }
 
 // pumpTerminal 在 WS 与交互式 SSH 会话间双向泵数据,直到任一侧结束。
 //   - WS → SSH:文本帧若是 resize 控制 JSON → WindowChange;否则原样写入 stdin。
-//   - SSH → WS:PTY 输出按块读出 → 以二进制帧发回 WS。
+//   - SSH → WS:PTY 输出按块读出 → 以二进制帧发回 WS;读到的每一块先交给 tap(可为 nil)
+//     顺路扫一遍终端命令回报,字节本身不改写(见 terminal_recorder.go)。
 //
 // 任一方向出错/结束都 cancel,使另一方向的阻塞读/写解除,随后 defer 关 WS + 关 SSH 会话(不泄漏)。
-func pumpTerminal(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, sess target.Session) {
+func pumpTerminal(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, sess target.Session, tap func([]byte)) {
 	// SSH PTY → WS。
 	go func() {
 		defer cancel()
@@ -276,6 +282,9 @@ func pumpTerminal(ctx context.Context, cancel context.CancelFunc, conn *websocke
 		for {
 			n, err := sess.Read(buf)
 			if n > 0 {
+				if tap != nil {
+					tap(buf[:n])
+				}
 				wctx, wcancel := context.WithTimeout(ctx, 10*time.Second)
 				werr := conn.Write(wctx, websocket.MessageBinary, buf[:n])
 				wcancel()

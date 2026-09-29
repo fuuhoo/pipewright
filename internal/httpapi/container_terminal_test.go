@@ -193,6 +193,13 @@ func (d *fakeInteractiveDialer) cmd() []string {
 	return d.lastCmd
 }
 
+// session 取当前内存会话(测试要从「远端侧」推输出,而不是只靠回显)。
+func (d *fakeInteractiveDialer) session() *memSession {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.sess
+}
+
 // memSession 是内存版 target.Session:写入 stdin 即原样回显到 out(像 echo 终端)。
 type memSession struct {
 	mu       sync.Mutex
@@ -232,6 +239,15 @@ func (m *memSession) Write(p []byte) (int, error) {
 	m.buf = append(m.buf, p...) // echo
 	m.cond.Broadcast()
 	return len(p), nil
+}
+
+// pushRemote 模拟「远端 shell 自己吐出来的输出」:进读向缓冲,但不算回显。
+// 用它喂一条提示符回报,就能在 handler 层面验到命令级审计整条链路。
+func (m *memSession) pushRemote(p []byte) {
+	m.mu.Lock()
+	m.buf = append(m.buf, p...)
+	m.cond.Broadcast()
+	m.mu.Unlock()
 }
 
 func (m *memSession) Resize(cols, rows int) error {

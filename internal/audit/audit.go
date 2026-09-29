@@ -54,6 +54,10 @@ const (
 	ActionSystemPrune        = "system_prune"
 	ActionContainerTerminal  = "container_terminal"
 	ActionServerTerminal     = "server_terminal"
+	// ActionServerCommand 是远程终端里 shell 真正执行掉的一条命令(远端提示符钩子回报,机制见
+	// internal/httpapi/terminal_recorder.go)。开终端那一行只说明「谁连上了哪台机」,事后追责
+	// 要看的是连上之后干了什么 —— 一条命令一行,按 session 串得起来。
+	ActionServerCommand = "server_command"
 	// 远程文件面板(「远程」弹窗下半屏):与 *_op 同族,一种资源一个 action,
 	// 具体动作落在 detail.op(save/upload/download/mkdir/remove/rename)。
 	// 单列而不并进 server_terminal,是因为事后追查「谁把这台机上的文件改了什么」

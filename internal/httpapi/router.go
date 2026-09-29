@@ -916,11 +916,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// containerId 严格白名单(首字符非 `-` 防 flag 注入、无 shell 元字符)+ shell 枚举白名单;
 		// 命令 array 化经 target.ExecInteractive 不拼 shell。握手成功(PTY 建立)后写审计(detail 脱敏)。
 		// 比 /servers/{id} 多两段,不会被吞。
-		ar.Get("/servers/{id}/containers/{containerId}/terminal", makeContainerTerminalHandler(sv, aud, o.access))
+		ar.Get("/servers/{id}/containers/{containerId}/terminal", makeContainerTerminalHandler(sv, aud, o.access, authn))
 		// 主机 shell 终端(「连服务器终端」的目标:SSH 直起交互 shell)。进容器留给用户在 shell 里
 		// 自己 docker exec 自由探索(不绑死容器;很多服务器没 docker)。WS 升级,同源校验 + shell
 		// 白名单;审计 server_terminal。比 /servers/{id} 多一段,不会被吞。
-		ar.Get("/servers/{id}/terminal", makeServerTerminalHandler(sv, aud, o.access))
+		ar.Get("/servers/{id}/terminal", makeServerTerminalHandler(sv, aud, o.access, authn))
 		// 远程文件面板(「远程」弹窗的下半屏:列目录 / 读正文 / 存正文 / 下载(文件或整个目录)/ 上传 / 改名)。
 		// 每条路由**含 GET**都按 ActOperate 把关 —— 读主机上任意文件不是平台语义的「查看」,
 		// 它与开终端等价(实现见 server_fs.go 头注释)。写与下载留审计,detail 只有路径与体积。

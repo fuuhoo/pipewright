@@ -26,11 +26,12 @@ const auditActor = "admin"
 //   - 无 session → "system"(兜底)
 //   - Session.Role="admin" → "admin:<username>"(兼容旧部署 username 由 AdminUsername 取)
 //   - Session.Role="user"  → "user:<username>"(admin 不混用 user: 前缀)
+//   - 其余(自定义角色,Role=roles.id uuid)→ "user:<登录名>"
 //
 // 实际 username 在登录时由 auth.Service.Login 写入 last_login_at 路径同步;
 // 为避免 httpapi → users 的硬依赖,这里采用「Session.UserID/Role + admin 路径走
 // AdminUsername()」的解耦方式:admin 默认 "admin"(兼容旧部署),user 用 UserID。
-// 后续若需精确 username 区分,可在 Session 上扩展 Username 字段(留待阶段 9)。
+// 自定义角色没有内置名可查,只能吃 v6.2 起 Session 上带的 Username。
 func actorFromSession(ctx context.Context, ac auth.Authenticator) string {
 	sess, ok := sessionFromContext(ctx)
 	if !ok || sess == nil {
@@ -48,6 +49,15 @@ func actorFromSession(ctx context.Context, ac auth.Authenticator) string {
 	case "user":
 		return "user:" + sess.UserID
 	default:
+		// 自定义角色:Session.Role 是 roles.id(uuid)。直接把它当 actor 落库等于没记 ——
+		//  uuid 既不能按人查也认不出是谁。真实登录名在 v6.2 已进 Session.Username(内存字段,
+		//  Verify 时按 UserID 解析),优先用它;再退 UserID;全空才回落角色串(旧会话)。
+		if sess.Username != "" {
+			return "user:" + sess.Username
+		}
+		if sess.UserID != "" {
+			return "user:" + sess.UserID
+		}
 		return sess.Role
 	}
 }

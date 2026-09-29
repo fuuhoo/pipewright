@@ -72,8 +72,27 @@ func TestActorFromSession_UserRole(t *testing.T) {
 	}
 }
 
+// 自定义角色的 Session.Role 是 roles.id(uuid)。把它当 actor 落库等于没记(认不出人),
+// 所以按「登录名 → UserID」派生,只有两者都空(旧会话)才回落角色串。
+func TestActorFromSession_CustomRoleUsesUsername(t *testing.T) {
+	ctx := withSessionContext(&auth.Session{Role: "7ded3a10-3a5b-4c2e-9a1f-0b7c1d2e3f44", UserID: "u-2", Username: "alice"})
+	got := actorFromSession(ctx, nil)
+	if got != "user:alice" {
+		t.Fatalf("自定义角色应派生 user:<登录名>, got %q", got)
+	}
+}
+
+func TestActorFromSession_CustomRoleNoUsernameFallsBackToUserID(t *testing.T) {
+	ctx := withSessionContext(&auth.Session{Role: "7ded3a10-3a5b-4c2e-9a1f-0b7c1d2e3f44", UserID: "u-2"})
+	got := actorFromSession(ctx, nil)
+	if got != "user:u-2" {
+		t.Fatalf("无登录名时应回落 user:<UserID>, got %q", got)
+	}
+}
+
 func TestActorFromSession_UnknownRole(t *testing.T) {
-	ctx := withSessionContext(&auth.Session{Role: "strange-role", UserID: "x"})
+	// 登录名与 UserID 皆空(极旧会话)才原样返回角色串。
+	ctx := withSessionContext(&auth.Session{Role: "strange-role"})
 	got := actorFromSession(ctx, nil)
 	if got != "strange-role" {
 		t.Fatalf("未知 role 应原样返回, got %q", got)
