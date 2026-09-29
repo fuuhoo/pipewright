@@ -5,8 +5,8 @@
   但这一份只做弹窗里需要的最小闭环:连上、能打字、能复制、尺寸跟着分屏拖动重算。
   没有 AI 补全 / 右键菜单 / 氛围样式 —— 那些在全屏页里各有归属,弹窗里挤进来只会糊。
 
-  多出来的一条能力是**cwd 上报**:连接后往 PTY 注入一段钩子脚本(见 lib/serverFs 的
-  cwdReportScript),让远端 shell 每次出提示符时用 OSC 7 打印当前目录,本组件解析后经
+  cwd 联动**不再由本组件注入脚本**:服务端在建 PTY 时统一装一条提示符钩子(既报 OSC 7 目录,
+  也报命令级审计,见 internal/httpapi/terminal_recorder.go),本组件只解析收到的 OSC 7 并经
   emit('cwd') 交给上层联动文件面板。只有 bash/zsh 有提示符钩子;其余 shell 静默无联动,
   文件面板仍可自行导航(不假装能跟上)。shell 默认留空 = 让服务端在这台机上现挑一个
   (bash/zsh 优先),所以正常情况下联动是开箱即用的。
@@ -20,7 +20,7 @@ import {
   type TerminalConnection,
   type TerminalHandlers,
 } from '../../api/servers'
-import { cdCommand, cwdReportScript, pathFromOsc7 } from '../../lib/serverFs'
+import { cdCommand, pathFromOsc7 } from '../../lib/serverFs'
 
 import type { Terminal as XTerm } from '@xterm/xterm'
 import type { FitAddon as XFitAddon } from '@xterm/addon-fit'
@@ -235,8 +235,6 @@ async function connect(): Promise<void> {
       setState('connected')
       latencyMs.value = Math.round(performance.now() - startedAt)
       refit()
-      // 先让 shell 装上 cwd 钩子,再清一次行,免得注入回显留在提示符前。
-      conn.value?.send(cwdReportScript())
       // 自动模式下唯一能证明「这台机的 shell 有提示符钩子」的证据就是它真的报过 cwd。
       if (shell.value === '') {
         linkProbe = window.setTimeout(() => {

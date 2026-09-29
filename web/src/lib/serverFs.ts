@@ -154,21 +154,3 @@ export function pathFromOsc7(payload: string): string {
     return rest.slice(slash)
   }
 }
-
-/**
- * 连接终端后注入的 cwd 上报脚本。
- *   · bash:`PROMPT_COMMAND` 每次出提示符前打一条 OSC 7(`\e]7;file://host/pwd\ BEL`)。
- *   · zsh:`precmd` 钩子等价(直接 printf,不引入 add-zsh-hook 依赖)。
- *   · 其余 POSIX shell(dash/ash)没有提示符钩子:静默跳过,面板仍可自行导航。
- * OSC 7 是终端控制序列,不会显示成一行文本,用户看不到额外噪声。
- *
- * PROMPT_COMMAND 的值必须**单引号**包住:双引号会在赋值那一刻就把 $PWD 展开成登录目录,
- * 之后每次上报的都是同一个旧路径,面板再也跟不上终端。
- */
-export function cwdReportScript(): string {
-  const emit = `printf "\\033]7;file://%s%s\\007" "$HOSTNAME" "$PWD"`
-  return (
-    `if [ -n "$BASH_VERSION" ]; then export PROMPT_COMMAND='${emit}'; ` +
-    `elif [ -n "$ZSH_VERSION" ]; then precmd() { ${emit}; }; fi\r`
-  )
-}

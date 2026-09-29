@@ -7,7 +7,6 @@ import type { FsEntry } from '../api/serverFs'
 import {
   ROOT,
   cdCommand,
-  cwdReportScript,
   fileExt,
   formatBytes,
   formatMtime,
@@ -158,27 +157,5 @@ describe('pathFromOsc7', () => {
     expect(pathFromOsc7('file://host')).toBe('')
     expect(pathFromOsc7('8;something')).toBe('')
     expect(pathFromOsc7('')).toBe('')
-  })
-})
-
-describe('cwdReportScript', () => {
-  it('bash 走 PROMPT_COMMAND,zsh 走 precmd,其余 shell 静默跳过', () => {
-    const s = cwdReportScript()
-    expect(s).toContain('BASH_VERSION')
-    expect(s).toContain('PROMPT_COMMAND=')
-    expect(s).toContain('ZSH_VERSION')
-    expect(s).toContain('precmd()')
-  })
-
-  it('打的是 OSC 7(file:// + $PWD),不是给人看的一行文本', () => {
-    const s = cwdReportScript()
-    expect(s).toContain('printf "\\033]7;file://%s%s\\007"')
-    expect(s).toContain('$PWD')
-  })
-
-  it('PROMPT_COMMAND 用单引号赋值:双引号会在赋值那刻展开 $PWD,之后永远上报登录目录', () => {
-    const s = cwdReportScript()
-    expect(s).toContain(`PROMPT_COMMAND='printf "\\033]7;file://%s%s\\007" "$HOSTNAME" "$PWD"'`)
-    expect(s).not.toContain('PROMPT_COMMAND="')
   })
 })
