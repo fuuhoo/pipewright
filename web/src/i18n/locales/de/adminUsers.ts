@@ -3,7 +3,7 @@
  * 缺少译文时 i18n 以 fallbackLocale=zh-CN 回退,不会出现裸 key。
  */
 export default {
-  usersTitle: 'Users',
+usersTitle: 'Konten und Rollen',
   usersDesc: 'Die Rolle bestimmt, welche Aktionsarten ein Konto ausführen darf; die Gruppe bestimmt, welche Ressourcen es sieht. Pro Entscheidung zählt die strengere Stufe.',
   roleAxesHint: 'Die Spalte „Rolle“ ändert die Funktionsstufe und wird sofort gespeichert; Rollen werden in der Sitzung eingefroren, die Änderung wirkt erst beim nächsten Login.',
   usersList: 'Users',

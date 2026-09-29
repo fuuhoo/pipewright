@@ -39,7 +39,7 @@ const ja: typeof zhCN = {
     collapse: 'サイドバーを折りたたむ',
     buildEnvs: 'ビルド環境',
     configProfiles: '構成プロファイル',
-    groups: 'グループ',
+    permissions: 'ユーザーと権限',
   },
 
   shell: {

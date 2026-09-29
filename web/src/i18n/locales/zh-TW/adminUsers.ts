@@ -3,7 +3,7 @@
  * 缺少译文时 i18n 以 fallbackLocale=zh-CN 回退,不会出现裸 key。
  */
 export default {
-  usersTitle: 'Users',
+usersTitle: '帳號與角色',
   usersDesc: '角色決定這個帳號能做哪類動作(功能檔),分組決定它能看到哪些資源(資料範圍);一次判定取兩者更嚴的一檔。',
   roleAxesHint: '「角色」欄改的是功能檔,儲存即寫入;角色記在工作階段快照裡,要等對方下次登入才生效。',
   usersList: 'Users',

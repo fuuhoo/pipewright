@@ -39,7 +39,7 @@ const en: typeof zhCN = {
     collapse: 'Collapse sidebar',
     buildEnvs: 'Build environments',
     configProfiles: 'Config profiles',
-    groups: 'Groups',
+    permissions: 'Users & access',
   },
 
   shell: {

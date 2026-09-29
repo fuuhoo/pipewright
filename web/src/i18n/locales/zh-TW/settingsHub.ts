@@ -18,7 +18,6 @@ export default {
   globalGroupHint: '僅管理員可見',
   personalGroup: '個人設定',
   navCredentials: '全域憑證',
-  navUsers: '使用者',
   navAudit: '稽核日誌',
   navMyCredentials: '我的憑證',
 }

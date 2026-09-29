@@ -18,7 +18,6 @@ export default {
   globalGroupHint: '관리자 전용',
   personalGroup: '개인 설정',
   navCredentials: '전역 자격 증명',
-  navUsers: '사용자',
   navAudit: '감사 로그',
   navMyCredentials: '내 자격 증명',
 }

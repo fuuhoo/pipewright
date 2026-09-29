@@ -1,8 +1,11 @@
 <script setup lang="ts">
 /**
- * v6.2 用户管理(设置类入口)。
+ * v6.2 用户管理 —— 挂在「用户与权限」壳(/permissions)的用户 tab 下。
  *
- * 交互壳与「分组与权限」页共用:表单弹窗走 ui/AppModal(背景/Esc 在提交中不关、回车即提交),
+ * 这一 tab 的门在壳里:没有「设置类」能力时 tab 根本不渲染,而不是靠路由 meta.requires
+ * 把人踢回仪表盘(组长还要用同一页的分组 tab)。后端 /api/admin/users 的 RequireAdmin 是权威。
+ *
+ * 交互壳与分组 tab 共用:表单弹窗走 ui/AppModal(背景/Esc 在提交中不关、回车即提交),
  * 破坏性操作用 useConfirm 的公共确认框(不再各页手搓一个),报错统一 .banner--err 措辞。
  *
  * 两类行分开对待:内置管理员那一行是 admin_user 的同步行,口令与启停在「账户设置」里改,
@@ -246,7 +249,7 @@ async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<v
   <div class="users-view">
     <header class="view-header">
       <div>
-        <h1 class="view-title">{{ t('adminUsers.usersTitle') }}</h1>
+        <h2 class="view-title">{{ t('adminUsers.usersTitle') }}</h2>
         <p class="view-sub">{{ t('adminUsers.usersDesc') }}</p>
         <p class="view-sub view-sub--hint">{{ t('adminUsers.roleAxesHint') }}</p>
       </div>
@@ -473,8 +476,9 @@ async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<v
   margin-bottom: 16px;
 }
 .view-title {
-  font-size: var(--text-display);
-  font-weight: 700;
+  /* 这一页是「用户与权限」壳下的一个 tab:大标题由壳给,这里降到小节级。 */
+  font-size: var(--text-heading);
+  font-weight: 600;
   color: var(--color-text);
 }
 .view-sub {

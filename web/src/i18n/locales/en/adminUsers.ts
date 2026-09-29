@@ -3,7 +3,7 @@
  * 缺少译文时 i18n 以 fallbackLocale=zh-CN 回退,不会出现裸 key。
  */
 export default {
-  usersTitle: 'Users',
+usersTitle: 'Accounts & roles',
   usersDesc: 'A role decides which kinds of actions an account may take; a group decides which resources it can see. Each decision takes the stricter of the two.',
   roleAxesHint: 'The Role column changes the functional tier and is saved at once; roles are snapshotted into the session, so a change only applies on the next sign-in.',
   usersList: 'Users',

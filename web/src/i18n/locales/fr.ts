@@ -39,7 +39,7 @@ const fr: typeof zhCN = {
     collapse: 'Réduire la barre latérale',
     buildEnvs: 'Environnements de build',
     configProfiles: 'Profils de configuration',
-    groups: 'Groupes',
+    permissions: 'Utilisateurs et droits',
   },
 
   shell: {

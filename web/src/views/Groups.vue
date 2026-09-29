@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * 分组与权限(v6.2 分组权限)—— 资源分组的名册管理页。
+ * 分组与权限(v6.2 分组权限)—— 资源分组的名册管理页,挂在「用户与权限」壳(/permissions)的
+ * 分组 tab 下;另一 tab 是 admin/Users.vue,两页同处一页。
  *
- * 交互壳与「设置 > 用户管理」共用:表单弹窗走 ui/AppModal,删除走 useConfirm 的公共确认框,
+ * 交互壳与用户管理 tab 共用:表单弹窗走 ui/AppModal,删除走 useConfirm 的公共确认框,
  * 字段用 ui/FormField、按钮用 ui/AppButton —— 两页的「关闭/回车/报错」是同一套行为。
  *
  * 谁能看到什么由后端决定(GET /api/groups 已按可见范围过滤),页面只读结论开关按钮:
@@ -245,7 +246,7 @@ function isMine(g: Group): boolean {
   <div class="groups-view">
     <header class="view-header">
       <div>
-        <h1 class="view-title">{{ t('groups.title') }}</h1>
+        <h2 class="view-title">{{ t('groups.title') }}</h2>
         <p class="view-sub">{{ t('groups.desc') }}</p>
       </div>
       <div v-if="canSettings" class="header-actions">
@@ -472,8 +473,9 @@ function isMine(g: Group): boolean {
   margin-bottom: 16px;
 }
 .view-title {
-  font-size: var(--text-display);
-  font-weight: 700;
+  /* 这一页是「用户与权限」壳下的一个 tab:大标题由壳给,这里降到小节级。 */
+  font-size: var(--text-heading);
+  font-weight: 600;
   color: var(--color-text);
 }
 .view-sub {

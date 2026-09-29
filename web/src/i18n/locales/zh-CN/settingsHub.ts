@@ -18,7 +18,6 @@ export default {
   globalGroupHint: '仅管理员可见',
   personalGroup: '个人设置',
   navCredentials: '全局凭据',
-  navUsers: '用户管理',
   navAudit: '审计日志',
   navMyCredentials: '我的凭据',
 }

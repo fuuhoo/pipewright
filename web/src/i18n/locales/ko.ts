@@ -39,7 +39,7 @@ const ko: typeof zhCN = {
     collapse: '사이드바 접기',
     buildEnvs: '빌드 환경',
     configProfiles: '구성 프로필',
-    groups: '그룹',
+    permissions: '사용자 및 권한',
   },
 
   shell: {

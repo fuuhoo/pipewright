@@ -3,7 +3,7 @@
  * 缺少译文时 i18n 以 fallbackLocale=zh-CN 回退,不会出现裸 key。
  */
 export default {
-  usersTitle: 'Users',
+usersTitle: '계정 및 역할',
   usersDesc: '역할은 이 계정이 수행할 수 있는 동작 종류를, 그룹은 볼 수 있는 자원의 범위를 정합니다. 판단은 두 축 중 더 엄격한 쪽이 적용됩니다.',
   roleAxesHint: '"역할" 열은 기능 단계를 바꾸며 저장 즉시 반영됩니다. 역할은 세션에 스냅샷되므로 상대는 다음 로그인부터 적용됩니다.',
   usersList: 'Users',

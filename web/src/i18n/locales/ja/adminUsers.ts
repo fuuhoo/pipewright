@@ -3,7 +3,7 @@
  * 缺少译文时 i18n 以 fallbackLocale=zh-CN 回退,不会出现裸 key。
  */
 export default {
-  usersTitle: 'Users',
+usersTitle: 'アカウントとロール',
   usersDesc: 'ロールはそのアカウントが実行できる操作の種類を、グループは参照できるリソースの範囲を決めます。判定は両者のうち厳しい側が適用されます。',
   roleAxesHint: '「ロール」列は機能段階の変更で、保存即座にDBへ反映されます。ロールはセッションにスナップショットされるため、相手は次回ログイン時に有効になります。',
   usersList: 'Users',

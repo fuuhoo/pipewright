@@ -3,7 +3,7 @@
  * Covers the groups page plus the group controls shared by projects and servers.
  */
 export default {
-  title: 'Groups & access',
+title: 'Resource groups',
   desc: 'Projects and servers belong to a group: a private group is only visible and operable by its owner, members and admins; ungrouped resources are open to everyone.',
   add: 'New group',
   empty: 'No groups yet. An admin can create one and then move projects or servers into it.',

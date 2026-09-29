@@ -2,7 +2,7 @@
  * Droits par groupe (v6.2) — espace de noms : groups
  */
 export default {
-  title: 'Groupes et accès',
+title: 'Groupes de ressources',
   desc: 'Les projets et les serveurs appartiennent à un groupe : un groupe privé n’est visible et utilisable que par son propriétaire, ses membres et les administrateurs ; une ressource sans groupe est ouverte à tous.',
   add: 'Nouveau groupe',
   empty: 'Aucun groupe pour l’instant. Un administrateur peut en créer un puis y placer des projets ou des serveurs.',

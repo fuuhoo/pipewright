@@ -18,7 +18,6 @@ export default {
   globalGroupHint: 'Solo administradores',
   personalGroup: 'Ajustes personales',
   navCredentials: 'Credenciales globales',
-  navUsers: 'Usuarios',
   navAudit: 'Registro de auditoría',
   navMyCredentials: 'Mis credenciales',
 }

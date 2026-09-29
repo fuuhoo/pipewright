@@ -51,10 +51,12 @@ const AdminBuildEnvs = () => import('../views/admin/BuildEnvs.vue')
 const AdminConfigProfiles = () => import('../views/admin/ConfigProfiles.vue')
 // 全局凭据管理 + personal 禁用(设置类入口;§3.4)
 const AdminCredentials = () => import('../views/admin/Credentials.vue')
-// 用户管理(设置类入口;§3.5)
-const AdminUsers = () => import('../views/admin/Users.vue')
-// 分组与权限(v6.2 分组权限):组长也要能管自己组的成员,故不加功能门。
+// 用户与权限(设置类 tab:用户管理)
+const Permissions = () => import('../views/Permissions.vue')
+// 分组名册(数据轴):组长也要进得来,它在这壳下是不设功能门的那个 tab。
 const Groups = () => import('../views/Groups.vue')
+// 用户管理(功能轴):仅「设置类」能力可见,门在 Permissions.vue 壳里(见其注释)。
+const AdminUsers = () => import('../views/admin/Users.vue')
 // 审计日志(设置类入口,只读)
 const AdminAudit = () => import('../views/admin/Audit.vue')
 // 我的凭据(所有登录用户;§3.4)
@@ -152,9 +154,31 @@ const router = createRouter({
         // ─── v6.2 §3.1/§3.3:构建环境 / 配置资源(一级入口,设置类能力位;侧栏同口径过滤)───
         { path: 'build-envs', name: 'build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', requires: { settings: true } } },
         { path: 'config-profiles', name: 'config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', requires: { settings: true } } },
-        // v6.2 分组权限:分组名册页。所有登录用户可进(看到自己有权限的组),
+        // 用户与权限:原来分散在两处的入口(左栏「分组与权限」、设置 > 用户管理)合成一页两 tab。
+        // 壳不设功能门(组长要进得来),用户 tab 的门挂在子路由 beforeEnter 上(见下方注释)。
         // 建组/删组与「未归组资源」的登记仍由后端按 admin 收口,UI 据 canManage 开关按钮。
-        { path: 'groups', name: 'groups', component: Groups, meta: { title: '分组与权限' } },
+        {
+          path: 'permissions',
+          name: 'permissions',
+          component: Permissions,
+          meta: { title: '用户与权限' },
+          children: [
+            { path: '', redirect: { name: 'permissions-groups' } },
+            { path: 'groups', name: 'permissions-groups', component: Groups, meta: { title: '资源分组' } },
+            {
+              path: 'users',
+              name: 'permissions-users',
+              component: AdminUsers,
+              meta: { title: '账号与角色' },
+              // 门做在这一跳而不是父路由的 meta.requires:后者不满足时守卫会回仪表盘,
+              // 那会把误打 URL 的组长整个踢出这一页。这里只把他挪回分组 tab,且组件根本不挂载 ——
+              // 否则 Users.vue 的 onMounted 会先发一次注定 403 的 GET /api/admin/users。
+              beforeEnter: () => (useSessionStore().canSettings ? true : { name: 'permissions-groups' }),
+            },
+          ],
+        },
+        // 旧路径保留重定向(书签 + 外部链接)。
+        { path: 'groups', redirect: { name: 'permissions-groups' } },
         // 顶层「通知」占位页 → 重定向到真实的通知配置页。
         { path: 'notifications', name: 'notifications', redirect: { name: 'settings-notifications' } },
         {
@@ -184,7 +208,8 @@ const router = createRouter({
             { path: 'build-envs', redirect: { name: 'build-envs' } },
             { path: 'config-profiles', redirect: { name: 'config-profiles' } },
             { path: 'credentials', name: 'settings-credentials', component: AdminCredentials, meta: { title: '全局凭据', requires: { settings: true } } },
-            { path: 'users', name: 'settings-users', component: AdminUsers, meta: { title: '用户管理', requires: { settings: true } } },
+            // 用户管理并进了「用户与权限」页(左栏一级入口);旧路径重定向,书签不失效。
+            { path: 'users', redirect: { name: 'permissions-users' } },
             { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', requires: { settings: true } } },
 
             // ─── v6.2 §3.6:个人设置(所有登录用户)───

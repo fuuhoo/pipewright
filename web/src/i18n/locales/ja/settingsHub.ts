@@ -18,7 +18,6 @@ export default {
   globalGroupHint: '管理者のみ',
   personalGroup: '個人設定',
   navCredentials: 'グローバル資格情報',
-  navUsers: 'ユーザー',
   navAudit: '監査ログ',
   navMyCredentials: 'マイ資格情報',
 }

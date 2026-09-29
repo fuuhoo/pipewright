@@ -2,7 +2,7 @@
  * Grupos y permisos (v6.2) — espacio de nombres: groups
  */
 export default {
-  title: 'Grupos y permisos',
+title: 'Grupos de recursos',
   desc: 'Los proyectos y servidores pertenecen a un grupo: un grupo privado solo es visible y operable por su responsable, sus miembros y la administración; los recursos sin grupo están abiertos a todo el mundo.',
   add: 'Nuevo grupo',
   empty: 'Aún no hay grupos. La administración puede crear uno y luego asignarle proyectos o servidores.',

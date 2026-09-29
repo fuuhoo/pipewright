@@ -99,8 +99,9 @@ const navItems: NavItem[] = [
   // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(设置类入口;一级页面)。
   { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', requires: { settings: true } },
   { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', requires: { settings: true } },
-  // v6.2 分组权限:分组与权限页(组长也要进得来,故非设置类入口)。
-  { name: 'groups', to: '/groups', icon: Users, labelKey: 'nav.groups', ariaKey: 'nav.groups' },
+  // 用户与权限:账号(功能轴)+ 分组(数据轴)合成一个入口。
+  // 不设功能门 —— 组长(非管理员)也要进得来管自己组的名册,用户 tab 在页内按能力位隐藏。
+  { name: 'permissions', to: '/permissions', icon: Users, labelKey: 'nav.permissions', ariaKey: 'nav.permissions' },
 ]
 
 // 角色档位不够的入口直接不出现(后端 RequireAdmin / 分组判定仍是权威校验)。

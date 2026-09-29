@@ -39,7 +39,7 @@ const zhTW: typeof zhCN = {
     collapse: '收合側欄',
     buildEnvs: '建置環境',
     configProfiles: '配置資源',
-    groups: '分組',
+    permissions: '使用者與權限',
   },
 
   shell: {

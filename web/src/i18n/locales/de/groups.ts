@@ -2,7 +2,7 @@
  * Gruppenberechtigungen (v6.2) — Namensraum: groups
  */
 export default {
-  title: 'Gruppen und Zugriffe',
+title: 'Ressourcengruppen',
   desc: 'Projekte und Server gehören zu einer Gruppe: eine private Gruppe ist nur für ihre Leitung, Mitglieder und Administratoren sichtbar und bedienbar; nicht zugeordnete Ressourcen stehen allen offen.',
   add: 'Neue Gruppe',
   empty: 'Noch keine Gruppen. Eine Administration kann eine Gruppe anlegen und darauf Projekte oder Server einordnen.',

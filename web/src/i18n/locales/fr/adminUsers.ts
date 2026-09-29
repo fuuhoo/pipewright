@@ -3,7 +3,7 @@
  * 缺少译文时 i18n 以 fallbackLocale=zh-CN 回退,不会出现裸 key。
  */
 export default {
-  usersTitle: 'Users',
+usersTitle: 'Comptes et rôles',
   usersDesc: 'Le rôle décide quelles catégories d’actions un compte peut exécuter ; le groupe décide quelles ressources il voit. Chaque arbitrage retient le niveau le plus strict.',
   roleAxesHint: 'La colonne « Rôle » change le niveau fonctionnel et est enregistrée immédiatement ; le rôle est figé dans la session, il ne prend effet qu’à la prochaine connexion.',
   usersList: 'Users',
