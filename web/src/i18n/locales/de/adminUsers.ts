@@ -45,6 +45,7 @@ export default {
   enable: 'Aktivieren',
   disable: 'Deaktivieren',
   disableTitle: 'Konto deaktivieren',
+  enableTitle: 'Konto aktivieren',
   disableBody: '{name} kann sich nicht mehr anmelden; bestehende Sitzungen werden beim nächsten Abgleich verworfen.',
   enableBody: 'Anmelderecht von {name} wiederherstellen?',
   showDisabled: 'Deaktivierte anzeigen',

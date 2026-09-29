@@ -2,11 +2,13 @@
 /**
  * 分组与权限(v6.2 分组权限)—— 资源分组的名册管理页。
  *
- * 谁能看到什么由后端决定(GET /api/groups 已按可见范围过滤),页面只读 canManage
- * 结论来开关按钮:
- *   - 建组 / 删组      → 仅管理员(分组是「设置类」)
- *   - 改组 / 管成员    → 管理员或该组组长
- *   - 换组长           → 仅管理员
+ * 交互壳与「设置 > 用户管理」共用:表单弹窗走 ui/AppModal,删除走 useConfirm 的公共确认框,
+ * 字段用 ui/FormField、按钮用 ui/AppButton —— 两页的「关闭/回车/报错」是同一套行为。
+ *
+ * 谁能看到什么由后端决定(GET /api/groups 已按可见范围过滤),页面只读结论开关按钮:
+ *   - 建组 / 删组      → 「设置类」能力(分组本身是设置类资源)
+ *   - 改组 / 管成员    → 有设置能力或该组组长(canManage 由后端给)
+ *   - 换组长           → 仅有设置能力
  * 未归组(资源 groupId='')= 全员可见可操作,是存量数据的默认态。
  */
 import { computed, onMounted, ref } from 'vue'
@@ -23,11 +25,19 @@ import {
 import type { Group, GroupMember, GroupVisibility, UpdateGroupInput } from '../api/groups'
 import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
+import AppModal from '../components/ui/AppModal.vue'
+import AppButton from '../components/ui/AppButton.vue'
+import FormField from '../components/ui/FormField.vue'
+import { useConfirm } from '../composables/useConfirm'
+import { useToast } from '../composables/useToast'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
+const confirm = useConfirm()
+const toast = useToast()
 
-const isAdmin = computed(() => sessionStore.user?.role === 'admin')
+/** 「设置类」能力:与路由/侧栏同一份来源(lib/roles),不再各处写 role === 'admin'。 */
+const canSettings = computed(() => sessionStore.canSettings)
 
 // ─── state ──────────────────────────────────────────────────────────────────
 
@@ -45,25 +55,20 @@ async function load(): Promise<void> {
     roster.value = users
     loadState.value = 'idle'
   } catch (err) {
-    loadError.value = msg(err, 'groups.errLoad')
+    loadError.value = errText(err, 'groups.errLoad')
     loadState.value = 'error'
   }
 }
 
 onMounted(load)
 
-function msg(err: unknown, fallback: string): string {
+/** 校验失败时用后端原文,其余按状态码给一句人话(与用户管理页同口径)。 */
+function errText(err: unknown, key: string): string {
   if (err instanceof HttpError) {
     if (err.status === 0) return t('groups.errLoadConn')
-    return err.apiError?.message ?? t(fallback)
+    return err.apiError?.message ?? t(key, { status: err.status })
   }
-  return t(fallback)
-}
-
-// 名册里可加入的人:排除已在组内与组长(组长天然是组的人,不必重复列)。
-function candidates(g: Group): GroupMember[] {
-  const inGroup = new Set([g.ownerId, ...g.members.map((m) => m.id)])
-  return roster.value.filter((u) => !inGroup.has(u.id))
+  return t('groups.errRetry')
 }
 
 // ─── create / edit modal ────────────────────────────────────────────────────
@@ -108,6 +113,12 @@ function openEdit(g: Group): void {
   modalOpen.value = true
 }
 
+/** 提交中/成员操作中不关弹窗:否则用户以为没保存,实际已经落库了。 */
+function closeModal(): void {
+  if (formSubmitting.value || memberBusy.value) return
+  modalOpen.value = false
+}
+
 async function submitForm(): Promise<void> {
   formSubmitting.value = true
   formBanner.value = ''
@@ -120,7 +131,7 @@ async function submitForm(): Promise<void> {
         visibility: form.value.visibility,
       }
       // 换组长只有管理员能传,组长自己提交时不带这个键(否则 403)。
-      if (isAdmin.value && form.value.ownerId && form.value.ownerId !== g.ownerId) {
+      if (canSettings.value && form.value.ownerId && form.value.ownerId !== g.ownerId) {
         patch.ownerId = form.value.ownerId
       }
       await updateGroup(g.id, patch)
@@ -136,11 +147,10 @@ async function submitForm(): Promise<void> {
     modalOpen.value = false
     await load()
   } catch (err) {
-    formBanner.value = msg(err, 'groups.errSave')
+    formBanner.value = errText(err, 'groups.errSave')
+  } finally {
     formSubmitting.value = false
-    return
   }
-  formSubmitting.value = false
 }
 
 // ─── 成员名册(编辑态弹窗内即时增删,离屏也能看清谁进了组) ──────────────────
@@ -148,8 +158,9 @@ async function submitForm(): Promise<void> {
 const newMemberId = ref('')
 const memberBusy = ref(false)
 
-async function addMember(g: Group): Promise<void> {
-  if (!newMemberId.value) return
+async function addMember(): Promise<void> {
+  const g = liveGroup.value
+  if (!g || !newMemberId.value) return
   memberBusy.value = true
   formBanner.value = ''
   try {
@@ -159,13 +170,15 @@ async function addMember(g: Group): Promise<void> {
     const fresh = groups.value.find((x) => x.id === g.id)
     if (fresh) editing.value = fresh
   } catch (err) {
-    formBanner.value = msg(err, 'groups.errMemberAdd')
+    formBanner.value = errText(err, 'groups.errMemberAdd')
   } finally {
     memberBusy.value = false
   }
 }
 
-async function dropMember(g: Group, userId: string): Promise<void> {
+async function dropMember(userId: string): Promise<void> {
+  const g = liveGroup.value
+  if (!g) return
   memberBusy.value = true
   formBanner.value = ''
   try {
@@ -174,7 +187,7 @@ async function dropMember(g: Group, userId: string): Promise<void> {
     const fresh = groups.value.find((x) => x.id === g.id)
     if (fresh) editing.value = fresh
   } catch (err) {
-    formBanner.value = msg(err, 'groups.errMemberRemove')
+    formBanner.value = errText(err, 'groups.errMemberRemove')
   } finally {
     memberBusy.value = false
   }
@@ -185,25 +198,33 @@ const liveGroup = computed<Group | null>(() =>
   editing.value ? (groups.value.find((g) => g.id === editing.value?.id) ?? editing.value) : null,
 )
 
+/** 名册里可加入的人:排除已在组内与组长(组长天然是组的人,不必重复列)。 */
+const rosterCandidates = computed<GroupMember[]>(() => {
+  const g = liveGroup.value
+  if (!g) return []
+  const inGroup = new Set([g.ownerId, ...g.members.map((m) => m.id)])
+  return roster.value.filter((u) => !inGroup.has(u.id))
+})
+
 // ─── delete ─────────────────────────────────────────────────────────────────
 
-const deleteOpen = ref(false)
-const deleting = ref<Group | null>(null)
-const deleteSubmitting = ref(false)
-const deleteBanner = ref('')
-
-async function confirmDelete(): Promise<void> {
-  if (!deleting.value) return
-  deleteSubmitting.value = true
-  deleteBanner.value = ''
+/**
+ * 删组走公共确认框(与用户管理页的启停同一壳)。
+ * 确认框在请求发出前就关掉了,失败没有地方塞横幅,只能用 toast 说清「没删掉」。
+ */
+async function askDelete(g: Group): Promise<void> {
+  const ok = await confirm.open({
+    title: t('groups.confirmDelete'),
+    body: `${t('groups.deleteBody', { name: g.name })} ${t('groups.deleteResourcesHint')}`,
+    confirmLabel: t('groups.delete'),
+    variant: 'danger',
+  })
+  if (!ok) return
   try {
-    await deleteGroup(deleting.value.id)
-    deleteOpen.value = false
+    await deleteGroup(g.id)
     await load()
   } catch (err) {
-    deleteBanner.value = msg(err, 'groups.errDelete')
-  } finally {
-    deleteSubmitting.value = false
+    toast.error(errText(err, 'groups.errDelete'))
   }
 }
 
@@ -211,8 +232,12 @@ function ownerLabel(g: Group): string {
   return g.ownerName || g.ownerId
 }
 
+/**
+ * 「我管理的」标:有设置能力的人看什么都算管理,否则按组长本人。
+ * 会话里只有用户名没有用户 id(/api/auth/session 不回 id),所以这里按名比对。
+ */
 function isMine(g: Group): boolean {
-  return isAdmin.value || sessionStore.user?.username === g.ownerName
+  return canSettings.value || sessionStore.user?.username === g.ownerName
 }
 </script>
 
@@ -223,15 +248,15 @@ function isMine(g: Group): boolean {
         <h1 class="view-title">{{ t('groups.title') }}</h1>
         <p class="view-sub">{{ t('groups.desc') }}</p>
       </div>
-      <div v-if="isAdmin" class="header-actions">
-        <button class="btn btn--primary" @click="openAdd">+ {{ t('groups.add') }}</button>
+      <div v-if="canSettings" class="header-actions">
+        <AppButton variant="primary" @click="openAdd">+ {{ t('groups.add') }}</AppButton>
       </div>
     </header>
 
     <p v-if="loadState === 'loading'" class="state">{{ t('common.refresh') }}…</p>
     <div v-else-if="loadState === 'error'" class="state state--error">
       <p>{{ loadError }}</p>
-      <button class="btn" @click="load">{{ t('common.refresh') }}</button>
+      <AppButton @click="load">{{ t('common.refresh') }}</AppButton>
     </div>
     <p v-else-if="groups.length === 0" class="state">{{ t('groups.empty') }}</p>
 
@@ -243,14 +268,14 @@ function isMine(g: Group): boolean {
           <th>{{ t('groups.colOwner') }}</th>
           <th>{{ t('groups.colMembers') }}</th>
           <th>{{ t('groups.colResources') }}</th>
-          <th>{{ t('groups.colActions') }}</th>
+          <th class="th-actions">{{ t('groups.colActions') }}</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="g in groups" :key="g.id">
           <td>
-            <div class="cell-strong">
-              {{ g.name }}
+            <div class="cell-strong name-row">
+              <span>{{ g.name }}</span>
               <span v-if="isMine(g)" class="tag tag--mine">{{ t('groups.mine') }}</span>
             </div>
             <div v-if="g.description" class="cell-dim">{{ g.description }}</div>
@@ -280,140 +305,161 @@ function isMine(g: Group): boolean {
               {{ t('groups.resourceCounts', { projects: g.projectCount, servers: g.serverCount }) }}
             </div>
           </td>
-          <td class="actions">
-            <button
-              class="btn btn--sm"
+          <td class="cell-actions">
+            <AppButton
+              variant="ghost"
+              size="sm"
               :disabled="!g.canManage"
               :title="g.canManage ? '' : t('groups.manageOnlyHint')"
               @click="openEdit(g)"
             >
               {{ t('groups.edit') }}
-            </button>
-            <button
-              v-if="isAdmin"
-              class="btn btn--sm btn--danger"
-              @click="(deleting = g), (deleteOpen = true), (deleteBanner = '')"
-            >
+            </AppButton>
+            <AppButton v-if="canSettings" variant="danger" size="sm" @click="askDelete(g)">
               {{ t('groups.delete') }}
-            </button>
+            </AppButton>
           </td>
         </tr>
       </tbody>
     </table>
 
     <!-- ── create / edit ── -->
-    <div v-if="modalOpen" class="modal-mask" @click.self="modalOpen = false">
-      <div class="modal" role="dialog">
-        <h2 class="modal-title">
-          {{ editing ? t('groups.editTitle') : t('groups.createTitle') }}
-        </h2>
-        <p class="modal-sub">{{ t('groups.formHint') }}</p>
+    <AppModal
+      v-if="modalOpen"
+      :title="editing ? t('groups.editTitle') : t('groups.createTitle')"
+      :subtitle="t('groups.formHint')"
+      width="lg"
+      :busy="formSubmitting || memberBusy"
+      @close="closeModal"
+      @submit="submitForm"
+    >
+      <p v-if="formBanner" class="banner banner--err" role="alert">{{ formBanner }}</p>
 
-        <div class="form-grid">
-          <label class="field">
-            <span>{{ t('groups.fieldName') }}</span>
-            <input v-model="form.name" type="text" :placeholder="t('groups.namePlaceholder')" />
-          </label>
-          <label class="field">
-            <span>{{ t('groups.fieldVisibility') }}</span>
-            <select v-model="form.visibility">
+      <div class="form-grid">
+        <FormField :label="t('groups.fieldName')" field-id="group-name" required>
+          <template #default="{ fieldId }">
+            <input
+              :id="fieldId"
+              v-model="form.name"
+              class="ui-input"
+              type="text"
+              autocomplete="off"
+              :placeholder="t('groups.namePlaceholder')"
+              :disabled="formSubmitting"
+            />
+          </template>
+        </FormField>
+
+        <FormField
+          :label="t('groups.fieldVisibility')"
+          field-id="group-visibility"
+          :hint="form.visibility === 'public' ? t('groups.publicHint') : t('groups.privateHint')"
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <select
+              :id="fieldId"
+              v-model="form.visibility"
+              class="ui-input"
+              :aria-describedby="ariaDescribedby"
+              :disabled="formSubmitting"
+            >
               <option value="private">{{ t('groups.visibilityPrivate') }}</option>
               <option value="public">{{ t('groups.visibilityPublic') }}</option>
             </select>
-            <small>{{
-              form.visibility === 'public' ? t('groups.publicHint') : t('groups.privateHint')
-            }}</small>
-          </label>
-          <label class="field field--wide">
-            <span>{{ t('groups.fieldDesc') }}</span>
-            <input v-model="form.description" type="text" />
-          </label>
-          <label v-if="isAdmin" class="field field--wide">
-            <span>{{ t('groups.fieldOwner') }}</span>
-            <select v-model="form.ownerId">
+          </template>
+        </FormField>
+
+        <FormField class="field--wide" :label="t('groups.fieldDesc')" field-id="group-desc">
+          <template #default="{ fieldId }">
+            <input
+              :id="fieldId"
+              v-model="form.description"
+              class="ui-input"
+              type="text"
+              autocomplete="off"
+              :disabled="formSubmitting"
+            />
+          </template>
+        </FormField>
+
+        <FormField
+          v-if="canSettings"
+          class="field--wide"
+          :label="t('groups.fieldOwner')"
+          field-id="group-owner"
+          :hint="t('groups.ownerHint')"
+        >
+          <template #default="{ fieldId }">
+            <select :id="fieldId" v-model="form.ownerId" class="ui-input" :disabled="formSubmitting">
               <option value="">{{ t('groups.ownerSelf') }}</option>
               <option v-for="u in roster" :key="u.id" :value="u.id">{{ u.username }}</option>
             </select>
-            <small>{{ t('groups.ownerHint') }}</small>
-          </label>
-          <label v-if="!editing" class="field field--wide">
-            <span>{{ t('groups.fieldMembers') }}</span>
-            <div class="picker">
-              <select v-model="form.memberIds" multiple size="6">
-                <option v-for="u in createCandidates" :key="u.id" :value="u.id">
-                  {{ u.username }}
-                </option>
-              </select>
-              <small>{{ t('groups.membersHint') }}</small>
-            </div>
-          </label>
-        </div>
+          </template>
+        </FormField>
 
-        <!-- 成员名册:编辑态逐人增删(每次操作立即落库,不是保存时才生效) -->
-        <div v-if="liveGroup" class="roster">
-          <h3 class="roster-title">{{ t('groups.fieldMembers') }}</h3>
-          <p v-if="!liveGroup.members.length" class="cell-dim">{{ t('groups.noMembers') }}</p>
-          <ul v-else class="roster-list">
-            <li v-for="m in liveGroup.members" :key="m.id">
-              <span class="chip">{{ m.username }}</span>
-              <button
-                class="link-btn"
-                :disabled="memberBusy"
-                @click="dropMember(liveGroup, m.id)"
-              >
-                {{ t('groups.removeMember') }}
-              </button>
-            </li>
-          </ul>
-          <div class="roster-add">
-            <select v-model="newMemberId" :disabled="memberBusy">
-              <option value="">{{ t('groups.memberAddPlaceholder') }}</option>
-              <option v-for="u in candidates(liveGroup)" :key="u.id" :value="u.id">
+        <FormField
+          v-if="!editing"
+          class="field--wide"
+          :label="t('groups.fieldMembers')"
+          field-id="group-members"
+          :hint="t('groups.membersHint')"
+        >
+          <template #default="{ fieldId }">
+            <select
+              :id="fieldId"
+              v-model="form.memberIds"
+              class="ui-input ui-input--multi"
+              multiple
+              size="6"
+              :disabled="formSubmitting"
+            >
+              <option v-for="u in createCandidates" :key="u.id" :value="u.id">
                 {{ u.username }}
               </option>
             </select>
-            <button
-              class="btn btn--sm"
-              :disabled="!newMemberId || memberBusy"
-              @click="addMember(liveGroup)"
-            >
-              {{ t('groups.addMember') }}
-            </button>
-          </div>
+          </template>
+        </FormField>
+      </div>
+
+      <!-- 成员名册:编辑态逐人增删(每次操作立即落库,不是保存时才生效) -->
+      <div v-if="liveGroup" class="roster">
+        <h3 class="roster-title">{{ t('groups.fieldMembers') }}</h3>
+        <p v-if="!liveGroup.members.length" class="cell-dim">{{ t('groups.noMembers') }}</p>
+        <ul v-else class="roster-list">
+          <li v-for="m in liveGroup.members" :key="m.id">
+            <span class="chip">{{ m.username }}</span>
+            <AppButton variant="ghost" size="sm" :disabled="memberBusy" @click="dropMember(m.id)">
+              {{ t('groups.removeMember') }}
+            </AppButton>
+          </li>
+        </ul>
+        <div class="roster-add">
+          <select v-model="newMemberId" class="ui-input" :disabled="memberBusy">
+            <option value="">{{ t('groups.memberAddPlaceholder') }}</option>
+            <option v-for="u in rosterCandidates" :key="u.id" :value="u.id">
+              {{ u.username }}
+            </option>
+          </select>
+          <AppButton size="sm" :disabled="!newMemberId || memberBusy" @click="addMember">
+            {{ t('groups.addMember') }}
+          </AppButton>
         </div>
-
-        <p v-if="formBanner" class="banner banner--err">{{ formBanner }}</p>
-
-        <footer class="modal-actions">
-          <button class="btn" @click="modalOpen = false">{{ t('groups.cancel') }}</button>
-          <button
-            class="btn btn--primary"
-            :disabled="formSubmitting || !form.name.trim()"
-            @click="submitForm"
-          >
-            {{ formSubmitting ? t('groups.saving') : t('groups.save') }}
-          </button>
-        </footer>
       </div>
-    </div>
 
-    <!-- ── delete ── -->
-    <div v-if="deleteOpen" class="modal-mask" @click.self="deleteOpen = false">
-      <div class="modal modal--sm" role="dialog">
-        <h2 class="modal-title">{{ t('groups.confirmDelete') }}</h2>
-        <p class="modal-body">
-          {{ t('groups.deleteBody', { name: deleting?.name ?? '' }) }}
-        </p>
-        <p class="modal-sub">{{ t('groups.deleteResourcesHint') }}</p>
-        <p v-if="deleteBanner" class="banner banner--err">{{ deleteBanner }}</p>
-        <footer class="modal-actions">
-          <button class="btn" @click="deleteOpen = false">{{ t('groups.cancel') }}</button>
-          <button class="btn btn--danger" :disabled="deleteSubmitting" @click="confirmDelete">
-            {{ t('groups.delete') }}
-          </button>
-        </footer>
-      </div>
-    </div>
+      <template #actions>
+        <AppButton :disabled="formSubmitting || memberBusy" @click="closeModal">
+          {{ t('groups.cancel') }}
+        </AppButton>
+        <AppButton
+          variant="primary"
+          type="submit"
+          :loading="formSubmitting"
+          :disabled="!form.name.trim()"
+        >
+          {{ t('groups.save') }}
+        </AppButton>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -492,10 +538,9 @@ function isMine(g: Group): boolean {
 }
 .tag {
   display: inline-block;
-  margin-left: 6px;
-  padding: 1px 8px;
+  padding: 2px 10px;
   border-radius: 999px;
-  font-size: var(--text-small, 0.78em);
+  font-size: var(--text-small, 0.8em);
   font-weight: 600;
 }
 .tag--public {
@@ -507,157 +552,29 @@ function isMine(g: Group): boolean {
   color: #a16207;
 }
 .tag--mine {
-  margin-left: 6px;
   background: rgba(59, 130, 246, 0.15);
   color: #2563eb;
 }
-.actions {
+.name-row {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
 }
-.actions .btn {
-  flex: none;
+.th-actions {
+  text-align: right;
+}
+.cell-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   white-space: nowrap;
 }
 .cell-nowrap {
   white-space: nowrap;
 }
-.btn {
-  padding: 7px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg, #fff);
-  color: var(--color-text);
-  font-size: var(--text-label);
-  cursor: pointer;
-}
-.btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn--primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-.btn--danger {
-  color: var(--color-danger, #dc2626);
-  border-color: var(--color-danger, #dc2626);
-}
-.btn--sm {
-  padding: 4px 10px;
-  font-size: var(--text-small, 0.85em);
-}
-.link-btn {
-  border: none;
-  background: none;
-  color: var(--color-faint);
-  font-size: var(--text-small, 0.85em);
-  cursor: pointer;
-  text-decoration: underline;
-}
-.link-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.banner {
-  margin-top: 14px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-  font-size: var(--text-label);
-}
-.banner--err {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
-}
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.modal {
-  background: var(--color-bg, #fff);
-  border-radius: 12px;
-  padding: 24px;
-  width: min(680px, 92vw);
-  max-height: 88vh;
-  overflow: auto;
-}
-.modal--sm {
-  width: min(420px, 92vw);
-}
-.modal-title {
-  font-size: var(--text-h3, 1.1rem);
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.modal-sub {
-  font-size: var(--text-label);
-  color: var(--color-faint);
-  margin-bottom: 16px;
-}
-.modal-body {
-  color: var(--color-dim);
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
-}
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: var(--text-label);
-}
-.field--wide {
-  grid-column: 1 / -1;
-}
-.field > span {
-  font-weight: 600;
-  color: var(--color-dim);
-}
-.field input,
-.field select {
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg, #fff);
-  color: var(--color-text);
-  font-size: var(--text-label);
-  font-family: inherit;
-}
-.field small,
-.picker small {
-  color: var(--color-faint);
-  font-size: var(--text-small, 0.85em);
-}
-.picker {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.picker select {
-  padding: 6px;
-}
+/* 弹窗里的成员名册:slot 内容带着本页的 scope,所以样式留在这一侧。 */
 .roster {
-  margin-top: 18px;
-  padding-top: 14px;
+  padding-top: var(--space-3);
   border-top: 1px solid var(--color-border);
 }
 .roster-title {
@@ -669,7 +586,7 @@ function isMine(g: Group): boolean {
 .roster-list {
   list-style: none;
   padding: 0;
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-3);
   display: flex;
   flex-wrap: wrap;
   gap: 8px 14px;
@@ -681,16 +598,10 @@ function isMine(g: Group): boolean {
 }
 .roster-add {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: var(--space-2);
 }
-.roster-add select {
-  flex: 1;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg, #fff);
-  color: var(--color-text);
-  font-size: var(--text-label);
+.roster-add .ui-input {
+  max-width: 320px;
 }
 </style>

@@ -8,6 +8,7 @@ const en: typeof zhCN = {
     refresh: 'Refresh',
     allArrow: 'All →',
     detailArrow: 'Details →',
+    close: 'Close',
   },
 
   locale: {

@@ -45,6 +45,7 @@ export default {
   enable: '활성화',
   disable: '비활성화',
   disableTitle: '계정 비활성화',
+  enableTitle: '계정 활성화',
   disableBody: '{name}은(는) 로그인할 수 없으며, 기존 세션은 다음 검증 때 만료됩니다.',
   enableBody: '{name}의 로그인 권한을 복구할까요?',
   showDisabled: '비활성화된 계정 표시',

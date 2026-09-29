@@ -46,6 +46,7 @@ export default {
   enable: '启用',
   disable: '禁用',
   disableTitle: '禁用账号',
+  enableTitle: '启用账号',
   disableBody: '禁用后 {name} 无法登录，已登录的会话会在下次校验时失效。',
   enableBody: '恢复 {name} 的登录权限？',
   showDisabled: '显示已禁用',

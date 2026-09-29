@@ -45,6 +45,7 @@ export default {
   enable: 'Enable',
   disable: 'Disable',
   disableTitle: 'Disable account',
+  enableTitle: 'Enable account',
   disableBody: '{name} will no longer be able to sign in; existing sessions are dropped on the next check.',
   enableBody: 'Restore sign-in access for {name}?',
   showDisabled: 'Show disabled',

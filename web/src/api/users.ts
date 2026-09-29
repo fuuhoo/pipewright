@@ -19,6 +19,13 @@ import type { UserRole } from './auth'
 
 export type { UserRole }
 
+/**
+ * 内置管理员在 users 表里的同步行 id(= Go 侧 users.BootstrapAdminRegularUserID)。
+ * 这一行的口令与启停归「账户设置」管,写端点对它一律 409 —— 页面据此提前禁掉按钮,
+ * 而不是等报错。
+ */
+export const BOOTSTRAP_ADMIN_ID = '00000000-0000-0000-0000-000000000001'
+
 export interface User {
   id: string
   username: string

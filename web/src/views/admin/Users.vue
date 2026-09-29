@@ -2,6 +2,9 @@
 /**
  * v6.2 用户管理(设置类入口)。
  *
+ * 交互壳与「分组与权限」页共用:表单弹窗走 ui/AppModal(背景/Esc 在提交中不关、回车即提交),
+ * 破坏性操作用 useConfirm 的公共确认框(不再各页手搓一个),报错统一 .banner--err 措辞。
+ *
  * 两类行分开对待:内置管理员那一行是 admin_user 的同步行,口令与启停在「账户设置」里改,
  * 写端点对它一律 409 —— 所以这里直接禁用按钮,而不是等报错。
  * 默认列表不含已禁用账号(后端的 includeDisabled 取舍),要看到被停用的账号得勾上开关。
@@ -10,26 +13,34 @@
  * 名单来自 lib/roles(与后端 roles.go 同集合,单测比对防漂移)。改完要对方重新登录
  * 才生效 —— sessions.role 是登录快照,所以页面上把这句话写明白,而不是让人以为立刻生效。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   listUsers,
   createUser,
   updateUser,
   resetUserPassword,
+  BOOTSTRAP_ADMIN_ID,
   MIN_PASSWORD_LEN,
 } from '../../api/users'
 import type { User, UserRole } from '../../api/users'
 import { ROLE_LABEL_KEY, ROLE_ORDER, ROLE_TAG_CLASS, normalizeRole } from '../../lib/roles'
 import { HttpError } from '../../api/http'
+import AppModal from '../../components/ui/AppModal.vue'
+import AppButton from '../../components/ui/AppButton.vue'
+import FormField from '../../components/ui/FormField.vue'
+import { useConfirm } from '../../composables/useConfirm'
+import { useToast } from '../../composables/useToast'
 
 const { t } = useI18n()
+const confirm = useConfirm()
+const toast = useToast()
 
 const loadState = ref<'idle' | 'loading' | 'error'>('idle')
 const loadError = ref('')
 const users = ref<User[]>([])
 const includeDisabled = ref(false)
-// 行内改描述失败的提示:它不属于「整页加载失败」,所以单独一条横幅而不是复用 loadError。
+// 行内改描述/改角色失败的提示:它不属于「整页加载失败」,所以单独一条横幅而不是复用 loadError。
 const rowError = ref('')
 
 async function load(): Promise<void> {
@@ -39,12 +50,7 @@ async function load(): Promise<void> {
     users.value = await listUsers({ includeDisabled: includeDisabled.value })
     loadState.value = 'idle'
   } catch (err) {
-    loadError.value =
-      err instanceof HttpError
-        ? err.status === 0
-          ? t('adminUsers.errUsersLoadConn')
-          : (err.apiError?.message ?? t('adminUsers.errUsersLoad'))
-        : t('adminUsers.errUsersLoad')
+    loadError.value = errText(err, 'adminUsers.errUsersLoad')
     loadState.value = 'error'
   }
 }
@@ -56,8 +62,6 @@ function fmtTime(iso: string | null): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
-
-const BOOTSTRAP_ADMIN_ID = '00000000-0000-0000-0000-000000000001'
 
 function isBootstrapAdmin(u: User): boolean {
   return u.id === BOOTSTRAP_ADMIN_ID
@@ -179,39 +183,28 @@ async function submitReset(): Promise<void> {
 
 // ─── 启用 / 禁用 ──────────────────────────────────────────────────────────────
 
-const toggleTarget = ref<User | null>(null)
-const toggleBusy = ref(false)
-const toggleBanner = ref('')
-
-const toggleIsDisabling = computed(() => toggleTarget.value?.enabled === true)
-
-function openToggle(u: User): void {
-  toggleTarget.value = u
-  toggleBanner.value = ''
-}
-
-function closeToggle(): void {
-  if (toggleBusy.value) return
-  toggleTarget.value = null
-}
-
-async function submitToggle(): Promise<void> {
-  const target = toggleTarget.value
-  if (!target) return
-  toggleBusy.value = true
-  toggleBanner.value = ''
+/**
+ * 启停走公共确认框(与分组页删除同一壳)。确认框在调用前就关掉了,所以失败只能进 toast,
+ * 不能再塞回弹窗横幅。
+ */
+async function askToggle(u: User): Promise<void> {
+  const disabling = u.enabled
+  const ok = await confirm.open({
+    title: t(disabling ? 'adminUsers.disableTitle' : 'adminUsers.enableTitle'),
+    body: t(disabling ? 'adminUsers.disableBody' : 'adminUsers.enableBody', { name: u.username }),
+    confirmLabel: t(disabling ? 'adminUsers.disable' : 'adminUsers.enable'),
+    variant: disabling ? 'danger' : 'primary',
+  })
+  if (!ok) return
   try {
-    const fresh = await updateUser(target.id, { enabled: !target.enabled })
-    users.value = users.value.map((u) => (u.id === fresh.id ? fresh : u))
+    const fresh = await updateUser(u.id, { enabled: !u.enabled })
+    users.value = users.value.map((x) => (x.id === fresh.id ? fresh : x))
     // 取消勾选「显示已禁用」后,刚被停用的账号就不该继续留在列表里。
     if (!includeDisabled.value && !fresh.enabled) {
-      users.value = users.value.filter((u) => u.id !== fresh.id)
+      users.value = users.value.filter((x) => x.id !== fresh.id)
     }
-    toggleTarget.value = null
   } catch (err) {
-    toggleBanner.value = errText(err, 'adminUsers.errToggle')
-  } finally {
-    toggleBusy.value = false
+    toast.error(errText(err, 'adminUsers.errToggle'))
   }
 }
 
@@ -262,11 +255,11 @@ async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<v
           <input v-model="includeDisabled" type="checkbox" @change="load" />
           <span>{{ t('adminUsers.showDisabled') }}</span>
         </label>
-        <button class="btn btn--primary" @click="openCreate">+ {{ t('adminUsers.addUser') }}</button>
+        <AppButton variant="primary" @click="openCreate">+ {{ t('adminUsers.addUser') }}</AppButton>
       </div>
     </header>
 
-    <div v-if="rowError" class="banner banner--row" role="alert">
+    <div v-if="rowError" class="banner banner--err banner--row" role="alert">
       <span>{{ rowError }}</span>
       <button class="banner-close" type="button" aria-label="×" @click="rowError = ''">×</button>
     </div>
@@ -274,7 +267,7 @@ async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<v
     <p v-if="loadState === 'loading'" class="state">{{ t('common.refresh') }}…</p>
     <div v-else-if="loadState === 'error'" class="state state--error">
       <p>{{ loadError }}</p>
-      <button class="btn" @click="load">{{ t('common.refresh') }}</button>
+      <AppButton @click="load">{{ t('common.refresh') }}</AppButton>
     </div>
     <p v-else-if="users.length === 0" class="state">{{ t('adminUsers.usersEmpty') }}</p>
 
@@ -328,115 +321,146 @@ async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<v
           <td>{{ fmtTime(u.lastLoginAt) }}</td>
           <td>{{ fmtTime(u.createdAt) }}</td>
           <td class="cell-actions">
-            <button
-              class="btn btn--ghost"
+            <AppButton
+              variant="ghost"
+              size="sm"
               :disabled="isBootstrapAdmin(u)"
               :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
               @click="openReset(u)"
             >
               {{ t('adminUsers.resetPassword') }}
-            </button>
-            <button
-              class="btn btn--ghost"
-              :class="{ 'btn--danger': u.enabled }"
+            </AppButton>
+            <AppButton
+              :variant="u.enabled ? 'danger' : 'ghost'"
+              size="sm"
               :disabled="isBootstrapAdmin(u)"
               :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
-              @click="openToggle(u)"
+              @click="askToggle(u)"
             >
               {{ u.enabled ? t('adminUsers.disable') : t('adminUsers.enable') }}
-            </button>
+            </AppButton>
           </td>
         </tr>
       </tbody>
     </table>
 
     <!-- ─── 新建账号 ─── -->
-    <div v-if="createOpen" class="backdrop" @click.self="closeCreate">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-create-title">
-        <h3 id="user-create-title" class="modal-title">{{ t('adminUsers.createTitle') }}</h3>
-        <div v-if="createBanner" class="banner" role="alert">{{ createBanner }}</div>
-        <form @submit.prevent="submitCreate">
-          <label class="field">
-            <span class="field-label">{{ t('adminUsers.fieldUsername') }}</span>
-            <input v-model="createForm.username" class="field-input" type="text" autocomplete="off" :disabled="createBusy" />
-            <span v-if="createErrors.username" class="field-error">{{ createErrors.username }}</span>
-          </label>
-          <label class="field">
-            <span class="field-label">{{ t('adminUsers.fieldPassword') }}</span>
-            <input v-model="createForm.password" class="field-input" type="password" autocomplete="new-password" :disabled="createBusy" />
-            <span v-if="createErrors.password" class="field-error">{{ createErrors.password }}</span>
-            <span v-else class="field-hint">{{ t('adminUsers.passwordHint', { n: MIN_PASSWORD_LEN }) }}</span>
-          </label>
-          <label class="field">
-            <span class="field-label">{{ t('adminUsers.fieldRole') }}</span>
-            <select v-model="createForm.role" class="field-input" :disabled="createBusy">
+    <AppModal
+      v-if="createOpen"
+      :title="t('adminUsers.createTitle')"
+      width="lg"
+      :busy="createBusy"
+      @close="closeCreate"
+      @submit="submitCreate"
+    >
+      <p v-if="createBanner" class="banner banner--err" role="alert">{{ createBanner }}</p>
+      <div class="form-grid">
+        <FormField
+          :label="t('adminUsers.fieldUsername')"
+          field-id="user-create-name"
+          :error="createErrors.username"
+          required
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <input
+              :id="fieldId"
+              v-model="createForm.username"
+              class="ui-input"
+              type="text"
+              autocomplete="off"
+              :aria-describedby="ariaDescribedby"
+              :disabled="createBusy"
+            />
+          </template>
+        </FormField>
+        <FormField
+          :label="t('adminUsers.fieldPassword')"
+          field-id="user-create-pw"
+          :error="createErrors.password"
+          :hint="t('adminUsers.passwordHint', { n: MIN_PASSWORD_LEN })"
+          required
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <input
+              :id="fieldId"
+              v-model="createForm.password"
+              class="ui-input"
+              type="password"
+              autocomplete="new-password"
+              :aria-describedby="ariaDescribedby"
+              :disabled="createBusy"
+            />
+          </template>
+        </FormField>
+        <FormField
+          :label="t('adminUsers.fieldRole')"
+          field-id="user-create-role"
+          :hint="t('adminUsers.roleDesc')"
+        >
+          <template #default="{ fieldId }">
+            <select :id="fieldId" v-model="createForm.role" class="ui-input" :disabled="createBusy">
               <option v-for="r in ROLE_ORDER" :key="r" :value="r">{{ roleLabel(r) }}</option>
             </select>
-            <span class="field-hint">{{ t('adminUsers.roleDesc') }}</span>
-          </label>
-          <label class="field">
-            <span class="field-label">{{ t('adminUsers.fieldDesc') }}</span>
-            <input v-model="createForm.description" class="field-input" type="text" autocomplete="off" :disabled="createBusy" />
-          </label>
-          <div class="modal-actions">
-            <button type="button" class="btn" :disabled="createBusy" @click="closeCreate">{{ t('adminUsers.cancel') }}</button>
-            <button type="submit" class="btn btn--primary" :disabled="createBusy">
-              {{ createBusy ? t('adminUsers.saving') : t('adminUsers.create') }}
-            </button>
-          </div>
-        </form>
+          </template>
+        </FormField>
+        <FormField :label="t('adminUsers.fieldDesc')" field-id="user-create-desc">
+          <template #default="{ fieldId }">
+            <input
+              :id="fieldId"
+              v-model="createForm.description"
+              class="ui-input"
+              type="text"
+              autocomplete="off"
+              :disabled="createBusy"
+            />
+          </template>
+        </FormField>
       </div>
-    </div>
+
+      <template #actions>
+        <AppButton :disabled="createBusy" @click="closeCreate">{{ t('adminUsers.cancel') }}</AppButton>
+        <AppButton variant="primary" type="submit" :loading="createBusy">
+          {{ t('adminUsers.create') }}
+        </AppButton>
+      </template>
+    </AppModal>
 
     <!-- ─── 重置口令 ─── -->
-    <div v-if="resetOpen" class="backdrop" @click.self="closeReset">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-reset-title">
-        <h3 id="user-reset-title" class="modal-title">{{ t('adminUsers.resetTitle', { name: resetTarget?.username }) }}</h3>
-        <div v-if="resetBanner" class="banner" role="alert">{{ resetBanner }}</div>
-        <form @submit.prevent="submitReset">
-          <label class="field">
-            <span class="field-label">{{ t('adminUsers.fieldPassword') }}</span>
-            <input v-model="resetPasswordValue" class="field-input" type="password" autocomplete="new-password" :disabled="resetBusy" />
-            <span class="field-hint">{{ t('adminUsers.passwordHint', { n: MIN_PASSWORD_LEN }) }}</span>
-          </label>
-          <div class="modal-actions">
-            <button type="button" class="btn" :disabled="resetBusy" @click="closeReset">{{ t('adminUsers.cancel') }}</button>
-            <button type="submit" class="btn btn--primary" :disabled="resetBusy">
-              {{ resetBusy ? t('adminUsers.saving') : t('adminUsers.reset') }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <AppModal
+      v-if="resetOpen"
+      :title="t('adminUsers.resetTitle', { name: resetTarget?.username })"
+      width="sm"
+      :busy="resetBusy"
+      @close="closeReset"
+      @submit="submitReset"
+    >
+      <p v-if="resetBanner" class="banner banner--err" role="alert">{{ resetBanner }}</p>
+      <FormField
+        :label="t('adminUsers.fieldPassword')"
+        field-id="user-reset-pw"
+        :hint="t('adminUsers.passwordHint', { n: MIN_PASSWORD_LEN })"
+        required
+      >
+        <template #default="{ fieldId, ariaDescribedby }">
+          <input
+            :id="fieldId"
+            v-model="resetPasswordValue"
+            class="ui-input"
+            type="password"
+            autocomplete="new-password"
+            :aria-describedby="ariaDescribedby"
+            :disabled="resetBusy"
+          />
+        </template>
+      </FormField>
 
-    <!-- ─── 启用 / 禁用确认 ─── -->
-    <div v-if="toggleTarget" class="backdrop" @click.self="closeToggle">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-toggle-title">
-        <h3 id="user-toggle-title" class="modal-title">
-          {{ toggleIsDisabling ? t('adminUsers.disableTitle') : t('adminUsers.enable') }}
-        </h3>
-        <div v-if="toggleBanner" class="banner" role="alert">{{ toggleBanner }}</div>
-        <p class="modal-text">
-          {{
-            toggleIsDisabling
-              ? t('adminUsers.disableBody', { name: toggleTarget.username })
-              : t('adminUsers.enableBody', { name: toggleTarget.username })
-          }}
-        </p>
-        <div class="modal-actions">
-          <button type="button" class="btn" :disabled="toggleBusy" @click="closeToggle">{{ t('adminUsers.cancel') }}</button>
-          <button
-            type="button"
-            class="btn btn--primary"
-            :class="{ 'btn--danger': toggleIsDisabling }"
-            :disabled="toggleBusy"
-            @click="submitToggle"
-          >
-            {{ toggleBusy ? t('adminUsers.saving') : t('adminUsers.save') }}
-          </button>
-        </div>
-      </div>
-    </div>
+      <template #actions>
+        <AppButton :disabled="resetBusy" @click="closeReset">{{ t('adminUsers.cancel') }}</AppButton>
+        <AppButton variant="primary" type="submit" :loading="resetBusy">
+          {{ t('adminUsers.reset') }}
+        </AppButton>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -591,111 +615,22 @@ async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<v
 .off {
   color: var(--color-faint);
 }
-.btn {
-  padding: 7px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg, #fff);
-  color: var(--color-text);
-  font-size: var(--text-label);
-  cursor: pointer;
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn--primary {
-  background: var(--color-primary, #2563eb);
-  border-color: var(--color-primary, #2563eb);
-  color: #fff;
-}
-.btn--ghost {
-  background: transparent;
-}
-.btn--danger {
-  background: var(--color-danger, #dc2626);
-  border-color: var(--color-danger, #dc2626);
-  color: #fff;
-}
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: color-mix(in oklch, var(--color-text) 40%, transparent);
-}
-.modal {
-  width: 100%;
-  max-width: 420px;
-  padding: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 12px);
-  background: var(--color-surface, #fff);
-}
-.modal-title {
-  margin-bottom: 12px;
-  font-size: var(--text-body);
-  font-weight: 700;
-  color: var(--color-text);
-}
-.modal-text {
-  margin-bottom: 16px;
-  font-size: var(--text-label);
-  line-height: 1.5;
-  color: var(--color-dim);
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.field-label {
-  font-size: var(--text-label);
-  font-weight: 500;
-  color: var(--color-dim);
-}
-.field-input {
-  padding: 8px 12px;
-  font-size: var(--text-body);
-  color: var(--color-text);
-  background: var(--color-bg, #fff);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 6px);
-}
-.field-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-.field-hint {
-  font-size: var(--text-small, 0.85em);
-  color: var(--color-faint);
-}
-.field-error {
-  font-size: var(--text-small, 0.85em);
-  color: var(--color-danger, #dc2626);
-}
 .banner {
-  margin-bottom: 12px;
   padding: 8px 12px;
-  border: 1px solid var(--color-danger, #dc2626);
   border-radius: var(--radius-sm, 6px);
   font-size: var(--text-label);
-  color: var(--color-danger, #dc2626);
+}
+.banner--err {
+  border: 1px solid var(--color-red-line);
+  background: var(--color-red-soft);
+  color: var(--color-red);
 }
 .banner--row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 12px;
 }
 .banner-close {
   border: none;

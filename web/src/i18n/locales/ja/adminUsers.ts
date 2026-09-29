@@ -45,6 +45,7 @@ export default {
   enable: '有効化',
   disable: '無効化',
   disableTitle: 'アカウントを無効化',
+  enableTitle: 'アカウントを有効化',
   disableBody: '{name} はログインできなくなり、既存のセッションは次の検証時に失効します。',
   enableBody: '{name} のログインを再開しますか？',
   showDisabled: '無効なものも表示',

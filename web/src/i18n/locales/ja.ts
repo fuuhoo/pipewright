@@ -8,6 +8,7 @@ const ja: typeof zhCN = {
     refresh: '更新',
     allArrow: 'すべて →',
     detailArrow: '詳細 →',
+    close: '閉じる',
   },
 
   locale: {

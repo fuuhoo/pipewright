@@ -45,6 +45,7 @@ export default {
   enable: '啟用',
   disable: '停用',
   disableTitle: '停用帳號',
+  enableTitle: '啟用帳號',
   disableBody: '停用後 {name} 無法登入，已登入的工作階段會在下次驗證時失效。',
   enableBody: '恢復 {name} 的登入權限？',
   showDisabled: '顯示已停用',

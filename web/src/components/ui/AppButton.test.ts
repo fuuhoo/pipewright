@@ -46,6 +46,11 @@ describe('AppButton', () => {
     },
   )
 
+  it('defaults to size=md; size=sm is the in-row variant', () => {
+    expect(mount(AppButton).classes()).toContain('app-btn--md')
+    expect(mount(AppButton, { props: { size: 'sm' } }).classes()).toContain('app-btn--sm')
+  })
+
   it('defaults to type=button (avoids accidental form submit)', () => {
     const wrapper = mount(AppButton)
     expect(wrapper.attributes('type')).toBe('button')

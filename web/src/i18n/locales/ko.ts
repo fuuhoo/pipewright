@@ -8,6 +8,7 @@ const ko: typeof zhCN = {
     refresh: '새로고침',
     allArrow: '전체 →',
     detailArrow: '상세 →',
+    close: '닫기',
   },
 
   locale: {

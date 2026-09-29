@@ -45,6 +45,7 @@ export default {
   enable: 'Activer',
   disable: 'Désactiver',
   disableTitle: 'Désactiver le compte',
+  enableTitle: 'Activer le compte',
   disableBody: '{name} ne pourra plus se connecter ; les sessions existantes tombent à la prochaine vérification.',
   enableBody: "Rétablir l'accès de {name} ?",
   showDisabled: 'Afficher les désactivés',

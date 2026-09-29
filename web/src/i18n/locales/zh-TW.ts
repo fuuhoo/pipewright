@@ -8,6 +8,7 @@ const zhTW: typeof zhCN = {
     refresh: '重新整理',
     allArrow: '全部 →',
     detailArrow: '詳情 →',
+    close: '關閉',
   },
 
   locale: {

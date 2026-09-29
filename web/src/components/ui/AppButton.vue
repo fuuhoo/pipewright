@@ -2,19 +2,23 @@
 /**
  * AppButton — unified button component.
  * Variants: primary | default | ghost | danger | ai
+ * Sizes: md (默认,页面/弹窗用) | sm (表格行内,少占高度)
  * States: hover / focus-visible / active / disabled / loading
  * Animation: transform only (translateY -1px on hover), spinner on loading.
  */
 
 export type ButtonVariant = 'primary' | 'default' | 'ghost' | 'danger' | 'ai'
+export type ButtonSize = 'sm' | 'md'
 
 const props = withDefaults(defineProps<{
   variant?: ButtonVariant
+  size?: ButtonSize
   disabled?: boolean
   loading?: boolean
   type?: 'button' | 'submit' | 'reset'
 }>(), {
   variant: 'default',
+  size: 'md',
   disabled: false,
   loading: false,
   type: 'button',
@@ -34,7 +38,7 @@ function handleClick(event: MouseEvent) {
 <template>
   <button
     class="app-btn"
-    :class="[`app-btn--${variant}`, { 'app-btn--loading': loading }]"
+    :class="[`app-btn--${variant}`, `app-btn--${size}`, { 'app-btn--loading': loading }]"
     :type="type"
     :disabled="disabled || loading"
     :aria-busy="loading || undefined"
@@ -72,6 +76,18 @@ function handleClick(event: MouseEvent) {
 .app-btn:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* ——— size:sm(表格行内)——— */
+.app-btn--sm {
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-micro);
+  gap: 5px;
+}
+.app-btn--sm .app-btn__spinner {
+  width: 11px;
+  height: 11px;
 }
 
 .app-btn:disabled,

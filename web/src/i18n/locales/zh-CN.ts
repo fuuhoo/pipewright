@@ -7,6 +7,7 @@ export default {
     refresh: '刷新',
     allArrow: '全部 →',
     detailArrow: '详情 →',
+    close: '关闭',
   },
 
   locale: {
