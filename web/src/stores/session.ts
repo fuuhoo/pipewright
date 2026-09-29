@@ -16,9 +16,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { http, HttpError } from '../api/http'
-import type { ResourceAct, ResourceKind, SessionUser } from '../api/auth'
+import type { PermId, ResourceAct, ResourceKind, SessionUser } from '../api/auth'
 import {
   meetsRequires,
+  permAllowed,
   roleAllows,
   settingsAllowed,
   type AccessRequires,
@@ -110,6 +111,11 @@ export const useSessionStore = defineStore('session', () => {
   /** 能否进设置类入口(构建环境 / 配置资源 / 全局凭据 / 用户管理 / 审计)。 */
   const canSettings = computed(() => settingsAllowed(capabilities.value))
 
+  /** 该角色是否持有某功能点(左栏入口、路由落点按它亮灭)。 */
+  function canPerm(id: PermId): boolean {
+    return permAllowed(capabilities.value, id)
+  }
+
   /** 路由 meta.requires / 菜单项 requires 的统一判据。 */
   function meets(req?: AccessRequires): boolean {
     return meetsRequires(capabilities.value, req)
@@ -121,6 +127,7 @@ export const useSessionStore = defineStore('session', () => {
     capabilities,
     canSettings,
     can,
+    canPerm,
     meets,
     ensureSession,
     setUser,

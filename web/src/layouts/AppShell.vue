@@ -76,26 +76,28 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { name: 'dashboard',     to: '/dashboard',     icon: Dashboard, labelKey: 'nav.dashboard',     ariaKey: 'nav.dashboard' },
-  { name: 'projects',      to: '/projects',      icon: GitBranch,  labelKey: 'nav.projects',      ariaKey: 'nav.projects' },
-  { name: 'runs',          to: '/runs',          icon: GitFork,    labelKey: 'nav.runs',          ariaKey: 'nav.runs' },
+  { name: 'dashboard',     to: '/dashboard',     icon: Dashboard, labelKey: 'nav.dashboard',     ariaKey: 'nav.dashboard', requires: { perm: 'dashboard.view' } },
+  { name: 'projects',      to: '/projects',      icon: GitBranch,  labelKey: 'nav.projects',      ariaKey: 'nav.projects', requires: { perm: 'project.view' } },
+  { name: 'runs',          to: '/runs',          icon: GitFork,    labelKey: 'nav.runs',          ariaKey: 'nav.runs', requires: { perm: 'run.view' } },
   // FR-8-13: 复用库(流水线模板 + 变量组)。
-  { name: 'library',       to: '/library',       icon: Stack2,     labelKey: 'nav.library',       ariaKey: 'nav.library' },
+  { name: 'library',       to: '/library',       icon: Stack2,     labelKey: 'nav.library',       ariaKey: 'nav.library', requires: { perm: 'library.view' } },
   // 环境一等公民:按环境聚合的部署历史 + 一键回滚(对标 GitLab environments)。
-  { name: 'environments',  to: '/environments',  icon: Rocket,     labelKey: 'nav.environments',  ariaKey: 'nav.ariaEnvironments' },
+  { name: 'environments',  to: '/environments',  icon: Rocket,     labelKey: 'nav.environments',  ariaKey: 'nav.ariaEnvironments', requires: { perm: 'environments.view' } },
   // FR-8-15: DORA 四指标仪表盘(交付效能;只读聚合)。
-  { name: 'dora',          to: '/metrics/dora',  icon: ChartBar,   labelKey: 'nav.dora',          ariaKey: 'nav.dora' },
+  { name: 'dora',          to: '/metrics/dora',  icon: ChartBar,   labelKey: 'nav.dora',          ariaKey: 'nav.dora', requires: { perm: 'metrics.dora.view' } },
   // Story 6-1: 多机状态总览(服务器层指标 FR-15);登记在 设置 → 服务器。
-  { name: 'server-status', to: '/server-status', icon: Server,     labelKey: 'nav.serverStatus',  ariaKey: 'nav.serverStatus' },
+  { name: 'server-status', to: '/server-status', icon: Server,     labelKey: 'nav.serverStatus',  ariaKey: 'nav.serverStatus', requires: { perm: 'server.view' } },
   // 容器管理:跨服务器聚合容器总览 + 行内生命周期操作(docker over SSH)。
-  { name: 'containers',    to: '/containers',    icon: Box,        labelKey: 'nav.containers',    ariaKey: 'nav.containers' },
+  { name: 'containers',    to: '/containers',    icon: Box,        labelKey: 'nav.containers',    ariaKey: 'nav.containers', requires: { perm: 'container.view' } },
   // R2 / E2.4: 证书总览大盘(跨主机跨域名一张表 + 到期高亮)。
-  { name: 'proxy-overview', to: '/proxy',        icon: Certificate, labelKey: 'nav.proxyOverview', ariaKey: 'nav.proxyOverview' },
+  { name: 'proxy-overview', to: '/proxy',        icon: Certificate, labelKey: 'nav.proxyOverview', ariaKey: 'nav.proxyOverview', requires: { perm: 'cert.view' } },
   // R4 / E4.1: PR 预览环境大盘(临时环境列表 + 手动回收)。
-  { name: 'previews',      to: '/previews',      icon: Browser,    labelKey: 'nav.previews',      ariaKey: 'nav.previews' },
+  { name: 'previews',      to: '/previews',      icon: Browser,    labelKey: 'nav.previews',      ariaKey: 'nav.previews', requires: { perm: 'preview.view' } },
   // Story 6-5: configurable anomaly detection & alerts (FR-23)
-  { name: 'anomaly',       to: '/anomaly',       icon: AlertTriangle, labelKey: 'nav.anomaly',    ariaKey: 'nav.anomaly' },
-  { name: 'notifications', to: '/settings/notifications', icon: Bell, labelKey: 'nav.notifications', ariaKey: 'nav.notifications' },
+  { name: 'anomaly',       to: '/anomaly',       icon: AlertTriangle, labelKey: 'nav.anomaly',    ariaKey: 'nav.anomaly', requires: { perm: 'anomaly.view' } },
+  // 通知渠道是平台设置(端点收在 RequireAdmin 后),入口也跟着设置点走 —— 以前它在左栏
+  // 对所有角色亮着,普通用户点进来落在一整组他没有上限的页面上。
+  { name: 'notifications', to: '/settings/notifications', icon: Bell, labelKey: 'nav.notifications', ariaKey: 'nav.notifications', requires: { settings: true } },
   // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(设置类入口;一级页面)。
   { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', requires: { settings: true } },
   { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', requires: { settings: true } },
@@ -106,6 +108,8 @@ const navItems: NavItem[] = [
 
 // 角色档位不够的入口直接不出现(后端 RequireAdmin / 分组判定仍是权威校验)。
 // 与路由守卫共用 sessionStore.meets,所以不存在「看得见点不进」或反过来的错位。
+// 挂门用功能点(perm)而不是 kind+act:同一类资源下有五处入口(主机状态 / 容器 / 证书 /
+// 预览 / 异常检测),按类别只能整块亮或整块灭。
 const visibleNavItems = computed(() => navItems.filter((item) => sessionStore.meets(item.requires)))
 
 const settingsItem: NavItem = {

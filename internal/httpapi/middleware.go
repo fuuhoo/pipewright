@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/huangchengsir/pipewright/internal/access"
 	"github.com/huangchengsir/pipewright/internal/auth"
 )
 
@@ -86,14 +87,18 @@ func requireCSRF(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAdmin 中间件:要求 Session.IsAdmin() == true;否则 403。
+// RequireAdmin 中间件:要求角色持有「进得了设置那一组」的功能点;否则 403。
 //
 // 阶段 8 新增:用于 /api/admin/* 子组(阶段 9 接入)。
 //
+// 为什么读 access.SettingsAllowed 而不是 Session.IsAdmin:左栏入口、路由落点与这层服务端门
+// 必须出自同一张表(internal/access/perms.go)。今天两者取值完全等价(settings.access 只授予
+// 管理员),但两套判据并排写就会飘 —— 某天给某个新角色开了设置点,页面进得去而端点全 403。
+//
 // 行为:
 //   - 无 session(未过 requireAuth)→ 401("请先登录")——避免泄露路由存在性。
-//   - 已登录但非 admin(role=="user")→ 403("forbidden")。
-//   - 旧会话(role=="")→ 放行(向后兼容旧部署;Session.IsAdmin 把 "" 视为 admin)。
+//   - 已登录但无设置点(user / developer / ops / viewer,以及认不出的角色名)→ 403("forbidden")。
+//   - 旧会话(role=="")→ 放行(向后兼容旧部署;与 Session.IsAdmin 把 "" 视为 admin 同口径)。
 //
 // 该函数设计为 http.Handler 形式以直接 chi.Use 挂载;依赖 requireAuth 已先注入 session。
 func RequireAdmin(next http.Handler) http.Handler {
@@ -103,7 +108,7 @@ func RequireAdmin(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
 		}
-		if !auth.IsAdminSession(sess) {
+		if !access.SettingsAllowed(sess.Role) {
 			writeError(w, http.StatusForbidden, "forbidden", "需要管理员权限")
 			return
 		}

@@ -93,24 +93,27 @@ const router = createRouter({
       meta: { public: true },
     },
     // ——— 自定义节点工作室:聚焦全屏编辑器(shell 外,但需鉴权)———
+    // 门按「编辑复用库」这档:它是模板 / 变量组的编辑器,不是只读浏览。
     {
       path: '/library/studio',
       name: 'studio-create',
       component: CustomNodeStudioPage,
-      meta: { requiresAuth: true, title: '节点工作室' },
+      meta: { requiresAuth: true, title: '节点工作室', requires: { perm: 'library.edit' } },
     },
     {
       path: '/library/studio/:id',
       name: 'studio-edit',
       component: CustomNodeStudioPage,
-      meta: { requiresAuth: true, title: '节点工作室' },
+      meta: { requiresAuth: true, title: '节点工作室', requires: { perm: 'library.edit' } },
     },
     // ——— AI 运维终端:独立全屏页(query: ?container=&shell=);shell 外,需鉴权 ———
     {
       path: '/servers/:id/terminal',
       name: 'server-terminal',
       component: ServerTerminal,
-      meta: { requiresAuth: true, title: '运维终端', requires: { kind: 'server', act: 'operate' } },
+      // 从 kind+act 换成点:与左栏「服务器状态」入口的可见性(server.view)分得开 ——
+      // 开发者能看指标、登不上机器。
+      meta: { requiresAuth: true, title: '运维终端', requires: { perm: 'server.exec' } },
     },
     // ——— Shell-inside: authenticated routes ———
     {
@@ -120,37 +123,38 @@ const router = createRouter({
       children: [
         // 首页:概览仪表盘尚未建,暂重定向到项目页(避免落到占位页)。
         { path: '', name: 'overview', redirect: { name: 'dashboard' } },
-        { path: 'dashboard', name: 'dashboard', component: Dashboard, meta: { title: '概览' } },
+        { path: 'dashboard', name: 'dashboard', component: Dashboard, meta: { title: '概览', requires: { perm: 'dashboard.view' } } },
         // Story 1-7: first-run onboarding guide (inside shell, auth-required)
         { path: 'onboarding', name: 'onboarding', component: Onboarding, meta: { title: '快速上手' } },
-        { path: 'projects', name: 'projects', component: Projects, meta: { title: '项目' } },
+        // 项目页及其子页统一挂 project.view:页里的编辑控件另按 kind+act 判(只读角色进得来、改不动)。
+        { path: 'projects', name: 'projects', component: Projects, meta: { title: '项目', requires: { perm: 'project.view' } } },
         // Story 2-2: 4-tab pipeline editor (primary config entry point)
-        { path: 'projects/:id/pipeline', name: 'project-pipeline', component: ProjectPipeline, meta: { title: '流水线' } },
+        { path: 'projects/:id/pipeline', name: 'project-pipeline', component: ProjectPipeline, meta: { title: '流水线', requires: { perm: 'project.view' } } },
         // Story 2-3: backward-compat standalone triggers page
-        { path: 'projects/:id/triggers', name: 'project-triggers', component: ProjectTriggers, meta: { title: '触发器' } },
+        { path: 'projects/:id/triggers', name: 'project-triggers', component: ProjectTriggers, meta: { title: '触发器', requires: { perm: 'project.view' } } },
         // Story 7-4: read-only code browsing (FR-4)
-        { path: 'projects/:id/code', name: 'project-code', component: ProjectCode, meta: { title: '代码' } },
-        { path: 'runs', name: 'runs', component: Runs, meta: { title: '运行' } },
+        { path: 'projects/:id/code', name: 'project-code', component: ProjectCode, meta: { title: '代码', requires: { perm: 'project.view' } } },
+        { path: 'runs', name: 'runs', component: Runs, meta: { title: '运行', requires: { perm: 'run.view' } } },
         // FR-8-13: 复用库(流水线模板 + 变量组)
-        { path: 'library', name: 'library', component: Library, meta: { title: '复用库' } },
-        { path: 'runs/:id', name: 'run-detail', component: RunDetail, meta: { title: '运行详情' } },
+        { path: 'library', name: 'library', component: Library, meta: { title: '复用库', requires: { perm: 'library.view' } } },
+        { path: 'runs/:id', name: 'run-detail', component: RunDetail, meta: { title: '运行详情', requires: { perm: 'run.view' } } },
         // FR-8-15: DORA 指标仪表盘(只读聚合;projectId / window 经 query 即状态)
-        { path: 'metrics/dora', name: 'dora', component: DoraDashboard, meta: { title: 'DORA 指标' } },
+        { path: 'metrics/dora', name: 'dora', component: DoraDashboard, meta: { title: 'DORA 指标', requires: { perm: 'metrics.dora.view' } } },
 
         // 环境一等公民:按环境聚合部署历史 + 一键回滚。projectId 落 query(URL 即状态)。
-        { path: 'environments', name: 'environments', component: Environments, meta: { title: '环境部署历史' } },
+        { path: 'environments', name: 'environments', component: Environments, meta: { title: '环境部署历史', requires: { perm: 'environments.view' } } },
         // 顶层「服务器」占位页 → 重定向到真实的多机状态页(登记在 /settings/servers)。
         { path: 'servers', name: 'servers', redirect: { name: 'server-status' } },
         // Story 6-1: multi-host status overview (server-layer metrics, FR-15)
-        { path: 'server-status', name: 'server-status', component: ServerStatus, meta: { title: '服务器状态' } },
+        { path: 'server-status', name: 'server-status', component: ServerStatus, meta: { title: '服务器状态', requires: { perm: 'server.view' } } },
 
-        { path: 'containers', name: 'containers', component: Containers, meta: { title: '容器' } },
+        { path: 'containers', name: 'containers', component: Containers, meta: { title: '容器', requires: { perm: 'container.view' } } },
         // R2 / E2.4: 证书总览大盘(跨主机跨域名 + 到期高亮)
-        { path: 'proxy', name: 'proxy-overview', component: ProxyOverview, meta: { title: '证书总览' } },
+        { path: 'proxy', name: 'proxy-overview', component: ProxyOverview, meta: { title: '证书总览', requires: { perm: 'cert.view' } } },
         // R4 / E4.1: PR 预览环境大盘(临时环境列表 + 手动回收)
-        { path: 'previews', name: 'previews', component: Previews, meta: { title: '预览环境' } },
+        { path: 'previews', name: 'previews', component: Previews, meta: { title: '预览环境', requires: { perm: 'preview.view' } } },
         // Story 6-5: configurable anomaly detection & alerts (FR-23)
-        { path: 'anomaly', name: 'anomaly', component: AnomalyDetection, meta: { title: '异常检测' } },
+        { path: 'anomaly', name: 'anomaly', component: AnomalyDetection, meta: { title: '异常检测', requires: { perm: 'anomaly.view' } } },
         // ─── v6.2 §3.1/§3.3:构建环境 / 配置资源(一级入口,设置类能力位;侧栏同口径过滤)───
         { path: 'build-envs', name: 'build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', requires: { settings: true } } },
         { path: 'config-profiles', name: 'config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', requires: { settings: true } } },
@@ -187,21 +191,30 @@ const router = createRouter({
           component: Settings,
           meta: { title: '设置' },
           children: [
-            { path: '', redirect: { name: 'settings-ai' } },
-            { path: 'ai', name: 'settings-ai', component: SettingsAI, meta: { title: 'AI 设置' } },
-            { path: 'oauth', name: 'settings-oauth', component: SettingsOAuth, meta: { title: 'OAuth 设置' } },
-            { path: 'notifications', name: 'settings-notifications', component: SettingsNotifications, meta: { title: '通知设置' } },
-            { path: 'vault', name: 'settings-vault', component: SettingsVault, meta: { title: '凭据保险库' } },
+            // 落地页按能力位分岔:全局那组对普通用户全部拦下,若还默认跳 AI 设置,
+            // 他点「设置」只会被守卫弹回仪表盘 —— 等于没了进个人设置的门。
+            {
+              path: '',
+              redirect: () =>
+                useSessionStore().canSettings ? { name: 'settings-ai' } : { name: 'settings-account' },
+            },
+            // 以下九项是「全局设置」那一组:端点统一收在 RequireAdmin(=设置点)后,
+            // 路由也跟着同一道门 —— 以前只在 Settings.vue 里不渲染列表项,直接敲 URL 仍进得来。
+            { path: 'ai', name: 'settings-ai', component: SettingsAI, meta: { title: 'AI 设置', requires: { settings: true } } },
+            { path: 'oauth', name: 'settings-oauth', component: SettingsOAuth, meta: { title: 'OAuth 设置', requires: { settings: true } } },
+            { path: 'notifications', name: 'settings-notifications', component: SettingsNotifications, meta: { title: '通知设置', requires: { settings: true } } },
+            { path: 'vault', name: 'settings-vault', component: SettingsVault, meta: { title: '凭据保险库', requires: { settings: true } } },
             // R3 / E3.1: DNS 提供商(DNS-01 通配符 + 一键分配子域名)
-            { path: 'dns-providers', name: 'settings-dns-providers', component: SettingsDnsProviders, meta: { title: 'DNS 提供商' } },
+            { path: 'dns-providers', name: 'settings-dns-providers', component: SettingsDnsProviders, meta: { title: 'DNS 提供商', requires: { settings: true } } },
+            // 账户设置是个人页(所有登录用户),不设门。
             { path: 'account', name: 'settings-account', component: SettingsAccount, meta: { title: '账户设置' } },
             // 系统信息 + 一键检查更新
-            { path: 'system', name: 'settings-system', component: SettingsSystem, meta: { title: '系统信息' } },
+            { path: 'system', name: 'settings-system', component: SettingsSystem, meta: { title: '系统信息', requires: { settings: true } } },
             // Story 4-1: target servers + shared SSH layer (FR-14)
-            { path: 'servers', name: 'settings-servers', component: SettingsServers, meta: { title: '服务器' } },
-            { path: 'kube-clusters', name: 'settings-kube-clusters', component: SettingsKubeClusters, meta: { title: 'K8s 集群' } },
+            { path: 'servers', name: 'settings-servers', component: SettingsServers, meta: { title: '服务器', requires: { settings: true } } },
+            { path: 'kube-clusters', name: 'settings-kube-clusters', component: SettingsKubeClusters, meta: { title: 'K8s 集群', requires: { settings: true } } },
             // Story 7-5: diagnosis feedback-loop stats (FR-26)
-            { path: 'diagnosis-stats', name: 'settings-diagnosis-stats', component: SettingsDiagnosisStats, meta: { title: '诊断统计' } },
+            { path: 'diagnosis-stats', name: 'settings-diagnosis-stats', component: SettingsDiagnosisStats, meta: { title: '诊断统计', requires: { settings: true } } },
 
             // ─── v6.2 §3.6:全局设置(仅管理员)───
             // 构建环境 / 配置资源已提升为一级页面(左栏直达);旧路径重定向兼容书签。

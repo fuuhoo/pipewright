@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { Capabilities } from '../api/auth'
+import type { Capabilities, PermId } from '../api/auth'
 import {
   ROLE_LABEL_KEY,
   ROLE_ORDER,
@@ -15,12 +15,18 @@ import {
   ceilingOf,
   meetsRequires,
   normalizeRole,
+  permAllowed,
   roleAllows,
   settingsAllowed,
 } from './roles'
 
 function caps(settings: boolean, kinds: Capabilities['kinds']): Capabilities {
   return { settings, kinds }
+}
+
+/** 带功能点的能力位;后端 perms.go 那张表的投影就是这个形状。 */
+function capsWith(settings: boolean, kinds: Capabilities['kinds'], perms: PermId[]): Capabilities {
+  return { settings, kinds, perms }
 }
 
 describe('角色名单', () => {
@@ -91,5 +97,51 @@ describe('功能门(meta.requires 与菜单共用)', () => {
     expect(meetsRequires(admin, { kind: 'server', act: 'operate' })).toBe(true)
     expect(meetsRequires(caps(false, { server: 'view' }), { kind: 'server', act: 'operate' })).toBe(false)
     expect(meetsRequires(undefined, { kind: 'server', act: 'operate' })).toBe(false)
+  })
+})
+
+describe('功能点门(入口级可见性)', () => {
+  // 开发者真实点集的摘录:编排可改、落点只读。
+  const dev = capsWith(
+    false,
+    { project: 'operate', run: 'operate', server: 'view', kube_cluster: 'view' },
+    ['dashboard.view', 'project.view', 'project.edit', 'run.view', 'server.view', 'container.view'],
+  )
+
+  it('缺 perms 一律不放行:能力位没带这一项时菜单宁可整块不亮', () => {
+    expect(permAllowed(undefined, 'project.view')).toBe(false)
+    expect(permAllowed(caps(false, { project: 'operate' }), 'project.view')).toBe(false)
+    expect(meetsRequires(caps(false, { project: 'operate' }), { perm: 'project.view' })).toBe(false)
+  })
+
+  it('字典里没有的点不放行(手抄错的点不会误亮入口)', () => {
+    expect(permAllowed(dev, 'no.such.perm' as PermId)).toBe(false)
+  })
+
+  it('同一类资源下的两处入口能分开:看得见容器状态,登不上机器', () => {
+    expect(meetsRequires(dev, { perm: 'container.view' })).toBe(true)
+    expect(meetsRequires(dev, { perm: 'server.exec' })).toBe(false)
+    // 这条差异按旧的 kind+act 表达不出来:两处入口同属 server,上限都是 view。
+    expect(meetsRequires(dev, { kind: 'server', act: 'view' })).toBe(true)
+  })
+
+  it('settings 门与 settings.access 点同源(两种写法判的是同一条线)', () => {
+    const adminish = capsWith(true, { project: 'manage' }, ['settings.access'])
+    expect(meetsRequires(adminish, { settings: true })).toBe(true)
+    expect(meetsRequires(adminish, { perm: 'settings.access' })).toBe(true)
+    expect(meetsRequires(dev, { settings: true })).toBe(false)
+    expect(meetsRequires(dev, { perm: 'settings.access' })).toBe(false)
+  })
+
+  it('只读角色任何 operate 点都不放行', () => {
+    const viewer = capsWith(
+      false,
+      { project: 'view', run: 'view', server: 'view', kube_cluster: 'view' },
+      ['dashboard.view', 'project.view', 'run.view', 'server.view', 'container.view'],
+    )
+    for (const id of ['project.edit', 'run.operate', 'server.exec', 'container.operate'] as PermId[]) {
+      expect(meetsRequires(viewer, { perm: id })).toBe(false)
+    }
+    expect(meetsRequires(viewer, { perm: 'container.view' })).toBe(true)
   })
 })

@@ -1,20 +1,21 @@
 /**
- * roles.ts —— 角色档位在前端的只读视图。
+ * roles.ts —— 功能轴在前端的只读视图。
  *
- * 权威表在 internal/access/roles.go(功能轴:角色 × 资源类别 → 最高动作),后端把算好的
- * 上限随会话回在 capabilities 里;这里只负责「怎么用它」:
+ * 权威表在 internal/access/perms.go(角色 → 功能点);后端把它同时投影成两样东西回在
+ * capabilities 里 —— 每类资源的档位上限(kinds)与该角色的功能点(perms),这里只负责「怎么用它」:
  *   - 下拉与标签要的角色名单和顺序;
  *   - 把能力位翻译成布尔判断,供路由守卫、菜单和控件用。
  *
- * 两点刻意与后端逐字对齐:
+ * 三点刻意与后端逐字对齐:
  *   1. manage 不吃功能轴上限(它判的是「谁拥有这份数据」,归分组那条轴管),所以
  *      roleAllows(_, _, 'manage') 恒真 —— 前端不替后端猜组长的权限。
  *   2. 认不出的类别 / 缺失的能力位一律按 view(fail closed),与 Ceiling 的默认一致。
+ *   3. 缺 perms 按「一个点都没有」处理:菜单宁可整块不亮,也不把没授权的入口亮出来。
  */
 
-import type { Capabilities, ResourceAct, ResourceKind, UserRole } from '../api/auth'
+import type { Capabilities, PermId, ResourceAct, ResourceKind, UserRole } from '../api/auth'
 
-/** 下拉展示顺序,与 access.Roles() 同序;新增角色改这里 + i18n 五份键。 */
+/** 下拉展示顺序,与 access.Roles() 同序;新增角色改这里 + i18n 八份键 + 后端 perms.go 的点集。 */
 export const ROLE_ORDER: UserRole[] = ['admin', 'user', 'developer', 'ops', 'viewer']
 
 /** 角色 → adminUsers 命名空间下的展示键。Record<> 保证枚举漏一个键就编译不过。 */
@@ -58,20 +59,35 @@ export function settingsAllowed(caps: Capabilities | undefined): boolean {
 }
 
 /**
+ * 该角色是否被授予某个功能点(入口级可见性)。
+ *
+ * 比 kind+act 细的地方在于:同一类资源下挂着好几处入口 —— 主机状态、容器、证书、预览、
+ * 异常检测都属 server —— 按类别只能一起亮或一起灭,而点能逐个说。
+ * 缺 perms 数组(能力位没带这一项)一律按不放行,与后端「未知角色一个点都不给」同口径。
+ */
+export function permAllowed(caps: Capabilities | undefined, id: PermId): boolean {
+  return caps?.perms?.includes(id) === true
+}
+
+/**
  * 功能门:路由 meta.requires、侧栏入口、设置页子标签共用同一份判据。
  *
  * 三处各写一次「能不能进」迟早会飘(典型症状:菜单里看得见,点进去被弹回首页)。
- * 判定只看角色功能档位;资源归属(分组)由后端每请求再判,不在这里出现。
+ * 判定只看角色功能轴;资源归属(分组)由后端每请求再判,不在这里出现。
  */
 export interface AccessRequires {
+  /** 设置类总闸。等价于 perm: 'settings.access'(后端同源:设置位就是由那个点算的)。 */
   settings?: true
   kind?: ResourceKind
   act?: ResourceAct
+  /** 入口级功能点;控件按 kind+act 判、入口按点判,两条都是同一张表的投影。 */
+  perm?: PermId
 }
 
 export function meetsRequires(caps: Capabilities | undefined, req?: AccessRequires): boolean {
   if (!req) return true
   if (req.settings === true && !settingsAllowed(caps)) return false
+  if (req.perm && !permAllowed(caps, req.perm)) return false
   if (req.kind && req.act && !roleAllows(caps, req.kind, req.act)) return false
   return true
 }
