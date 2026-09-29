@@ -12,7 +12,9 @@ import {
   ROLE_LABEL_KEY,
   ROLE_ORDER,
   ROLE_TAG_CLASS,
+  LANDING_ORDER,
   ceilingOf,
+  landingRouteName,
   meetsRequires,
   normalizeRole,
   permAllowed,
@@ -143,5 +145,28 @@ describe('功能点门(入口级可见性)', () => {
       expect(meetsRequires(viewer, { perm: id })).toBe(false)
     }
     expect(meetsRequires(viewer, { perm: 'container.view' })).toBe(true)
+  })
+})
+
+describe('落点(守卫被功能门拦下时去哪一页)', () => {
+  it('带概览就落概览', () => {
+    expect(landingRouteName(capsWith(true, { project: 'manage' }, ['dashboard.view', 'project.view']))).toBe('dashboard')
+  })
+
+  it('不带概览的自定义角色落第一个开得了的入口,而不是把自己弹回概览', () => {
+    // 这一条就是曾经的死循环:守卫拦下概览后又把人 redirect 回概览,导航被中止、卡在登录页。
+    const noOverview = capsWith(false, { project: 'operate' }, ['project.view', 'project.edit'])
+    expect(landingRouteName(noOverview)).toBe('projects')
+    const hostOnly = capsWith(false, { server: 'operate' }, ['container.view'])
+    expect(landingRouteName(hostOnly)).toBe('containers')
+  })
+
+  it('一个点都没有也有落点(末项不设功能门,守卫不会把自己 redirect 给自己)', () => {
+    expect(landingRouteName(caps(false, {}))).toBe('permissions')
+    expect(landingRouteName(undefined)).toBe('permissions')
+    // 落点必须过得了自己那一道门,否则 A→B→A 又是一圈死循环。
+    for (const item of LANDING_ORDER) {
+      expect(meetsRequires(capsWith(false, {}, []), item.requires)).toBe(item.name === 'permissions')
+    }
   })
 })

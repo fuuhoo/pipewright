@@ -92,6 +92,35 @@ export function meetsRequires(caps: Capabilities | undefined, req?: AccessRequir
   return true
 }
 
+/**
+ * 落点顺序:登录后 / 被功能门拦下时该把人放到哪一页。
+ *
+ * 以前守卫写死「不满足就回仪表盘」,而仪表盘自己也要 dashboard.view —— 内置五档恰好都带
+ * 那个点所以没露馅,角色可配置以后就能建出一个不带概览的角色,那时「回仪表盘」就是
+ * 守卫自己 redirect 给自己:导航被中止,页面永远停在登录页。
+ * 顺序跟 AppShell 的 navItems 一致(同一张表,别在这里发明新顺序);末项「用户与权限」
+ * 不设功能门(组长也得进得来),所以它保证落点永远找得到。
+ */
+export const LANDING_ORDER: { name: string; requires?: AccessRequires }[] = [
+  { name: 'dashboard', requires: { perm: 'dashboard.view' } },
+  { name: 'projects', requires: { perm: 'project.view' } },
+  { name: 'runs', requires: { perm: 'run.view' } },
+  { name: 'library', requires: { perm: 'library.view' } },
+  { name: 'environments', requires: { perm: 'environments.view' } },
+  { name: 'dora', requires: { perm: 'metrics.dora.view' } },
+  { name: 'server-status', requires: { perm: 'server.view' } },
+  { name: 'containers', requires: { perm: 'container.view' } },
+  { name: 'proxy-overview', requires: { perm: 'cert.view' } },
+  { name: 'previews', requires: { perm: 'preview.view' } },
+  { name: 'anomaly', requires: { perm: 'anomaly.view' } },
+  { name: 'permissions' },
+]
+
+/** 该角色第一个开得了的入口;末项无门,故恒有落点。 */
+export function landingRouteName(caps: Capabilities | undefined): string {
+  return (LANDING_ORDER.find((l) => meetsRequires(caps, l.requires)) ?? LANDING_ORDER[LANDING_ORDER.length - 1]).name
+}
+
 /** 归一化角色:库里的值可能是历史遗留的未知名,展示时不能崩。 */
 export function normalizeRole(role: string): UserRole {
   return (ROLE_ORDER as string[]).includes(role) ? (role as UserRole) : 'user'

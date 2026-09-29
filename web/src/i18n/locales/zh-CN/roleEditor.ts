@@ -1,0 +1,113 @@
+/**
+ * 角色管理页文案 —— 命名空间:roleEditor。
+ *
+ * 这一页只有功能轴一件事:每个角色能不能看到某个入口。所以点集标签一律写成**入口名 / 动作名**
+ * (「主机终端与远程文件」),不写权限术语(「KindServer+ActOperate」),用户勾的是「他看得见哪几页」。
+ *
+ * 三条边界的说法要和后端 role 包一致:内置档只读、settings.access 不外授、有账号挂着不许删。
+ */
+export default {
+  title: '角色',
+  desc: '角色决定一个账号能看到哪些入口、能按得动哪类动作。内置五档是模板,不可修改;自定义角色按功能点逐个勾。',
+  axesHint: '角色 = 功能轴(能不能做这类动作),分组 = 数据轴(这份数据归谁),账号 tab 把人挂到角色上。三者各改一件事。',
+  add: '新建角色',
+  empty: '还没有自定义角色。',
+
+  colRole: '角色',
+  colTemplate: '基于模板',
+  colPerms: '功能点',
+  colUsers: '账号数',
+  colActions: '操作',
+  noTemplate: '从零开始',
+  permCount: '{n} / {total} 个',
+  permsNone: '一个入口都不给',
+  permsMore: '还有 {n} 个',
+  permsCollapse: '收起',
+  userCount: '{n} 个账号',
+  builtinTag: '内置模板',
+  builtinEditHint: '内置档位是代码表里的模板,不可修改也不可删除 —— 要调整就复制一份。',
+  deleteBlockedHint: '还有 {n} 个账号挂着这个角色,先在账号 tab 改派再来删。',
+
+  edit: '编辑',
+  copy: '复制',
+  delete: '删除',
+  save: '保存',
+  cancel: '取消',
+
+  createTitle: '新建角色',
+  editTitle: '编辑角色 {name}',
+  formHint: '起个名字,再勾这个角色能看到的入口。没勾到的入口对这一角色整个不出现。',
+  fieldName: '角色名',
+  fieldDesc: '说明',
+  fieldTemplate: '起始模板',
+  fieldPerms: '能看到哪些入口',
+  nameHint: '最多 {n} 个字符,不可与既有角色重名(不区分大小写)',
+  nameErrRequired: '请填写角色名',
+  nameErrTooLong: '角色名最多 {n} 个字符',
+  nameErrDuplicate: '已有同名角色',
+  nameErrReserved: '这个名字是内置档位的标识(admin / user / developer / ops / viewer),换一个',
+  templateHint: '选一个内置档当起点,它会把那一份功能点带过来;选「从零开始」则一个都不勾。',
+  templateNone: '从零开始',
+
+  permTotal: '已勾 {n} / {total}',
+  selectAll: '全选',
+  clearAll: '清空',
+  permsHint: '功能点是入口级的:同一个「服务器」类别下,主机状态、容器、证书、预览、异常检测可以分别给或分别不给。',
+  settingsOnly: '仅内置管理员',
+  settingsBlocked: '「进得了设置」这一项只给内置管理员,自定义角色拿不到。',
+  effectHint: '保存后对方刷新页面即生效(能力位每次会话读取都重算);只有把账号换到另一个角色才需要对方重新登录。',
+
+  permChangeTitle: '确认修改这个角色?',
+  permChangeBody: '{name} 当前挂着 {users} 个账号,这次要新增 {added} 个入口、收回 {removed} 个。',
+  permChangeEffect: '收回的点会让对应入口立刻消失(刷新后),给出的点则当场亮出来。',
+
+  errLoad: '角色名单加载失败',
+  errLoadConn: '连不上服务器',
+  errRetry: '操作失败,请重试',
+  errSave: '保存角色失败(状态码:{status})',
+  errCopy: '复制角色失败(状态码:{status})',
+  errDelete: '删除角色失败(状态码:{status})',
+
+  copyTitle: '复制 {name}',
+  copyNameSuggest: '{name} 副本',
+  copyHint: '把点集原样带走,「进得了设置」那一项不带 —— 复制内置管理员也造不出新管理员。复制完直接进编辑器改点集。',
+
+  deleteTitle: '删除角色',
+  deleteBody: '确定删除 {name}?它一旦没了,原来挂着它的账号也不会自动改派。',
+  deleteEffect: '仍有账号在用时后端会拒绝,所以这一步不可回退。',
+
+  kindProject: '编排',
+  kindRun: '运行',
+  kindServer: '主机及其上的东西',
+  kindCluster: 'K8s 集群',
+  kindPlatform: '平台设置',
+  kindProjectHint: '项目、流水线、触发器、复用库与自定义节点工作室都算这一类。',
+  kindRunHint: '运行历史、环境视图与 DORA 指标都是从运行算出来的聚合页。',
+  kindServerHint: '主机状态、容器、证书、预览环境与异常检测共用这台机器这条轴。',
+  kindClusterHint: '集群浏览与发布 / 回滚,对应 deploy_k8s 那条腿。',
+  kindPlatformHint: '全局凭据、保险库、审计、通知、AI、DNS、系统与服务器/集群登记 —— 这一组要么全给要么全不给,所以只内置管理员可得。',
+
+  perm: {
+    dashboard_view: '概览',
+    project_view: '项目列表与详情',
+    project_edit: '改建项目与流水线',
+    library_view: '复用库(模板 / 变量组)',
+    library_edit: '增删改复用库与节点工作室',
+    run_view: '运行历史',
+    run_operate: '触发运行 / 取消 / 重试',
+    environments_view: '环境视图',
+    metrics_dora_view: 'DORA 指标',
+    server_view: '服务器状态与指标',
+    server_exec: '主机终端与远程文件',
+    container_view: '容器总览',
+    container_operate: '容器生命周期与镜像清理',
+    cert_view: '证书总览',
+    preview_view: '预览环境',
+    preview_recycle: '回收预览环境',
+    anomaly_view: '异常检测',
+    anomaly_edit: '改异常检测规则与告警',
+    cluster_view: 'K8s 集群与工作负载',
+    cluster_operate: '发布 / 回滚到集群',
+    settings_access: '进得了设置(全局凭据 / 审计 / 登记)',
+  },
+}

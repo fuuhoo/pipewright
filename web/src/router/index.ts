@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSessionStore } from '../stores/session'
-import type { AccessRequires } from '../lib/roles'
+import { landingRouteName, type AccessRequires } from '../lib/roles'
 
 // Lazy-loaded views
 const Login       = () => import('../views/Login.vue')
@@ -57,6 +57,8 @@ const Permissions = () => import('../views/Permissions.vue')
 const Groups = () => import('../views/Groups.vue')
 // 用户管理(功能轴):仅「设置类」能力可见,门在 Permissions.vue 壳里(见其注释)。
 const AdminUsers = () => import('../views/admin/Users.vue')
+// 角色管理(功能轴的表本身):内置五档当模板只读,自定义角色可增删改。门与用户 tab 同一档。
+const AdminRoles = () => import('../views/admin/Roles.vue')
 // 审计日志(设置类入口,只读)
 const AdminAudit = () => import('../views/admin/Audit.vue')
 // 我的凭据(所有登录用户;§3.4)
@@ -179,6 +181,14 @@ const router = createRouter({
               // 否则 Users.vue 的 onMounted 会先发一次注定 403 的 GET /api/admin/users。
               beforeEnter: () => (useSessionStore().canSettings ? true : { name: 'permissions-groups' }),
             },
+            {
+              path: 'roles',
+              name: 'permissions-roles',
+              component: AdminRoles,
+              meta: { title: '角色' },
+              // 与用户 tab 同一道门、同一去向:改角色表是设置类动作,无权限的人回到分组 tab。
+              beforeEnter: () => (useSessionStore().canSettings ? true : { name: 'permissions-groups' }),
+            },
           ],
         },
         // 旧路径保留重定向(书签 + 外部链接)。
@@ -257,7 +267,9 @@ router.beforeEach(async (to) => {
     // meta.requires(AccessRequires)是功能门:角色档位不够的页面直接不渲染,判据与侧栏、
     // 设置页子标签共用 lib/roles 那一份(RequireAdmin 与分组判定仍是后端权威)。
     if (!sessionStore.meets(to.meta.requires as AccessRequires | undefined)) {
-      return { name: 'dashboard' }
+      // 落点按这个角色实际开得了的第一个入口算,不能写死仪表盘 —— 自定义角色可以不带
+      // dashboard.view,那样守卫就是把自己 redirect 给自己,导航被中止、人卡在登录页。
+      return { name: landingRouteName(sessionStore.capabilities) }
     }
     return true
   }

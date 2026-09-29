@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
- * 「用户与权限」—— 账号(功能轴)与资源分组(数据轴)的统一管理页。
+ * 「用户与权限」—— 角色与功能点(功能轴的表)、账号(把人挂上去)、资源分组(数据轴)的统一管理页。
  *
- * 两个 tab 的门不一样,这是合并成一个入口时唯一要小心的地方:
+ * 三个 tab 的门不一样,这是合并成一个入口时唯一要小心的地方:
  *   - 分组 tab 对所有登录用户开放:组长(可能不是管理员)也得进得来改名册,
  *     页内能做什么由后端给的 canManage 决定。
- *   - 用户 tab 只在有「设置类」能力时出现。门挂在路由的 beforeEnter 上
- *     (见 router/index.ts 里 permissions-users 那条):既不会让无权限的人挂载这个组件
+ *   - 用户 tab 与角色 tab 只在有「设置类」能力时出现。门挂在路由的 beforeEnter 上
+ *     (见 router/index.ts 里 permissions-users / permissions-roles 两条):既不会让无权限的人挂载这些组件
  *     去发注定 403 的请求,也不会像 meta.requires 那样把人踢回仪表盘 —— 只把他挪回分组 tab。
- *     后端 /api/admin/users 的 RequireAdmin 才是权威校验。
+ *     后端 /api/admin/users、/api/admin/roles 的 RequireAdmin 才是权威校验。
  *
  * tab 用子路由(而非页内 v-if):可深链、可书签、浏览器返回落在原 tab。
  */
@@ -23,7 +23,11 @@ const canSettings = computed(() => sessionStore.canSettings)
 
 const tabs = computed(() => {
   const list: Array<{ name: string; key: string }> = [{ name: 'permissions-groups', key: 'tabGroups' }]
-  if (canSettings.value) list.push({ name: 'permissions-users', key: 'tabUsers' })
+  if (canSettings.value) {
+    // 顺序按「先定规则再套人」:角色表(哪些入口给谁)→ 账号(谁挂哪个角色)→ 分组(数据归谁)。
+    list.push({ name: 'permissions-roles', key: 'tabRoles' })
+    list.push({ name: 'permissions-users', key: 'tabUsers' })
+  }
   return list
 })
 </script>
