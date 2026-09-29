@@ -14,7 +14,7 @@ vi.mock('../api/servers', () => ({
 }))
 
 function server(id: string, name: string): Server {
-  return { id, name } as Server
+  return { id, name, host: '127.0.0.1', port: 22, user: 'cw' } as Server
 }
 
 function metric(id: string, over: Partial<ServerMetrics> = {}): ServerMetrics {
@@ -39,7 +39,7 @@ function emitAll(...items: ServerMetrics[]) {
 }
 
 async function clickRefresh(wrapper: ReturnType<typeof mount>) {
-  await wrapper.get('header button').trigger('click')
+  await wrapper.get('.view-refresh').trigger('click')
   await flushPromises()
 }
 
@@ -139,5 +139,71 @@ describe('ServerStatus — 逐台出卡', () => {
 
     const names = wrapper.findAll('.metrics-card__name').map((n) => n.text())
     expect(names).toEqual(['local-A'])
+  })
+})
+
+describe('ServerStatus — 卡片 / 列表两种视图', () => {
+  beforeEach(() => {
+    localStorage.clear() // 视图偏好是落盘的,不清会让上一条用例串到下一条
+    streamMock.mockReset()
+    listServersMock.mockReset().mockResolvedValue([server('a', 'local-A'), server('b', 'local-B')])
+  })
+
+  /** 切到列表视图(第二个切换按钮)。 */
+  async function toList(wrapper: ReturnType<typeof mount>) {
+    await wrapper.findAll('.view-toggle__btn')[1].trigger('click')
+    await flushPromises()
+  }
+
+  it('默认卡片视图;列表要点一下才出现', async () => {
+    emitAll(metric('a'), metric('b'))
+    const wrapper = mount(ServerStatus)
+    await flushPromises()
+
+    expect(wrapper.findAll('.metrics-card')).toHaveLength(2)
+    expect(wrapper.find('.metrics-table').exists()).toBe(false)
+    expect(wrapper.get('.view-toggle__btn--active').text()).toContain('卡片')
+
+    await toList(wrapper)
+    expect(wrapper.find('.metrics-card').exists()).toBe(false)
+    expect(wrapper.findAll('.metrics-table tbody tr')).toHaveLength(2)
+    expect(localStorage.getItem('pipewright.serverStatus.viewMode')).toBe('list')
+  })
+
+  it('同一台机在两种视图给出同一个数(展示口径共用)', async () => {
+    emitAll(metric('a', { cpu: { loadavg1: 3.75, cores: 4 } }), metric('b'))
+    const wrapper = mount(ServerStatus)
+    await flushPromises()
+    expect(wrapper.findAll('.metrics-card')[0].text()).toContain('3.75')
+
+    await toList(wrapper)
+    const row = wrapper.findAll('.metrics-table tbody tr')[0]
+    expect(row.get('.st-name').text()).toBe('local-A')
+    expect(row.get('.st-addr').text()).toBe('cw@127.0.0.1:22')
+    expect(row.get('.st-num').text()).toContain('3.75')
+  })
+
+  it('不可达那行只报错误,不给「远程」入口', async () => {
+    emitAll(metric('a'), metric('b', { reachable: false, error: '无法连接服务器' }))
+    const wrapper = mount(ServerStatus)
+    await flushPromises()
+    await toList(wrapper)
+
+    const rows = wrapper.findAll('.metrics-table tbody tr')
+    expect(rows[0].find('.st-remote').exists()).toBe(true)
+    expect(rows[1].get('.st-name__err').text()).toBe('无法连接服务器')
+    expect(rows[1].find('.st-remote').exists()).toBe(false)
+  })
+
+  it('偏好落盘:重新进页面还停在列表', async () => {
+    emitAll(metric('a'), metric('b'))
+    const wrapper = mount(ServerStatus)
+    await flushPromises()
+    await toList(wrapper)
+    wrapper.unmount()
+
+    const again = mount(ServerStatus)
+    await flushPromises()
+    expect(again.find('.metrics-table').exists()).toBe(true)
   })
 })

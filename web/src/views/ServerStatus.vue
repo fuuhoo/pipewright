@@ -7,6 +7,7 @@
     · 某台不可达 → 该卡灰显 + 人读错误,排到可达的后面,不连累其它台。
     · 某指标缺失(跨平台 best-effort)→ 该行「不可用」。
     · 刷新/自动轮询都是**静默**的:就地替换已有卡片,不压暗、不清屏,只有首屏才显示骨架。
+    · 两种视图:卡片(默认)/ 一行一台的列表。只有排布不同,取数与展示口径完全共用。
 
   这是一个**新增**的总览入口,不动 4-1 SettingsServers CRUD、6-2 日志入口。
 -->
@@ -16,6 +17,7 @@ import { useI18n } from 'vue-i18n'
 import { streamAllServerMetrics, listServers, type ServerMetrics, type Server } from '../api/servers'
 import { HttpError } from '../api/http'
 import ServerMetricsCard from '../components/ops/ServerMetricsCard.vue'
+import ServerMetricsTable from '../components/ops/ServerMetricsTable.vue'
 import RemoteWorkspaceModal from '../components/ops/RemoteWorkspaceModal.vue'
 import AppButton from '../components/ui/AppButton.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
@@ -71,6 +73,41 @@ const sortedMetrics = computed(() => {
 
 function displayName(m: ServerMetrics): string {
   return serverById.value.get(m.serverId)?.name ?? m.serverId
+}
+
+/** 列表行:同一份 sortedMetrics,只是把登记信息 join 成地址一列(排序口径两边共用)。 */
+const tableRows = computed(() =>
+  sortedMetrics.value.map((m) => {
+    const s = serverById.value.get(m.serverId)
+    return { metrics: m, name: displayName(m), addr: s ? `${s.user}@${s.host}:${s.port}` : '' }
+  }),
+)
+
+// ─── 视图切换:卡片 / 列表 ─────────────────────────────────────────────────────
+// 默认卡片:机器少时卡片的信息密度更合适,列表是给「几十台里找那台内存最紧的」用的。
+// 偏好写 localStorage(与主题、项目页视图同一做法);取数逻辑完全不受视图影响。
+
+type ViewMode = 'cards' | 'list'
+const VIEW_MODE_KEY = 'pipewright.serverStatus.viewMode'
+
+function readViewMode(): ViewMode {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'cards'
+  } catch {
+    // 隐私模式 / 安全策略下 localStorage 会抛:安静退回卡片。
+    return 'cards'
+  }
+}
+
+const viewMode = ref<ViewMode>(readViewMode())
+
+function setViewMode(mode: ViewMode): void {
+  viewMode.value = mode
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, mode)
+  } catch {
+    // 存不下不影响这次切换。
+  }
 }
 
 function upsertMetrics(item: ServerMetrics): void {
@@ -204,24 +241,63 @@ onUnmounted(() => {
         </p>
         <p v-if="staleError" class="view-sub__stale">{{ t('serverStatus.staleError', { msg: staleError }) }}</p>
       </div>
-      <!-- 只有首屏才转圈;后台刷新保持静默(按钮不变、卡片不压暗)。 -->
-      <AppButton variant="default" :loading="loadState === 'loading'" @click="load">
-        {{ t('common.refresh') }}
-      </AppButton>
+      <div class="view-actions">
+        <!-- 视图切换:卡片铺开 / 一行一台。机器多了要横向比较「谁的内存最紧」,列表才扫得动。 -->
+        <div v-if="metrics.length > 0" class="view-toggle" role="group" :aria-label="t('serverStatus.viewModeAria')">
+          <button
+            type="button"
+            class="view-toggle__btn"
+            :class="{ 'view-toggle__btn--active': viewMode === 'cards' }"
+            :aria-pressed="viewMode === 'cards'"
+            @click="setViewMode('cards')"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            {{ t('serverStatus.viewCards') }}
+          </button>
+          <button
+            type="button"
+            class="view-toggle__btn"
+            :class="{ 'view-toggle__btn--active': viewMode === 'list' }"
+            :aria-pressed="viewMode === 'list'"
+            @click="setViewMode('list')"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M3 5h18M3 12h18M3 19h11" />
+            </svg>
+            {{ t('serverStatus.viewList') }}
+          </button>
+        </div>
+        <!-- 只有首屏才转圈;后台刷新保持静默(按钮不变、卡片不压暗)。 -->
+        <AppButton class="view-refresh" variant="default" :loading="loadState === 'loading'" @click="load">
+          {{ t('common.refresh') }}
+        </AppButton>
+      </div>
     </header>
 
     <!-- Initial loading skeletons -->
     <div
       v-if="loadState === 'loading' && metrics.length === 0"
-      class="metrics-grid"
+      :class="viewMode === 'list' ? 'skeleton-rows' : 'metrics-grid'"
       aria-busy="true"
       :aria-label="t('serverStatus.loadingAria')"
     >
-      <div v-for="n in 3" :key="n" class="skeleton-card">
-        <SkeletonBlock :height="20" width="50%" />
-        <SkeletonBlock :height="14" width="80%" />
-        <SkeletonBlock :height="14" width="80%" />
-      </div>
+      <template v-if="viewMode === 'list'">
+        <div v-for="n in 4" :key="n" class="skeleton-row">
+          <SkeletonBlock :height="16" width="24%" />
+          <SkeletonBlock :height="16" width="18%" />
+          <SkeletonBlock :height="16" width="30%" />
+        </div>
+      </template>
+      <template v-else>
+        <div v-for="n in 3" :key="n" class="skeleton-card">
+          <SkeletonBlock :height="20" width="50%" />
+          <SkeletonBlock :height="14" width="80%" />
+          <SkeletonBlock :height="14" width="80%" />
+        </div>
+      </template>
     </div>
 
     <!-- Load error (whole-page; 仅在从未取到数据时出现;后台刷新失败走上面的 staleError) -->
@@ -239,7 +315,8 @@ onUnmounted(() => {
       :description="t('serverStatus.emptyDesc')"
     />
 
-    <!-- Metrics grid (per-host cards;可达在前、不可达沉底) -->
+    <!-- Metrics(可达在前、不可达沉底):两种视图吃同一份排序结果 -->
+    <ServerMetricsTable v-else-if="viewMode === 'list'" :rows="tableRows" @remote="openRemote" />
     <div v-else class="metrics-grid">
       <ServerMetricsCard
         v-for="m in sortedMetrics"
@@ -300,6 +377,47 @@ onUnmounted(() => {
   color: var(--color-warn, var(--color-dim));
 }
 
+.view-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* 视图切换:与项目页同一「凹底 + 抬起当前档」的形状(token 名这页用 --color-line/--color-surface)。 */
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--color-inset);
+  border: 1px solid var(--color-line);
+  border-radius: var(--rounded-md);
+}
+.view-toggle__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--rounded-sm, 4px);
+  color: var(--color-dim);
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-out-expo), background-color var(--duration-fast) var(--ease-out-expo);
+}
+.view-toggle__btn:hover {
+  color: var(--color-text);
+}
+.view-toggle__btn--active {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
 /* 刷新时不压暗、不做过渡:静默替换内容即可。 */
 .metrics-grid {
   display: grid;
@@ -315,5 +433,22 @@ onUnmounted(() => {
   border: 1px solid var(--color-line);
   border-radius: var(--rounded-lg);
   background: var(--color-surface);
+}
+
+/* 列表视图的首屏骨架:一行一台,免得切了视图还先看见三张卡。 */
+.skeleton-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--rounded-lg);
+  background: var(--color-surface);
+}
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 0;
 }
 </style>
