@@ -12,6 +12,10 @@
     · **上传分块且可续**。文件按体积切块逐块推,界面给逐文件进度 + 取消/重试;断了从
       远端实测偏移接着传,所以 64 GB 的传输不会因为一次网络抖动从头再来(算术在
       lib/fsUpload,这里只做选择器与渲染)。
+    · **传输记录只记到平台真知道的那一步**。上传的逐文件结果是从驱动器状态折算的;
+      下载只有「已交给浏览器」这一条 —— 字节流不经过 JS,成功与否平台无从得知,
+      画成「已完成」就是撒谎。记录活在当前标签页内存里(lib/fsTransfers),按服务器
+      分格:关弹窗还在,刷新页面即空,不落盘也不问服务端。
     · **正文编辑器是内联的一层**,不是套第二层弹窗:叠层弹窗的焦点/滚动/转义键管理
       在窄分屏里最容易出错,而这里只需要「看正文 + 改 + 存」。
 
@@ -42,6 +46,18 @@ import {
   type UploadItemState,
   type UploadSessionHandle,
 } from '../../lib/fsUpload'
+import {
+  applyUploadBatch,
+  downloadRowOf,
+  formatClock,
+  newTransferBatchId,
+  prependTransfer,
+  setTransferLog,
+  transferLogOf,
+  transferSummary,
+  uploadRowsOf,
+  type TransferRow,
+} from '../../lib/fsTransfers'
 import {
   ROOT,
   fileExt,
@@ -109,6 +125,40 @@ let session: UploadSessionHandle | null = null
 
 /** 队列里最多渲染这么多行:选一个 5000 文件的目录也值得界面只画一屏。 */
 const QUEUE_ROWS = 200
+
+// ─── 传输记录(本次会话) ────────────────────────────────────────────────────────
+// 默认收起:下面已经有一条上传队列,再常驻一块记录会把文件表格挤没。
+// 工具栏那个数字徽标就是入口 —— 功能不该藏在没人发现的角落里。
+const transfers = ref<TransferRow[]>(transferLogOf(props.serverId))
+const txOpen = ref(false)
+/** 记录里最多渲染这么多行:计数照常算,DOM 不为几千条记录排队。 */
+const TX_ROWS = 120
+/**
+ * 当前批次的身份与发起态。驱动器的 item.key 只是批次内序号,跨批次会撞,
+ * 所以记录行要自己带批次号;落点目录也要在发起时钉住 —— 批次跑一半时终端 cd 走了,
+ * 记录里写的还得是文件真正落下的那层。
+ */
+let batchId = ''
+let batchDir = ''
+let batchAt = 0
+
+/** 记录的唯一出口:ref 与「同一标签页」的存储同时更新,免得重开弹窗看到旧的一半。 */
+function commitTransfers(rows: TransferRow[]): void {
+  transfers.value = rows
+  setTransferLog(props.serverId, rows)
+}
+
+// 一台服务器一份记录:换服务器就换成它那格(上面那台还在内存里,切回来还在)。
+watch(
+  () => props.serverId,
+  (id) => {
+    transfers.value = transferLogOf(id)
+  },
+)
+
+const txTally = computed(() => transferSummary(transfers.value))
+const txRows = computed(() => transfers.value.slice(0, TX_ROWS))
+const txHidden = computed(() => Math.max(0, transfers.value.length - TX_ROWS))
 
 // ─── 左侧目录树 ─────────────────────────────────────────────────────────────────
 // 只装目录、逐层懒加载:一次列目录若顺手把整棵子树拉平,慢的机器上首屏就得等
@@ -425,12 +475,19 @@ function startUpload(files: File[]): void {
   const sources = uploadSourcesOf(files)
   if (!sources.length) return
   queueOpen.value = true
+  batchId = newTransferBatchId()
+  batchDir = currentPath.value
+  batchAt = Date.now()
+  const owner = props.serverId
   session = runUploadSession({
     dir: currentPath.value,
     files: sources,
     deps: fsUploadDeps(props.serverId),
     onUpdate: (items) => {
       uploadItems.value = items
+      // 换过服务器就别再往新那格的记录里写:旧批次的字节属于旧服务器。
+      if (props.serverId !== owner) return
+      commitTransfers(applyUploadBatch(transfers.value, uploadRowsOf(batchId, batchDir, items, batchAt)))
     },
   })
   void session.finished.then((tally) => {
@@ -508,8 +565,51 @@ function uploadCancellable(it: UploadItemState): boolean {
   return it.status === 'queued' || it.status === 'uploading'
 }
 
+// ─── 下载:交给浏览器,顺手记一条 ────────────────────────────────────────────────
+/**
+ * `<a href>` 才是下载本体(整份文件不进 JS),这里只补一条「已发起」。
+ * 不 preventDefault:拦了就等于把用户要的文件拦掉了。
+ */
+function noteDownload(e: FsEntry): void {
+  commitTransfers(
+    prependTransfer(transfers.value, downloadRowOf({ name: e.name, path: e.path, size: e.size, isDir: e.isDir })),
+  )
+}
+
+function txStateText(r: TransferRow): string {
+  if (r.direction === 'download') return t('remoteWorkspace.panel.txStateStarted')
+  if (r.status === 'error') return uploadErrorText(r.error)
+  if (r.status === 'done') return t('remoteWorkspace.panel.uploadStateDone')
+  if (r.status === 'canceled') return t('remoteWorkspace.panel.uploadStateCanceled')
+  if (r.status === 'queued') return t('remoteWorkspace.panel.uploadStateQueued')
+  return t('remoteWorkspace.panel.uploadStateUploading')
+}
+
+/** 上传才有进度条:下载的字节在浏览器那一侧,平台画不出真的条。 */
+function txRatio(r: TransferRow): number {
+  if (r.size === null || r.size <= 0) return r.status === 'done' ? 100 : 0
+  if (r.status === 'done') return 100
+  return Math.min(100, Math.round((r.offset / r.size) * 100))
+}
+
+function txVariant(r: TransferRow): 'default' | 'success' | 'warn' | 'error' {
+  if (r.status === 'done') return 'success'
+  if (r.status === 'error') return 'error'
+  if (r.status === 'canceled') return 'warn'
+  return 'default'
+}
+
+/** 字节读数:下载只给体积(体积未知就空着,别写 0 B);上传给「已传 / 总」。 */
+function txBytes(r: TransferRow): string {
+  if (r.direction === 'download') return r.size === null ? '' : formatBytes(r.size)
+  if (r.size === null) return ''
+  return `${formatBytes(r.offset)} / ${formatBytes(r.size)}`
+}
+
 
 onMounted(() => {
+  // 弹窗关着的时候批次照跑、记录照写:重开要以存储为准,别显示卸载前那一半。
+  transfers.value = transferLogOf(props.serverId)
   // 空路径 = 该会话的家目录:比从界面猜一个 /root 或 /home 都诚实。
   void load('')
 })
@@ -563,6 +663,15 @@ onMounted(() => {
         :aria-pressed="queueOpen"
         @click="queueOpen = !queueOpen"
       >≡</button>
+      <button
+        class="fs-ibtn"
+        type="button"
+        :class="{ 'fs-ibtn--on': txOpen }"
+        :title="txOpen ? t('remoteWorkspace.panel.txCollapse') : t('remoteWorkspace.panel.txExpand')"
+        :aria-pressed="txOpen"
+        @click="txOpen = !txOpen"
+      >⇅</button>
+      <span v-if="transfers.length" class="fs-badge" :title="t('remoteWorkspace.panel.txAria')">{{ transfers.length }}</span>
       <input
         v-model="pathInput"
         class="fs-path"
@@ -702,6 +811,7 @@ onMounted(() => {
                   class="fs-op"
                   :href="fsDownloadUrl(serverId, e.path)"
                   :title="e.isDir ? t('remoteWorkspace.panel.downloadDirTitle') : t('remoteWorkspace.panel.downloadTitle')"
+                  @click="noteDownload(e)"
                 >{{ t('remoteWorkspace.panel.download') }}</a>
                 <button v-if="!e.isDir" class="fs-op" type="button" @click="openEditor(e.path)">{{ t('remoteWorkspace.panel.edit') }}</button>
                 <button class="fs-op" type="button" @click="startRename(e)">{{ t('remoteWorkspace.panel.rename') }}</button>
@@ -769,6 +879,50 @@ onMounted(() => {
         <li v-if="uploadHidden" class="fs-queue__more">
           {{ t('remoteWorkspace.panel.queueMore', { n: uploadHidden }) }}
         </li>
+      </ul>
+    </section>
+
+    <!-- 传输记录:本次会话(同一标签页)的逐条传输,只读 —— 取消/重试在上面的队列里做。 -->
+    <section v-if="txOpen" class="fs-queue fs-tx" :aria-label="t('remoteWorkspace.panel.txAria')">
+      <header class="fs-queue__head">
+        <span class="fs-queue__title">{{ t('remoteWorkspace.panel.txTitle', { n: transfers.length }) }}</span>
+        <span v-if="txTally.failed" class="fs-queue__warn">
+          {{ t('remoteWorkspace.panel.txFailed', { n: txTally.failed }) }}
+        </span>
+        <span class="fs-queue__bytes">
+          {{ t('remoteWorkspace.panel.txCounts', { up: txTally.uploads, down: txTally.downloads }) }}
+        </span>
+        <span class="grow" />
+        <button v-if="transfers.length" class="fs-btn" type="button" @click="commitTransfers([])">
+          {{ t('remoteWorkspace.panel.txClear') }}
+        </button>
+        <button class="fs-btn" type="button" @click="txOpen = false">
+          {{ t('remoteWorkspace.panel.txCollapse') }}
+        </button>
+      </header>
+
+      <p v-if="!transfers.length" class="fs-tx__empty">{{ t('remoteWorkspace.panel.txEmpty') }}</p>
+      <ul v-else class="fs-queue__list">
+        <li v-for="r in txRows" :key="r.id" class="fs-queue__row">
+          <span class="fs-tx__dir" :class="`fs-tx__dir--${r.direction}`" :title="r.direction === 'upload' ? t('remoteWorkspace.panel.txUpload') : t('remoteWorkspace.panel.txDownload')">
+            {{ r.direction === 'upload' ? '↑' : '↓' }}
+          </span>
+          <span class="fs-queue__name" :title="r.path">{{ r.name }}</span>
+          <ProgressBar
+            v-if="r.direction === 'upload'"
+            class="fs-queue__prog"
+            :value="txRatio(r)"
+            :variant="txVariant(r)"
+            :label="r.name"
+          />
+          <span class="fs-queue__state" :class="`fs-queue__state--${r.status}`">{{ txStateText(r) }}</span>
+          <span class="fs-queue__num">{{ txBytes(r) }}</span>
+          <span class="fs-tx__at" :title="new Date(r.at).toLocaleString()">{{ formatClock(r.at) }}</span>
+        </li>
+        <li v-if="txHidden" class="fs-queue__more">
+          {{ t('remoteWorkspace.panel.txMore', { n: txHidden }) }}
+        </li>
+        <li v-if="txTally.downloads" class="fs-queue__more">{{ t('remoteWorkspace.panel.txDownloadNote') }}</li>
       </ul>
     </section>
   </div>
@@ -1100,6 +1254,33 @@ onMounted(() => {
   font-size: var(--text-label);
   color: var(--color-faint);
   padding-left: 2px;
+}
+
+/* 传输记录:沿用队列的容器与行版式,只加方向、时刻、空态这三样自己的东西。 */
+.fs-tx__dir {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--color-faint);
+}
+.fs-tx__dir--upload {
+  color: var(--color-green, var(--color-dim));
+}
+.fs-tx__dir--download {
+  color: var(--color-primary, var(--color-dim));
+}
+.fs-tx__at {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-label);
+  color: var(--color-faint);
+}
+.fs-tx__empty {
+  margin: 0;
+  padding: 2px;
+  font-size: var(--text-label);
+  color: var(--color-faint);
 }
 
 .fs-editor,
