@@ -423,25 +423,27 @@ async function submitGroups(): Promise<void> {
             </td>
             <td>{{ fmtTime(u.lastLoginAt) }}</td>
             <td>{{ fmtTime(u.createdAt) }}</td>
-            <td class="cell-actions">
-              <AppButton
-                variant="ghost"
-                size="sm"
-                :disabled="isBootstrapAdmin(u)"
-                :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
-                @click="openReset(u)"
-              >
-                {{ t('adminUsers.resetPassword') }}
-              </AppButton>
-              <AppButton
-                :variant="u.enabled ? 'danger' : 'ghost'"
-                size="sm"
-                :disabled="isBootstrapAdmin(u)"
-                :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
-                @click="askToggle(u)"
-              >
-                {{ u.enabled ? t('adminUsers.disable') : t('adminUsers.enable') }}
-              </AppButton>
+            <td>
+              <div class="cell-actions">
+                <AppButton
+                  variant="ghost"
+                  size="sm"
+                  :disabled="isBootstrapAdmin(u)"
+                  :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
+                  @click="openReset(u)"
+                >
+                  {{ t('adminUsers.resetPassword') }}
+                </AppButton>
+                <AppButton
+                  :variant="u.enabled ? 'danger' : 'ghost'"
+                  size="sm"
+                  :disabled="isBootstrapAdmin(u)"
+                  :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
+                  @click="askToggle(u)"
+                >
+                  {{ u.enabled ? t('adminUsers.disable') : t('adminUsers.enable') }}
+                </AppButton>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -681,6 +683,7 @@ async function submitGroups(): Promise<void> {
   color: var(--color-faint);
   margin-top: 2px;
 }
+/* 挂在内层 div 而不是 td:td 一旦 display:flex 就不再是 table-cell,这格的行底边线会短到按钮下面,列线看着就歪了。 */
 .cell-actions {
   display: flex;
   justify-content: flex-end;

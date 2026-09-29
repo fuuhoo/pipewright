@@ -405,34 +405,36 @@ async function askDelete(r: Role): Promise<void> {
                 {{ t('roleEditor.userCount', { n: r.userCount }) }}
               </span>
             </td>
-            <td class="cell-actions">
-              <AppButton
-                variant="ghost"
-                size="sm"
-                :disabled="r.builtin"
-                :title="r.builtin ? t('roleEditor.builtinEditHint') : ''"
-                @click="openEdit(r)"
-              >
-                {{ t('roleEditor.edit') }}
-              </AppButton>
-              <AppButton variant="ghost" size="sm" @click="openCopy(r)">
-                {{ t('roleEditor.copy') }}
-              </AppButton>
-              <AppButton
-                variant="danger"
-                size="sm"
-                :disabled="!canDeleteRole(r)"
-                :title="
-                  r.builtin
-                    ? t('roleEditor.builtinEditHint')
-                    : r.userCount
-                      ? t('roleEditor.deleteBlockedHint', { n: r.userCount })
-                      : ''
-                "
-                @click="askDelete(r)"
-              >
-                {{ t('roleEditor.delete') }}
-              </AppButton>
+            <td>
+              <div class="cell-actions">
+                <AppButton
+                  variant="ghost"
+                  size="sm"
+                  :disabled="r.builtin"
+                  :title="r.builtin ? t('roleEditor.builtinEditHint') : ''"
+                  @click="openEdit(r)"
+                >
+                  {{ t('roleEditor.edit') }}
+                </AppButton>
+                <AppButton variant="ghost" size="sm" @click="openCopy(r)">
+                  {{ t('roleEditor.copy') }}
+                </AppButton>
+                <AppButton
+                  variant="danger"
+                  size="sm"
+                  :disabled="!canDeleteRole(r)"
+                  :title="
+                    r.builtin
+                      ? t('roleEditor.builtinEditHint')
+                      : r.userCount
+                        ? t('roleEditor.deleteBlockedHint', { n: r.userCount })
+                        : ''
+                  "
+                  @click="askDelete(r)"
+                >
+                  {{ t('roleEditor.delete') }}
+                </AppButton>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -710,6 +712,7 @@ async function askDelete(r: Role): Promise<void> {
 .cell-nowrap {
   white-space: nowrap;
 }
+/* 挂在内层 div 而不是 td:td 一旦 display:flex 就不再是 table-cell,这格的行底边线会短到按钮下面,列线看着就歪了。 */
 .cell-actions {
   display: flex;
   justify-content: flex-end;

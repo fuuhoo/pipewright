@@ -306,19 +306,21 @@ function isMine(g: Group): boolean {
               {{ t('groups.resourceCounts', { projects: g.projectCount, servers: g.serverCount }) }}
             </div>
           </td>
-          <td class="cell-actions">
-            <AppButton
-              variant="ghost"
-              size="sm"
-              :disabled="!g.canManage"
-              :title="g.canManage ? '' : t('groups.manageOnlyHint')"
-              @click="openEdit(g)"
-            >
-              {{ t('groups.edit') }}
-            </AppButton>
-            <AppButton v-if="canSettings" variant="danger" size="sm" @click="askDelete(g)">
-              {{ t('groups.delete') }}
-            </AppButton>
+          <td>
+            <div class="cell-actions">
+              <AppButton
+                variant="ghost"
+                size="sm"
+                :disabled="!g.canManage"
+                :title="g.canManage ? '' : t('groups.manageOnlyHint')"
+                @click="openEdit(g)"
+              >
+                {{ t('groups.edit') }}
+              </AppButton>
+              <AppButton v-if="canSettings" variant="danger" size="sm" @click="askDelete(g)">
+                {{ t('groups.delete') }}
+              </AppButton>
+            </div>
           </td>
         </tr>
       </tbody>
@@ -565,6 +567,7 @@ function isMine(g: Group): boolean {
 .th-actions {
   text-align: right;
 }
+/* 挂在内层 div 而不是 td:td 一旦 display:flex 就不再是 table-cell,这格的行底边线会短到按钮下面,列线看着就歪了。 */
 .cell-actions {
   display: flex;
   justify-content: flex-end;
