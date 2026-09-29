@@ -9,7 +9,8 @@
 //   - 请求上限:roles.go 的 Ceiling 由本表的点集算出来,所以「入口亮了」与「这个写请求 403」
 //     不可能各说一套;RequireAdmin 读的也是本表(设置点)。
 //
-// 存量账号的档位一格不许变,由 TestCeilingMatrixUnchanged 逐格钉住。
+// 存量账号的档位一格不许变:内置 admin 由 TestCeilingMatrixUnchanged 逐格钉住,四档预置
+// 自 0063 起点的是迁移里的种子(见 roles_drift_test.go 的 TestSeededPresetCeilings)。
 //
 // 点分两类:
 //   - 资源点:Kind 取四类资源之一,Act 取 view / operate。它声明「要看得到 / 按得动这个,
@@ -90,35 +91,19 @@ var permByID = func() map[string]Perm {
 	return m
 }()
 
-// rolePerms 是角色 → 功能点集。名单按「这个角色是做什么的」写,不从档位反推 —— 反推出来的
-// 表只能复述今天,加不了粒度。两张口径的一致性(档位矩阵不许漂)由测试钉住。
+// rolePerms 是**内置模板角色** → 功能点集。今天只剩 admin 一档:其余四档(user / developer /
+// ops / viewer)已由 0063 迁移搬进 roles / role_perms 两张表,与自定义角色同一条路走
+// (catalog.go 缓存),管理员可以改名、改点集、删掉。
+//
+// admin 刻意留在代码里:它是「管理员不会把自己锁在门外」的兜底 —— 库里的行改坏了、删掉了、
+// 甚至整张表读不出来,这一档还得在。这也是本表只留一行的原因:多留一行,就多一处
+// 「页面上改不动、只能发版改代码」的角色。
+//
+// 名单按「这个角色是做什么的」写,不从档位反推 —— 反推出来的表只能复述今天,加不了粒度。
+// 两张口径的一致性(档位矩阵不许漂)由测试钉住。
 var rolePerms = map[string][]string{
 	// 管理员:全部点。它同时短路 Ceiling(直接给到 manage),见 roles.go。
 	RoleAdmin: permIDs(),
-
-	// 普通用户:平台默认角色。四类落点都能动,但平台设置类不给 —— 与引入本表之前的行为一致。
-	RoleUser: permsWithout(PermSettingsAccess),
-
-	// 流水线开发者:编排与运行全开,落点一律只读 —— 排障要看得到主机指标与容器状态
-	// (它们就是「我这次部署起来没有」的答案),但登机器、重启容器、调告警阈值是运维的事。
-	RoleDeveloper: {
-		"dashboard.view", "project.view", "project.edit", "library.view", "library.edit",
-		"run.view", "run.operate", "environments.view", "metrics.dora.view",
-		"server.view", "container.view", "cert.view", "preview.view", "anomaly.view",
-		"cluster.view",
-	},
-
-	// 运维:落点全开(登机器、管容器、回收预览、调告警),编排只读 —— 能看流水线,不能改。
-	RoleOps: {
-		"dashboard.view", "project.view", "library.view",
-		"run.view", "run.operate", "environments.view", "metrics.dora.view",
-		"server.view", "server.exec", "container.view", "container.operate",
-		"cert.view", "preview.view", "preview.recycle", "anomaly.view", "anomaly.edit",
-		"cluster.view", "cluster.operate",
-	},
-
-	// 只读:所有 *.view,一个 operate 都不给。
-	RoleViewer: permsWhere(func(p Perm) bool { return p.Kind != Platform && p.Act == ActView }),
 }
 
 // permIDs 返回字典里所有点的 ID(声明序)。
@@ -135,28 +120,6 @@ func permIDs() []string {
 func Perms() []Perm {
 	out := make([]Perm, len(permDict))
 	copy(out, permDict)
-	return out
-}
-
-// permsWithout 返回除 exclude 之外的所有点(给「全员但排除平台设置」这类角色用)。
-func permsWithout(exclude ...string) []string {
-	out := make([]string, 0, len(permDict))
-	for _, p := range permDict {
-		if !slices.Contains(exclude, p.ID) {
-			out = append(out, p.ID)
-		}
-	}
-	return out
-}
-
-// permsWhere 按字典序筛点(避免每个角色手抄一遍,漏项就是少一个入口)。
-func permsWhere(match func(Perm) bool) []string {
-	out := make([]string, 0, len(permDict))
-	for _, p := range permDict {
-		if match(p) {
-			out = append(out, p.ID)
-		}
-	}
 	return out
 }
 

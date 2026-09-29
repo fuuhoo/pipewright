@@ -17,6 +17,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/group"
 	"github.com/huangchengsir/pipewright/internal/mask"
 	"github.com/huangchengsir/pipewright/internal/project"
+	"github.com/huangchengsir/pipewright/internal/role"
 	"github.com/huangchengsir/pipewright/internal/run"
 	"github.com/huangchengsir/pipewright/internal/storetest"
 	"github.com/huangchengsir/pipewright/internal/target"
@@ -33,6 +34,21 @@ import (
 //  4. 改归属(归组 / 移出)要管得住两侧,组成员做不到。
 
 const guardPass = "guard-pass-1234"
+
+// loadRoleCatalog 按 main.go 的两行装配把角色仓储接进 access 的判定缓存。
+//
+// 0063 之后 'user' / 'developer' / 'ops' / 'viewer' 只活在库里:不装载就 fail closed,
+// 这些角色的会话会在 RequireUser 上 401、请求会一律降到只读 —— 看着像权限设计坏了,
+// 其实缺的是装配。凡是用非管理员身份发请求的测试 setup 都要先调它。
+func loadRoleCatalog(t *testing.T, db *sql.DB) {
+	t.Helper()
+	roleSvc := role.New(db)
+	access.SetRoleStore(roleSvc)
+	if err := access.ReloadRoles(context.Background()); err != nil {
+		t.Fatalf("装载角色目录: %v", err)
+	}
+	t.Cleanup(func() { access.SetRoleStore(nil) })
+}
 
 type guardEnv struct {
 	srv *httptest.Server
@@ -76,6 +92,8 @@ func setupGuard(t *testing.T) *guardEnv {
 	if err := authSvc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap admin: %v", err)
 	}
+	// 角色仓储要接进判定缓存,和 main.go 的装配逐字同形。
+	loadRoleCatalog(t, db)
 
 	hash, err := auth.HashPassword(guardPass)
 	if err != nil {

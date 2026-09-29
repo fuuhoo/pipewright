@@ -576,7 +576,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			adminR.Post("/users/{id}/password", makeResetUserPasswordHandler(o.usersSvc, aud, authn))
 			adminR.Patch("/users/{id}", makePatchUserHandler(o.usersSvc, aud, authn))
 
-			// 角色(P4 可配置角色):内置五档当模板只读,自定义角色可增删改。
+			// 角色(P4 可配置角色):内置只剩 admin 一档当模板只读;四档预置(0063 起在库里)
+			// 与自建角色同样可增删改。
 			// points 是静态段,chi 优先于 /{id};它是代码字典不是库数据,所以放在读角色前面一起注册。
 			rSvc := o.roleSvc
 			adminR.Get("/roles", makeListRolesHandler(rSvc))

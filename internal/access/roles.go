@@ -2,8 +2,9 @@
 //
 // 两轴分工(权威说明见 docs/权限架构说明.md):
 //   - 功能轴回答「这个角色允不允许做这类动作」,与数据归属无关。它的权威点集有两处来源:
-//     内置五档在 perms.go 的代码表(模板,只读),自定义角色在库里的 roles / role_perms
-//     (由 catalog.go 缓存)。本文件的 Ceiling 从「先代码表、再缓存」查到的点集**派生**,
+//     内置档(只剩 admin)在 perms.go 的代码表里,是只读模板;其余角色 —— 包括 0063 从代码表
+//     搬进库的四档预置(user / developer / ops / viewer)—— 都在 roles / role_perms 两张表里,
+//     由 catalog.go 缓存。本文件的 Ceiling 从「先代码表、再缓存」查到的点集**派生**,
 //     所以菜单与请求上限永远同口径。
 //   - 数据轴(access.go 的 Decide)回答「这份数据归谁」(未归组 / public / private + 组长 + 名册)。
 //     一次判定取两者更严的一档,即 min(角色上限, 分组授予)。
@@ -12,8 +13,9 @@
 // 本身(改归属、删资源),组长靠它管自己的组。若让功能轴把 Manage 封掉,改一次菜单就会
 // 静默夺走组长的既有管理权——那属于数据轴的事,不该由功能轴越权。
 //
-// 档位一律只「收窄」不「放宽」:内置的 user 对四类资源都是 Operate,与引入档位表之前既有
-// 行为逐字一致(Manage 仍由 Decide 决定),所以存量账号升级后权限不变。
+// 档位一律只「收窄」不「放宽」:点集为空或角色认不出 → 只给 View,绝不顺手放行。
+// 存量账号的权限在 0063 之后不变,靠的是那四档的点集被逐字搬进了库(见 0063 的守卫测试),
+// 而不是靠代码表兜底 —— 库里读不到角色时它和任意陌生 id 一样落 View。
 package access
 
 import "slices"
@@ -21,21 +23,16 @@ import "slices"
 // 角色枚举。字串取值与 users.role / sessions.role 完全一致(该列没有 CHECK 约束,
 // 新增角色不需要重建表的迁移)。
 const (
-	// RoleUser 是平台默认角色:四类资源都能动(功能轴不封顶),归属仍由分组决定。
+	// RoleUser 是**平台默认角色的 id**,不是内置模板:0063 迁移把它连同 developer / ops / viewer
+	// 一起播种进 roles 表,点集从此由管理员在页面上改。常量留着是因为建号时角色留空要落它,
+	// 而它的字串 'user' 与库里那行的 id 逐字相同 —— 存量账号的 users.role 一次都不用动。
 	RoleUser = "user"
-	// RoleDeveloper 流水线开发者:能改项目与跑运行,但不能碰主机 / 集群这类「部署落点」。
-	RoleDeveloper = "developer"
-	// RoleOps 运维:能操作主机 / 集群,能对既有运行做审批 / 部署 / 重试 / 回滚,
-	// 但不改项目配置。手动触发一条流水线走 POST /projects/{id}/runs,归 project 档,
-	// 因此 ops 不含「发起构建」——要放开得把 Kind 拆细,留到后续。
-	RoleOps = "ops"
-	// RoleViewer 只读:能看列表 / 详情 / 日志 / 报告,任何写请求都 403。
-	RoleViewer = "viewer"
 )
 
-// Roles 是角色枚举的展示顺序(前端下拉照这个顺序列,不再各自硬编名单)。
+// Roles 是**内置模板档**的展示顺序(自定义角色由服务端名单另发,页面把它们排在内置档之后)。
+// 内置只剩管理员一档:它不可改删,兜住「管理员不会把自己锁在门外」。
 func Roles() []string {
-	return []string{RoleAdmin, RoleUser, RoleDeveloper, RoleOps, RoleViewer}
+	return []string{RoleAdmin}
 }
 
 // IsBuiltinRole 报告该 id 是否为内置档。内置档是「模板」:设置页不许改删,库里也不许出现

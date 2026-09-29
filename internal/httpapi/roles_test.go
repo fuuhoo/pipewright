@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,11 @@ func setupRoleServer(t *testing.T) *httptest.Server {
 	}
 	roleSvc := role.New(st.DB)
 	access.SetRoleStore(roleSvc)
+	// 装载一次才算装配完整:0063 播种的四档预置只存在于库里,不 Reload 就一律 fail closed,
+	// 建号时 role='user' 会被当成非法角色(main.go 里就是这两行连着写)。
+	if err := access.ReloadRoles(context.Background()); err != nil {
+		t.Fatalf("装载角色目录: %v", err)
+	}
 	t.Cleanup(func() { access.SetRoleStore(nil) })
 
 	groupSvc := group.New(st.DB)
@@ -145,7 +151,9 @@ func TestRolePointsDict(t *testing.T) {
 	}
 }
 
-// TestRoleListIncludesBuiltinTemplates 验证列表把内置五档当模板返回(带点集,排在前面)。
+// TestRoleListIncludesBuiltinTemplates 验证列表把内置档当模板排在最前(带点集),
+// 而 0063 播种的四档预置以「库里普通角色」的身份跟着后面 —— 前端角色下拉读的就是这份名单,
+// 预置档少了或还被标成内置,页面上都会变成「改不动、删不掉」。
 func TestRoleListIncludesBuiltinTemplates(t *testing.T) {
 	srv := setupRoleServer(t)
 	client, csrf := adminSession(t, srv)
@@ -171,6 +179,23 @@ func TestRoleListIncludesBuiltinTemplates(t *testing.T) {
 		}
 		if got, want := strings.Join(out.Items[i].Perms, ","), strings.Join(access.PermsFor(id), ","); got != want {
 			t.Errorf("%s 点集与代码表不一致:\n got %s\nwant %s", id, got, want)
+		}
+	}
+	// 四档预置:来自库里,点集非空,Builtin=false(前端据此放开编辑与删除)。
+	byID := map[string]roleDTO{}
+	for _, it := range out.Items {
+		byID[it.ID] = it
+	}
+	for _, id := range []string{"user", "developer", "ops", "viewer"} {
+		it, ok := byID[id]
+		if !ok {
+			t.Fatalf("预置档 %q 不在角色名单里", id)
+		}
+		if it.Builtin {
+			t.Errorf("预置档 %q 仍标为内置,页面改不动它", id)
+		}
+		if len(it.Perms) == 0 {
+			t.Errorf("预置档 %q 点集为空,该角色的账号会一个入口都看不到", id)
 		}
 	}
 }
@@ -283,7 +308,8 @@ func TestRoleWriteGuards(t *testing.T) {
 	}
 }
 
-// TestRoleBuiltinReadOnly 验证内置五档改不掉也删不掉 —— 它既是模板,也是「永远有个管理员档」的兜底。
+// TestRoleBuiltinReadOnly 验证内置管理员档改不掉也删不掉 —— 它是模板,也是「永远有个管理员档」
+// 的兜底。四档预置自 0063 起已是库里的普通角色,同一份端点就能改、能删(见末尾两条)。
 func TestRoleBuiltinReadOnly(t *testing.T) {
 	srv := setupRoleServer(t)
 	admin, adminCSRF := adminSession(t, srv)
@@ -296,9 +322,15 @@ func TestRoleBuiltinReadOnly(t *testing.T) {
 	if code := decodeErrCode(t, patch); code != "builtin_role" {
 		t.Errorf("code = %s, want builtin_role", code)
 	}
-	del := doRoleJSON(t, admin, http.MethodDelete, srv.URL+"/api/admin/roles/"+access.RoleViewer, adminCSRF, "")
+	del := doRoleJSON(t, admin, http.MethodDelete, srv.URL+"/api/admin/roles/"+access.RoleAdmin, adminCSRF, "")
 	if del.StatusCode != http.StatusConflict {
 		t.Fatalf("删内置 status = %d, want 409(%s)", del.StatusCode, readBody(t, del))
+	}
+	// 预置档已可编辑:改名走同一条 PATCH,200 而不是 409。
+	presetPatch := doRoleJSON(t, admin, http.MethodPatch, srv.URL+"/api/admin/roles/ops", adminCSRF,
+		`{"description":"运维值班"}`)
+	if presetPatch.StatusCode != http.StatusOK {
+		t.Fatalf("改预置档 ops status = %d, want 200(%s)", presetPatch.StatusCode, readBody(t, presetPatch))
 	}
 	// 内置档读得到,未知 id 是 404 而不是 500。
 	missing := doRoleJSON(t, admin, http.MethodGet, srv.URL+"/api/admin/roles/no-such-role", adminCSRF, "")
@@ -356,8 +388,8 @@ func TestRoleDeleteGuards(t *testing.T) {
 		t.Errorf("409 文案该带人数(要先告诉管理员得改派几个),got %s", body)
 	}
 
-	// 改回内置档再删。
-	assignRole(t, admin, adminCSRF, srv.URL, u.ID, access.RoleViewer)
+	// 改派到预置档(库里的一行)再删。
+	assignRole(t, admin, adminCSRF, srv.URL, u.ID, "viewer")
 	ok := doRoleJSON(t, admin, http.MethodDelete, srv.URL+"/api/admin/roles/"+created.ID, adminCSRF, "")
 	if ok.StatusCode != http.StatusOK {
 		t.Fatalf("删除 status = %d(%s)", ok.StatusCode, readBody(t, ok))

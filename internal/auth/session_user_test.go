@@ -1,9 +1,12 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/huangchengsir/pipewright/internal/access"
+	"github.com/huangchengsir/pipewright/internal/role"
 	"github.com/huangchengsir/pipewright/internal/storetest"
 	"github.com/huangchengsir/pipewright/internal/users"
 )
@@ -86,6 +89,16 @@ func TestIsAdminSession_AllRoles(t *testing.T) {
 
 // TestIsUserSession_AllRoles 覆盖 IsUserSession 的 4 个分支。
 func TestIsUserSession_AllRoles(t *testing.T) {
+	// 'user' 自 0063 起是库里的普通角色,判定读的是装配时装进内存的角色目录:
+	// 不装载就会 fail closed,这条用例也就从「验角色名单」变成了「验装配」——
+	// 所以这里按 main.go 的两行接一次仓储,测的才是线上真实的口径。
+	db := storetest.OpenDB(t)
+	access.SetRoleStore(role.New(db))
+	if err := access.ReloadRoles(context.Background()); err != nil {
+		t.Fatalf("装载角色目录: %v", err)
+	}
+	t.Cleanup(func() { access.SetRoleStore(nil) })
+
 	if IsUserSession(nil) {
 		t.Fatal("nil 不应通过")
 	}
@@ -97,6 +110,10 @@ func TestIsUserSession_AllRoles(t *testing.T) {
 	}
 	if !IsUserSession(&Session{Role: "user"}) {
 		t.Fatal("user 应通过 RequireUser")
+	}
+	// 目录里没有的角色仍然拒(fail closed:脏角色串不该换来一个会话)。
+	if IsUserSession(&Session{Role: "root"}) {
+		t.Fatal("未知名不该通过 RequireUser")
 	}
 }
 

@@ -123,8 +123,9 @@ func main() {
 	accessSvc := access.NewService(groupSvc)
 
 	// 装配可配置角色(P4):role.Service 既是 /api/admin/roles 的领域服务,也是 access
-	// 判定侧读自定义角色的仓储。装载失败只记警告不 fatal:内置五档仍在代码表里,
-	// 平台照样能鉴权,只是暂时看不到自定义角色(access 判不出的 id 一律不给入口)。
+	// 判定侧读角色的仓储。装载失败只记警告不 fatal(平台还得留给管理员修),但要清楚代价:
+	// 代码表里只剩 admin,四档预置连同自定义角色全在这一次读出来 —— 装载失败等于
+	// 除管理员外所有账号的角色串认不出、每个请求 401,页面会整个空掉。
 	roleSvc := role.New(st.DB)
 	access.SetRoleStore(roleSvc)
 	if err := access.ReloadRoles(context.Background()); err != nil {

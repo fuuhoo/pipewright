@@ -32,6 +32,7 @@ func setupPresetServer(t *testing.T) (*httptest.Server, *http.Client) {
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
+	loadRoleCatalog(t, st.DB) // alice 是 'user':不装载目录她的会话会在 RequireUser 上 401
 	hash, err := auth.HashPassword("alice-pass-1234")
 	if err != nil {
 		t.Fatalf("hash: %v", err)

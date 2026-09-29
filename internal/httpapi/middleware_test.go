@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/huangchengsir/pipewright/internal/storetest"
 )
 
 // fakeOK 是「下一个 handler 已通过」的哨兵,用于测试中间件是否放行/拒绝。
@@ -89,6 +90,10 @@ func TestRequireUser_AllowsAdmin(t *testing.T) {
 
 // TestRequireUser_AllowsUser 验证 user 可访问。
 func TestRequireUser_AllowsUser(t *testing.T) {
+	// 'user' 自 0063 起是库里的角色,RequireUser 认它靠的是装配好的角色目录;
+	// 这里按线上口径装载一次,免得用例测成「中间件拒了合法角色」。
+	loadRoleCatalog(t, storetest.OpenDB(t))
+
 	req := makeReq(http.MethodGet, "/api/personal/profile")
 	req = withSession(req, &auth.Session{Role: "user", UserID: "u-1"})
 

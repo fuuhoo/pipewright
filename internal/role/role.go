@@ -1,10 +1,12 @@
 // Package role 是「可配置角色」的领域层:P4 自定义角色的存储、校验与判定侧接线。
 //
-// 与内置档的分工(权威说明见 docs/权限架构说明.md §2):
-//   - 内置五档 admin / user / developer / ops / viewer 的点集是 internal/access/perms.go 的代码表,
-//     页面上当**模板**呈现:不可改、不可删、可复制成自定义角色。升级时新加的功能点自动跟着
-//     内置档位走,内置 admin 也永远改不掉(自锁兜底)。
-//   - 本包只管自定义角色:存 0062 的 roles / role_perms,users.role 存这里的 id(uuid v4)。
+// 内置与预置的分工(权威说明见 docs/权限架构说明.md §2):
+//   - 内置只剩 admin 一档:它的点集是 internal/access/perms.go 的代码表,页面上当**模板**呈现,
+//     不可改、不可删,升级时新加的功能点自动跟着它走 —— 它是自锁兜底,所以必须钉死在代码里。
+//   - user / developer / ops / viewer 四档预置自 0063 起是 roles / role_perms 里的普通行
+//     (id 仍是那几个小写词,由迁移种进去),和自建角色走同一条读写路径:管理员可改、可删
+//     (仍被账号使用时挡 role_in_use),也可当模板复制。
+//   - 本包管的就是这些库里的角色:存 0062 的 roles / role_perms,users.role 存这里的 id。
 //
 // 判定不经过本包:access 通过 RoleStore 窄接口读本包的仓储实现(access.SetRoleStore + ReloadRoles),
 // 所以「这个角色能不能做某事」永远只有 access 一个出口,不会出现两套口径。
@@ -48,13 +50,13 @@ var (
 // maxNameLen 是角色展示名长度上限;与「一眼读得完」对齐,而不是贴着 DB 列宽。
 const maxNameLen = 40
 
-// Role 是一个角色的领域视图。内置档与自定义档共用这一结构:Builtin 决定页面能否编辑,
-// Perms 是判定的唯一输入(内置档的点集从代码表取,不落库)。
+// Role 是一个角色的领域视图。内置档与库里的角色(含 0063 播种的四档预置)共用这一结构:
+// Builtin 决定页面能否编辑,Perms 是判定的唯一输入(只有内置 admin 的点集取自代码表,不落库)。
 type Role struct {
 	ID          string
 	Name        string
 	Description string
-	// BaseRole 是复制来源的内置档 id('' = 手建);只用于页面提示「基于运维模板」,无判定语义。
+	// BaseRole 是复制来源的角色 id('' = 手建);只用于页面提示「基于某模板」,无判定语义。
 	BaseRole string
 	Builtin  bool
 	Perms    []string
@@ -163,18 +165,11 @@ func (s *Service) List(ctx context.Context) ([]Role, error) {
 }
 
 // builtinHint 给内置档一句固定说明(它是代码表里的定位,不是库里的自由文本)。
+// 其余四档预置角色已在 0063 搬进库里,它们的说明归 description 列,由管理员自己写。
 func builtinHint(id string) string {
 	switch id {
 	case access.RoleAdmin:
 		return "全部功能点,含设置类"
-	case access.RoleUser:
-		return "四类落点可操作,进不了设置"
-	case access.RoleDeveloper:
-		return "编排与运行可改,落点只读"
-	case access.RoleOps:
-		return "落点可操作,编排只读"
-	case access.RoleViewer:
-		return "全部只读"
 	default:
 		return ""
 	}
@@ -227,8 +222,8 @@ type CreateInput struct {
 }
 
 // Create 落一条自定义角色 + 它的点集,成功后刷新判定缓存。
-// BaseRole 只接受内置档 id(页面「从模板复制」带过来);非法值报错而不是静默清空,
-// 免得用户在页面上看到「基于 developer 模板」而库里存着空串。
+// BaseRole 接受任一存在的角色 id(内置 admin,或 0063 起也在库里的四档预置与自建角色);
+// 非法值报错而不是静默清空,免得用户在页面上看到「基于 developer 模板」而库里存着空串。
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Role, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
@@ -239,7 +234,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Role, error) {
 	}
 	base := strings.TrimSpace(in.BaseRole)
 	if base != "" && !access.IsBuiltinRole(base) {
-		return nil, fmt.Errorf("%w: 模板角色 %q 不是内置档", ErrValidation, base)
+		ok, err := s.idExists(ctx, base)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: 模板角色 %q 不存在", ErrValidation, base)
+		}
 	}
 	perms, err := normalizePerms(in.Perms)
 	if err != nil {
@@ -354,8 +355,10 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (*Role,
 	return s.Get(ctx, id)
 }
 
-// Copy 以某个角色(内置或自定义)的点集为起点建一个新角色。内置档不可改,
-// 「复制一份再调」就是它作为模板的用法。
+// Copy 以某个角色(内置或库里)的点集为起点建一个新角色。
+//
+// base_role 记的只是「从谁抄来」的展示线索,所以源角色无论内置与否都记 id:
+// 名字改名、甚至源角色被删,都不会影响新角色的判定,列上的提示退化成历史出处而已。
 //
 // 源角色的 settings.access 在这里剥掉(而不是报错):从 admin 模板复制一份是常见起手式,
 // 而那个点本来就不许给自定义角色 —— 报错只会让人以为复制坏了。UI 里它显示为
@@ -364,10 +367,6 @@ func (s *Service) Copy(ctx context.Context, id, name, createdBy string) (*Role, 
 	src, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
-	}
-	base := ""
-	if src.Builtin {
-		base = src.ID
 	}
 	perms := make([]string, 0, len(src.Perms))
 	for _, p := range src.Perms {
@@ -379,7 +378,7 @@ func (s *Service) Copy(ctx context.Context, id, name, createdBy string) (*Role, 
 	return s.Create(ctx, CreateInput{
 		Name:        name,
 		Description: src.Description,
-		BaseRole:    base,
+		BaseRole:    src.ID,
 		Perms:       perms,
 		CreatedBy:   createdBy,
 	})
@@ -527,6 +526,19 @@ func (s *Service) nameTaken(ctx context.Context, name, excludeID string) (bool, 
 		}
 	}
 	return false, rows.Err()
+}
+
+// idExists 报告库里是否有这个角色行(0063 起预置档也在库里,所以「模板存在吗」一次查得到)。
+func (s *Service) idExists(ctx context.Context, id string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM roles WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("role: 查角色 %q: %w", id, err)
+	}
+	return true, nil
 }
 
 // normalizePerms 去空去重、拒绝字典外的点与 settings.access,并按字典序排列。

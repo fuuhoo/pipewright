@@ -101,6 +101,9 @@ func (f *fakeRepo) PublicAndJoinedGroupIDs(_ context.Context, userID string) ([]
 }
 
 func TestServiceCan(t *testing.T) {
+	// 这里验的是数据轴(归属)的判定,而用例里的 actor 都是普通用户角色 —— 那四档预置自 0063
+	// 起存在库里,不装进缓存就会 fail closed 成只读,「路人可操作」会被功能轴拦下,看着像数据轴坏了。
+	useSeededPresets(t)
 	repo := &fakeRepo{
 		groups: map[string]*Group{"g-priv": privateGroup()},
 		byRes: map[string]string{

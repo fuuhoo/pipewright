@@ -50,8 +50,9 @@ func IsAdminSession(s *Session) bool {
 
 // IsUserSession 报告会话是否为已登录用户(admin 或任一普通角色)。RequireUser 中间件用。
 //
-// 角色名单以 internal/access 的功能档位表(access.Roles)为唯一权威:新增角色只改那张表,
-// 这里自动跟随,不会出现「库里有这个角色、但所有 RequireUser 端点都 401」的漏收。
+// 角色名单以 internal/access 为唯一权威(内置档的代码表 ∪ 装配时装进缓存的库里角色),
+// 新增角色不用改这里。代价是这条判定依赖 catalog 已装载:main.go 那次 ReloadRoles 没成功,
+// 非内置角色的会话就会在 RequireUser 上 401 —— 所以启动时那次装载的告警要盯住。
 // 旧会话 role="" 仍然拒绝(0053 之前的行没有角色,普通用户端点要求明确角色,登出重登一次即可)。
 func IsUserSession(s *Session) bool {
 	return s != nil && access.ValidRole(s.Role)

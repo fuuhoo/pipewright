@@ -53,7 +53,7 @@ func addUserWithRole(t *testing.T, db *sql.DB, ctx context.Context, id, roleID s
 }
 
 func TestCreateGetAndList(t *testing.T) {
-	svc, ctx, _ := newService(t)
+	svc, ctx, db := newService(t)
 	perms := []string{"project.view", "run.operate", "server.view"}
 	created := mustCreate(t, svc, ctx, "发布操作员", perms)
 	if created.ID == "" {
@@ -85,13 +85,33 @@ func TestCreateGetAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("列角色失败: %v", err)
 	}
-	// 内置五档在前(按 access.Roles() 的声明序),自定义在后。
-	if len(list) != len(access.Roles())+1 {
-		t.Fatalf("列表长度 = %d, want %d", len(list), len(access.Roles())+1)
+	// 名单 = 内置档在前(按 access.Roles() 的声明序)+ 库里所有角色在后。
+	// 内置只剩管理员一档:0063 把四档预置搬进库之后,它们与自建角色走同一条读路径。
+	var inDB int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM roles`).Scan(&inDB); err != nil {
+		t.Fatalf("数 roles 失败: %v", err)
+	}
+	if len(list) != len(access.Roles())+inDB { // inDB 已含本用例刚建的那条
+		t.Fatalf("列表长度 = %d, want %d(内置 %d + 库里 %d)",
+			len(list), len(access.Roles())+inDB, len(access.Roles()), inDB)
 	}
 	for i, id := range access.Roles() {
 		if list[i].ID != id || !list[i].Builtin {
 			t.Errorf("第 %d 位应是内置 %s,实得 %q(builtin=%v)", i, id, list[i].ID, list[i].Builtin)
+		}
+	}
+	// 四档预置在名单里读得到、且不再是内置(页面据此给编辑/删除入口)。
+	byID := map[string]role.Role{}
+	for _, r := range list {
+		byID[r.ID] = r
+	}
+	for _, id := range []string{"user", "developer", "ops", "viewer"} {
+		r, ok := byID[id]
+		if !ok {
+			t.Fatalf("预置档 %q 没出现在角色名单里(下拉会选不到它)", id)
+		}
+		if r.Builtin {
+			t.Errorf("预置档 %q 仍被标成内置,页面会禁止编辑删除", id)
 		}
 	}
 	last := list[len(list)-1]
@@ -111,12 +131,22 @@ func TestCreateRejects(t *testing.T) {
 		{"超长名", role.CreateInput{Name: strings.Repeat("角", testMaxNameLen+1)}, role.ErrValidation},
 		{"设置点", role.CreateInput{Name: "半个管理员", Perms: []string{"settings.access"}}, role.ErrSettingsPoint},
 		{"字典外的点", role.CreateInput{Name: "脏名单", Perms: []string{"project.fly"}}, role.ErrUnknownPoint},
-		{"模板不是内置档", role.CreateInput{Name: "怪模板", BaseRole: "不存在的档"}, role.ErrValidation},
+		{"模板角色不存在", role.CreateInput{Name: "怪模板", BaseRole: "不存在的档"}, role.ErrValidation},
 	}
 	for _, c := range cases {
 		if _, err := svc.Create(ctx, c.input); !errors.Is(err, c.want) {
 			t.Errorf("%s: err = %v, want %v", c.name, err, c.want)
 		}
+	}
+
+	// 模板名单来自库里(0063 起预置档也是普通行),所以「以 user 为模板」建得出角色:
+	// 前端新建弹窗默认就带这个 baseRole,它 400 的话建角色一步都走不下去。
+	fromPreset, err := svc.Create(ctx, role.CreateInput{Name: "照抄普通用户", BaseRole: "user"})
+	if err != nil {
+		t.Fatalf("以预置档 user 为模板建角色失败: %v", err)
+	}
+	if fromPreset.BaseRole != "user" {
+		t.Errorf("BaseRole = %q, want user", fromPreset.BaseRole)
 	}
 
 	// 名字大小写不敏感唯一:两条只差大小写的名字会在同一个下拉里读成两行一样的。
@@ -146,8 +176,15 @@ func TestUpdateRepointsRoleAndBlocksBuiltin(t *testing.T) {
 		t.Errorf("撤点之后 Ceiling(run) 仍是 %s,说明缓存没刷新", access.Ceiling(r.ID, access.KindRun))
 	}
 
-	if _, err := svc.Update(ctx, access.RoleOps, role.UpdateInput{Description: strPtr("改内置")}); !errors.Is(err, role.ErrBuiltin) {
+	// 内置档只剩管理员:它既是模板也是兜底,改不动。四档预置自 0063 起是库里的普通行,
+	// 同一次 Update 就能改名 —— 这正是「预置角色也交给管理员管」要的口径。
+	if _, err := svc.Update(ctx, access.RoleAdmin, role.UpdateInput{Description: strPtr("改内置")}); !errors.Is(err, role.ErrBuiltin) {
 		t.Errorf("改内置角色没被挡住: %v", err)
+	}
+	if preset, err := svc.Update(ctx, "ops", role.UpdateInput{Description: strPtr("运维值班")}); err != nil {
+		t.Errorf("改预置档 ops 失败(它自 0063 起是库里的普通角色): %v", err)
+	} else if preset.Description != "运维值班" {
+		t.Errorf("预置档改名后回读 = %q, want 运维值班", preset.Description)
 	}
 	if _, err := svc.Update(ctx, r.ID, role.UpdateInput{Name: strPtr("  ")}); !errors.Is(err, role.ErrValidation) {
 		t.Errorf("改名成空串没被挡住: %v", err)
@@ -177,14 +214,31 @@ func TestCopyFromAdminStripsSettingsPoint(t *testing.T) {
 	if !access.SettingsAllowed(access.RoleAdmin) {
 		t.Error("内置 admin 的设置点被复制操作影响了")
 	}
+
+	// 从预置档复制同样记下来源:它就在 roles 里,和内置模板走同一条 Copy 路径,
+	// 页面上那句「基于普通用户」靠的就是这一列。
+	fromPreset, err := svc.Copy(ctx, "user", "普通用户副本", "u-admin")
+	if err != nil {
+		t.Fatalf("从预置档复制失败: %v", err)
+	}
+	if fromPreset.BaseRole != "user" {
+		t.Errorf("BaseRole = %q, want user", fromPreset.BaseRole)
+	}
+	if !access.HasPerm(fromPreset.ID, "project.view") {
+		t.Error("副本没带上 user 的点集")
+	}
 }
 
 func TestDeleteGuards(t *testing.T) {
 	svc, ctx, db := newService(t)
 	r := mustCreate(t, svc, ctx, "待删", []string{"project.view"})
 
-	if err := svc.Delete(ctx, access.RoleUser); !errors.Is(err, role.ErrBuiltin) {
+	if err := svc.Delete(ctx, access.RoleAdmin); !errors.Is(err, role.ErrBuiltin) {
 		t.Errorf("删内置角色没被挡住: %v", err)
+	}
+	// 预置档自 0063 起只是库里的普通行:没人用就该能删(用户定的「除了管理员,预置都当普通角色」)。
+	if err := svc.Delete(ctx, "viewer"); err != nil {
+		t.Errorf("删无人使用的预置档 viewer 失败: %v", err)
 	}
 	if err := svc.Delete(ctx, "no-such-role"); !errors.Is(err, role.ErrNotFound) {
 		t.Errorf("删不存在的角色应报 NotFound,实得 %v", err)

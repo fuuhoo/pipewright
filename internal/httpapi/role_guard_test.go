@@ -16,6 +16,10 @@ import (
 //
 // 分组三态的判定由 access_guard_test.go 覆盖,这里全部用「未归组」资源(数据轴对全员开放),
 // 好让 403 只能来自角色上限,不会与归属混淆。控制组是存量的 user:它必须逐字保持今天的权限。
+//
+// 下面用到的 viewer / developer / ops / user 都不是代码里的常量了 —— 它们是 0063 播种进 roles 表
+// 的四档预置,由 setupGuard 装载进判定缓存。所以这一组用例同时也是那条播种的端到端验收:
+// 少一行、少一个点,这里就会以 401/403 的形式炸出来。
 
 // addRoleUser 直接落库建一个指定角色的账号并登录,返回 (client, csrf, userID)。
 // 绕开 POST /api/admin/users 是为了让夹具与「建号」解耦——角色本身要能被独立设定。
@@ -64,9 +68,9 @@ func TestRoleCeilingOnHTTP(t *testing.T) {
 	env := setupGuard(t)
 	base := env.srv.URL
 
-	viewer, viewerCS, _ := addRoleUser(t, env, "role-viewer", access.RoleViewer)
-	dev, devCS, _ := addRoleUser(t, env, "role-dev", access.RoleDeveloper)
-	ops, opsCS, _ := addRoleUser(t, env, "role-ops", access.RoleOps)
+	viewer, viewerCS, _ := addRoleUser(t, env, "role-viewer", "viewer")
+	dev, devCS, _ := addRoleUser(t, env, "role-dev", "developer")
+	ops, opsCS, _ := addRoleUser(t, env, "role-ops", "ops")
 	plain, plainCS, _ := addRoleUser(t, env, "role-user", access.RoleUser)
 
 	projURL := "/api/projects/" + env.ungrouped
@@ -103,7 +107,7 @@ func TestSessionCarriesCapabilities(t *testing.T) {
 	env := setupGuard(t)
 	base := env.srv.URL
 
-	viewer, _, viewerID := addRoleUser(t, env, "cap-viewer", access.RoleViewer)
+	viewer, _, viewerID := addRoleUser(t, env, "cap-viewer", "viewer")
 
 	var caps sessionPayload
 	resp := doJSON(t, viewer, http.MethodGet, base+"/api/auth/session", "", "")
@@ -115,7 +119,7 @@ func TestSessionCarriesCapabilities(t *testing.T) {
 	if err := json.Unmarshal(raw, &caps); err != nil {
 		t.Fatalf("解析 session 响应: %v(%s)", err, raw)
 	}
-	if caps.Role != access.RoleViewer {
+	if caps.Role != "viewer" {
 		t.Fatalf("role = %q, want viewer", caps.Role)
 	}
 	if caps.Capabilities.Settings {
@@ -160,7 +164,7 @@ func TestSessionCarriesCapabilities(t *testing.T) {
 	if err := json.Unmarshal(rawOld, &capsOld); err != nil {
 		t.Fatalf("解析旧会话: %v", err)
 	}
-	if capsOld.Role != access.RoleViewer {
+	if capsOld.Role != "viewer" {
 		t.Fatalf("旧会话角色应仍是登录时的 viewer, got %q", capsOld.Role)
 	}
 }
@@ -202,7 +206,7 @@ func TestUserAPIRoleValidation(t *testing.T) {
 	if err := json.Unmarshal(raw2, &opsUser); err != nil {
 		t.Fatalf("解析 ops 建号响应: %v", err)
 	}
-	if opsUser.Role != access.RoleOps {
+	if opsUser.Role != "ops" {
 		t.Fatalf("role = %q, want ops", opsUser.Role)
 	}
 

@@ -153,7 +153,7 @@ func TestReloadWithoutStoreIsNoop(t *testing.T) {
 		t.Fatalf("未装配仓储时重载本该 no-op,得到错误: %v", err)
 	}
 	// 内置档不依赖仓储,照旧可用。
-	if !ValidRole(RoleDeveloper) {
+	if !ValidRole(RoleAdmin) {
 		t.Error("内置档在没接库的情况下不可用了")
 	}
 }

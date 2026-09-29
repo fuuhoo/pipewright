@@ -8,6 +8,9 @@ import (
 
 // roles_test.go —— 功能轴(角色档位上限)的表驱动用例。
 // 判定矩阵在 access_test.go(数据轴),这里只验两轴叠加后的取严结果。
+//
+// 四档预置(user / developer / ops / viewer)自 0063 起是库里的普通角色,代码侧不再有常量,
+// 它们的档位由 roles_drift_test.go 读迁移播种的点集校验;下面这几张表只留代码侧那几行。
 
 func TestCeiling_Matrix(t *testing.T) {
 	cases := []struct {
@@ -20,36 +23,14 @@ func TestCeiling_Matrix(t *testing.T) {
 		{RoleAdmin, KindServer, ActManage},
 		{RoleAdmin, KindKubeCluster, ActManage},
 
-		// 存量默认角色:功能轴不封顶(与加这张表之前的行为逐字一致)。
-		{RoleUser, KindProject, ActOperate},
-		{RoleUser, KindRun, ActOperate},
-		{RoleUser, KindServer, ActOperate},
-		{RoleUser, KindKubeCluster, ActOperate},
-
-		// 开发者:能动项目与运行,落点只读。
-		{RoleDeveloper, KindProject, ActOperate},
-		{RoleDeveloper, KindRun, ActOperate},
-		{RoleDeveloper, KindServer, ActView},
-		{RoleDeveloper, KindKubeCluster, ActView},
-
-		// 运维:落点能动,项目配置只读;运行仍可审批/部署。
-		{RoleOps, KindProject, ActView},
-		{RoleOps, KindRun, ActOperate},
-		{RoleOps, KindServer, ActOperate},
-		{RoleOps, KindKubeCluster, ActOperate},
-
-		// 只读。
-		{RoleViewer, KindProject, ActView},
-		{RoleViewer, KindRun, ActView},
-		{RoleViewer, KindServer, ActView},
-		{RoleViewer, KindKubeCluster, ActView},
-
 		// 旧部署会话 role='' 按管理员上限:否则升级当天旧会话被静默降成只读。
 		{"", KindProject, ActManage},
 		{"", KindServer, ActManage},
 
-		// 认不出的角色 / 类别一律先只让看(fail closed)。
+		// 认不出的角色 / 类别一律先只让看(fail closed)。库里查到的角色要等 catalog 装载
+		// 才算数(SetRoleStore 没接上时全都落这一档,所以装配失败的表现是「全员只读」)。
 		{"strange-role", KindProject, ActView},
+		{"developer", KindProject, ActView},
 		{RoleAdmin, Kind("unknown-kind"), ActView},
 	}
 	for _, c := range cases {
@@ -60,8 +41,8 @@ func TestCeiling_Matrix(t *testing.T) {
 }
 
 func TestNormalizeRoleAndValid(t *testing.T) {
-	if got := NormalizeRole("developer"); got != RoleDeveloper {
-		t.Fatalf("枚举内角色不该被改写: got %q", got)
+	if got := NormalizeRole(RoleAdmin); got != RoleAdmin {
+		t.Fatalf("内置角色不该被改写: got %q", got)
 	}
 	if got := NormalizeRole("root"); got != RoleUser {
 		t.Fatalf("未知名应按 user 落库: got %q", got)
@@ -82,7 +63,11 @@ func TestNormalizeRoleAndValid(t *testing.T) {
 
 // TestServiceCan_RoleCeiling 验 min(角色上限, 分组授予):
 // 分组名册给了访问权,角色仍可以把这一档拦下来。
+//
+// 用例里的 developer / ops / viewer 是 0063 播种进库的预置档:先把它们装进判定缓存,
+// 这里跑的才是线上装配后的同一形状(没装载时它们一律 fail closed 成只读)。
 func TestServiceCan_RoleCeiling(t *testing.T) {
+	useSeededPresets(t)
 	repo := &fakeRepo{
 		groups: map[string]*Group{
 			"g-priv": {ID: "g-priv", Visibility: VisibilityPrivate, OwnerID: "viewer-owner", MemberIDs: []string{"viewer"}},
@@ -104,27 +89,27 @@ func TestServiceCan_RoleCeiling(t *testing.T) {
 	}
 
 	// 只读角色对未归组资源(数据轴全员可动)仍被功能轴拦下 —— 这正是新增档位要的效果。
-	if err := act(RoleViewer, KindProject, "p1", ActView); err != nil {
+	if err := act("viewer", KindProject, "p1", ActView); err != nil {
 		t.Fatalf("viewer 看未归组项目: %v", err)
 	}
-	if err := act(RoleViewer, KindProject, "p1", ActOperate); !errors.Is(err, ErrForbidden) {
+	if err := act("viewer", KindProject, "p1", ActOperate); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer 改未归组项目应被角色上限拦下, got %v", err)
 	}
 	// 开终端 = KindServer/ActOperate,只读与开发者都不该拿得到 shell。
-	if err := act(RoleViewer, KindServer, "s1", ActOperate); !errors.Is(err, ErrForbidden) {
+	if err := act("viewer", KindServer, "s1", ActOperate); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer 开服务器终端应 403, got %v", err)
 	}
-	if err := act(RoleDeveloper, KindServer, "s1", ActOperate); !errors.Is(err, ErrForbidden) {
+	if err := act("developer", KindServer, "s1", ActOperate); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("developer 开服务器终端应 403, got %v", err)
 	}
-	if err := act(RoleOps, KindServer, "s1", ActOperate); err != nil {
+	if err := act("ops", KindServer, "s1", ActOperate); err != nil {
 		t.Fatalf("ops 开服务器终端: %v", err)
 	}
 	// 运维可以审批/部署已有的运行,但不能改项目配置。
-	if err := act(RoleOps, KindRun, "r1", ActOperate); err != nil {
+	if err := act("ops", KindRun, "r1", ActOperate); err != nil {
 		t.Fatalf("ops 操作运行: %v", err)
 	}
-	if err := act(RoleOps, KindProject, "p1", ActOperate); !errors.Is(err, ErrForbidden) {
+	if err := act("ops", KindProject, "p1", ActOperate); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("ops 改项目配置应 403, got %v", err)
 	}
 	// 存量 user 逐字不变。
@@ -139,35 +124,36 @@ func TestServiceCan_RoleCeiling(t *testing.T) {
 		t.Fatalf("空角色(旧会话)操作未归组主机: %v", err)
 	}
 	// 私有组内:名册给访问权,角色上限仍然生效(取严)。
-	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: RoleViewer}, KindProject, "p-priv", ActView); err != nil {
+	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: "viewer"}, KindProject, "p-priv", ActView); err != nil {
 		t.Fatalf("私有组成员看: %v", err)
 	}
-	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: RoleViewer}, KindProject, "p-priv", ActOperate); !errors.Is(err, ErrForbidden) {
+	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: "viewer"}, KindProject, "p-priv", ActOperate); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("私有组成员是只读角色,操作应 403, got %v", err)
 	}
 	// 名册内的人看私有组里的主机:数据轴放行,功能轴(开发者对落点只读)拦下操作。
-	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: RoleDeveloper}, KindServer, "s-priv", ActView); err != nil {
+	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: "developer"}, KindServer, "s-priv", ActView); err != nil {
 		t.Fatalf("名册成员看私有组主机: %v", err)
 	}
-	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: RoleDeveloper}, KindServer, "s-priv", ActOperate); !errors.Is(err, ErrForbidden) {
+	if err := svc.Can(ctx, &Actor{UserID: "viewer", Role: "developer"}, KindServer, "s-priv", ActOperate); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("名册成员但角色不允许动落点,应 403, got %v", err)
 	}
 	// Manage 刻意不受角色上限约束:组长(哪怕角色是只读)仍管得了自己组的归属。
-	if err := svc.Can(ctx, &Actor{UserID: "viewer-owner", Role: RoleViewer}, KindProject, "p-priv", ActManage); err != nil {
+	if err := svc.Can(ctx, &Actor{UserID: "viewer-owner", Role: "viewer"}, KindProject, "p-priv", ActManage); err != nil {
 		t.Fatalf("组长改归属不该被角色上限夺走, got %v", err)
 	}
 	// 未归组的 Manage 依旧只有管理员(与加表前一致)。
-	if err := act(RoleViewer, KindProject, "p1", ActManage); !errors.Is(err, ErrForbidden) {
+	if err := act("viewer", KindProject, "p1", ActManage); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("未归组资源改归属应仅管理员, got %v", err)
 	}
 	// 数据轴先于功能轴拦人的情况:不在名册里的运维看私有组集群,仍是 403。
-	if err := act(RoleOps, KindKubeCluster, "k-priv", ActView); !errors.Is(err, ErrForbidden) {
+	if err := act("ops", KindKubeCluster, "k-priv", ActView); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("非成员看私有组集群应 403, got %v", err)
 	}
 }
 
 // TestCapabilitiesFor 验回传给前端的能力位形状。
 func TestCapabilitiesFor(t *testing.T) {
+	useSeededPresets(t)
 	admin := CapabilitiesFor(RoleAdmin)
 	if !admin.Settings {
 		t.Fatalf("管理员应有设置位")
@@ -175,7 +161,7 @@ func TestCapabilitiesFor(t *testing.T) {
 	if admin.Kinds[string(KindServer)] != "manage" {
 		t.Fatalf("管理员主机档位 = %q, want manage", admin.Kinds[string(KindServer)])
 	}
-	viewer := CapabilitiesFor(RoleViewer)
+	viewer := CapabilitiesFor("viewer")
 	if viewer.Settings {
 		t.Fatalf("只读不该有设置位")
 	}

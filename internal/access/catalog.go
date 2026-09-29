@@ -1,9 +1,10 @@
 // catalog.go —— 功能轴的「自定义角色」读取入口。
 //
-// 分工:内置五档(admin / user / developer / ops / viewer)的点集是 perms.go 里的代码表,
-// 库里不复制一份 —— 它们是模板,升级时新加的功能点自动跟着走,内置 admin 也永远改不掉、
-// 删不掉(_self-lockout 兜底)。自定义角色存在 0062 的 roles / role_perms 两张表里,由装配时
-// SetRoleStore + ReloadRoles 拉进这份进程内缓存。
+// 分工:内置档 admin 的点集是 perms.go 里的代码表,库里不复制一份 —— 它是模板,升级时新加的
+// 功能点自动跟着走,而且永远改不掉、删不掉(兜住「管理员不会把自己锁在门外」)。其余角色 ——
+// 含 0063 从代码表搬进库的四档预置(user / developer / ops / viewer)—— 存在 0062 的
+// roles / role_perms 两张表里,由装配时 SetRoleStore + ReloadRoles 拉进这份进程内缓存。
+// 也就是说:**启动时这次装载 load 不出问题,非管理员账号就全都进不来**(见 main.go 的警告)。
 //
 // 为什么是进程内缓存而不是每次查库:判定入口是 RequireAdmin、登录响应、users 校验这类
 // 「只有角色字符串、没有仓储句柄」的纯函数(见 docs/权限架构说明.md §2.4),给它们统统

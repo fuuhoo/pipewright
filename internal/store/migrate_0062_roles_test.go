@@ -53,7 +53,8 @@ func TestMigration0062Roles(t *testing.T) {
 		t.Fatalf("删角色失败: %v", err)
 	}
 	var left int
-	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM role_perms`).Scan(&left); err != nil {
+	// 只数自己插的那条角色:0063 起库里预置了四档角色共 65 个功能点,全表计数会读成「CASCADE 坏了」。
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM role_perms WHERE role_id='r-1'`).Scan(&left); err != nil {
 		t.Fatalf("数角色点: %v", err)
 	}
 	if left != 0 {
