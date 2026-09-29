@@ -15,8 +15,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import ProgressBar, { type ProgressVariant } from '../ui/ProgressBar.vue'
+import ProgressBar from '../ui/ProgressBar.vue'
 import type { ServerMetrics } from '../../api/servers'
+import {
+  collectedClock,
+  humanBytes,
+  loadAvailable as loadAvailableOf,
+  loadText as loadTextOf,
+  loadVariant as loadVariantOf,
+  memoryView,
+  sysParts as sysPartsOf,
+  sysPrimary as sysPrimaryOf,
+  usagePercent,
+  usageVariant,
+} from '../../lib/serverMetrics'
 
 const { t } = useI18n()
 
@@ -31,118 +43,25 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'remote', serverId: string): void }>()
 
 // ─── derived display ───────────────────────────────────────────────────────────
-
-/** 用量百分比(0–100);分母为 0 或缺失 → null(不渲染进度)。 */
-function pct(used: number, total: number): number | null {
-  if (!total || total <= 0) return null
-  return Math.min(100, Math.max(0, (used / total) * 100))
-}
-
-/** 进度条着色:>90% 红、>75% 黄、否则默认。 */
-function usageVariant(percent: number | null): ProgressVariant {
-  if (percent === null) return 'default'
-  if (percent >= 90) return 'error'
-  if (percent >= 75) return 'warn'
-  return 'default'
-}
-
-/** 人读字节(二进制单位,1 位小数)。 */
-function humanBytes(n: number): string {
-  if (!Number.isFinite(n) || n < 0) return '—'
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
-  let v = n
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`
-}
-
-// ─── system info(该机自报的静态标识;缺段直接跳过,不标「不可用」) ──────────────
+// 算术(百分比、着色档、人读字节)全在 lib/serverMetrics:列表视图要给出与卡片
+// 完全一致的数字,所以两边只能同一套判定,不能各写一个「≥75% 算黄」。
 
 const system = computed(() => props.metrics.system)
+const sysPrimary = computed(() => sysPrimaryOf(system.value))
+const sysParts = computed(() => sysPartsOf(system.value))
 
-/** 主行:发行版优先(macOS 15.5 / Ubuntu 24.04.2 LTS),没有就退内核名(Linux)。 */
-const sysPrimary = computed(() => {
-  const s = system.value
-  if (!s) return ''
-  return s.distro || s.os
-})
-
-/** 运行时长:最多给两级(3 天 4 小时 / 5 小时 12 分 / 8 分 / 40 秒);采不到 → 空。 */
-const uptimeText = computed(() => {
-  const sec = system.value?.uptimeSeconds ?? 0
-  if (sec <= 0) return ''
-  const d = Math.floor(sec / 86400)
-  const h = Math.floor((sec % 86400) / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  if (d > 0) return h > 0 ? t('opsServer.metrics.uptimeDh', { d, h }) : t('opsServer.metrics.uptimeD', { d })
-  if (h > 0) return m > 0 ? t('opsServer.metrics.uptimeHm', { h, m }) : t('opsServer.metrics.uptimeH', { h })
-  if (m > 0) return t('opsServer.metrics.uptimeM', { m })
-  return t('opsServer.metrics.uptimeS', { s: sec })
-})
-
-/** 次行片段:内核(带上内核名以免主行没给)、架构、主机名、运行时长。 */
-const sysParts = computed(() => {
-  const s = system.value
-  if (!s) return []
-  const kernel = s.kernel ? (s.os && !sysPrimary.value.includes(s.os) ? `${s.os} ${s.kernel}` : s.kernel) : ''
-  return [kernel, s.arch, s.hostname, uptimeText.value ? t('opsServer.metrics.uptime', { text: uptimeText.value }) : ''].filter(Boolean)
-})
-
-const memPercent = computed(() =>
-  props.metrics.memory ? pct(props.metrics.memory.usedBytes, props.metrics.memory.totalBytes) : null,
-)
-/**
- * 「含缓存」口径的分母:有物理/分配总量时优先用它(对齐宿主面板如 PVE 的总量),
- * 否则回退 free 的可用总量。physicalTotalBytes 为 0 表示采集不到。
- */
-const memCacheTotal = computed(() => {
-  const m = props.metrics.memory
-  if (!m) return null
-  return m.physicalTotalBytes > 0 ? m.physicalTotalBytes : m.totalBytes
-})
-/** 含页缓存(total - free)/ 物理总量 —— 与 cgroup / 宿主面板「已用」百分比一致。 */
-const memCachePercent = computed(() =>
-  props.metrics.memory && memCacheTotal.value
-    ? pct(props.metrics.memory.usedWithCacheBytes, memCacheTotal.value)
-    : null,
-)
+const memView = computed(() => memoryView(props.metrics.memory))
+const memPercent = computed(() => memView.value.percent)
+const memCacheTotal = computed(() => memView.value.cacheTotal)
+const memCachePercent = computed(() => memView.value.cachePercent)
+const swapPercent = computed(() => memView.value.swapPercent)
 const diskPercent = computed(() =>
-  props.metrics.disk ? pct(props.metrics.disk.usedBytes, props.metrics.disk.totalBytes) : null,
+  props.metrics.disk ? usagePercent(props.metrics.disk.usedBytes, props.metrics.disk.totalBytes) : null,
 )
 
-/** 交换分区用量(swapTotalBytes 为 0 → 未配置,不渲染)。 */
-const swapPercent = computed(() => {
-  const m = props.metrics.memory
-  if (!m || m.swapTotalBytes <= 0) return null
-  return pct(m.swapUsedBytes, m.swapTotalBytes)
-})
-
-/** CPU 负载相对核数的健康着色(无核数则不着色)。 */
-const loadVariant = computed<ProgressVariant>(() => {
-  const cpu = props.metrics.cpu
-  if (!cpu || cpu.loadavg1 === null) return 'default'
-  const cores = cpu.cores ?? 0
-  if (cores <= 0) return 'default'
-  const ratio = cpu.loadavg1 / cores
-  if (ratio >= 1) return 'error'
-  if (ratio >= 0.7) return 'warn'
-  return 'default'
-})
-
-const loadAvailable = computed(() => {
-  const cpu = props.metrics.cpu
-  return !(!cpu || cpu.loadavg1 === null)
-})
-
-const loadText = computed(() => {
-  const cpu = props.metrics.cpu
-  if (!cpu || cpu.loadavg1 === null) return t('opsServer.metrics.unavailable')
-  const coresText = cpu.cores !== null ? t('opsServer.metrics.cores', { n: cpu.cores }) : ''
-  return `${cpu.loadavg1.toFixed(2)}${coresText}`
-})
+const loadVariant = computed(() => loadVariantOf(props.metrics.cpu))
+const loadAvailable = computed(() => loadAvailableOf(props.metrics.cpu))
+const loadText = computed(() => loadTextOf(props.metrics.cpu))
 </script>
 
 <template>
@@ -263,7 +182,7 @@ const loadText = computed(() => {
 
     <footer v-if="metrics.reachable" class="metrics-card__foot">
       <span class="metrics-card__collected">
-        {{ t('opsServer.metrics.collectedAt', { time: new Date(metrics.collectedAt).toLocaleTimeString() }) }}
+        {{ t('opsServer.metrics.collectedAt', { time: collectedClock(metrics.collectedAt) }) }}
       </span>
       <button class="metrics-card__remote" type="button" @click="emit('remote', metrics.serverId)">
         {{ t('remoteWorkspace.button') }}
