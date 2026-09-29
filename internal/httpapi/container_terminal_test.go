@@ -30,7 +30,7 @@ func TestValidateContainerTarget(t *testing.T) {
 		wantErr   bool
 		wantShell string
 	}{
-		{"合法容器名 + 默认 shell", "app_1", "", false, "/bin/sh"},
+		{"合法容器名 + 未指定 shell 走自动", "app_1", "", false, ""},
 		{"合法容器名 + bash", "web.1", "/bin/bash", false, "/bin/bash"},
 		{"合法长 ID", "a1b2c3d4e5f6", "sh", false, "sh"},
 		// 注入 / flag 注入(AC-SEC-02):一律拒。
@@ -65,6 +65,32 @@ func TestBuildContainerExecCmd(t *testing.T) {
 	want := []string{"docker", "exec", "-it", "c1", "/bin/bash"}
 	if !equalStrSlice(got, want) {
 		t.Fatalf("cmd = %v, want %v", got, want)
+	}
+	// 未指定 shell:命令仍只有 docker exec -it + 一段常量脚本,多出来的 argv 全来自代码。
+	auto := buildContainerExecCmd("c1", "")
+	wantAuto := append([]string{"docker", "exec", "-it", "c1"}, autoContainerShellArgv()...)
+	if !equalStrSlice(auto, wantAuto) {
+		t.Fatalf("auto cmd = %v, want %v", auto, wantAuto)
+	}
+}
+
+func TestAutoContainerShellArgv(t *testing.T) {
+	argv := autoContainerShellArgv()
+	if len(argv) != 3 || argv[0] != "/bin/sh" || argv[1] != "-c" {
+		t.Fatalf("argv = %v, want [/bin/sh -c <script>]", argv)
+	}
+	script := argv[2]
+	// 候选顺序就是本次改动的语义:bash 在前,/bin/sh 只作兜底。
+	iBash, iSh := strings.Index(script, "bash"), strings.LastIndex(script, "exec /bin/sh")
+	if !(iBash >= 0 && iBash < iSh) {
+		t.Fatalf("应 bash 优先、/bin/sh 兜底:bash=%d sh=%d script=%q", iBash, iSh, script)
+	}
+	if !strings.Contains(script, "exec ") {
+		t.Fatalf("应以 exec 起 shell(PTY 前台进程就是 shell 本身): %q", script)
+	}
+	// 常量脚本且不含单引号:过 quoteArgs 后仍是一个 argv,不会被拆成多条命令。
+	if strings.Contains(script, "'") {
+		t.Fatalf("脚本不该含单引号(会破坏 array 化的转义前提): %q", script)
 	}
 }
 
@@ -470,6 +496,63 @@ func TestServerTerminalHostShellResolution(t *testing.T) {
 			}
 			if got, _ := res.Entries[0].Detail["shell"].(string); got != c.wantAudits {
 				t.Fatalf("审计 shell = %q, want %q", got, c.wantAudits)
+			}
+		})
+	}
+}
+
+// --- 容器终端的 shell 归属:没给 shell 让容器里挑 bash,给了就原样 ---
+
+func TestContainerTerminalShellResolution(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		wantCmd    []string
+		wantAudits string
+	}{
+		{"没给 shell 走自动优选", "", append([]string{"docker", "exec", "-it", "myapp"}, autoContainerShellArgv()...), "auto"},
+		{"给了 bash 原样起", "?shell=/bin/bash", []string{"docker", "exec", "-it", "myapp", "/bin/bash"}, "/bin/bash"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dialer := &fakeInteractiveDialer{}
+			srv, client, csrf, rec := setupTerminalAPI(t, dialer)
+			id := newServerAPI(t, client, srv.URL, csrf)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			hdr := http.Header{}
+			for _, ck := range client.Jar.Cookies(mustParseURL(t, srv.URL)) {
+				hdr.Add("Cookie", ck.Name+"="+ck.Value)
+			}
+			u := wsURL(srv.URL) + "/api/servers/" + id + "/containers/myapp/terminal" + c.query
+			conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPHeader: hdr})
+			if err != nil {
+				t.Fatalf("WS dial: %v", err)
+			}
+			defer conn.Close(websocket.StatusNormalClosure, "")
+
+			if err := conn.Write(ctx, websocket.MessageText, []byte("pwd\n")); err != nil {
+				t.Fatalf("write input: %v", err)
+			}
+			if got := readWSUntil(t, ctx, conn, "pwd"); !strings.Contains(got, "pwd") {
+				t.Fatalf("echo not received, got %q", got)
+			}
+			if cmd := dialer.cmd(); !equalStrSlice(cmd, c.wantCmd) {
+				t.Fatalf("cmd = %q, want %q", cmd, c.wantCmd)
+			}
+			res, err := rec.List(context.Background(), audit.ListFilter{Action: audit.ActionContainerTerminal})
+			if err != nil {
+				t.Fatalf("audit list: %v", err)
+			}
+			if len(res.Entries) != 1 {
+				t.Fatalf("审计应有 1 条 container_terminal, got %d", len(res.Entries))
+			}
+			if got, _ := res.Entries[0].Detail["shell"].(string); got != c.wantAudits {
+				t.Fatalf("审计 shell = %q, want %q", got, c.wantAudits)
+			}
+			if got, _ := res.Entries[0].Detail["containerId"].(string); got != "myapp" {
+				t.Fatalf("审计 containerId = %q, want myapp", got)
 			}
 		})
 	}

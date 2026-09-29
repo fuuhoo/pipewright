@@ -27,8 +27,9 @@ import (
 //   - 鉴权:WS 升级是 GET,经 /api 组的 requireAuth 校验会话 cookie(未登录 → 401,升级失败)。
 //     CSRF 对 GET 豁免,改以**同源(Origin)校验**防跨站 WS 劫持(见 originPatterns)。
 //   - 命令 array 化:`docker exec -it <containerID> <shell>`,containerID 经严格白名单
-//     (首字符 [\w] 防 flag 注入、无 shell 元字符),shell 经枚举白名单;经 target.ExecInteractive
-//     各参数 shell 转义后执行,绝不拼 shell 字符串。
+//     (首字符 [\w] 防 flag 注入、无 shell 元字符),shell 经枚举白名单;未指定 shell 时不改拼命令,
+//     而是在容器里跑一段写死的挑选脚本(bash 优先、/bin/sh 兜底),候选路径无一处来自请求。
+//     经 target.ExecInteractive 各参数 shell 转义后执行,绝不拼 shell 字符串。
 //   - 凭据经 vault 即用即弃,绝不入 WS 帧/日志。
 //   - 审计:开终端是高危操作,握手成功(SSH PTY 建立)后写 append-only 审计(谁/哪台/哪容器/何时)。
 
@@ -37,8 +38,6 @@ const (
 	wsReadLimit = 1 << 20 // 1 MiB
 	// ptyReadChunk 是从 SSH PTY 读出转发到 WS 的缓冲块大小。
 	ptyReadChunk = 32 * 1024
-	// termShellDefault 是容器终端未指定 shell 时的默认(容器不一定装 bash,sh 最稳)。
-	termShellDefault = "/bin/sh"
 )
 
 // reContainerID 校验 docker 容器名/ID:首字符强制 [\w](禁 `-` 开头防 flag 注入),
@@ -58,7 +57,9 @@ var allowedShells = map[string]struct{}{
 	"bash":          {},
 }
 
-// validateContainerTarget 校验容器 ID 与 shell,合法返回归一后的 shell。
+// validateContainerTarget 校验容器 ID 与 shell。shell 空串 = 交给 buildContainerExecCmd 在容器里
+// 现挑一个可用的(bash 优先,没有再退 /bin/sh),而不是写死 /bin/sh —— 装了 bash 的容器才有补全、
+// 历史与可用提示符钩子。
 func validateContainerTarget(containerID, shell string) (string, error) {
 	if containerID == "" {
 		return "", errors.New("容器 ID 不能为空")
@@ -70,7 +71,7 @@ func validateContainerTarget(containerID, shell string) (string, error) {
 		return "", errors.New("非法容器 ID(仅允许字母数字与 . _ -,且不得以 - 开头)")
 	}
 	if shell == "" {
-		shell = termShellDefault
+		return "", nil
 	}
 	if _, ok := allowedShells[shell]; !ok {
 		return "", errors.New("非法 shell(不在允许白名单内)")
@@ -78,9 +79,24 @@ func validateContainerTarget(containerID, shell string) (string, error) {
 	return shell, nil
 }
 
+// autoContainerShellArgv 是未指定 shell 时在**容器内**挑 shell 的命令:bash 优先,容器没装
+// bash 才退到 /bin/sh(= 本来的写死默认,不降级)。
+//
+// 候选路径全部写死、不含用户输入,也不含单引号,因此过 quoteArgs 后仍是**一个** argv。
+// 用 exec 起 shell:PTY 的前台进程就是 shell 本身,中间不剩一层 sh。
+// 起手解释器取 /bin/sh —— 它比 bash 普遍得多(Alpine 上就是 ash)。
+func autoContainerShellArgv() []string {
+	return []string{"/bin/sh", "-c",
+		`for s in bash /bin/bash /usr/bin/bash; do ` +
+			`command -v "$s" >/dev/null 2>&1 && exec "$s"; done; exec /bin/sh`}
+}
+
 // buildContainerExecCmd 构造 `docker exec -it <containerID> <shell>` 命令 array(不拼 shell)。
-// 调用前须先过 validateContainerTarget。
+// 调用前须先过 validateContainerTarget;shell 为空即「自动」,追加的是上面那段常量挑选脚本。
 func buildContainerExecCmd(containerID, shell string) []string {
+	if shell == "" {
+		return append([]string{"docker", "exec", "-it", containerID}, autoContainerShellArgv()...)
+	}
 	return []string{"docker", "exec", "-it", containerID, shell}
 }
 
@@ -139,12 +155,17 @@ func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *a
 		defer func() { _ = sess.Close() }()
 
 		// 握手成功(SSH PTY 已建立)= 高危操作落地 → 写审计(谁/哪台/哪容器/何时)。
+		// 审计如实记 shell:自动模式记 auto,别记成 /bin/sh 骗过后面的追责(容器里实际起的可能是 bash)。
+		auditShell := shell
+		if auditShell == "" {
+			auditShell = "auto"
+		}
 		recordAudit(r.Context(), aud, audit.Entry{
 			Actor:      auditActor,
 			Action:     audit.ActionContainerTerminal,
 			TargetType: audit.TargetServer,
 			TargetID:   id,
-			Detail:     map[string]any{"containerId": containerID, "shell": shell},
+			Detail:     map[string]any{"containerId": containerID, "shell": auditShell},
 			IP:         clientIP(r),
 		})
 

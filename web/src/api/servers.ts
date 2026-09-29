@@ -445,9 +445,9 @@ export interface TerminalConnection {
  * Open an interactive terminal into a container on a registered server.
  *
  * Same-origin WebSocket carries the session cookie automatically. `shell`
- * defaults server-side to `/bin/sh` when omitted. Returns a connection handle
- * for input / resize / close. Output is delivered as binary chunks via
- * `handlers.onData`.
+ * omitted = server-side auto-pick inside the container (bash first, `/bin/sh`
+ * fallback). Returns a connection handle for input / resize / close. Output is
+ * delivered as binary chunks via `handlers.onData`.
  */
 export function openContainerTerminal(
   serverId: string,

@@ -52,15 +52,12 @@ const containerLabel = computed(() =>
 // ─── session controls(顶栏会话段) ───────────────────────────────────────────────
 // 终端目标 = 服务器**主机 shell**(SSH 直起登录 shell),或 ?container= 指定的**容器内 shell**。
 const server = ref<Server | null>(null)
-// '' = 自动:让服务端在这台机上现挑一个可用 shell(bash/zsh 优先,两者才有提示符钩子与补全)。
+// '' = 自动:让服务端现挑一个可用 shell(bash/zsh 优先,两者才有提示符钩子与补全)。
+// 主机与容器两种模式共用这一档:容器里也是先试 bash,没装才退 /bin/sh(= 原来的写死默认)。
 const shell = ref<HostTerminalShell>(
   allowedShells.includes(route.query.shell as TerminalShell) ? (route.query.shell as TerminalShell) : '',
 )
-// 容器模式没有「自动」这一档:容器不一定装 bash,服务端对空值给的是 /bin/sh,直接列具体 shell 更实在。
-const shellOptions = computed<HostTerminalShell[]>(() => (isContainer.value ? allowedShells : ['', ...allowedShells]))
-watch(isContainer, (c) => {
-  if (c && shell.value === '') shell.value = '/bin/sh'
-}, { immediate: true })
+const shellOptions: HostTerminalShell[] = ['', ...allowedShells]
 
 type ConnState = 'idle' | 'connecting' | 'connected' | 'closed' | 'error'
 const connState = ref<ConnState>('idle')
