@@ -12,8 +12,8 @@
  * 写端点对它一律 409 —— 所以这里直接禁用按钮,而不是等报错。
  * 默认列表不含已禁用账号(后端的 includeDisabled 取舍),要看到被停用的账号得勾上开关。
  *
- * 这一页负责**把人挂到规则上**,不定义规则本身:角色名单来自 /api/admin/roles(内置五档 +
- * 自定义角色,点集在「角色」tab 里维护),分组归属直接读写 /api/groups 的名册。
+ * 这一页负责**把人挂到规则上**,不定义规则本身:角色名单来自 /api/admin/roles(内置管理员 +
+ * 库里的角色,含四档预置;点集在「角色」tab 里维护),分组归属直接读写 /api/groups 的名册。
  * 改角色不会踢掉对方已有的会话 —— sessions.role 是登录快照,下次登录才生效;改分组归属当场生效
  * (每个请求重判)。页面上把这两句写明白,而不是让人以为都是立刻生效 / 都要重登。
  */
@@ -33,7 +33,7 @@ import type { Role, RoleId } from '../../api/roles'
 import { listGroups, addGroupMember, removeGroupMember } from '../../api/groups'
 import type { Group } from '../../api/groups'
 import { HttpError } from '../../api/http'
-import { ROLE_TAG_CLASS, normalizeRole } from '../../lib/roles'
+import { ROLE_TAG_CLASS } from '../../lib/roles'
 import { labelForRoleId } from '../../lib/roleEditor'
 import AppModal from '../../components/ui/AppModal.vue'
 import AppButton from '../../components/ui/AppButton.vue'
@@ -94,14 +94,15 @@ function isBootstrapAdmin(u: User): boolean {
   return u.id === BOOTSTRAP_ADMIN_ID
 }
 
-/** 角色展示名:内置档走 i18n,自定义档用它的名字;名单查不到时按 normalizeRole 兜底。 */
+/** 角色展示名:走 labelForRoleId(没改过名的预置档回 i18n 标签,其余用它的名字)。 */
 function roleLabel(role: RoleId): string {
   return labelForRoleId(role, rolesById.value, t)
 }
 
-/** 标签配色只给内置档;自定义角色统一一档灰绿,免得「加一个角色改一次配色表」。 */
+/** 标签配色按 id 走(五个预置 id 各一色),不看 builtin:预置档自 0063 起也是库里的普通行,
+ *  但 id 稳定,管理员改了名字也不该让标签换色;自建角色一律用那条通用灰绿。 */
 function roleTagClass(role: RoleId): string {
-  return rolesById.value[role]?.builtin ? ROLE_TAG_CLASS[normalizeRole(role)] : 'tag--custom'
+  return (ROLE_TAG_CLASS as Record<string, string>)[role] ?? 'tag--custom'
 }
 
 /** 校验失败时用后端原文,其余按状态码给一句人话。 */

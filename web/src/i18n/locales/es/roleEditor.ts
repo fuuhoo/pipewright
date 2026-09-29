@@ -4,7 +4,7 @@
  */
 export default {
   title: 'Roles',
-  desc: 'El rol decide qué pantallas puede ver una cuenta y qué tipo de acciones puede ejecutar. Los cinco niveles integrados son plantillas y no se pueden editar; los roles personalizados se arman punto por punto.',
+  desc: 'El rol decide qué pantallas puede ver una cuenta y qué tipo de acciones puede ejecutar. El rol Admin integrado es una plantilla: no se edita ni se borra. Los demás — incluidos los cuatro predefinidos (Usuario / Desarrollador / Ops / Solo lectura) — se arman punto por punto.',
   axesHint: 'Rol = eje funcional (puede hacer este tipo de acción), grupo = eje de datos (de quién son estos datos), y la pestaña de cuentas une a la persona con el rol. Cada uno cambia una sola cosa.',
   add: 'Nuevo rol',
   empty: 'Todavía no hay roles personalizados.',
@@ -21,7 +21,7 @@ export default {
   permsCollapse: 'Contraer',
   userCount: '{n} cuentas',
   builtinTag: 'Plantilla integrada',
-  builtinEditHint: 'Los niveles integrados viven en el código: no se editan ni se borran. Duplique uno para ajustarlo.',
+  builtinEditHint: 'El rol Admin integrado vive en el código: no se edita ni se borra. Duplíquelo para ajustarlo.',
   deleteBlockedHint: '{n} cuentas aún usan este rol. Reasígnelas primero en la pestaña de cuentas.',
 
   edit: 'Editar',
@@ -38,11 +38,12 @@ export default {
   fieldTemplate: 'Plantilla inicial',
   fieldPerms: 'Qué entradas puede ver',
   nameHint: 'Hasta {n} caracteres; no puede coincidir con un rol existente (sin distinción de mayúsculas)',
+  nameHintPreset: 'Es un rol predefinido: renombrarlo fija este nombre y dejará de seguir el idioma de la interfaz (la lista, los desplegables y las etiquetas del menú cambian a la vez)',
   nameErrRequired: 'El nombre del rol es obligatorio',
   nameErrTooLong: 'El nombre del rol admite como máximo {n} caracteres',
   nameErrDuplicate: 'Ya existe un rol con ese nombre',
-  nameErrReserved: 'Ese nombre es un identificador de nivel integrado (admin / user / developer / ops / viewer); elija otro',
-  templateHint: 'Elija un nivel integrado como punto de partida y sus puntos se copian; «Desde cero» no marca ninguno.',
+  nameErrReserved: 'Ese nombre es el identificador del rol Admin integrado (admin); elija otro',
+  templateHint: 'Elija un rol existente como punto de partida y sus puntos se copian; «Desde cero» no marca ninguno.',
   templateNone: 'Desde cero',
 
   permTotal: '{n} de {total} seleccionados',

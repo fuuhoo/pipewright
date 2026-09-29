@@ -4,7 +4,7 @@
  */
 export default {
   title: '角色',
-  desc: '角色決定一個帳號能看到哪些入口、能執行哪類動作。內建五檔是範本,不可修改;自訂角色按功能點逐個勾選。',
+  desc: '角色決定一個帳號能看到哪些入口、能執行哪類動作。內建管理員是範本,不可修改也不可刪除;其餘角色(含平台預設的一般使用者/開發者/維運/唯讀)與自訂角色一樣,按功能點逐個勾選。',
   axesHint: '角色 = 功能軸(能不能做這類動作),分組 = 資料軸(這份資料歸誰),帳號分頁把人掛到角色上。三者各改一件事。',
   add: '新建角色',
   empty: '還沒有自訂角色。',
@@ -21,7 +21,7 @@ export default {
   permsCollapse: '收起',
   userCount: '{n} 個帳號',
   builtinTag: '內建範本',
-  builtinEditHint: '內建档位是程式碼表裡的範本,不可修改也不可刪除 —— 要調整請複製一份。',
+  builtinEditHint: '內建管理員是程式碼表裡的範本,不可修改也不可刪除 —— 要調整請複製一份。',
   deleteBlockedHint: '還有 {n} 個帳號掛著這個角色,請先在帳號分頁改派再來刪除。',
 
   edit: '編輯',
@@ -38,11 +38,12 @@ export default {
   fieldTemplate: '起始範本',
   fieldPerms: '能看到哪些入口',
   nameHint: '最多 {n} 個字元,不可與既有角色重名(不區分大小寫)',
+  nameHintPreset: '這是平台預置檔:改名就把它固定成這個名字,不再隨介面語言翻譯(清單、下拉與選單標籤一起跟著變)',
   nameErrRequired: '請填寫角色名',
   nameErrTooLong: '角色名最多 {n} 個字元',
   nameErrDuplicate: '已有同名角色',
-  nameErrReserved: '這個名字是內建档位的識別碼(admin / user / developer / ops / viewer),換一個',
-  templateHint: '選一個內建档當起點,它會把那一份功能點帶過來;選「從零開始」則一個都不勾。',
+  nameErrReserved: '這個名字是內建管理員的識別碼(admin),換一個',
+  templateHint: '選一個既有角色當起點,它會把那一份功能點帶過來;選「從零開始」則一個都不勾。',
   templateNone: '從零開始',
 
   permTotal: '已勾 {n} / {total}',

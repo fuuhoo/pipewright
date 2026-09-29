@@ -4,7 +4,7 @@
  */
 export default {
   title: 'Roles',
-  desc: 'A role decides which entries an account can see and which kinds of actions it can take. The five built-in tiers are templates and cannot be edited; custom roles are assembled point by point.',
+  desc: 'A role decides which entries an account can see and which kinds of actions it can take. The built-in Admin is a template: never editable, never deletable. Every other role — the four presets (User / Developer / Ops / Viewer) included — is assembled point by point.',
   axesHint: 'Role = the functional axis (may it do this kind of action), group = the data axis (who owns this data), the Accounts tab attaches a person to a role. Each changes one thing.',
   add: 'New role',
   empty: 'No custom roles yet.',
@@ -21,7 +21,7 @@ export default {
   permsCollapse: 'Collapse',
   userCount: '{n} accounts',
   builtinTag: 'Built-in template',
-  builtinEditHint: 'Built-in tiers live in the code table: they cannot be edited or deleted — copy one instead.',
+  builtinEditHint: 'The built-in Admin lives in the code table: it cannot be edited or deleted — copy it instead.',
   deleteBlockedHint: '{n} accounts still use this role. Reassign them in the Accounts tab first.',
 
   edit: 'Edit',
@@ -38,11 +38,12 @@ export default {
   fieldTemplate: 'Starting template',
   fieldPerms: 'Which entries it can see',
   nameHint: 'Up to {n} characters; must not match an existing role name (case-insensitive)',
+  nameHintPreset: 'This is a preset role: renaming it freezes this label, so it no longer follows the UI language (the list, dropdowns and menu labels all change with it)',
   nameErrRequired: 'Role name is required',
   nameErrTooLong: 'Role name may be at most {n} characters',
   nameErrDuplicate: 'A role with this name already exists',
-  nameErrReserved: 'This name is a built-in tier identifier (admin / user / developer / ops / viewer); pick another',
-  templateHint: 'Pick a built-in tier as the starting point and its permission points are copied in; “From scratch” starts with none.',
+  nameErrReserved: 'This name is the built-in Admin identifier (admin); pick another',
+  templateHint: 'Pick any existing role as the starting point and its permission points are copied in; “From scratch” starts with none.',
   templateNone: 'From scratch',
 
   permTotal: '{n} of {total} selected',

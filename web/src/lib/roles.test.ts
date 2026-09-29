@@ -1,8 +1,8 @@
 /**
- * roles.test.ts —— 角色档位前端的契约。
+ * roles.test.ts —— 功能轴前端只读视图的契约。
  *
- * 「前端角色名单 == 后端枚举」这条防漂移断言住在 Go 侧
- * (internal/access/roles_drift_test.go):那边能直接读文件,这里没有 node 类型可用。
+ * 「预置档的点集不许漂」这条防漂移断言住在 Go 侧(internal/access/roles_drift_test.go):
+ * 那边直接读 0063 迁移的 SQL 与代码表,这里没有 node 类型可用。
  * 本文件只判前端自己的逻辑:名单齐整、档位比较、缺失能力位按最严处理。
  */
 

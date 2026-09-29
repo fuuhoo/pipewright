@@ -2,7 +2,7 @@
  * roleEditor.test.ts —— 角色编辑器纯逻辑的契约。
  *
  * 这里每一条都对应后端一个 4xx 或一条静默 bug,断言的意义是「前端别靠撞状态码学规则」:
- *   - validateRoleName:空 / 超 40 rune / 重名 / 占用内置 id → role.Create 的 400 / 409。
+ *   - validateRoleName:空 / 超 40 rune / 重名 / 占用内置 admin 的 id → role.Create 的 400 / 409。
  *   - seedFromTemplate、SETTINGS_POINT:自定义角色拿到 settings.access 是 422,
  *     所以复制与建模板起手时就要把它剥干净。
  *   - canDeleteRole:还有人挂着就删是 409 role_in_use。
@@ -50,13 +50,21 @@ function custom(id: string, name: string, extra: Partial<Role> = {}): Role {
   return { ...base, id, name, builtin: false, ...extra }
 }
 
-/** 服务端名单:内置五档在前,自定义在后。 */
+/**
+ * 四档预置自迁移 0063 起是 roles 表里的普通行:id 与 name 同为那个小写词,builtin 为假 ——
+ * 只有内置 admin 的点集还在 Go 代码表里,因而也只有它在页面上不可改、不可删。
+ */
+function preset(id: string, extra: Partial<Role> = {}): Role {
+  return { ...base, id, name: id, builtin: false, ...extra }
+}
+
+/** 服务端名单:内置 admin 在首,四档预置与自建角色同列其后。 */
 const roster: Role[] = [
   builtin('admin'),
-  builtin('user'),
-  builtin('developer'),
-  builtin('ops'),
-  builtin('viewer'),
+  preset('user'),
+  preset('developer'),
+  preset('ops'),
+  preset('viewer'),
   custom('7f0c…', '发布值班'),
 ]
 
@@ -114,10 +122,16 @@ describe('validateRoleName —— 展示名', () => {
     expect(validateRoleName(`${'a'.repeat(MAX_ROLE_NAME_LEN)}  `, roster)).toBe('')
   })
 
-  it('占用内置档 id 单独报错(后端只查 roles 表,这一条只在前端拦)', () => {
+  it('占用内置 admin 的 id 单独报错(后端只查 roles 表,这一条只在前端拦)', () => {
     expect(validateRoleName('admin', roster)).toBe('reserved')
     expect(validateRoleName('Admin', roster)).toBe('reserved')
-    expect(validateRoleName(' VIEWER ', roster)).toBe('reserved')
+  })
+
+  it('预置档已在 roles 表里:撞它们的名字是重名,不是保留字', () => {
+    expect(validateRoleName('ops', roster)).toBe('duplicate')
+    expect(validateRoleName(' VIEWER ', roster)).toBe('duplicate')
+    // 于是给预置档改名也走得通(把自己排除掉就不算撞名)。
+    expect(validateRoleName('主机值班', roster, 'ops')).toBe('')
   })
 
   it('重名大小写不敏感,改名时放过自己', () => {
@@ -137,10 +151,11 @@ describe('permsDiff / canDeleteRole / seedFromTemplate', () => {
     expect(permsDiff(['run.view'], ['run.view'])).toEqual({ added: [], removed: [] })
   })
 
-  it('内置档或有账号挂着都不许删', () => {
+  it('内置 admin 不许删;预置档已入表,和自建角色一样只看有没有人挂着', () => {
     expect(canDeleteRole(custom('x', '甲'))).toBe(true)
     expect(canDeleteRole(custom('x', '甲', { userCount: 2 }))).toBe(false)
-    expect(canDeleteRole(builtin('viewer'))).toBe(false)
+    expect(canDeleteRole(preset('viewer'))).toBe(true)
+    expect(canDeleteRole(preset('user', { userCount: 7 }))).toBe(false)
     expect(canDeleteRole(builtin('admin'))).toBe(false)
   })
 
@@ -164,8 +179,17 @@ describe('labelForRoleId —— 角色展示名', () => {
     expect(labelForRoleId('7f0c…', byId, t)).toBe('发布值班')
   })
 
-  it('内置档走 i18n 键(库里 name 存的就是 id,不能显示裸 admin)', () => {
+  it('内置 admin 走 i18n 键(库里 name 存的就是 id,不能显示裸 admin)', () => {
+    expect(labelForRoleId('admin', byId, t)).toBe('zh:adminUsers.roleAdmin')
+  })
+
+  it('预置档没改过名时也走 i18n 键(判据是 name 还等于 id,不是 builtin)', () => {
     expect(labelForRoleId('ops', byId, t)).toBe('zh:adminUsers.roleOps')
+  })
+
+  it('预置档被管理员改名后显示新名字(它是库里的普通行,名字以它为准)', () => {
+    const renamed: Record<string, Role> = { ...byId, ops: { ...byId.ops, name: '主机值班' } }
+    expect(labelForRoleId('ops', renamed, t)).toBe('主机值班')
   })
 
   it('名单查不到时按 normalizeRole 兜底,不渲染裸 key 或 UUID', () => {

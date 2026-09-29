@@ -9,9 +9,11 @@
  * 这一页只改**功能轴**(这个角色能不能看到某个入口)。「这份数据归谁」在分组 tab,
  * 「谁挂哪个角色」在账号 tab —— 三条线各改一件事,是这套权限设计的底子。
  *
- * 内置五档是模板:点集来自代码表(access/perms.go),页面上不可改、不可删,只能「复制一份再调」。
- * 这么留着它们有两个理由:升级时新加的功能点会自动跟着内置档走;而 admin 改不掉、删不掉,
- * 等于给「把自己锁在门外」兜了底。
+ * 内置只剩「管理员」一档:它的点集来自代码表(access/perms.go),页面上不可改、不可删,
+ * 只能「复制一份再调」。留着的理由是 admin 改不掉、删不掉,等于给「把自己锁在门外」兜了底。
+ * 其余四档(user / developer / ops / viewer)自 0063 迁移起也是 roles 表里的普通行:名字、
+ * 点集、删留都归这一页管,和自建角色同一条路径 —— 所以模板下拉列的是整份服务端名单,
+ * 而不是某一类「内置档」。
  *
  * 生效时机是这里唯一容易误解的地方,所以写在弹窗里:改**点集**对方刷新页面就生效
  * (能力位每次 /api/auth/session 重算);把**人**换到另一个角色才需要对方重新登录。
@@ -95,6 +97,15 @@ function roleLabel(id: string): string {
   return labelForRoleId(id, rolesById.value, t)
 }
 
+/**
+ * 没被人改过名的预置档:id 稳定(user / developer / ops / viewer),名字还等于 id 本身,
+ * 所以展示走 i18n(见 labelForRoleId)。自建角色的 id 是 UUID,名字永远不等于它,
+ * 内置 admin 另有 builtin,故这里要排掉 —— 三个条件其实只有一条真的在筛。
+ */
+function isPresetRole(r: Role): boolean {
+  return !r.builtin && r.name === r.id
+}
+
 function pointLabel(id: PermId): string {
   return t(permLabelKey(id))
 }
@@ -123,7 +134,8 @@ const NAME_ISSUE_KEY: Record<Exclude<NameIssue, ''>, string> = {
 function openCreate(): void {
   editing.value = null
   // 默认以「普通用户」为模板:它是平台的默认档,也是自定义角色最常见的起点。
-  // 设置类总闸由 seedFromTemplate 剥掉,勾不到也提交不上去。
+  // 它自 0063 起是库里的普通角色,但 id 稳定,所以这里仍按 id 取;管理员删了它就拿不到点集,
+  // 弹窗退回「一个入口都不给」的空名单,照样能手动勾。设置类总闸由 seedFromTemplate 剥掉。
   form.value = {
     name: '',
     description: '',
@@ -227,7 +239,7 @@ async function submitEdit(): Promise<void> {
       const ok = await confirm.open({
         title: t('roleEditor.permChangeTitle'),
         body: `${t('roleEditor.permChangeBody', {
-          name: current.name,
+          name: roleLabel(current.id),
           users: current.userCount,
           added: diff.added.length,
           removed: diff.removed.length,
@@ -321,7 +333,7 @@ async function submitCopy(): Promise<void> {
 async function askDelete(r: Role): Promise<void> {
   const ok = await confirm.open({
     title: t('roleEditor.deleteTitle'),
-    body: `${t('roleEditor.deleteBody', { name: r.name })} ${t('roleEditor.deleteEffect')}`,
+    body: `${t('roleEditor.deleteBody', { name: roleLabel(r.id) })} ${t('roleEditor.deleteEffect')}`,
     confirmLabel: t('roleEditor.delete'),
     variant: 'danger',
   })
@@ -444,7 +456,7 @@ async function askDelete(r: Role): Promise<void> {
     <!-- ─── 新建 / 编辑:点集编辑器 ─── -->
     <AppModal
       v-if="editOpen"
-      :title="editing ? t('roleEditor.editTitle', { name: editing.name }) : t('roleEditor.createTitle')"
+      :title="editing ? t('roleEditor.editTitle', { name: roleLabel(editing.id) }) : t('roleEditor.createTitle')"
       :subtitle="t('roleEditor.formHint')"
       width="lg"
       :busy="busy"
@@ -458,7 +470,7 @@ async function askDelete(r: Role): Promise<void> {
           :label="t('roleEditor.fieldName')"
           field-id="role-name"
           :error="nameIssue ? t(NAME_ISSUE_KEY[nameIssue]) : ''"
-          :hint="t('roleEditor.nameHint', { n: MAX_ROLE_NAME_LEN })"
+          :hint="editing && isPresetRole(editing) ? t('roleEditor.nameHintPreset') : t('roleEditor.nameHint', { n: MAX_ROLE_NAME_LEN })"
           required
         >
           <template #default="{ fieldId, ariaDescribedby }">
@@ -504,9 +516,9 @@ async function askDelete(r: Role): Promise<void> {
               @change="applyTemplate(($event.target as HTMLSelectElement).value)"
             >
               <option value="">{{ t('roleEditor.templateNone') }}</option>
-              <option v-for="r in roles.filter((x) => x.builtin)" :key="r.id" :value="r.id">
-                {{ roleLabel(r.id) }}
-              </option>
+              <!-- 模板 = 整份服务端名单(内置 admin + 库里的角色)。名字可能被人改过,
+                   按 id 取值、按 roleLabel 显示,才不会「改了名就找不到这个模板」。 -->
+              <option v-for="r in roles" :key="r.id" :value="r.id">{{ roleLabel(r.id) }}</option>
             </select>
           </template>
         </FormField>

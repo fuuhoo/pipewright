@@ -1,9 +1,10 @@
 /**
  * roles.ts —— 功能轴在前端的只读视图。
  *
- * 权威表在 internal/access/perms.go(角色 → 功能点);后端把它同时投影成两样东西回在
- * capabilities 里 —— 每类资源的档位上限(kinds)与该角色的功能点(perms),这里只负责「怎么用它」:
- *   - 下拉与标签要的角色名单和顺序;
+ * 权威判据在 internal/access:内置 admin 的点集是 perms.go 的代码表,其余角色(含四档预置)
+ * 的点集在 roles / role_perms 两张表里。后端把它投影成两样东西回在 capabilities 里 ——
+ * 每类资源的档位上限(kinds)与该角色的功能点(perms),这里只负责「怎么用它」:
+ *   - 这几个稳定 id 的标签、配色和回落;
  *   - 把能力位翻译成布尔判断,供路由守卫、菜单和控件用。
  *
  * 三点刻意与后端逐字对齐:
@@ -15,7 +16,11 @@
 
 import type { Capabilities, PermId, ResourceAct, ResourceKind, UserRole } from '../api/auth'
 
-/** 下拉展示顺序,与 access.Roles() 同序;新增角色改这里 + i18n 八份键 + 后端 perms.go 的点集。 */
+/**
+ * 五个**预置 id** 的展示顺序与回落表(内置 admin + 0063 播种进库的四档)。
+ * 页面名单来自 /api/admin/roles,这里只负责两件事:给这几个稳定 id 配 i18n 标签/配色,
+ * 以及在名单还没拉到时把库里的角色字串归一个能看懂的说法。新增自定义角色不用改这里。
+ */
 export const ROLE_ORDER: UserRole[] = ['admin', 'user', 'developer', 'ops', 'viewer']
 
 /** 角色 → adminUsers 命名空间下的展示键。Record<> 保证枚举漏一个键就编译不过。 */
@@ -95,7 +100,7 @@ export function meetsRequires(caps: Capabilities | undefined, req?: AccessRequir
 /**
  * 落点顺序:登录后 / 被功能门拦下时该把人放到哪一页。
  *
- * 以前守卫写死「不满足就回仪表盘」,而仪表盘自己也要 dashboard.view —— 内置五档恰好都带
+ * 以前守卫写死「不满足就回仪表盘」,而仪表盘自己也要 dashboard.view —— 那五个预置档恰好都带
  * 那个点所以没露馅,角色可配置以后就能建出一个不带概览的角色,那时「回仪表盘」就是
  * 守卫自己 redirect 给自己:导航被中止,页面永远停在登录页。
  * 顺序跟 AppShell 的 navItems 一致(同一张表,别在这里发明新顺序);末项「用户与权限」

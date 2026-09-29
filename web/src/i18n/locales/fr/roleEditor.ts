@@ -4,7 +4,7 @@
  */
 export default {
   title: 'Rôles',
-  desc: "Un rôle décide quelles pages un compte peut voir et quels types d'actions il peut exécuter. Les cinq paliers intégrés sont des modèles non modifiables ; les rôles personnalisés se composent point par point.",
+  desc: "Un rôle décide quelles pages un compte peut voir et quels types d'actions il peut exécuter. Le rôle Admin intégré est un modèle : ni modifiable ni supprimable. Les autres — y compris les quatre prédéfinis (Utilisateur / Développeur / Ops / Lecture seule) — se composent point par point.",
   axesHint: "Rôle = axe fonctionnel (a-t-il droit à cette action), groupe = axe des données (à qui appartiennent ces données), l'onglet Comptes relie une personne à un rôle. Chacun ne change qu'une chose.",
   add: 'Nouveau rôle',
   empty: "Aucun rôle personnalisé pour l'instant.",
@@ -21,7 +21,7 @@ export default {
   permsCollapse: 'Réduire',
   userCount: '{n} comptes',
   builtinTag: 'Modèle intégré',
-  builtinEditHint: "Les paliers intégrés vivent dans le code : on ne peut ni les modifier ni les supprimer — dupliquez-en un pour l'ajuster.",
+  builtinEditHint: "Le rôle Admin intégré vit dans le code : on ne peut ni le modifier ni le supprimer — dupliquez-le pour l'ajuster.",
   deleteBlockedHint: '{n} comptes utilisent encore ce rôle. Réaffectez-les d’abord dans l’onglet Comptes.',
 
   edit: 'Modifier',
@@ -38,11 +38,12 @@ export default {
   fieldTemplate: 'Modèle de départ',
   fieldPerms: 'Quelles entrées il voit',
   nameHint: 'Jusqu’à {n} caractères ; ne doit correspondre à aucun rôle existant (casse non sensible)',
+  nameHintPreset: 'Rôle prédéfini : le renommer fige ce libellé, qui ne suivra plus la langue de l’interface (liste, menus déroulants et libellés du menu changent en même temps)',
   nameErrRequired: 'Le nom du rôle est obligatoire',
   nameErrTooLong: 'Le nom du rôle est limité à {n} caractères',
   nameErrDuplicate: 'Un rôle porte déjà ce nom',
-  nameErrReserved: "Ce nom est un identifiant de palier intégré (admin / user / developer / ops / viewer) ; choisissez-en un autre",
-  templateHint: "Choisissez un palier intégré comme point de départ : ses points sont repris ; « Depuis zéro » ne coche rien.",
+  nameErrReserved: "Ce nom est l'identifiant du rôle Admin intégré (admin) ; choisissez-en un autre",
+  templateHint: "Choisissez un rôle existant comme point de départ : ses points sont repris ; « Depuis zéro » ne coche rien.",
   templateNone: 'Depuis zéro',
 
   permTotal: '{n} sur {total} sélectionnés',

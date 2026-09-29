@@ -57,7 +57,7 @@ const Permissions = () => import('../views/Permissions.vue')
 const Groups = () => import('../views/Groups.vue')
 // 用户管理(功能轴):仅「设置类」能力可见,门在 Permissions.vue 壳里(见其注释)。
 const AdminUsers = () => import('../views/admin/Users.vue')
-// 角色管理(功能轴的表本身):内置五档当模板只读,自定义角色可增删改。门与用户 tab 同一档。
+// 角色管理(功能轴的表本身):内置只剩管理员一档当模板只读,其余(含四档预置)都在库里、可增删改。门与用户 tab 同一档。
 const AdminRoles = () => import('../views/admin/Roles.vue')
 // 审计日志(设置类入口,只读)
 const AdminAudit = () => import('../views/admin/Audit.vue')

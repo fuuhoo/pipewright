@@ -10,8 +10,9 @@
  *   POST   /api/admin/roles/:id/copy → Role   以某角色为模板复制成新角色
  *
  * 三条边界是后端定的,前端只负责别让人去撞:
- *   - 内置五档(admin / user / developer / ops / viewer)是代码表里的**模板**:不可改、不可删,
- *     只能复制。它们的 id 与 UserRole 枚举同集合,自定义角色的 id 是 UUID。
+ *   - 内置只剩 admin 一档:它是代码表里的**模板**,不可改、不可删,只能复制。其余角色 ——
+ *     含 0063 从代码表搬进库的四档预置(user / developer / ops / viewer)—— 都在 roles 表里,
+ *     由这条接口读出来,页面据 `builtin` 字段决定编辑/删除入口,别在前端再抄一份 id 名单。
  *   - `settings.access`(进得了设置的总闸)不许分给自定义角色 → 422;勾选框直接禁用。
  *   - 仍有账号在用的角色不许删 → 409,userCount 就是那句「还有 N 个账号」。
  *
@@ -20,24 +21,17 @@
  */
 
 import { http } from './http'
-import type { PermId, ResourceAct, ResourceKind, UserRole } from './auth'
+import type { PermId, ResourceAct, ResourceKind } from './auth'
 
-/** 角色引用:内置档 id 或自定义角色的 UUID。users.role 存的就是它。 */
+/** 角色引用:内置档 id('admin')或库里角色的 id(0063 播种的预置档是那四个词,自建的 UUID)。 */
 export type RoleId = string
-
-/** 内置档 id 的取值范围(= UserRole),供页面区分「模板」与「自定义」。 */
-export const BUILTIN_ROLE_IDS: UserRole[] = ['admin', 'user', 'developer', 'ops', 'viewer']
-
-export function isBuiltinRoleId(id: string): boolean {
-  return BUILTIN_ROLE_IDS.includes(id as UserRole)
-}
 
 export interface Role {
   id: RoleId
-  /** 展示名:内置档回的是 id 本身(admin),页面按 i18n 键翻译;自定义档回用户起的名字。 */
+  /** 展示名:内置 admin 与没改过名的预置档回的是 id 本身,页面按 i18n 键翻译;其余回用户起的名字。 */
   name: string
   description: string
-  /** 复制来源的内置档 id('' = 手建)。只用于「基于某模板」这句提示,无判定语义。 */
+  /** 复制来源的角色 id('' = 手建)。只用于「基于某模板」这句提示,无判定语义。 */
   baseRole: string
   builtin: boolean
   perms: PermId[]
@@ -61,7 +55,7 @@ export interface PermPoint {
 export interface CreateRoleInput {
   name: string
   description?: string
-  /** 只接受内置档 id;新建时不填就是「从零开始,一个入口都不给」。 */
+  /** 模板:服务端名单里的任一角色 id(内置 admin 或库里的角色);不填就是「从零开始,一个入口都不给」。 */
   baseRole?: string
   perms?: PermId[]
 }

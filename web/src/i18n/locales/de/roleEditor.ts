@@ -4,7 +4,7 @@
  */
 export default {
   title: 'Rollen',
-  desc: 'Eine Rolle bestimmt, welche Seiten ein Konto sehen darf und welche Aktionsarten es ausführen kann. Die fünf eingebauten Stufen sind Vorlagen und nicht editierbar; eigene Rollen setzt man Punkt für Punkt zusammen.',
+  desc: 'Eine Rolle bestimmt, welche Seiten ein Konto sehen darf und welche Aktionsarten es ausführen kann. Die eingebaute Admin-Rolle ist eine Vorlage: weder änderbar noch löschbar. Alle anderen Rollen — auch die vier vorgegebenen (Benutzer / Entwickler / Ops / Nur-Lesen) — setzt man Punkt für Punkt zusammen.',
   axesHint: 'Rolle = funktionale Achse (darf sie diese Art Aktion), Gruppe = Datenachse (wem gehören diese Daten), im Konto-Tab wird die Person an eine Rolle gehängt. Jedes ändert nur eine Sache.',
   add: 'Neue Rolle',
   empty: 'Noch keine eigenen Rollen.',
@@ -21,7 +21,7 @@ export default {
   permsCollapse: 'Einklappen',
   userCount: '{n} Konten',
   builtinTag: 'Eingebaute Vorlage',
-  builtinEditHint: 'Eingebaute Stufen stehen im Code: weder änderbar noch löschbar — bitte eine Kopie anlegen und dort anpassen.',
+  builtinEditHint: 'Die eingebaute Admin-Rolle steht im Code: weder änderbar noch löschbar — bitte eine Kopie anlegen und dort anpassen.',
   deleteBlockedHint: '{n} Konten nutzen diese Rolle noch. Zuerst im Konto-Tab neu zuordnen.',
 
   edit: 'Bearbeiten',
@@ -38,11 +38,12 @@ export default {
   fieldTemplate: 'Vorlage zum Start',
   fieldPerms: 'Welche Einstiege sichtbar sind',
   nameHint: 'Maximal {n} Zeichen; darf keinem bestehenden Rollennamen entsprechen (Groß-/Kleinschreibung egal)',
+  nameHintPreset: 'Das ist eine Vorlagenrolle: Ein Umbenennen friert diese Bezeichnung ein – sie folgt dann nicht mehr der Oberflächensprache (Liste, Auswahlfelder und Menübezeichnungen ändern sich mit)',
   nameErrRequired: 'Ein Rollenname ist erforderlich',
   nameErrTooLong: 'Der Rollenname darf höchstens {n} Zeichen haben',
   nameErrDuplicate: 'Eine Rolle mit diesem Namen existiert bereits',
-  nameErrReserved: 'Dieser Name ist eine eingebaute Stufe (admin / user / developer / ops / viewer); bitte einen anderen wählen',
-  templateHint: 'Wähle eine eingebaute Stufe als Startpunkt — ihre Punkte werden übernommen; „Von Grund auf“ bleibt leer.',
+  nameErrReserved: 'Dieser Name ist die Kennung der eingebauten Admin-Rolle (admin); bitte einen anderen wählen',
+  templateHint: 'Wähle eine bestehende Rolle als Startpunkt — ihre Punkte werden übernommen; „Von Grund auf“ bleibt leer.',
   templateNone: 'Von Grund auf',
 
   permTotal: '{n} von {total} ausgewählt',

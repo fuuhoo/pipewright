@@ -4,11 +4,12 @@
  * 这一页只有功能轴一件事:每个角色能不能看到某个入口。所以点集标签一律写成**入口名 / 动作名**
  * (「主机终端与远程文件」),不写权限术语(「KindServer+ActOperate」),用户勾的是「他看得见哪几页」。
  *
- * 三条边界的说法要和后端 role 包一致:内置档只读、settings.access 不外授、有账号挂着不许删。
+ * 三条边界的说法要和后端 role 包一致:内置管理员只读、settings.access 不外授、有账号挂着不许删。
+ * (四档预置自迁移 0063 起也是 roles 表里的普通行,归这一页管,不再算「内置档」。)
  */
 export default {
   title: '角色',
-  desc: '角色决定一个账号能看到哪些入口、能按得动哪类动作。内置五档是模板,不可修改;自定义角色按功能点逐个勾。',
+  desc: '角色决定一个账号能看到哪些入口、能按得动哪类动作。内置管理员是模板,不可修改也不可删除;其余角色(含平台预置的普通用户/开发者/运维/只读)和自建角色一样,按功能点逐个勾。',
   axesHint: '角色 = 功能轴(能不能做这类动作),分组 = 数据轴(这份数据归谁),账号 tab 把人挂到角色上。三者各改一件事。',
   add: '新建角色',
   empty: '还没有自定义角色。',
@@ -25,7 +26,7 @@ export default {
   permsCollapse: '收起',
   userCount: '{n} 个账号',
   builtinTag: '内置模板',
-  builtinEditHint: '内置档位是代码表里的模板,不可修改也不可删除 —— 要调整就复制一份。',
+  builtinEditHint: '内置管理员是代码表里的模板,不可修改也不可删除 —— 要调整就复制一份。',
   deleteBlockedHint: '还有 {n} 个账号挂着这个角色,先在账号 tab 改派再来删。',
 
   edit: '编辑',
@@ -42,11 +43,12 @@ export default {
   fieldTemplate: '起始模板',
   fieldPerms: '能看到哪些入口',
   nameHint: '最多 {n} 个字符,不可与既有角色重名(不区分大小写)',
+  nameHintPreset: '这是平台预置档:改名就把它固定成这个名字,不再随界面语言翻译(列表、下拉与菜单标签一起跟着变)',
   nameErrRequired: '请填写角色名',
   nameErrTooLong: '角色名最多 {n} 个字符',
   nameErrDuplicate: '已有同名角色',
-  nameErrReserved: '这个名字是内置档位的标识(admin / user / developer / ops / viewer),换一个',
-  templateHint: '选一个内置档当起点,它会把那一份功能点带过来;选「从零开始」则一个都不勾。',
+  nameErrReserved: '这个名字是内置管理员的标识(admin),换一个',
+  templateHint: '选一个已有角色当起点,它会把那一份功能点带过来;选「从零开始」则一个都不勾。',
   templateNone: '从零开始',
 
   permTotal: '已勾 {n} / {total}',

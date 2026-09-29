@@ -2,7 +2,7 @@
  * roleEditor.ts —— 角色编辑器的纯逻辑(无组件、无网络),供 admin/Roles.vue 与单测用。
  *
  * 拆出来的理由:这里每一条都对应后端一个 4xx,拦不住就是「点了才报错」——
- *   - 名字空 / 超 40  rune / 与既有角色重名(大小写不敏感)/ 占用内置档 id → 400 / 409
+ *   - 名字空 / 超 40  rune / 与既有角色重名(大小写不敏感)/ 占用内置 admin 的 id → 400 / 409
  *   - 勾了 settings.access → 422(编辑器把那一项渲染成禁用,根本不让人勾)
  *   - 还有账号在用就删 → 409(删除按钮直接 disable,并把人数写在旁边)
  * 后端是权威,这里只是把同一份判据提前搬到浏览器,免得用户靠撞状态码来学规则。
@@ -113,10 +113,10 @@ export type NameIssue = '' | 'required' | 'tooLong' | 'duplicate' | 'reserved'
 /**
  * 校验展示名。`roles` 是服务端完整名单(内置 + 自定义),`selfId` 在改名时放过自己。
  *
- * reserved 这一条只在前端拦:后端 `nameTaken` 只查 roles 表,而起始 id(admin 等五个)
- * 永远不进那张表,所以自定一个「Admin」是有可能落库的 —— 于是「按名字读」的列表与
- * 下拉里就会同时出现内置「管理员」和一个叫 Admin 的自定义角色。不值得为它开一条后端
- * 校验路径,但也不该让人无意识地造出来,所以给它一句专门的解释。
+ * reserved 这一条只在前端拦:后端 `nameTaken` 只查 roles 表,而内置 admin 永远不进那张表,
+ * 所以自定一个「Admin」是有可能落库的 —— 于是「按名字读」的列表与下拉里就会同时出现内置
+ * 「管理员」和一个叫 Admin 的自定义角色。不值得为它开一条后端校验路径,但也不该让人无意识地
+ * 造出来,所以给它一句专门的解释。四档预置自 0063 起就在 roles 表里,撞它们的名字走 duplicate。
  */
 export function validateRoleName(name: string, roles: Role[], selfId = ''): NameIssue {
   const trimmed = name.trim()
@@ -160,8 +160,9 @@ export function seedFromTemplate(base: Role | null | undefined): PermId[] {
 
 /**
  * 角色展示名,三条分支:
- *   - 自定义档 → 用户起的名字。
- *   - 内置档 → i18n 键(库里 name 存的就是 id 本身,直接显示会露出裸 `admin`)。
+ *   - 名字与 id 不同 → 用那个名字(自建角色,或管理员改过名的预置档)。
+ *   - 名字仍是 id 本身(内置 admin,以及 0063 播种后没人改过的四档预置)→ 走 i18n 键,
+ *     否则页面会露出裸 `user` / `ops` 这种字串。
  *   - 名单里查不到(历史值 / 名单还没拉到)→ 按 normalizeRole 的口径回「普通用户」的标签,
  *     至少不渲染成裸 i18n key 或 UUID。
  *
@@ -173,11 +174,9 @@ export function labelForRoleId(
   t: (key: string) => string,
 ): string {
   const role = rolesById[id]
-  if (role && !role.builtin) return role.name
   if (role) {
-    const key = (ROLE_LABEL_KEY as Record<string, string>)[role.id]
-    if (key) return t(key)
-    return role.name
+    const key = role.name === role.id ? (ROLE_LABEL_KEY as Record<string, string>)[role.id] : ''
+    return key ? t(key) : role.name
   }
   return t((ROLE_LABEL_KEY as Record<string, string>)[normalizeRole(id)] ?? 'adminUsers.roleUser')
 }

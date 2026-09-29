@@ -15,7 +15,11 @@
 
 import { http, HttpError } from './http'
 
-/** 平台角色。与 internal/access/roles.go 的枚举逐字同集合。 */
+/**
+ * 预置角色 id 的集合:内置只剩 'admin'(代码表里的模板),其余四档自 0063 起是 roles 表里的
+ * 普通行,users.role / sessions.role 存的取值仍与这些字串逐字相同。留着是为了给这五个稳定 id
+ * 一份 i18n 标签与配色(见 lib/roles.ts),真正的角色名单永远以 /api/admin/roles 为准。
+ */
 export type UserRole = 'admin' | 'user' | 'developer' | 'ops' | 'viewer'
 
 /** 被判定资源的类别,与 access.Kind 同集合。 */
