@@ -140,6 +140,63 @@ describe('ServerStatus — 逐台出卡', () => {
     const names = wrapper.findAll('.metrics-card__name').map((n) => n.text())
     expect(names).toEqual(['local-A'])
   })
+
+  it('手点刷新:按钮转圈给反馈,连点也只发一轮', async () => {
+    // 每轮都卡在待解放上,这样才能在「一轮在飞」的状态里连点。
+    let rounds = 0
+    let release: (() => void) | null = null
+    streamMock.mockImplementation(async (cb: (m: ServerMetrics) => void) => {
+      rounds++
+      await new Promise<void>((res) => {
+        release = res
+      })
+      cb(metric('a'))
+      cb(metric('b'))
+    })
+
+    const wrapper = mount(ServerStatus)
+    await flushPromises()
+    release!() // 放掉首屏那一轮
+    await flushPromises()
+    rounds = 0
+
+    const btn = wrapper.get('.view-refresh')
+    await btn.trigger('click')
+    expect(btn.classes()).toContain('app-btn--loading')
+
+    await btn.trigger('click')
+    await btn.trigger('click')
+    expect(rounds).toBe(1) // 重复点没叠出第二、第三轮请求
+
+    release!()
+    await flushPromises()
+    expect(btn.classes()).not.toContain('app-btn--loading')
+  })
+
+  it('自动轮询那一轮不转圈(静默),卡与屏面都不动', async () => {
+    let release: (() => void) | null = null
+    streamMock.mockImplementation(async (cb: (m: ServerMetrics) => void) => {
+      await new Promise<void>((res) => {
+        release = res
+      })
+      cb(metric('a'))
+      cb(metric('b'))
+    })
+
+    const wrapper = mount(ServerStatus)
+    await flushPromises()
+    release!()
+    await flushPromises()
+    expect(wrapper.findAll('.metrics-card')).toHaveLength(2)
+
+    // 程序触发的取数(轮询 / 回前台补的那次)不该让按钮出现转圈态。
+    const vm = wrapper.vm as unknown as { load: (manual?: boolean) => Promise<void> }
+    const pending = vm.load(false)
+    await flushPromises()
+    expect(wrapper.get('.view-refresh').classes()).not.toContain('app-btn--loading')
+    release!()
+    await pending
+  })
 })
 
 describe('ServerStatus — 卡片 / 列表两种视图', () => {

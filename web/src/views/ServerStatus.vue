@@ -6,7 +6,8 @@
     · 一张卡采完就上一张,不等最慢那台(死机要拖满探针超时,不该让健康机陪着空白)。
     · 某台不可达 → 该卡灰显 + 人读错误,排到可达的后面,不连累其它台。
     · 某指标缺失(跨平台 best-effort)→ 该行「不可用」。
-    · 刷新/自动轮询都是**静默**的:就地替换已有卡片,不压暗、不清屏,只有首屏才显示骨架。
+    · 刷新/自动轮询的数据区都是**静默**的:就地替换已有卡片,不压暗、不清屏,只有首屏才显示骨架。
+      手点「刷新」时按钮自己转圈并挡重复点(反馈给点击,不打扰屏上的卡)。
     · 两种视图:卡片(默认)/ 一行一台的列表。只有排布不同,取数与展示口径完全共用。
 
   这是一个**新增**的总览入口,不动 4-1 SettingsServers CRUD、6-2 日志入口。
@@ -43,6 +44,10 @@ const indexById = new Map<string, number>()
 const serverById = ref<Map<string, Server>>(new Map())
 /** 有一轮取数在飞:轮询与手动刷新都跳过,避免叠请求。 */
 const inFlight = ref(false)
+/** 在飞这一轮是不是手点的:只有手点才让按钮转圈,自动轮询照旧静默。 */
+const manualRound = ref(false)
+/** 刷新按钮的转圈态:首屏(骨架)或用户手点的那一轮在飞。 */
+const refreshing = computed(() => loadState.value === 'loading' || (inFlight.value && manualRound.value))
 
 // ─── 分组筛选(数据轴)─────────────────────────────────────────────────────────
 // 服务器自己带 groupId(登记时定的),组名来自 GET /api/groups(后端已按可见范围收敛)。
@@ -188,9 +193,19 @@ function humanizeLoadError(err: unknown): string {
   return t('serverStatus.errLoadRetry')
 }
 
-async function load(): Promise<void> {
-  if (inFlight.value) return
+/** 手点刷新:让按钮立刻有反馈(转圈 + 挡重复点),不叠请求。 */
+function refreshNow(): void {
+  void load(true)
+}
+
+async function load(manual = false): Promise<void> {
+  if (inFlight.value) {
+    // 轮询那一轮正在飞时手点:不发第二个请求,但把转圈接过来给用户一个交代。
+    if (manual) manualRound.value = true
+    return
+  }
   inFlight.value = true
+  manualRound.value = manual
   // 首屏(屏上还没有任何卡片)才值得走骨架;之后一律就地替换。
   const firstLoad = metrics.value.length === 0
   if (firstLoad) {
@@ -228,6 +243,7 @@ async function load(): Promise<void> {
     }
   } finally {
     inFlight.value = false
+    manualRound.value = false
   }
 }
 
@@ -345,8 +361,8 @@ onUnmounted(() => {
             {{ t('serverStatus.viewList') }}
           </button>
         </div>
-        <!-- 只有首屏才转圈;后台刷新保持静默(按钮不变、卡片不压暗)。 -->
-        <AppButton class="view-refresh" variant="default" :loading="loadState === 'loading'" @click="load">
+        <!-- 手点才转圈(顺带挡重复点);自动轮询保持静默(按钮不变、卡片不压暗)。 -->
+        <AppButton class="view-refresh" variant="default" :loading="refreshing" @click="refreshNow">
           {{ t('common.refresh') }}
         </AppButton>
       </div>
