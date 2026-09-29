@@ -1143,10 +1143,7 @@ func makeLoginHandler(svc auth.Authenticator) http.HandlerFunc {
 				username = req.Username
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"username": username,
-			"role":     sessionRoleOf(sess),
-		})
+		writeJSON(w, http.StatusOK, newSessionPayload(username, sessionRoleOf(sess)))
 	}
 }
 
@@ -1157,6 +1154,22 @@ func sessionRoleOf(sess *auth.Session) string {
 		return "admin"
 	}
 	return sess.Role
+}
+
+// sessionPayload 是 POST /api/auth/login 与 GET /api/auth/session 的响应体。
+//
+// capabilities 是从 internal/access 的角色档位表(roles.go)算出的展示副本:前端据此决定
+// 菜单、路由与控件是否出现。它不是授权凭证——服务端每个请求都重新查表判定,
+// 前端篡改这个对象不会多拿到一个字节的服务端权限。
+type sessionPayload struct {
+	Username     string              `json:"username"`
+	Role         string              `json:"role"`
+	Capabilities access.Capabilities `json:"capabilities"`
+}
+
+// newSessionPayload 组装会话响应。role 需先过 sessionRoleOf(旧会话空串按 admin)。
+func newSessionPayload(username, role string) sessionPayload {
+	return sessionPayload{Username: username, Role: role, Capabilities: access.CapabilitiesFor(role)}
 }
 
 // makeSessionHandler 返回 GET /api/auth/session handler。
@@ -1203,10 +1216,7 @@ func makeSessionHandler(svc auth.Authenticator) http.HandlerFunc {
 			username = "admin"
 		}
 		// v6.2:role 从会话读(§5.2 要求 login/session 均返回 role)。
-		writeJSON(w, http.StatusOK, map[string]string{
-			"username": username,
-			"role":     sessionRoleOf(sess),
-		})
+		writeJSON(w, http.StatusOK, newSessionPayload(username, sessionRoleOf(sess)))
 	}
 }
 

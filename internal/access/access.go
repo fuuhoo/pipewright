@@ -78,6 +78,10 @@ var (
 	// ErrForbidden → 403。明确告知「无权限」而非伪装成 404:分组是协作资源,
 	// 让人知道资源存在但不属于自己,比隐身更符合产品预期(用户据此去申请加入)。
 	ErrForbidden = errors.New("access: 无权限")
+	// ErrRoleCeiling 标记「角色本身不允许这类动作」(功能轴)。它同时包装 ErrForbidden,
+	// 所以既有的 errors.Is(err, ErrForbidden) 映射照旧生效;HTTP 层据它回一句真话——
+	// 被角色上限拦下时资源未必属于私有分组,报「你不在名册里」会把人引去申请一个没用的加入。
+	ErrRoleCeiling = errors.New("access: 角色档位不足")
 	// ErrGroupNotFound 表示 group_id 指向不存在的分组(引用悬挂)。
 	ErrGroupNotFound = errors.New("access: 分组不存在")
 )
@@ -174,6 +178,14 @@ func (s *Service) Can(ctx context.Context, actor *Actor, kind Kind, id string, a
 	}
 	if id == "" {
 		return fmt.Errorf("access: %s %s 缺资源 ID", kind, act)
+	}
+	// 功能轴先封顶:角色的档位上限与归属无关,查不到表就一律拦下,
+	// 免得再去库里为一条注定 403 的请求解析归属。Manage 不在这一步(见 roles.go 注释)。
+	if act != ActManage {
+		if max := Ceiling(actor.Role, kind); act > max {
+			return fmt.Errorf("%w:%s 角色对 %s 的上限是 %s,不能 %s (%w)",
+				ErrForbidden, NormalizeRole(actor.Role), kind, max, act, ErrRoleCeiling)
+		}
 	}
 	if s.repo == nil {
 		// 未装配仓储(如单机演示模式):仅管理员可操作,避免静默放行。

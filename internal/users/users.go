@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
+	"github.com/huangchengsir/pipewright/internal/access"
 )
 
 // BootstrapAdminRegularUserID 是 admin 在 users 表中对应的固定 UUID。
@@ -35,10 +36,11 @@ import (
 // 凭据的归属,导致解密 key 与 owner 错位。
 const BootstrapAdminRegularUserID = "00000000-0000-0000-0000-000000000001"
 
-// Role 枚举。
+// Role 枚举的别名。权威定义在 internal/access/roles.go(功能档位表按角色查),
+// 这里只是让账户域内读起来顺手;新增角色只需改 access 一处。
 const (
-	RoleAdmin = "admin"
-	RoleUser  = "user"
+	RoleAdmin = access.RoleAdmin
+	RoleUser  = access.RoleUser
 )
 
 // 领域错误(错误体不含敏感数据:不打印 hash / 密码 / 内部栈)。
@@ -221,7 +223,7 @@ type CreateInput struct {
 
 // Create 建普通用户或管理员账号(管理员建号,v6.2 阶段 9)。
 //   - username 归一化后需 2~64 字符,仅允许字母/数字/._-;唯一冲突 → ErrConflict
-//   - role 非 admin 时一律按 user 处理
+//   - role 不在 access 的角色枚举内(含空)一律按 user 处理
 //   - 返回视图(不含 hash)
 //
 // 注意:role='admin' 的既有同步行由 BootstrapAdminRow 管 id 固定值;此处新建的
@@ -235,7 +237,9 @@ func (s *Service) Create(in CreateInput) (*User, error) {
 		return nil, fmt.Errorf("%w:建号需要口令哈希", ErrValidation)
 	}
 	role := strings.TrimSpace(in.Role)
-	if role != RoleAdmin {
+	if !access.ValidRole(role) {
+		// 空串与未知名都落 user。注意:users.role 的空串只属于 0053 之前的旧**会话**行,
+		// 语义是「按管理员」;建号时若把空串写进 users.role,下次登录就会继承那个含义。
 		role = RoleUser
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -286,6 +290,23 @@ func (s *Service) SetDescription(id, description string) error {
 	return s.execOneRow("set description",
 		`UPDATE users SET description = ?, updated_at = ? WHERE id = ?`,
 		strings.TrimSpace(description), now, id,
+	)
+}
+
+// SetRole 改角色(功能轴)。角色名必须在 access 的角色枚举内,否则 ErrValidation。
+//
+// 生效时机:role 是登录时快照进 sessions.role 的,改库不会让已签发的会话立刻变色,
+// 对方重新登录才拿到新档位(与「禁用账号不撤销会话」同一取舍,见 docs/权限架构说明.md §10.2)。
+// 内置管理员那一行由 HTTP 层的 isBootstrapAdminRow 挡在门外,不在这里重复判。
+func (s *Service) SetRole(id, role string) error {
+	role = strings.TrimSpace(role)
+	if !access.ValidRole(role) {
+		return fmt.Errorf("%w:角色 %q 不在枚举内", ErrValidation, role)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	return s.execOneRow("set role",
+		`UPDATE users SET role = ?, updated_at = ? WHERE id = ?`,
+		role, now, id,
 	)
 }
 

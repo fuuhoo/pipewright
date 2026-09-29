@@ -132,12 +132,13 @@ func TestLoginSuccess(t *testing.T) {
 		t.Fatalf("login status = %d, want 200", resp.StatusCode)
 	}
 
-	var body map[string]string
+	// 响应体带 capabilities(嵌套对象),按会话结构体解。
+	var body sessionPayload
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["username"] != "admin" {
-		t.Fatalf("body username = %q, want admin", body["username"])
+	if body.Username != "admin" {
+		t.Fatalf("body username = %q, want admin", body.Username)
 	}
 
 	var sessionCookie, csrfCookie *http.Cookie
@@ -272,12 +273,24 @@ func TestSessionEndpointAuthenticated(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	var body map[string]string
+	// 响应体现在带 capabilities(嵌套对象),所以按结构体解而不是 map[string]string。
+	var body struct {
+		Username     string         `json:"username"`
+		Role         string         `json:"role"`
+		Capabilities map[string]any `json:"capabilities"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["username"] != "admin" {
-		t.Fatalf("username = %q, want admin", body["username"])
+	if body.Username != "admin" {
+		t.Fatalf("username = %q, want admin", body.Username)
+	}
+	// 管理员的能力位:设置位为 true,四类资源都能 manage。
+	if caps := body.Capabilities["kinds"]; caps == nil {
+		t.Fatalf("session 响应缺 capabilities.kinds")
+	}
+	if settings, _ := body.Capabilities["settings"].(bool); !settings {
+		t.Fatalf("管理员 settings 应为 true")
 	}
 }
 

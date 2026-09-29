@@ -6,7 +6,7 @@
 //	GET    /api/admin/users/{id}             → GetByID
 //	POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色)
 //	POST   /api/admin/users/{id}/password    → 重置口令
-//	PATCH  /api/admin/users/{id}             → 改描述 / 启用禁用
+//	PATCH  /api/admin/users/{id}             → 改描述 / 启用禁用 / 改角色
 //
 // 不在这里的:内置管理员(bootstrap admin)那一行——它的口令与启用状态由
 // admin_user + 「账户设置」管,上述写端点对它一律 409,理由见 isBootstrapAdminRow。
@@ -241,7 +241,7 @@ func makeResetUserPasswordHandler(us *users.Service, aud audit.Recorder, ac auth
 }
 
 // makePatchUserHandler 返回 PATCH /api/admin/users/{id} handler。
-// 支持改描述与启用/禁用;改口令走 /password(审计动作不同)。
+// 支持改描述、启用/禁用与改角色(功能轴);改口令走 /password(审计动作不同)。
 func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if us == nil {
@@ -258,13 +258,14 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 		var req struct {
 			Description *string `json:"description"`
 			Enabled     *bool   `json:"enabled"`
+			Role        *string `json:"role"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
-		if req.Description == nil && req.Enabled == nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "至少提供 description 或 enabled")
+		if req.Description == nil && req.Enabled == nil && req.Role == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "至少提供 description、enabled 或 role")
 			return
 		}
 		// 禁用自己在写库前拦下:把唯一的管理员账号禁用掉之后再没人能改回来。
@@ -272,7 +273,8 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 			writeError(w, http.StatusConflict, "self_disable", "不能禁用自己的账号")
 			return
 		}
-		if _, err := us.GetByID(id); err != nil {
+		target, err := us.GetByID(id)
+		if err != nil {
 			writeUsersError(w, err)
 			return
 		}
@@ -288,6 +290,15 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 				return
 			}
 		}
+		// 改角色只有真正变了才写库与记账;角色名不在枚举内 → 400(领域层 ErrValidation)。
+		roleChanged := false
+		if req.Role != nil && *req.Role != target.Role {
+			if err := us.SetRole(id, *req.Role); err != nil {
+				writeUsersError(w, err)
+				return
+			}
+			roleChanged = true
+		}
 		fresh, err := us.GetByID(id)
 		if err != nil {
 			writeUsersError(w, err)
@@ -300,11 +311,15 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 				action = audit.ActionUserDisabled
 			}
 		}
+		detail := map[string]any{"username": fresh.Username, "role": fresh.Role, "enabled": fresh.Enabled}
+		if roleChanged {
+			detail["role_from"] = target.Role
+		}
 		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     action,
 			TargetType: audit.TargetUser,
 			TargetID:   fresh.ID,
-			Detail:     map[string]any{"username": fresh.Username, "role": fresh.Role, "enabled": fresh.Enabled},
+			Detail:     detail,
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusOK, toUserDTO(fresh))

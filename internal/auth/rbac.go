@@ -15,6 +15,8 @@
 //     普通用户端点不接受未登录。
 package auth
 
+import "github.com/huangchengsir/pipewright/internal/access"
+
 // ActorFromSession 把 Session 转成 vault.Actor 的字段映射(v6.2 §5.7)。
 //
 // 返回值 nil 表示「会话无 user_id」(理论不应发生:Login 必填;但需兼容旧会话行)。
@@ -46,10 +48,11 @@ func IsAdminSession(s *Session) bool {
 	return s != nil && s.IsAdmin()
 }
 
-// IsUserSession 报告会话是否为已登录用户(admin 或 user)。中间件 RequireUser 用。
+// IsUserSession 报告会话是否为已登录用户(admin 或任一普通角色)。RequireUser 中间件用。
+//
+// 角色名单以 internal/access 的功能档位表(access.Roles)为唯一权威:新增角色只改那张表,
+// 这里自动跟随,不会出现「库里有这个角色、但所有 RequireUser 端点都 401」的漏收。
+// 旧会话 role="" 仍然拒绝(0053 之前的行没有角色,普通用户端点要求明确角色,登出重登一次即可)。
 func IsUserSession(s *Session) bool {
-	if s == nil {
-		return false
-	}
-	return s.Role == RoleAdmin || s.Role == RoleUser
+	return s != nil && access.ValidRole(s.Role)
 }

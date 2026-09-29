@@ -114,6 +114,9 @@ func writeAccessError(w http.ResponseWriter, err error) {
 	case errors.Is(err, access.ErrGroupNotFound):
 		// 资源指向已删的分组:按 fail closed 挡下了,但原因要说清楚,便于管理员重新归组。
 		writeError(w, http.StatusForbidden, "group_missing", "该资源指向一个已不存在的分组,请管理员重新归组")
+	case errors.Is(err, access.ErrRoleCeiling):
+		// 功能轴拦下的:与归属无关,提示「找管理员提角色」而不是「去申请加入分组」。
+		writeError(w, http.StatusForbidden, "role_denied", "你的角色不允许这类操作,需要管理员调整角色")
 	case errors.Is(err, access.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden", "无权访问:该资源属于私有分组,你不在名册里")
 	default:
