@@ -296,7 +296,7 @@ func (s *Service) SetDescription(id, description string) error {
 // SetRole 改角色(功能轴)。角色名必须在 access 的角色枚举内,否则 ErrValidation。
 //
 // 生效时机:role 是登录时快照进 sessions.role 的,改库不会让已签发的会话立刻变色,
-// 对方重新登录才拿到新档位(与「禁用账号不撤销会话」同一取舍,见 docs/权限架构说明.md §10.2)。
+// 对方重新登录才拿到新档位(与「禁用账号不撤销会话」同一取舍,见 docs/权限架构说明.md §11.2)。
 // 内置管理员那一行由 HTTP 层的 isBootstrapAdminRow 挡在门外,不在这里重复判。
 func (s *Service) SetRole(id, role string) error {
 	role = strings.TrimSpace(role)
