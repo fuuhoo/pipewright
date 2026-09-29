@@ -120,6 +120,13 @@ const (
 	ActionKubeClusterDelete   = "kube_cluster_delete"
 	ActionKubeClusterReassign = "kube_cluster_reassign"
 	ActionKubeClusterTest     = "kube_cluster_test"
+
+	// P4 可配置角色:角色定义决定「谁能看见哪个入口」,改一个点就等于改一批人的权限,
+	// 所以四个动作各自留痕(复制单独一个:它是「凭空多出一个角色」,和新建的追查路径不同)。
+	ActionRoleCreate = "role_create"
+	ActionRoleUpdate = "role_update"
+	ActionRoleDelete = "role_delete"
+	ActionRoleCopy   = "role_copy"
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
@@ -141,6 +148,7 @@ const (
 	TargetUserInvitation = "user_invitation"
 	TargetResourceGroup  = "resource_group"
 	TargetKubeCluster    = "kube_cluster"
+	TargetRole           = "role"
 )
 
 // Entry 是一条审计写入入参(冻结契约)。Detail 写库前过 Masker,绝不含明文 secret。

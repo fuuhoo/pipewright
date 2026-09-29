@@ -40,6 +40,7 @@ import (
 	"github.com/huangchengsir/pipewright/internal/promotion"
 	"github.com/huangchengsir/pipewright/internal/proxy"
 	"github.com/huangchengsir/pipewright/internal/retention"
+	"github.com/huangchengsir/pipewright/internal/role"
 	"github.com/huangchengsir/pipewright/internal/run"
 	"github.com/huangchengsir/pipewright/internal/runner"
 	"github.com/huangchengsir/pipewright/internal/target"
@@ -115,6 +116,8 @@ type options struct {
 	buildEnvCheck *buildenv.Checker
 	cpSvc         *configprofile.Service
 	usersSvc      *users.Service
+	// P4 可配置角色:自定义角色的领域服务。nil → /api/admin/roles* 端点 503。
+	roleSvc *role.Service
 	// v6.2 分组权限:分组领域服务 + 判定服务。access 为 nil 时中间件直通(见 access_guard.go)。
 	groupSvc *group.Service
 	access   *access.Service
@@ -123,6 +126,12 @@ type options struct {
 // WithGroups 注入资源分组领域服务(挂载 /api/groups CRUD 与名册端点)。nil → 端点 503。
 func WithGroups(gs *group.Service) Option {
 	return func(o *options) { o.groupSvc = gs }
+}
+
+// WithRoles 注入角色领域服务(P4 可配置角色),挂载 /api/admin/roles* 路由。nil → 端点 503。
+// 判定侧不依赖它:access 读的是 role.Service 实现的 access.RoleStore(见 access.SetRoleStore)。
+func WithRoles(svc *role.Service) Option {
+	return func(o *options) { o.roleSvc = svc }
 }
 
 // WithAccess 注入分组权限判定服务:它同时是 /api/projects/{id}*、/api/runs/{id}*
@@ -566,6 +575,17 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			adminR.Post("/users", makeCreateUserHandler(o.usersSvc, aud, authn))
 			adminR.Post("/users/{id}/password", makeResetUserPasswordHandler(o.usersSvc, aud, authn))
 			adminR.Patch("/users/{id}", makePatchUserHandler(o.usersSvc, aud, authn))
+
+			// 角色(P4 可配置角色):内置五档当模板只读,自定义角色可增删改。
+			// points 是静态段,chi 优先于 /{id};它是代码字典不是库数据,所以放在读角色前面一起注册。
+			rSvc := o.roleSvc
+			adminR.Get("/roles", makeListRolesHandler(rSvc))
+			adminR.Get("/roles/points", makeRolePointsHandler())
+			adminR.Post("/roles", makeCreateRoleHandler(rSvc, aud, authn))
+			adminR.Get("/roles/{id}", makeGetRoleHandler(rSvc))
+			adminR.Patch("/roles/{id}", makePatchRoleHandler(rSvc, aud, authn))
+			adminR.Delete("/roles/{id}", makeDeleteRoleHandler(rSvc, aud, authn))
+			adminR.Post("/roles/{id}/copy", makeCopyRoleHandler(rSvc, aud, authn))
 
 			// admin 切换 personal 凭据可用性(v6.2 §3.4 矩阵);禁用只改元数据,可逆
 			adminR.Post("/credentials/{id}/disable", makeSetCredentialEnabledHandler(v, aud, authn, true))
