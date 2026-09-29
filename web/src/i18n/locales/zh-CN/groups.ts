@@ -59,6 +59,8 @@ title: '资源分组',
   // ─── 项目 / 服务器上的分组控件 ───
   groupMissing: '分组已失效',
   ungrouped: '未归组',
+  filterAll: '全部分组',
+  filterAria: '分组筛选',
   fieldGroup: '分组',
   fieldGroupHint: '决定谁能看到并操作它;未归组 = 全员可操作。',
   reassignTitle: '改组',

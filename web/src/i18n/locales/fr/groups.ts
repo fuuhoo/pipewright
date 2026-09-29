@@ -53,6 +53,8 @@ title: 'Groupes de ressources',
 
   groupMissing: 'Le groupe n’existe plus',
   ungrouped: 'Sans groupe',
+  filterAll: 'Tous les groupes',
+  filterAria: 'Filtrer par groupe',
   fieldGroup: 'Groupe',
   fieldGroupHint: 'Détermine qui voit et utilise la ressource ; sans groupe = ouvert à tous.',
   reassignTitle: 'Changer de groupe',

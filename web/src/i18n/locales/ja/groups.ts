@@ -53,6 +53,8 @@ title: 'リソースグループ',
 
   groupMissing: 'グループは存在しません',
   ungrouped: '未所属',
+  filterAll: 'すべてのグループ',
+  filterAria: 'グループで絞り込み',
   fieldGroup: 'グループ',
   fieldGroupHint: '誰が閲覧・操作できるかを決定します。未所属は全員が操作可能です。',
   reassignTitle: 'グループを変更',

@@ -28,4 +28,6 @@ export default {
   errLoadRetry: '加载服务器状态失败,请稍后重试',
   emptyTitle: '尚无已登记服务器',
   emptyDesc: '先在「设置 › 服务器」登记目标服务器,这里就会显示它们的资源指标。',
+  groupEmptyTitle: '这个分组下没有服务器',
+  groupEmpty: '机器是有的,只是不属于这一档。切回「全部分组」即可看到全部。',
 }

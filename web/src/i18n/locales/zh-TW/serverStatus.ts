@@ -28,4 +28,6 @@ export default {
   errLoadRetry: '載入伺服器狀態失敗,請稍後重試',
   emptyTitle: '尚無已登記伺服器',
   emptyDesc: '先在「設定 › 伺服器」登記目標伺服器,這裡就會顯示它們的資源指標。',
+  groupEmptyTitle: '這個分組下沒有伺服器',
+  groupEmpty: '機器是有的,只是不屬於這一檔。切回「全部分組」即可看到全部。',
 }

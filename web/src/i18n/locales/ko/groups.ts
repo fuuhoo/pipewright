@@ -53,6 +53,8 @@ title: '리소스 그룹',
 
   groupMissing: '그룹이 더 이상 존재하지 않습니다',
   ungrouped: '미소속',
+  filterAll: '모든 그룹',
+  filterAria: '그룹으로 필터',
   fieldGroup: '그룹',
   fieldGroupHint: '누가 보고 작업할 수 있는지를 정합니다. 미소속은 모든 사용자가 작업 가능합니다.',
   reassignTitle: '그룹 변경',

@@ -54,6 +54,8 @@ title: 'Resource groups',
 
   groupMissing: 'Group no longer exists',
   ungrouped: 'Ungrouped',
+  filterAll: 'All groups',
+  filterAria: 'Filter by group',
   fieldGroup: 'Group',
   fieldGroupHint: 'Decides who can see and operate it; ungrouped means everyone can operate it.',
   reassignTitle: 'Change group',

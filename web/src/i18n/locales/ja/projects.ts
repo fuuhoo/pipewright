@@ -11,8 +11,6 @@ export default {
   searchAria: 'プロジェクトを検索',
   statusFilterAria: 'ステータスで絞り込み',
   statusAll: 'すべてのステータス',
-  groupAll: 'すべてのグループ',
-  groupFilterAria: 'グループで絞り込み',
   viewModeAria: 'プロジェクト一覧の表示',
   viewCards: 'カード',
   viewGroups: 'グループ別',

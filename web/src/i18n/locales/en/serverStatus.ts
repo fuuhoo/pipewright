@@ -28,4 +28,6 @@ export default {
   errLoadRetry: 'Failed to load server status. Please try again later.',
   emptyTitle: 'No registered servers yet',
   emptyDesc: 'Register target servers under "Settings › Servers" and their resource metrics will appear here.',
+  groupEmptyTitle: 'No servers in this group',
+  groupEmpty: 'Servers do exist — they just are not in this group. Switch back to “All groups” to see them all.',
 }

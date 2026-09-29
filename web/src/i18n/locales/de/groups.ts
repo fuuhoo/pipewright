@@ -53,6 +53,8 @@ title: 'Ressourcengruppen',
 
   groupMissing: 'Gruppe existiert nicht mehr',
   ungrouped: 'Ohne Gruppe',
+  filterAll: 'Alle Gruppen',
+  filterAria: 'Nach Gruppe filtern',
   fieldGroup: 'Gruppe',
   fieldGroupHint: 'Bestimmt, wer die Ressource sieht und bedient; ohne Gruppe = für alle bedienbar.',
   reassignTitle: 'Gruppe ändern',

@@ -11,8 +11,6 @@ export default {
   searchAria: '프로젝트 검색',
   statusFilterAria: '상태로 필터',
   statusAll: '모든 상태',
-  groupAll: '모든 그룹',
-  groupFilterAria: '그룹으로 필터',
   viewModeAria: '프로젝트 목록 보기',
   viewCards: '카드',
   viewGroups: '그룹별',

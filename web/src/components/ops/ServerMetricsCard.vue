@@ -35,6 +35,8 @@ const { t } = useI18n()
 const props = defineProps<{
   /** 展示用服务器名(列表 join 而来)。 */
   name: string
+  /** 所属分组名;空串 = 该页当前拿不到组名单,不贴标签(胜过贴一个错的)。 */
+  groupLabel?: string
   /** 该台指标(reachable:false 时各指标为 null)。 */
   metrics: ServerMetrics
 }>()
@@ -71,7 +73,11 @@ const loadText = computed(() => loadTextOf(props.metrics.cpu))
     :aria-label="t('opsServer.metrics.cardAria', { name })"
   >
     <header class="metrics-card__head">
-      <h3 class="metrics-card__name" :title="name">{{ name }}</h3>
+      <div class="metrics-card__ident">
+        <h3 class="metrics-card__name" :title="name">{{ name }}</h3>
+        <!-- 分组归属(数据轴):一眼看出这台是哪档里的机器 -->
+        <span v-if="groupLabel" class="metrics-card__group" :title="groupLabel">{{ groupLabel }}</span>
+      </div>
       <span
         class="reach-badge"
         :class="metrics.reachable ? 'reach-badge--ok' : 'reach-badge--down'"
@@ -216,8 +222,31 @@ const loadText = computed(() => loadTextOf(props.metrics.cpu))
   justify-content: space-between;
   gap: 10px;
 }
+/* 名称 + 分组标签一组,右侧徽标靠 space-between 顶到底;窄卡上让名称先收缩。 */
+.metrics-card__ident {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.metrics-card__group {
+  /* 不跟着收缩:组名本就三五个字,被压成「未…」比名称先省略号更难看。长的按 12em 截。 */
+  flex-shrink: 0;
+  max-width: 12em;
+  padding: 1px 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-inset);
+  color: var(--color-dim);
+  font-size: var(--text-label);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .metrics-card__name {
   margin: 0;
+  min-width: 0;
   font-size: var(--text-body);
   font-weight: 650;
   color: var(--color-text);

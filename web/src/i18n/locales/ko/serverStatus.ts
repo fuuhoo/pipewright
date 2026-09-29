@@ -28,4 +28,6 @@ export default {
   errLoadRetry: '서버 상태를 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
   emptyTitle: '등록된 서버가 아직 없습니다',
   emptyDesc: '「설정 › 서버」에서 대상 서버를 등록하면 여기에 리소스 지표가 표시됩니다.',
+  groupEmptyTitle: '이 그룹에 서버가 없습니다',
+  groupEmpty: '서버는 있지만 이 그룹에 속하지 않았습니다.「모든 그룹」으로 되돌리면 전체가 보입니다.',
 }

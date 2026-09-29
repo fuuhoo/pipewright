@@ -53,6 +53,8 @@ title: '資源分組',
 
   groupMissing: '分組已失效',
   ungrouped: '未歸組',
+  filterAll: '全部分組',
+  filterAria: '分組篩選',
   fieldGroup: '分組',
   fieldGroupHint: '決定誰能看到並操作它;未歸組 = 全员可操作。',
   reassignTitle: '改組',

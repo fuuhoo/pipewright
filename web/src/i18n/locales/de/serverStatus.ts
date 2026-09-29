@@ -28,4 +28,6 @@ export default {
   errLoadRetry: 'Laden des Serverstatus fehlgeschlagen. Bitte versuche es später erneut.',
   emptyTitle: 'Noch keine registrierten Server',
   emptyDesc: 'Registriere Zielserver unter „Einstellungen › Server“, dann werden hier ihre Ressourcenmetriken angezeigt.',
+  groupEmptyTitle: 'Keine Server in dieser Gruppe',
+  groupEmpty: 'Die Server existieren, sie gehören nur nicht zu dieser Gruppe. Wechsle zurück auf „Alle Gruppen“, um alle zu sehen.',
 }

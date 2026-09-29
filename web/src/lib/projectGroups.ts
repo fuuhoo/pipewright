@@ -6,13 +6,7 @@
  */
 import type { Project } from '../api/projects'
 import type { Group } from '../api/groups'
-
-/**
- * 分组筛选下拉的哨兵值。
- * 用哨兵而不是空串:空串是合法 groupId(它就是「未归组」那一档)。
- */
-export const GROUP_ALL = 'all'
-export const GROUP_NONE = '__ungrouped__'
+import { GROUP_ALL, GROUP_NONE } from './groupFilter'
 
 /** 未归组那一段的 key:它同时也是合法的空 groupId。 */
 const GROUP_NONE_KEY = ''

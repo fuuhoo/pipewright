@@ -27,12 +27,9 @@ import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
 import { isSupportedRepoUrl } from '../lib/gitUrl'
 import { runStatusLabel } from '../lib/runStatus'
-import {
-  GROUP_ALL,
-  GROUP_NONE,
-  groupProjects,
-  type ProjectGroupSection,
-} from '../lib/projectGroups'
+// lib 的 groupOptions(筛选下拉候选)与本页那个同名局部量(归组弹窗的可管组候选)不是一回事,别名隔开
+import { GROUP_ALL, GROUP_NONE, groupLabel, groupOptions as buildGroupOptions } from '../lib/groupFilter'
+import { groupProjects, type ProjectGroupSection } from '../lib/projectGroups'
 
 // ─── i18n ─────────────────────────────────────────────────────────────────────
 
@@ -115,18 +112,20 @@ const groupById = computed<Record<string, Group>>(() => {
 })
 const manageableGroups = computed(() => groups.value.filter((g) => g.canManage))
 
+/** 分组文案(下拉候选与组名回显共用一份),交给纯逻辑 lib 拼。 */
+const groupLabels = computed(() => ({
+  all: t('groups.filterAll'),
+  ungrouped: t('groups.ungrouped'),
+  missing: t('groups.groupMissing'),
+  public: t('groups.visibilityPublic'),
+  private: t('groups.visibilityPrivate'),
+}))
+
 /** 分组筛选下拉的候选:全部 / 未归组 / 每个可见分组(带可见性后缀,和归组弹窗同一说法)。 */
-const GROUP_OPTIONS = computed<Array<{ value: string; label: string }>>(() => [
-  { value: GROUP_ALL, label: t('projects.groupAll') },
-  { value: GROUP_NONE, label: t('groups.ungrouped') },
-  ...groups.value.map((g) => ({
-    value: g.id,
-    label: `${g.name} · ${g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate')}`,
-  })),
-])
+const GROUP_OPTIONS = computed(() => buildGroupOptions(groups.value, groupLabels.value))
 
 function groupName(id: string): string {
-  return id ? (groupById.value[id]?.name ?? t('groups.groupMissing')) : t('groups.ungrouped')
+  return groupLabel(id, groups.value, groupLabels.value)
 }
 
 /** 能否改这个项目的归属:未归组只有管理员能挪,组内则看对该组的 canManage。 */
@@ -992,7 +991,7 @@ async function handleTriggerSubmit(): Promise<void> {
         <select
           v-model="groupFilter"
           class="field-select"
-          :aria-label="t('projects.groupFilterAria')"
+          :aria-label="t('groups.filterAria')"
         >
           <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">
             {{ opt.label }}

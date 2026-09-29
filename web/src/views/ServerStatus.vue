@@ -15,6 +15,8 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { streamAllServerMetrics, listServers, type ServerMetrics, type Server } from '../api/servers'
+import { listGroups, type Group } from '../api/groups'
+import { GROUP_ALL, groupLabel, groupOptions, matchesGroup } from '../lib/groupFilter'
 import { HttpError } from '../api/http'
 import ServerMetricsCard from '../components/ops/ServerMetricsCard.vue'
 import ServerMetricsTable from '../components/ops/ServerMetricsTable.vue'
@@ -42,9 +44,52 @@ const serverById = ref<Map<string, Server>>(new Map())
 /** 有一轮取数在飞:轮询与手动刷新都跳过,避免叠请求。 */
 const inFlight = ref(false)
 
-const reachableCount = computed(() => metrics.value.filter((m) => m.reachable).length)
-/** 分母 = 已登记的台数:卡片逐台上屏的中间态不该把「共几台」忽大忽小。 */
-const totalCount = computed(() => Math.max(serverById.value.size, metrics.value.length))
+// ─── 分组筛选(数据轴)─────────────────────────────────────────────────────────
+// 服务器自己带 groupId(登记时定的),组名来自 GET /api/groups(后端已按可见范围收敛)。
+// 筛选只切展示口径,不改权限:能列出来的本来就是有权看的。
+const groups = ref<Group[]>([])
+const groupFilter = ref<string>(GROUP_ALL)
+/** 组名单是否取到过:没取到时整屏都不贴组标签 —— 给每机器冠一句「分组已失效」是谎报。 */
+const groupsLoaded = ref(false)
+
+const groupLabels = computed(() => ({
+  all: t('groups.filterAll'),
+  ungrouped: t('groups.ungrouped'),
+  missing: t('groups.groupMissing'),
+  public: t('groups.visibilityPublic'),
+  private: t('groups.visibilityPrivate'),
+}))
+const GROUP_OPTIONS = computed(() => groupOptions(groups.value, groupLabels.value))
+
+function groupIdOf(serverId: string): string {
+  return serverById.value.get(serverId)?.groupId ?? ''
+}
+function groupNameOf(serverId: string): string {
+  return groupLabel(groupIdOf(serverId), groups.value, groupLabels.value)
+}
+/**
+ * 卡/行上那枚组标签。名单没到位时返回空串(组件据此不渲染),因为此时"未归组"和
+ * "分组已失效"都无从判断 —— 印一个错的归属比留白更糟。
+ */
+function groupTagOf(serverId: string): string {
+  return groupsLoaded.value ? groupNameOf(serverId) : ''
+}
+
+/** 屏上这一档的机器(卡片与列表都吃它,所以两种视图口径一致)。 */
+const shownMetrics = computed(() =>
+  metrics.value.filter((m) => matchesGroup(groupIdOf(m.serverId), groupFilter.value)),
+)
+/** 筛完一台不剩:与「压根没登记服务器」是两回事,空态要说清是被筛掉了。 */
+const filteredToEmpty = computed(() => metrics.value.length > 0 && shownMetrics.value.length === 0)
+
+const reachableCount = computed(() => shownMetrics.value.filter((m) => m.reachable).length)
+/** 分母 = 这一档里已登记的台数:卡片逐台上屏的中间态不该把「共几台」忽大忽小。 */
+const totalCount = computed(() => {
+  if (groupFilter.value === GROUP_ALL) return Math.max(serverById.value.size, metrics.value.length)
+  let n = 0
+  for (const s of serverById.value.values()) if (matchesGroup(s.groupId, groupFilter.value)) n++
+  return Math.max(n, shownMetrics.value.length)
+})
 
 // 「远程」弹窗的目标机:null = 关闭。每次点卡上都重新取一份登记信息(改过 host 也生效)。
 const remoteId = ref<string | null>(null)
@@ -64,22 +109,28 @@ function closeRemote(): void {
 }
 
 // 可达的排前面,不可达的沉底(两组内部都保持上屏顺序 = 登记时间倒序)。
+// 只排当前筛选档的那些台:排序与筛选都收在这一份上,卡片和列表看到的是同一个序列。
 const sortedMetrics = computed(() => {
   const up: ServerMetrics[] = []
   const down: ServerMetrics[] = []
-  for (const m of metrics.value) (m.reachable ? up : down).push(m)
-  return up.length && down.length ? [...up, ...down] : metrics.value
+  for (const m of shownMetrics.value) (m.reachable ? up : down).push(m)
+  return up.length && down.length ? [...up, ...down] : shownMetrics.value
 })
 
 function displayName(m: ServerMetrics): string {
   return serverById.value.get(m.serverId)?.name ?? m.serverId
 }
 
-/** 列表行:同一份 sortedMetrics,只是把登记信息 join 成地址一列(排序口径两边共用)。 */
+/** 列表行:同一份 sortedMetrics,只是把登记信息 join 成地址 + 所属分组(排序口径两边共用)。 */
 const tableRows = computed(() =>
   sortedMetrics.value.map((m) => {
     const s = serverById.value.get(m.serverId)
-    return { metrics: m, name: displayName(m), addr: s ? `${s.user}@${s.host}:${s.port}` : '' }
+    return {
+      metrics: m,
+      name: displayName(m),
+      addr: s ? `${s.user}@${s.host}:${s.port}` : '',
+      group: groupTagOf(m.serverId),
+    }
   }),
 )
 
@@ -154,6 +205,7 @@ async function load(): Promise<void> {
       return m
     })
     .catch(() => null)
+  void loadGroups()
   try {
     await streamAllServerMetrics(upsertMetrics)
     const names = await namesPromise
@@ -184,6 +236,20 @@ async function loadServerNames(): Promise<Map<string, Server>> {
   const m = new Map<string, Server>()
   for (const s of servers) m.set(s.id, s)
   return m
+}
+
+/**
+ * 组名单只在没取到过时取:它是静态目录,不像指标需要实时,每轮都拉白搭一次请求。
+ * 失败就安静等着 —— 下一轮(或下次进页)自然重试。宁可用旧组名,也不给整屏机器贴「分组已失效」。
+ */
+async function loadGroups(): Promise<void> {
+  if (groupsLoaded.value) return
+  try {
+    groups.value = await listGroups()
+    groupsLoaded.value = true
+  } catch {
+    // 拿不到名单就把筛选档藏起来,不拿空数组冒充「只有未归组」。
+  }
 }
 // ─── 自动刷新 ────────────────────────────────────────────────────────────────
 // 指标实时、不落库,这里定时轮询:旧数据留屏、后台静默重取,成功就地替换,失败也不动画面。
@@ -242,6 +308,15 @@ onUnmounted(() => {
         <p v-if="staleError" class="view-sub__stale">{{ t('serverStatus.staleError', { msg: staleError }) }}</p>
       </div>
       <div class="view-actions">
+        <!-- 分组筛选:机器一多就分不清哪台归哪档;名单没取到时整控件不出现(见 loadGroups)。 -->
+        <div v-if="groupsLoaded && metrics.length > 0" class="group-filter">
+          <select v-model="groupFilter" class="group-filter__select" :aria-label="t('groups.filterAria')">
+            <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <svg class="group-filter__arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </div>
         <!-- 视图切换:卡片铺开 / 一行一台。机器多了要横向比较「谁的内存最紧」,列表才扫得动。 -->
         <div v-if="metrics.length > 0" class="view-toggle" role="group" :aria-label="t('serverStatus.viewModeAria')">
           <button
@@ -315,6 +390,13 @@ onUnmounted(() => {
       :description="t('serverStatus.emptyDesc')"
     />
 
+    <!-- 筛到一台不剩:机器是有的,只是不在这一档 —— 说「没有服务器」会让人白跑去登记 -->
+    <EmptyState
+      v-else-if="filteredToEmpty"
+      :title="t('serverStatus.groupEmptyTitle')"
+      :description="t('serverStatus.groupEmpty')"
+    />
+
     <!-- Metrics(可达在前、不可达沉底):两种视图吃同一份排序结果 -->
     <ServerMetricsTable v-else-if="viewMode === 'list'" :rows="tableRows" @remote="openRemote" />
     <div v-else class="metrics-grid">
@@ -322,6 +404,7 @@ onUnmounted(() => {
         v-for="m in sortedMetrics"
         :key="m.serverId"
         :name="displayName(m)"
+        :group-label="groupTagOf(m.serverId)"
         :metrics="m"
         @remote="openRemote"
       />
@@ -380,8 +463,42 @@ onUnmounted(() => {
 .view-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  /* 窄屏(或分组名单长)时三个控件放不下:让它们换行,而不是把「刷新」挤出可视区 */
+  flex-wrap: wrap;
   gap: 10px;
   flex-shrink: 0;
+}
+
+/* 分组下拉:与视图切换同高(26 + 3*2 padding ≈ 32),免得两个控件一高一低。 */
+.group-filter {
+  position: relative;
+  width: 170px;
+}
+.group-filter__select {
+  width: 100%;
+  height: 34px;
+  padding: 0 30px 0 10px;
+  background: var(--color-inset);
+  border: 1px solid var(--color-line);
+  border-radius: var(--rounded-md);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-label);
+  appearance: none;
+  cursor: pointer;
+}
+.group-filter__select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.group-filter__arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-faint);
+  pointer-events: none;
 }
 
 /* 视图切换:与项目页同一「凹底 + 抬起当前档」的形状(token 名这页用 --color-line/--color-surface)。 */

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { Group } from '../api/groups'
 import type { Project } from '../api/projects'
-import { GROUP_ALL, GROUP_NONE, groupProjects } from './projectGroups'
+import { GROUP_ALL, GROUP_NONE } from './groupFilter'
+import { groupProjects } from './projectGroups'
 
 function project(id: string, groupId = '', over: Partial<Project> = {}): Project {
   return {

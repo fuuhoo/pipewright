@@ -28,4 +28,6 @@ export default {
   errLoadRetry: 'Error al cargar el estado de los servidores. Inténtalo de nuevo más tarde.',
   emptyTitle: 'Aún no hay servidores registrados',
   emptyDesc: 'Registra servidores de destino en «Ajustes › Servidores» y sus métricas de recursos aparecerán aquí.',
+  groupEmptyTitle: 'No hay servidores en este grupo',
+  groupEmpty: 'Los servidores existen, solo que no pertenecen a este grupo. Vuelve a «Todos los grupos» para verlos todos.',
 }

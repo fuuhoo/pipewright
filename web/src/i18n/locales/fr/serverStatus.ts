@@ -28,4 +28,6 @@ export default {
   errLoadRetry: "Échec du chargement de l'état des serveurs. Veuillez réessayer plus tard.",
   emptyTitle: 'Aucun serveur enregistré pour le moment',
   emptyDesc: 'Enregistrez des serveurs cibles dans « Paramètres › Serveurs » et leurs métriques de ressources apparaîtront ici.',
+  groupEmptyTitle: 'Aucun serveur dans ce groupe',
+  groupEmpty: 'Les serveurs existent, ils n’appartiennent simplement pas à ce groupe. Revenez à « Tous les groupes » pour tous les voir.',
 }

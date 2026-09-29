@@ -11,8 +11,6 @@ export default {
   searchAria: 'Projekte suchen',
   statusFilterAria: 'Nach Status filtern',
   statusAll: 'Alle Status',
-  groupAll: 'Alle Gruppen',
-  groupFilterAria: 'Nach Gruppe filtern',
   viewModeAria: 'Ansicht der Projektliste',
   viewCards: 'Karten',
   viewGroups: 'Nach Gruppe',

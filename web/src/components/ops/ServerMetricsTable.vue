@@ -29,9 +29,9 @@ import {
 
 const { t } = useI18n()
 
-/** 一行 = 一台机的指标 + 列表要显示的登记信息(名称/地址由页面 join 好传进来)。 */
+/** 一行 = 一台机的指标 + 列表要显示的登记信息(名称/地址/所属分组由页面 join 好传进来)。 */
 const props = defineProps<{
-  rows: Array<{ metrics: ServerMetrics; name: string; addr: string }>
+  rows: Array<{ metrics: ServerMetrics; name: string; addr: string; group: string }>
 }>()
 
 const emit = defineEmits<{ (e: 'remote', serverId: string): void }>()
@@ -40,6 +40,7 @@ interface RowView {
   metrics: ServerMetrics
   name: string
   addr: string
+  group: string
   sysPrimary: string
   sysParts: string[]
   loadText: string
@@ -70,6 +71,7 @@ const views = computed<RowView[]>(() =>
       metrics: m,
       name: row.name,
       addr: row.addr,
+      group: row.group,
       sysPrimary: sysPrimaryOf(m.system),
       sysParts: sysPartsOf(m.system),
       loadText: loadTextOf(m.cpu),
@@ -122,6 +124,8 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
         >
           <td class="col-server">
             <span class="st-name" :title="r.name">{{ r.name }}</span>
+            <!-- 分组跟着名字走,不另开一列:列表已经有八列,再加一列每列都更挤 -->
+            <span v-if="r.group" class="st-group" :title="r.group">{{ r.group }}</span>
             <span v-if="!r.metrics.reachable" class="st-name__err" role="alert">
               {{ r.metrics.error || t('opsServer.metrics.collectFailed') }}
             </span>
@@ -304,6 +308,17 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
   margin-top: 2px;
   color: var(--color-red);
   line-height: 1.4;
+}
+/* 所属分组:名称下面一行小字,和地址列一样是「这台是谁」的补充,不是指标 */
+.st-group {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-dim);
+  font-weight: 400;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .st-addr {
   color: var(--color-dim);
