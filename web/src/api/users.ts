@@ -9,13 +9,15 @@
  *
  * 响应体绝不含 password_hash;口令只在请求里出现一次。
  *
- * 角色名单与 internal/access/roles.go 同集合(前端由 lib/roles.test.ts 比对两侧防漂移)。
+ * 角色列现在存的是**角色引用**:内置五档的 id(与 UserRole 同集合)+ 自定义角色的 UUID。
+ * 校验在 access.ValidRole(代码表 → 进程内角色表),所以这里放开成 RoleId,不再由前端枚举挡路。
  * 改角色不会踢掉对方已有的会话 —— sessions.role 是登录时的快照,下次登录才生效。
  * 内置管理员那一行(id 尾号 …0001)的口令/启停由「账户设置」管,上述写端点对它 409。
  */
 
 import { http } from './http'
 import type { UserRole } from './auth'
+import type { RoleId } from './roles'
 
 export type { UserRole }
 
@@ -29,7 +31,7 @@ export const BOOTSTRAP_ADMIN_ID = '00000000-0000-0000-0000-000000000001'
 export interface User {
   id: string
   username: string
-  role: UserRole
+  role: RoleId
   enabled: boolean
   description: string
   createdAt: string
@@ -43,7 +45,7 @@ interface ListEnvelope {
 }
 
 export interface ListUsersParams {
-  role?: UserRole
+  role?: RoleId
   /** 列出已禁用账号(默认 false)。 */
   includeDisabled?: boolean
 }
@@ -51,15 +53,15 @@ export interface ListUsersParams {
 export interface CreateUserInput {
   username: string
   password: string
-  role: UserRole
+  role: RoleId
   description?: string
 }
 
 export interface UpdateUserInput {
   description?: string
   enabled?: boolean
-  /** 改角色。未知名后端回 400(不会静默降级成 user,那是建号路径的取舍)。 */
-  role?: UserRole
+  /** 改角色(内置档 id 或自定义角色 UUID)。未知名后端回 400(不会静默降级成 user,那是建号路径的取舍)。 */
+  role?: RoleId
 }
 
 export async function listUsers(params: ListUsersParams = {}): Promise<User[]> {
