@@ -27,6 +27,7 @@ import { NIcon } from 'naive-ui'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { logout } from '../api/auth'
 import { useSessionStore } from '../stores/session'
+import type { AccessRequires } from '../lib/roles'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 
@@ -70,8 +71,8 @@ interface NavItem {
   labelKey: string
   /** i18n key under `nav.*` for the accessible name. */
   ariaKey: string
-  /** v6.2 §3.6:仅管理员可见。 */
-  adminOnly?: boolean
+  /** 功能门:与路由 meta.requires 同一套判据,入口和落地页不能一个亮着一个拦着。 */
+  requires?: AccessRequires
 }
 
 const navItems: NavItem[] = [
@@ -95,17 +96,16 @@ const navItems: NavItem[] = [
   // Story 6-5: configurable anomaly detection & alerts (FR-23)
   { name: 'anomaly',       to: '/anomaly',       icon: AlertTriangle, labelKey: 'nav.anomaly',    ariaKey: 'nav.anomaly' },
   { name: 'notifications', to: '/settings/notifications', icon: Bell, labelKey: 'nav.notifications', ariaKey: 'nav.notifications' },
-  // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(仅管理员;一级页面)。
-  { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', adminOnly: true },
-  { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', adminOnly: true },
-  // v6.2 分组权限:分组与权限页(组长也要进得来,故非 adminOnly)。
+  // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(设置类入口;一级页面)。
+  { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', requires: { settings: true } },
+  { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', requires: { settings: true } },
+  // v6.2 分组权限:分组与权限页(组长也要进得来,故非设置类入口)。
   { name: 'groups', to: '/groups', icon: Users, labelKey: 'nav.groups', ariaKey: 'nav.groups' },
 ]
 
-// v6.2 §3.6:非管理员隐藏 adminOnly 入口(后端 RequireAdmin 仍是权威校验)。
-const visibleNavItems = computed(() =>
-  navItems.filter((item) => !item.adminOnly || sessionStore.user?.role === 'admin'),
-)
+// 角色档位不够的入口直接不出现(后端 RequireAdmin / 分组判定仍是权威校验)。
+// 与路由守卫共用 sessionStore.meets,所以不存在「看得见点不进」或反过来的错位。
+const visibleNavItems = computed(() => navItems.filter((item) => sessionStore.meets(item.requires)))
 
 const settingsItem: NavItem = {
   name: 'settings',

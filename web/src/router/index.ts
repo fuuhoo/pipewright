@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSessionStore } from '../stores/session'
+import type { AccessRequires } from '../lib/roles'
 
 // Lazy-loaded views
 const Login       = () => import('../views/Login.vue')
@@ -44,17 +45,17 @@ const SettingsDiagnosisStats = () => import('../views/settings/SettingsDiagnosis
 // 系统信息 + 一键检查更新
 const SettingsSystem = () => import('../views/settings/SettingsSystem.vue')
 // ─── v6.2 新增页面 ───
-// 构建环境管理(admin-only;§3.1/§3.2)
+// 构建环境管理(设置类入口;§3.1/§3.2)
 const AdminBuildEnvs = () => import('../views/admin/BuildEnvs.vue')
-// 配置资源管理(admin-only;§3.3)
+// 配置资源管理(设置类入口;§3.3)
 const AdminConfigProfiles = () => import('../views/admin/ConfigProfiles.vue')
-// 全局凭据管理 + personal 禁用(admin-only;§3.4)
+// 全局凭据管理 + personal 禁用(设置类入口;§3.4)
 const AdminCredentials = () => import('../views/admin/Credentials.vue')
-// 用户管理(admin-only;§3.5)
+// 用户管理(设置类入口;§3.5)
 const AdminUsers = () => import('../views/admin/Users.vue')
-// 分组与权限(v6.2 分组权限):组长也要能管自己组的成员,故不设为 adminOnly。
+// 分组与权限(v6.2 分组权限):组长也要能管自己组的成员,故不加功能门。
 const Groups = () => import('../views/Groups.vue')
-// 审计日志(admin-only,只读)
+// 审计日志(设置类入口,只读)
 const AdminAudit = () => import('../views/admin/Audit.vue')
 // 我的凭据(所有登录用户;§3.4)
 const MyCredentials = () => import('../views/personal/Credentials.vue')
@@ -107,7 +108,7 @@ const router = createRouter({
       path: '/servers/:id/terminal',
       name: 'server-terminal',
       component: ServerTerminal,
-      meta: { requiresAuth: true, title: '运维终端' },
+      meta: { requiresAuth: true, title: '运维终端', requires: { kind: 'server', act: 'operate' } },
     },
     // ——— Shell-inside: authenticated routes ———
     {
@@ -148,9 +149,9 @@ const router = createRouter({
         { path: 'previews', name: 'previews', component: Previews, meta: { title: '预览环境' } },
         // Story 6-5: configurable anomaly detection & alerts (FR-23)
         { path: 'anomaly', name: 'anomaly', component: AnomalyDetection, meta: { title: '异常检测' } },
-        // ─── v6.2 §3.1/§3.3:构建环境 / 配置资源(一级入口,仅管理员;侧栏 adminOnly 过滤)───
-        { path: 'build-envs', name: 'build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', adminOnly: true } },
-        { path: 'config-profiles', name: 'config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', adminOnly: true } },
+        // ─── v6.2 §3.1/§3.3:构建环境 / 配置资源(一级入口,设置类能力位;侧栏同口径过滤)───
+        { path: 'build-envs', name: 'build-envs', component: AdminBuildEnvs, meta: { title: '构建环境', requires: { settings: true } } },
+        { path: 'config-profiles', name: 'config-profiles', component: AdminConfigProfiles, meta: { title: '配置资源', requires: { settings: true } } },
         // v6.2 分组权限:分组名册页。所有登录用户可进(看到自己有权限的组),
         // 建组/删组与「未归组资源」的登记仍由后端按 admin 收口,UI 据 canManage 开关按钮。
         { path: 'groups', name: 'groups', component: Groups, meta: { title: '分组与权限' } },
@@ -182,9 +183,9 @@ const router = createRouter({
             // 构建环境 / 配置资源已提升为一级页面(左栏直达);旧路径重定向兼容书签。
             { path: 'build-envs', redirect: { name: 'build-envs' } },
             { path: 'config-profiles', redirect: { name: 'config-profiles' } },
-            { path: 'credentials', name: 'settings-credentials', component: AdminCredentials, meta: { title: '全局凭据', adminOnly: true } },
-            { path: 'users', name: 'settings-users', component: AdminUsers, meta: { title: '用户管理', adminOnly: true } },
-            { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', adminOnly: true } },
+            { path: 'credentials', name: 'settings-credentials', component: AdminCredentials, meta: { title: '全局凭据', requires: { settings: true } } },
+            { path: 'users', name: 'settings-users', component: AdminUsers, meta: { title: '用户管理', requires: { settings: true } } },
+            { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', requires: { settings: true } } },
 
             // ─── v6.2 §3.6:个人设置(所有登录用户)───
             { path: 'my-credentials', name: 'settings-my-credentials', component: MyCredentials, meta: { title: '我的凭据' } },
@@ -215,9 +216,9 @@ router.beforeEach(async (to) => {
   const result = await sessionStore.ensureSession()
 
   if (result.kind === 'ok') {
-    // v6.2 §3.6:adminOnly 路由只放行 admin。后端 RequireAdmin 中间件是权威校验,
-    // 这里提前拦是为了不渲染注定 403 的页面(普通用户看到的是「无权限」而非白屏)。
-    if (to.meta.adminOnly && result.user.role !== 'admin') {
+    // meta.requires(AccessRequires)是功能门:角色档位不够的页面直接不渲染,判据与侧栏、
+    // 设置页子标签共用 lib/roles 那一份(RequireAdmin 与分组判定仍是后端权威)。
+    if (!sessionStore.meets(to.meta.requires as AccessRequires | undefined)) {
       return { name: 'dashboard' }
     }
     return true

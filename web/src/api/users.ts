@@ -5,15 +5,19 @@
  *   GET    /api/admin/users/:id          → User
  *   POST   /api/admin/users              → User   建号(用户名 + 初始口令 + 角色)
  *   POST   /api/admin/users/:id/password → 204    重置口令
- *   PATCH  /api/admin/users/:id          → User   改描述 / 启用禁用
+ *   PATCH  /api/admin/users/:id          → User   改描述 / 启用禁用 / 改角色
  *
  * 响应体绝不含 password_hash;口令只在请求里出现一次。
+ *
+ * 角色名单与 internal/access/roles.go 同集合(前端由 lib/roles.test.ts 比对两侧防漂移)。
+ * 改角色不会踢掉对方已有的会话 —— sessions.role 是登录时的快照,下次登录才生效。
  * 内置管理员那一行(id 尾号 …0001)的口令/启停由「账户设置」管,上述写端点对它 409。
  */
 
 import { http } from './http'
+import type { UserRole } from './auth'
 
-export type UserRole = 'admin' | 'user'
+export type { UserRole }
 
 export interface User {
   id: string
@@ -47,6 +51,8 @@ export interface CreateUserInput {
 export interface UpdateUserInput {
   description?: string
   enabled?: boolean
+  /** 改角色。未知名后端回 400(不会静默降级成 user,那是建号路径的取舍)。 */
+  role?: UserRole
 }
 
 export async function listUsers(params: ListUsersParams = {}): Promise<User[]> {

@@ -1,10 +1,14 @@
 <script setup lang="ts">
 /**
- * v6.2 用户管理(admin-only)。
+ * v6.2 用户管理(设置类入口)。
  *
  * 两类行分开对待:内置管理员那一行是 admin_user 的同步行,口令与启停在「账户设置」里改,
  * 写端点对它一律 409 —— 所以这里直接禁用按钮,而不是等报错。
  * 默认列表不含已禁用账号(后端的 includeDisabled 取舍),要看到被停用的账号得勾上开关。
+ *
+ * 角色是功能轴(允许做这类动作吗),分组是数据轴(这份数据归谁):这里只改前者,
+ * 名单来自 lib/roles(与后端 roles.go 同集合,单测比对防漂移)。改完要对方重新登录
+ * 才生效 —— sessions.role 是登录快照,所以页面上把这句话写明白,而不是让人以为立刻生效。
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -16,6 +20,7 @@ import {
   MIN_PASSWORD_LEN,
 } from '../../api/users'
 import type { User, UserRole } from '../../api/users'
+import { ROLE_LABEL_KEY, ROLE_ORDER, ROLE_TAG_CLASS, normalizeRole } from '../../lib/roles'
 import { HttpError } from '../../api/http'
 
 const { t } = useI18n()
@@ -56,6 +61,15 @@ const BOOTSTRAP_ADMIN_ID = '00000000-0000-0000-0000-000000000001'
 
 function isBootstrapAdmin(u: User): boolean {
   return u.id === BOOTSTRAP_ADMIN_ID
+}
+
+/** 角色展示名:库里可能存着枚举外的历史值,先归一(按 user 显示)再取键,免得渲染成裸 key。 */
+function roleLabel(role: string): string {
+  return t(ROLE_LABEL_KEY[normalizeRole(role)])
+}
+
+function roleTagClass(role: string): string {
+  return ROLE_TAG_CLASS[normalizeRole(role)]
 }
 
 /** 校验失败时用后端原文,其余按状态码给一句人话。 */
@@ -210,6 +224,29 @@ async function saveDescription(u: User, value: string): Promise<void> {
     rowError.value = errText(err, 'adminUsers.errToggle')
   }
 }
+
+// ─── 改角色(功能轴)──────────────────────────────────────────────────────────
+
+const roleBusyId = ref('')
+
+/**
+ * 改某人的角色档位。失败时把这一行的下拉弹回原值:DOM 已经显示成新选项了,
+ * 不回滚就是「看着改成功了、其实没改」——那是最难排查的一类错觉。
+ */
+async function saveRole(u: User, next: string, el: HTMLSelectElement): Promise<void> {
+  if (next === u.role) return
+  rowError.value = ''
+  roleBusyId.value = u.id
+  try {
+    const fresh = await updateUser(u.id, { role: next as UserRole })
+    users.value = users.value.map((x) => (x.id === fresh.id ? fresh : x))
+  } catch (err) {
+    el.value = u.role
+    rowError.value = errText(err, 'adminUsers.errRoleUpdate')
+  } finally {
+    roleBusyId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -218,6 +255,7 @@ async function saveDescription(u: User, value: string): Promise<void> {
       <div>
         <h1 class="view-title">{{ t('adminUsers.usersTitle') }}</h1>
         <p class="view-sub">{{ t('adminUsers.usersDesc') }}</p>
+        <p class="view-sub view-sub--hint">{{ t('adminUsers.roleAxesHint') }}</p>
       </div>
       <div class="header-actions">
         <label class="check">
@@ -268,9 +306,19 @@ async function saveDescription(u: User, value: string): Promise<void> {
             </div>
           </td>
           <td>
-            <span class="tag" :class="u.role === 'admin' ? 'tag--admin' : 'tag--user'">
-              {{ u.role === 'admin' ? t('adminUsers.roleAdmin') : t('adminUsers.roleUser') }}
+            <span v-if="isBootstrapAdmin(u)" class="tag" :class="roleTagClass(u.role)">
+              {{ roleLabel(u.role) }}
             </span>
+            <select
+              v-else
+              class="role-select"
+              :value="u.role"
+              :disabled="roleBusyId === u.id"
+              :title="t('adminUsers.roleChangeHint')"
+              @change="saveRole(u, ($event.target as HTMLSelectElement).value, $event.target as HTMLSelectElement)"
+            >
+              <option v-for="r in ROLE_ORDER" :key="r" :value="r">{{ roleLabel(r) }}</option>
+            </select>
           </td>
           <td>
             <span :class="u.enabled ? 'ok' : 'off'">
@@ -322,9 +370,9 @@ async function saveDescription(u: User, value: string): Promise<void> {
           <label class="field">
             <span class="field-label">{{ t('adminUsers.fieldRole') }}</span>
             <select v-model="createForm.role" class="field-input" :disabled="createBusy">
-              <option value="user">{{ t('adminUsers.roleUser') }}</option>
-              <option value="admin">{{ t('adminUsers.roleAdmin') }}</option>
+              <option v-for="r in ROLE_ORDER" :key="r" :value="r">{{ roleLabel(r) }}</option>
             </select>
+            <span class="field-hint">{{ t('adminUsers.roleDesc') }}</span>
           </label>
           <label class="field">
             <span class="field-label">{{ t('adminUsers.fieldDesc') }}</span>
@@ -410,6 +458,9 @@ async function saveDescription(u: User, value: string): Promise<void> {
   color: var(--color-faint);
   margin-top: 4px;
   max-width: 76ch;
+}
+.view-sub--hint {
+  font-size: var(--text-small, 0.85em);
 }
 .header-actions {
   display: flex;
@@ -500,6 +551,39 @@ async function saveDescription(u: User, value: string): Promise<void> {
 .tag--user {
   background: rgba(120, 120, 120, 0.15);
   color: var(--color-dim);
+}
+.tag--developer {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
+.tag--ops {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+.tag--viewer {
+  background: rgba(100, 116, 139, 0.16);
+  color: #475569;
+}
+/* 行内改角色:与描述输入一样做成「看着像文本、点开才像控件」,避免整表变成表单。 */
+.role-select {
+  padding: 4px 8px;
+  font-size: var(--text-small, 0.85em);
+  font-weight: 600;
+  color: var(--color-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+}
+.role-select:hover,
+.role-select:focus {
+  border-color: var(--color-border);
+  background: var(--color-bg, #fff);
+  outline: none;
+}
+.role-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .ok {
   color: #16a34a;

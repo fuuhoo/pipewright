@@ -14,24 +14,27 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../stores/session'
+import type { AccessRequires } from '../lib/roles'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 
-const isAdmin = computed(() => sessionStore.user?.role === 'admin')
+// 设置类入口的总闸。今天它的取值与 role==='admin' 完全等价(见 internal/access/roles.go
+// 的 settingsRoles),改成读能力位是为了让「谁能进设置」和路由/菜单用同一个来源。
+const canSettings = computed(() => sessionStore.canSettings)
 
 interface SettingsNavItem {
   to: string
   key: string
-  /** 仅管理员可见(§3.6 全局设置)。 */
-  adminOnly?: boolean
+  /** 功能门:与路由 meta.requires 同一判据(§3.6 全局设置)。 */
+  requires?: AccessRequires
 }
 
 const globalItems: SettingsNavItem[] = [
-  { to: '/settings/credentials', key: 'navCredentials', adminOnly: true },
+  { to: '/settings/credentials', key: 'navCredentials', requires: { settings: true } },
   { to: '/settings/vault', key: 'navVault' },
-  { to: '/settings/users', key: 'navUsers', adminOnly: true },
-  { to: '/settings/audit', key: 'navAudit', adminOnly: true },
+  { to: '/settings/users', key: 'navUsers', requires: { settings: true } },
+  { to: '/settings/audit', key: 'navAudit', requires: { settings: true } },
   { to: '/settings/servers', key: 'navServers' },
   { to: '/settings/kube-clusters', key: 'navKubeClusters' },
   { to: '/settings/ai', key: 'navAi' },
@@ -48,7 +51,7 @@ const personalItems: SettingsNavItem[] = [
 ]
 
 const visibleGlobalItems = computed(() =>
-  isAdmin.value ? globalItems : globalItems.filter((i) => !i.adminOnly),
+  globalItems.filter((i) => sessionStore.meets(i.requires)),
 )
 </script>
 
@@ -59,8 +62,8 @@ const visibleGlobalItems = computed(() =>
       <p class="view-sub">{{ t('settingsHub.subtitle') }}</p>
     </header>
 
-    <!-- 全局设置(仅管理员可见整组) -->
-    <template v-if="isAdmin">
+    <!-- 全局设置:整组仍按设置类能力位收口(与 v6.2 的 admin 口径等价) -->
+    <template v-if="canSettings">
       <h2 class="settings-group">
         {{ t('settingsHub.globalGroup') }}
         <span class="settings-group-hint">{{ t('settingsHub.globalGroupHint') }}</span>

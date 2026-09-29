@@ -8,13 +8,21 @@
  *     loaded; isNetworkError = true so callers can show a fault state
  *     instead of kicking a logged-in user to /login)
  *
- * v6.2:SessionUser 带 role("admin" | "user"),供菜单与路由级 adminOnly 隔离。
+ * v6.2:SessionUser 带 role,供菜单与路由级隔离。
+ * 角色档位落地后同一响应另带 capabilities(功能轴上限的展示副本);本 store 只负责把它
+ * 转成 can() / canSettings() / meets() 三个判断 —— 权威判定仍在后端,这里只决定入口出不出得来。
  */
 
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http, HttpError } from '../api/http'
-import type { SessionUser } from '../api/auth'
+import type { ResourceAct, ResourceKind, SessionUser } from '../api/auth'
+import {
+  meetsRequires,
+  roleAllows,
+  settingsAllowed,
+  type AccessRequires,
+} from '../lib/roles'
 
 export type { SessionUser }
 
@@ -91,5 +99,31 @@ export const useSessionStore = defineStore('session', () => {
     fetched = true
   }
 
-  return { user, isNetworkError, ensureSession, setUser, clearSession }
+  /** 会话能力位;未登录或尚未取到 → undefined,下面的判断一律按最严一档。 */
+  const capabilities = computed(() => user.value?.capabilities)
+
+  /** 角色档位允不允许对某类资源做这类动作(数据归属不在这一步,由后端按分组判)。 */
+  function can(kind: ResourceKind, act: ResourceAct): boolean {
+    return roleAllows(capabilities.value, kind, act)
+  }
+
+  /** 能否进设置类入口(构建环境 / 配置资源 / 全局凭据 / 用户管理 / 审计)。 */
+  const canSettings = computed(() => settingsAllowed(capabilities.value))
+
+  /** 路由 meta.requires / 菜单项 requires 的统一判据。 */
+  function meets(req?: AccessRequires): boolean {
+    return meetsRequires(capabilities.value, req)
+  }
+
+  return {
+    user,
+    isNetworkError,
+    capabilities,
+    canSettings,
+    can,
+    meets,
+    ensureSession,
+    setUser,
+    clearSession,
+  }
 })
