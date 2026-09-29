@@ -1,8 +1,10 @@
 // roles.go —— 功能轴:角色 → 资源类别的最高动作档位,以及回传给前端的能力位。
 //
 // 两轴分工(权威说明见 docs/权限架构说明.md):
-//   - 功能轴回答「这个角色允不允许做这类动作」,与数据归属无关。它的权威表是 perms.go 的
-//     角色 → 功能点集;本文件的 Ceiling 从那张表**派生**,所以菜单与请求上限永远同口径。
+//   - 功能轴回答「这个角色允不允许做这类动作」,与数据归属无关。它的权威点集有两处来源:
+//     内置五档在 perms.go 的代码表(模板,只读),自定义角色在库里的 roles / role_perms
+//     (由 catalog.go 缓存)。本文件的 Ceiling 从「先代码表、再缓存」查到的点集**派生**,
+//     所以菜单与请求上限永远同口径。
 //   - 数据轴(access.go 的 Decide)回答「这份数据归谁」(未归组 / public / private + 组长 + 名册)。
 //     一次判定取两者更严的一档,即 min(角色上限, 分组授予)。
 //
@@ -36,8 +38,16 @@ func Roles() []string {
 	return []string{RoleAdmin, RoleUser, RoleDeveloper, RoleOps, RoleViewer}
 }
 
+// IsBuiltinRole 报告该 id 是否为内置档。内置档是「模板」:设置页不许改删,库里也不许出现
+// 同名 id 的自定义行顶掉它(见 catalog.go 的 ReloadRoles)。
+func IsBuiltinRole(id string) bool { return isBuiltinRole(id) }
+
 // NormalizeRole 把任意入参角色归一到枚举内:未知名一律按 RoleUser 处理,
 // 空串保留为空(空串是 0053 迁移前旧会话的取值,语义是「按管理员」,不能改写成 user)。
+//
+// 只给展示与报错文案用,别把它接进判定:它认不出自定义角色 id 时会退成 user,
+// 那是「读起来顺」的口径而不是「权限够」的口径。真正的判定读 Ceiling / HasPerm,
+// 认不出的角色一律 fail closed。
 func NormalizeRole(role string) string {
 	if role == "" {
 		return ""
@@ -60,7 +70,7 @@ func Ceiling(role string, kind Kind) Act {
 	if role == "" || role == RoleAdmin {
 		return ActManage
 	}
-	perms, ok := rolePerms[role]
+	perms, ok := pointsFor(role)
 	if !ok {
 		return ActView
 	}

@@ -130,6 +130,14 @@ func permIDs() []string {
 	return out
 }
 
+// Perms 返回功能点字典的副本(声明序),供设置页渲染勾选项与角色编辑器分组。
+// 返回副本是因为调用方是 HTTP 层:把内部切片交出去,一次就地排序就会改掉全进程的序列化顺序。
+func Perms() []Perm {
+	out := make([]Perm, len(permDict))
+	copy(out, permDict)
+	return out
+}
+
 // permsWithout 返回除 exclude 之外的所有点(给「全员但排除平台设置」这类角色用)。
 func permsWithout(exclude ...string) []string {
 	out := make([]string, 0, len(permDict))
@@ -152,9 +160,17 @@ func permsWhere(match func(Perm) bool) []string {
 	return out
 }
 
-// ValidRole 报告字串是否为枚举内的角色(不含旧会话的空串)。
+// KnownPerm 报告点 ID 是否在字典里(自定义角色写路径用它挡掉前端过期名单)。
+func KnownPerm(id string) bool {
+	_, ok := permByID[id]
+	return ok
+}
+
+// ValidRole 报告字串是否为可用角色:内置档(代码表)或已装载的自定义角色(库里)。
+// 不含旧会话的空串。users 建号与改角色、RequireUser 的会话判据都走它 —— 自定义角色
+// 必须在这里被认下来,否则 NormalizeRole 会把它们统统折成 user(静默改档位)。
 func ValidRole(role string) bool {
-	_, ok := rolePerms[role]
+	_, ok := pointsFor(role)
 	return ok
 }
 
@@ -164,7 +180,7 @@ func HasPerm(role, id string) bool {
 	if role == "" {
 		return true
 	}
-	perms, ok := rolePerms[role]
+	perms, ok := pointsFor(role)
 	if !ok {
 		return false
 	}
@@ -178,7 +194,7 @@ func PermsFor(role string) []string {
 	if role == "" || role == RoleAdmin {
 		return permIDs()
 	}
-	perms, ok := rolePerms[role]
+	perms, ok := pointsFor(role)
 	if !ok {
 		return []string{}
 	}
