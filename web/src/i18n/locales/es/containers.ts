@@ -20,6 +20,8 @@ export default {
 
   emptyTitle: 'Aún no hay servidores registrados',
   emptyDesc: 'Registra los servidores de destino en «Ajustes › Servidores» y sus contenedores e imágenes se agruparán aquí.',
+  groupEmptyTitle: 'No hay servidores en este grupo',
+  groupEmpty: 'Los contenedores siguen a su anfitrión: este grupo no tiene servidores, así que tampoco contenedores. Vuelve a «Todos los grupos» para ver los demás.',
 
   kpiTotal: 'Contenedores totales',
   kpiRunning: 'En ejecución',

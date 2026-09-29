@@ -20,6 +20,8 @@ export default {
 
   emptyTitle: 'Noch keine registrierten Server',
   emptyDesc: 'Registrieren Sie Zielserver unter „Einstellungen › Server“, dann werden deren Container und Images hier zusammengefasst.',
+  groupEmptyTitle: 'Keine Server in dieser Gruppe',
+  groupEmpty: 'Container folgen ihrem Host: Diese Gruppe hat keine Server, also auch keine Container. Wechsle zurück auf „Alle Gruppen“, um die anderen zu sehen.',
 
   kpiTotal: 'Container gesamt',
   kpiRunning: 'Laufend',

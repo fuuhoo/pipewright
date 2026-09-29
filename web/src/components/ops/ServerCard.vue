@@ -59,6 +59,11 @@ const props = defineProps<{
   group: ServerContainers
   name: string
   host: string
+  /**
+   * 宿主服务器的所属分组名(容器没有自己的分组,归属跟宿主走)。
+   * 空串 = 页面当前拿不到组名单,不贴标签 —— 贴一个错的归属比留白更糟。
+   */
+  ownerGroup?: string
   /** 容器状态筛选(来自页面级筛选段);'all' = 不筛。 */
   stateFilter: 'all' | StateBucket
   /** 文本搜索(来自页面级搜索框);按 names / image 忽略大小写包含。 */
@@ -703,6 +708,7 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
     <header class="panel__head">
       <div class="panel__id">
         <h2 class="panel__name">{{ name }}</h2>
+        <span v-if="ownerGroup" class="panel__group" :title="ownerGroup">{{ ownerGroup }}</span>
         <span class="panel__host mono">{{ host }}</span>
       </div>
       <div class="panel__meta">
@@ -1111,6 +1117,20 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 .panel__host {
   font-size: var(--text-micro);
   color: var(--color-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 宿主所属分组:卡头一枚小标签,和地址一样是「这台是谁」的补充,不参与状态判断 */
+.panel__group {
+  flex-shrink: 0;
+  max-width: 140px;
+  padding: 1px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-inset);
+  font-size: var(--text-micro);
+  color: var(--color-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -20,6 +20,8 @@ export default {
 
   emptyTitle: 'No registered servers yet',
   emptyDesc: 'Register target servers under "Settings › Servers" and their containers and images will be aggregated here.',
+  groupEmptyTitle: 'No servers in this group',
+  groupEmpty: 'Containers follow their host: this group has no hosts, so it has no containers either. Switch back to “All groups” to see the rest.',
 
   kpiTotal: 'Total containers',
   kpiRunning: 'Running',

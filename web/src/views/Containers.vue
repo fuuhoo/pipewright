@@ -9,6 +9,8 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { streamAllContainers, type ServerContainers, type ContainerInfo } from '../api/containers'
 import { listServers, serviceAction, type Server, type ServiceAction } from '../api/servers'
+import { listGroups, type Group } from '../api/groups'
+import { GROUP_ALL, groupLabel, groupOptions, matchesGroup } from '../lib/groupFilter'
 import { HttpError } from '../api/http'
 import { stateBucket, type StateBucket } from '../lib/containerState'
 import {
@@ -56,6 +58,33 @@ const indexById = new Map<string, number>()
 const inFlight = ref(false)
 const serverById = ref<Map<string, Server>>(new Map())
 
+// ─── 宿主分组筛选(数据轴)────────────────────────────────────────────────────
+// 容器没有自己的分组:后端没有 KindContainer,容器是经 SSH 从宿主现采的,归属就是那台
+// 机器的组(见 docs/权限架构说明.md §3)。所以这里筛的是「宿主在哪一档」,组名来自
+// GET /api/groups(后端已按可见范围收敛)。筛选只切展示口径,不改权限。
+const permGroups = ref<Group[]>([])
+const groupFilter = ref<string>(GROUP_ALL)
+/** 组名单是否取到过:没取到时不贴标签 —— 给每台机器冠一句「分组已失效」是谎报。 */
+const groupsLoaded = ref(false)
+
+const groupLabels = computed(() => ({
+  all: t('groups.filterAll'),
+  ungrouped: t('groups.ungrouped'),
+  missing: t('groups.groupMissing'),
+  public: t('groups.visibilityPublic'),
+  private: t('groups.visibilityPrivate'),
+}))
+const GROUP_OPTIONS = computed(() => groupOptions(permGroups.value, groupLabels.value))
+
+function hostGroupId(serverId: string): string {
+  return serverById.value.get(serverId)?.groupId ?? ''
+}
+/** 卡头那枚组标签;名单没到位时返回空串(卡片据此不渲染),此时「未归组」和「组已失效」都无从判断。 */
+function hostGroupTag(serverId: string): string {
+  if (!groupsLoaded.value) return ''
+  return groupLabel(hostGroupId(serverId), permGroups.value, groupLabels.value)
+}
+
 const POLL_MS = 12_000
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -66,16 +95,27 @@ const serverScope = ref<ServerScope>(SERVER_ALL)
 
 /** 在线的在前、离线的沉底(与服务器状态页同一口径);切换范围不改变这个顺序。 */
 const orderedGroups = computed(() => reachableFirst(groups.value))
+/** 分组先收窄,后面「只看这台 / 仅看可用的」都只在这一档里解析(两个筛选叠起来才是直觉)。 */
+const groupScopedServers = computed(() =>
+  orderedGroups.value.filter((g) => matchesGroup(hostGroupId(g.serverId), groupFilter.value)),
+)
 /** 每轮聚合都换一批新对象;选中的机器掉了就自动回落「全部」(按钮高亮与内容始终一致)。 */
-const scope = computed(() => resolveServerScope(serverScope.value, orderedGroups.value))
-const scopeGroups = computed(() => scopedGroups(orderedGroups.value, scope.value))
+const scope = computed(() => resolveServerScope(serverScope.value, groupScopedServers.value))
+const scopeGroups = computed(() => scopedGroups(groupScopedServers.value, scope.value))
 /** 一台机时没什么可切的,这一行就不占地方。 */
-const showScopeBar = computed(() => orderedGroups.value.length > 1)
+const showScopeBar = computed(() => groupScopedServers.value.length > 1)
 /** 有离线机器才值得给「仅看可用的」这一档(否则它跟「全部」是同一屏,纯噪音)。 */
-const hasOffline = computed(() => orderedGroups.value.some((g) => !g.reachable))
-const reachableCount = computed(() => orderedGroups.value.filter((g) => g.reachable).length)
-/** 分母 = 已登记的台数:逐台上屏的中间态不该让「共几台」忽大忽小。 */
-const registeredCount = computed(() => Math.max(serverById.value.size, orderedGroups.value.length))
+const hasOffline = computed(() => groupScopedServers.value.some((g) => !g.reachable))
+const reachableCount = computed(() => groupScopedServers.value.filter((g) => g.reachable).length)
+/** 机器是有的,只是不在当前这一档:与「压根没登记机器」是两种空态。 */
+const filteredToEmpty = computed(() => groups.value.length > 0 && groupScopedServers.value.length === 0)
+/** 分母 = 这一档里已登记的台数:逐台上屏的中间态不该让「共几台」忽大忽小。 */
+const registeredCount = computed(() => {
+  if (groupFilter.value === GROUP_ALL) return Math.max(serverById.value.size, orderedGroups.value.length)
+  let n = 0
+  for (const s of serverById.value.values()) if (matchesGroup(s.groupId, groupFilter.value)) n++
+  return Math.max(n, groupScopedServers.value.length)
+})
 
 // ─── 聚合统计(口径 = 当前切换范围)────────────────────────────────────────────
 const totalContainers = computed(() => scopeGroups.value.reduce((n, g) => n + g.total, 0))
@@ -177,8 +217,9 @@ function toggleBulkMode(): void {
   if (!bulkMode.value) clearSelection()
 }
 
-// 切换机器后,不在范围内的勾选既看不见又仍会被批量执行 —— 那是最坏的一种「偷偷操作」,直接清掉。
-watch(scope, () => clearSelection())
+// 收窄范围后,不在范围内的勾选既看不见又仍会被批量执行 —— 那是最坏的一种「偷偷操作」,直接清掉。
+// 切分组同理:它同样把机器整批移出屏外。
+watch([scope, groupFilter], () => clearSelection())
 
 interface BulkAction {
   action: ServiceAction
@@ -320,6 +361,20 @@ function humanizeLoadError(err: unknown): string {
 }
 
 /**
+ * 组名单只在没取到过时取:它是静态目录,不像容器要实时,每轮都拉白搭一次请求。
+ * 失败就安静等下一轮 —— 宁可用旧组名,也不给整屏机器贴「分组已失效」。
+ */
+async function loadGroups(): Promise<void> {
+  if (groupsLoaded.value) return
+  try {
+    permGroups.value = await listGroups()
+    groupsLoaded.value = true
+  } catch {
+    // 拿不到名单就把筛选档藏起来,不拿空数组冒充「只有未归组」。
+  }
+}
+
+/**
  * 拉一轮聚合:容器走逐台流式(采完一台就上一张卡),名单并行取。
  * 刷新是**静默**的 —— 不压暗、不清屏,只有首屏(屏上还没有任何卡)才显示骨架。
  */
@@ -339,6 +394,7 @@ async function load(): Promise<void> {
       return m
     })
     .catch(() => null)
+  void loadGroups()
   try {
     await streamAllContainers(upsertGroup)
     const names = await namesPromise
@@ -427,6 +483,13 @@ onUnmounted(() => {
       :description="t('containers.emptyDesc')"
     />
 
+    <!-- 筛到一台不剩:机器是有的,只是宿主不在这一档 -->
+    <EmptyState
+      v-else-if="filteredToEmpty"
+      :title="t('containers.groupEmptyTitle')"
+      :description="t('containers.groupEmpty')"
+    />
+
     <template v-else>
       <!-- 服务器切换:一台一张卡,机器多了不用滚动找;在线的排前面、离线的沉底 -->
       <div v-if="showScopeBar" class="scope-bar" role="group" :aria-label="t('containers.serverFilterAria')">
@@ -452,7 +515,7 @@ onUnmounted(() => {
           <span class="scope-chip__count">{{ reachableCount }}</span>
         </button>
         <button
-          v-for="g in orderedGroups"
+          v-for="g in groupScopedServers"
           :key="g.serverId"
           class="scope-chip"
           :class="{ 'scope-chip--active': scope === g.serverId }"
@@ -502,6 +565,15 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="controls-right">
+          <!-- 宿主分组筛选:容器跟宿主走,所以这一档切的是「哪几台机器的容器」 -->
+          <div v-if="groupsLoaded" class="group-filter">
+            <select v-model="groupFilter" class="group-filter__select" :aria-label="t('groups.filterAria')">
+              <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <svg class="group-filter__arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </div>
           <div class="search-box">
             <input
               v-model="searchText"
@@ -554,6 +626,7 @@ onUnmounted(() => {
           :group="g"
           :name="serverName(g.serverId)"
           :host="serverHost(g.serverId)"
+          :owner-group="hostGroupTag(g.serverId)"
           :state-filter="stateFilter"
           :search="searchText"
           :bulk-mode="bulkMode"
@@ -678,6 +751,37 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* 分组下拉与同一行的搜索框同高同圆角:一行里两种形状会比多一行还乱 */
+.group-filter {
+  position: relative;
+  flex-shrink: 0;
+  width: 170px;
+}
+.group-filter__select {
+  width: 100%;
+  padding: 7px 30px 7px 13px;
+  font-family: inherit;
+  font-size: var(--text-label);
+  color: var(--color-text);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  appearance: none;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out-expo);
+}
+.group-filter__select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.group-filter__arrow {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-faint);
+  pointer-events: none;
 }
 .fold-all {
   flex-shrink: 0;

@@ -20,6 +20,8 @@ export default {
 
   emptyTitle: '尚無已登記伺服器',
   emptyDesc: '先在「設定 › 伺服器」登記目標伺服器,這裡就會彙整它們上面的容器與映像。',
+  groupEmptyTitle: '這個分組下沒有伺服器',
+  groupEmpty: '容器跟著宿主機器走:這一檔裡沒有機器,也就沒有它的容器。切回「全部分組」即可看到其它機器。',
 
   kpiTotal: '容器總數',
   kpiRunning: '執行中',

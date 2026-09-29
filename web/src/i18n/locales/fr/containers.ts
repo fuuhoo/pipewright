@@ -20,6 +20,8 @@ export default {
 
   emptyTitle: 'Aucun serveur enregistré pour le moment',
   emptyDesc: 'Enregistrez les serveurs cibles dans « Paramètres › Serveurs » et leurs conteneurs et images seront regroupés ici.',
+  groupEmptyTitle: 'Aucun serveur dans ce groupe',
+  groupEmpty: 'Les conteneurs suivent leur hôte : ce groupe n’a aucun serveur, donc pas de conteneurs. Revenez à « Tous les groupes » pour voir les autres.',
 
   kpiTotal: 'Total des conteneurs',
   kpiRunning: 'En cours d’exécution',

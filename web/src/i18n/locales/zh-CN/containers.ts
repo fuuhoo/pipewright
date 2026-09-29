@@ -20,6 +20,8 @@ export default {
 
   emptyTitle: '尚无已登记服务器',
   emptyDesc: '先在「设置 › 服务器」登记目标服务器,这里就会汇总它们上面的容器与镜像。',
+  groupEmptyTitle: '这个分组下没有服务器',
+  groupEmpty: '容器跟着宿主机器走:这一档里没有机器,也就没有它的容器。切回「全部分组」即可看到其它机器。',
 
   kpiTotal: '容器总数',
   kpiRunning: '运行中',
