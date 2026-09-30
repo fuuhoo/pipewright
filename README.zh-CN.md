@@ -120,6 +120,56 @@ cp .env.example .env       # 至少设 PIPEWRIGHT_ADMIN_PASSWORD,并 openssl ran
 docker compose up -d       # 数据持久化在具名卷 pipewright-data;切 MySQL 见 .env 注释
 ```
 
+compose 文件本身只读这几个变量(平台自身的环境变量见下方[配置](#配置环境变量)表):
+
+| 变量 | 说明 | 默认 |
+|---|---|---|
+| `PIPEWRIGHT_IMAGE` | 镜像仓库前缀 | `ghcr.io/huangchengsir/pipewright`;境内网络可换 `registry.cn-qingdao.aliyuncs.com/fubin/pipewright` |
+| `PIPEWRIGHT_VERSION` | 镜像标签。**两档**见下 | `latest` |
+| `PIPEWRIGHT_PORT` | 宿主侧发布端口 | `8080` |
+| `PIPEWRIGHT_WORK_DIR` | 容器内构建的工作区目录(宿主绝对路径)。仅「容器内打包镜像」需要,见下 | 空(此时容器内隔离构建不可用) |
+| `PIPEWRIGHT_RUNNER` | 留空即默认 DAG 执行器;`legacy` 回退旧版固定流程 | 空 |
+
+数据(sqlite 库、制品库、代码管理区、构建依赖缓存)全落在容器 `/data`,由具名卷 `pipewright-data` 持久化。master key 一旦写入凭据就要长期保存 —— 换 key 会让已存凭据无法解密。
+
+#### 两档镜像:要不要在容器里打包镜像
+
+| 标签 | 基底 | 容器内能否构建镜像 |
+|---|---|---|
+| `<版本>` / `latest` | distroless:非 root、无 shell、无容器 CLI | **不能**。启动日志会明说回退桩构建器 |
+| `<版本>-docker` / `latest-docker` | alpine + docker CLI,以 root 运行 | 能,还要再挂宿主 socket(见下) |
+
+两档都由 `.github/workflows/aliyun-image.yml` 出多架构镜像并发布到阿里云容器镜像服务(青岛)。ghcr 上的官方镜像(GoReleaser 发的 `latest` / `<版本>`)只有默认档 —— 要 `-docker` 档就从 ACR 拉,或用根目录 `Dockerfile` 自行 `--target with-docker` 构建。默认档是刻意选的:最小攻击面;只有确实要在平台容器里构建/推镜像,才升 `-docker` 档。
+
+#### 让平台在容器里打包镜像(三处一起改,缺一不可)
+
+1. `.env` 里换到 `-docker` 档:取消 ACR 两行注释(`PIPEWRIGHT_IMAGE=registry.cn-qingdao.aliyuncs.com/fubin/pipewright` + `PIPEWRIGHT_VERSION=latest-docker`)。ghcr 上没有 `-docker` 档,只改标签会拉不到镜像;
+2. 放开 `docker-compose.yml` 的 `- /var/run/docker.sock:/var/run/docker.sock`。**挂 socket 等同授予容器宿主 root 级权限**,只在信任的自托管机器上开;
+3. 放开工作区目录的自绑定,并把 `TMPDIR` 指到同一目录 —— 三者的值都是 `.env` 里的 `PIPEWRIGHT_WORK_DIR`。
+
+第 3 步不是洁癖:script 节点跑隔离构建发的是 `docker run -v <工作区>:<挂载点>`,而 daemon 是**宿主**的 —— 它按宿主路径解析 `-v` 的源。路径不一致时 daemon 会在宿主凭空建一个空目录,构建拿到空工作区,症状是日志里全是 `no such file or directory` 而平台侧看着一切正常。`docker-compose.yml` 的 `volumes` 注释里有逐行说明。
+
+起容器后一条命令验证是否真通(`-docker` 档有 shell,可以在容器里直接试):
+
+```bash
+docker exec pipewright sh -c 'mkdir -p "$TMPDIR/probe" && printf "FROM alpine:3.20\nRUN echo ok\n" > "$TMPDIR/probe/Dockerfile" && docker build -q "$TMPDIR/probe"'
+```
+
+打印出 `sha256:…` 即成。中间那行 `DEPRECATED: The legacy builder is deprecated` 是预期内的:`-docker` 档刻意不带 buildx 插件(带了 `docker build` 就转给 buildx,对宿主 daemon 版本有要求;不带则任何版本都能跑)。
+
+#### 在容器里看宿主机上的镜像 / 容器
+
+这两块走的是 SSH 而非 socket —— 平台的镜像与容器面板一律 SSH 到目标机执行命令,没有「读本机 socket」这条捷径。而容器内的 `localhost` 是容器自己,所以 compose 已配好:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+它把 `host.docker.internal` 解析到宿主网关。剩下的一步在界面里:**设置 → 服务器** 新增一台主机填 `host.docker.internal`(端口 22,凭据用宿主的 SSH 私钥或口令)。登记后该服务器卡的「镜像」「容器」屏读的就是宿主 daemon 的内容,部署容器也一样。
+
+> 容器内构建与「SSH 登记宿主」两件事互不依赖:前者只影响流水线里能不能在平台容器里出镜像,后者只影响 UI 能否看见宿主镜像。只用平台做部署、构建在别处的话,一档 distroless + 不挂 socket 就够了。
+
 ### ③ docker run(最快试用)
 
 ```bash

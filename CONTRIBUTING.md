@@ -180,6 +180,32 @@ git push origin v1.2.3
 
 版本元数据经 `-ldflags` 注入 `internal/version`,运行期可由 `pipewright --version` 或 `GET /version` 读取。
 
+### 镜像另发阿里云 ACR(`aliyun-image.yml`)
+
+ghcr 在国内经常拉不动,所以推 `v*` tag 时另有 [`aliyun-image.yml`](.github/workflows/aliyun-image.yml) 把镜像发到
+`registry.cn-qingdao.aliyuncs.com/fubin/pipewright`,一次出**两档**多架构标签:`<版本>` / `latest`(distroless 默认档)
+与 `<版本>-docker` / `latest-docker`(带 docker CLI,供容器内打包镜像;取舍见 README 部署章节)。
+预发布版(`-rc`/`-beta`)不碰 `latest`。也可手动 `workflow_dispatch` 补推某版本(勾 `push_latest` 才覆盖 latest)。
+
+它刻意独立于 GoReleaser:ghcr 只是 `.goreleaser.yaml` 写死的镜像目标,再往同一套配置里挂外部仓库凭据没必要;
+这里顺手把 `-docker` 档一起出(ghcr 上只有默认档)。二进制按架构原生交叉编译,镜像阶段只 `COPY` 二进制 + 装 CLI,
+所以不在 QEMU 里跑 Go 编译。
+
+一次性前置(人工,缺一步流水线就在推送阶段报错):
+1. ACR 控制台建命名空间 `fubin` 与仓库 `pipewright`(个人版不自动建仓库,否则报 `insufficient_scope`);
+2. 仓库访问凭证设为「固定密码」;
+3. GitHub → Settings → Secrets and variables → Actions 加 `ALIYUN_ACR_USERNAME` / `ALIYUN_ACR_PASSWORD`。
+   **口令绝不进仓库文件、日志或镜像。**
+
+本地验证镜像两档(不需要仓库凭据):
+
+```bash
+# 默认档
+docker build -t pw-local:test .
+# 带 CLI 档;国内把上游镜像换成 daocloud 前缀:--build-arg DOCKER_CLI_IMAGE=docker.m.daocloud.io/library/docker:cli
+docker build --target with-docker -t pw-local:test-docker .
+```
+
 ---
 
 ## 许可 / Licensing

@@ -120,6 +120,56 @@ cp .env.example .env       # at minimum set PIPEWRIGHT_ADMIN_PASSWORD, and opens
 docker compose up -d       # data persists in the named volume pipewright-data; see .env comments to switch to MySQL
 ```
 
+The compose file itself only reads these (the app's own variables are in the [configuration](#configuration-environment-variables) table below):
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `PIPEWRIGHT_IMAGE` | Image repository prefix | `ghcr.io/huangchengsir/pipewright`; on CN networks use `registry.cn-qingdao.aliyuncs.com/fubin/pipewright` |
+| `PIPEWRIGHT_VERSION` | Image tag — **two tiers**, see below | `latest` |
+| `PIPEWRIGHT_PORT` | Host-side published port | `8080` |
+| `PIPEWRIGHT_WORK_DIR` | Build workspace directory (absolute host path). Only needed to build images inside the container | empty (in-container isolated builds unavailable) |
+| `PIPEWRIGHT_RUNNER` | Empty = the default DAG runner; `legacy` falls back to the old fixed flow | empty |
+
+Everything the app stores (SQLite DB, artifact library, repo cache, build dependency cache) lives under `/data` in the container, persisted by the named volume `pipewright-data`. Keep the master key forever once credentials exist — rotating it makes stored credentials undecryptable.
+
+#### Two image tiers: building images inside the container
+
+| Tag | Base | Can build images in-container |
+|---|---|---|
+| `<version>` / `latest` | distroless: non-root, no shell, no container CLI | **No.** Startup logs say the builder fell back to the stub |
+| `<version>-docker` / `latest-docker` | alpine + docker CLI, runs as root | Yes, once you also mount the host socket (below) |
+
+CI publishes both tiers as multi-arch images to Aliyun Container Registry (Qingdao) via `.github/workflows/aliyun-image.yml`. The official ghcr images (published by GoReleaser as `latest` / `<version>`) ship only the default tier — pull `-docker` from ACR, or build it yourself from the root `Dockerfile` with `--target with-docker`. The default tier is deliberate: smallest attack surface. Upgrade to `-docker` only if the platform really has to build/push images from inside its own container.
+
+#### Let the platform build images inside its container (change all three, none optional)
+
+1. switch `.env` to the `-docker` tier: uncomment the two ACR lines (`PIPEWRIGHT_IMAGE=registry.cn-qingdao.aliyuncs.com/fubin/pipewright` + `PIPEWRIGHT_VERSION=latest-docker`). ghcr has no `-docker` tier, so the image prefix has to change too;
+2. uncomment `- /var/run/docker.sock:/var/run/docker.sock` in `docker-compose.yml`. **Mounting the socket is equivalent to granting the container root-level access to the host** — only do it on a machine you trust;
+3. uncomment the workspace self-bind and point `TMPDIR` at the same directory — all three values come from `PIPEWRIGHT_WORK_DIR` in `.env`.
+
+Step 3 is not busywork: an isolated script-job build issues `docker run -v <workspace>:<mount>`, and the daemon is the **host's** — it resolves the `-v` source as a host path. When the paths differ the daemon silently creates an empty directory on the host and the build gets an empty workspace; the symptom is a log full of `no such file or directory` while the platform looks healthy. The `volumes` comments in `docker-compose.yml` spell it out line by line.
+
+One command proves it works (the `-docker` tier has a shell):
+
+```bash
+docker exec pipewright sh -c 'mkdir -p "$TMPDIR/probe" && printf "FROM alpine:3.20\nRUN echo ok\n" > "$TMPDIR/probe/Dockerfile" && docker build -q "$TMPDIR/probe"'
+```
+
+A `sha256:…` on the last line means success. The `DEPRECATED: The legacy builder is deprecated` notice in between is expected: the `-docker` tier ships no buildx plugin on purpose (with buildx installed, `docker build` hands off to buildx, which puts requirements on the host daemon version; without it any daemon works).
+
+#### Seeing the host's images / containers from inside the container
+
+Those screens use SSH, not the socket — the image and container panels always SSH to the target machine, there is no "read my local socket" shortcut. And `localhost` inside a container is the container itself, so compose ships:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+which resolves `host.docker.internal` to the host gateway. The remaining step is in the UI: add a server in **Settings → Servers** with host `host.docker.internal` (port 22, authenticated with the host's SSH key or password). That server's "Images" and "Containers" screens then show the host daemon's content, and container deploys go there too.
+
+> Building in-container and registering the host over SSH are independent: the first only affects whether pipelines can produce images inside the platform container, the second only whether the UI can list host images. If you only deploy, the distroless tier without a socket is enough.
+
 ### ③ docker run (fastest trial)
 
 ```bash
