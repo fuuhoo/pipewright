@@ -1,0 +1,215 @@
+# 发布 Pipewright 镜像到阿里云容器镜像服务(ACR · 青岛)。
+#
+# 为什么单独一条流水线(不走 release.yml 的 GoReleaser):
+#   - ghcr.io 在国内经常拉不动,自托管在境内的机器要有个能直连的镜像源;
+#   - GoReleaser 的镜像目标写死在 .goreleaser.yaml(ghcr),再挂一套外部仓库凭据没必要;
+#   - 这里顺手把「带 docker CLI 的 -docker 变体」一起出:容器内要能打包镜像就得用它(见 README 部署章节)。
+#
+# 产出四个标签(linux/amd64 + linux/arm64 多架构):
+#   <版本>          默认档:distroless,最小攻击面,容器内**不能**打包镜像
+#   <版本>-docker   带 docker CLI,挂上宿主 /var/run/docker.sock 就能在容器内构建/推镜像
+#   latest / latest-docker   仅正式版本 tag(不含 -rc/-beta)才更新,预发布版不污染 latest
+#
+# 触发:打 v* tag(与 release.yml 同时机)+ 手动 workflow_dispatch(试推、补推某版本)。
+#
+# 前置(一次性,人工):
+#   1. ACR 控制台建好命名空间 `fubin` 与仓库 `pipewright`(个人版不自动建仓库,推不上去会报 insufficient_scope);
+#   2. 仓库访问凭证设成「固定密码」;
+#   3. GitHub 仓库 Settings→Secrets and variables→Actions 加两个:
+#        ALIYUN_ACR_USERNAME = 阿里云账号全名(RAM 子账号则用其 UPN)
+#        ALIYUN_ACR_PASSWORD = 上面设的固定密码
+#      口令绝不进仓库文件、日志或镜像。
+#
+# Actions 一律 SHA 钉死(与 ci.yml / release.yml / caddy-image.yml 同纪律)。
+name: aliyun-image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "镜像版本(如 1.2.3);留空则取 git describe 并去掉前导 v"
+        required: false
+        type: string
+        default: ""
+      push_latest:
+        description: "同时更新 latest / latest-docker(默认只在正式版本 tag 时更新)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: registry.cn-qingdao.aliyuncs.com
+  IMAGE: registry.cn-qingdao.aliyuncs.com/fubin/pipewright
+
+jobs:
+  # 版本元数据 + 「这次算不算正式版」在这里一次算清,后面的 job 只消费,避免多处各推一遍 tag。
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      is_stable: ${{ steps.meta.outputs.is_stable }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0 # git describe 兜底要历史与 tag
+
+      - id: meta
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-$(git describe --tags --always)}"
+          version="${version#v}"
+          # 预发布标识(-rc/-beta/-alpha/…)不算正式版:不碰 latest,免得线上「最新版」是试验品。
+          if printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            stable=true
+          else
+            stable=false
+          fi
+          {
+            echo "version=$version"
+            echo "is_stable=$stable"
+          } >> "$GITHUB_OUTPUT"
+          echo "镜像版本 $version;latest 是否更新:$stable"
+
+  # 前端产物与平台无关(go:embed 同一份),只建一次给两个架构复用。
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - run: cd web && npm ci
+      - run: cd web && npm run build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  # 二进制用原生交叉编译(CGO_ENABLED=0 纯 Go),比在 QEMU 里跑 golang 镜像快一个数量级;
+  # 镜像阶段只 COPY 二进制 + 装 CLI,自身几乎不干活。
+  binaries:
+    needs: [prepare, frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: 编译 linux/${{ matrix.arch }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 GOOS=linux GOARCH="${{ matrix.arch }}" go build -trimpath \
+            -ldflags "-s -w \
+              -X github.com/huangchengsir/pipewright/internal/version.Version=${VERSION} \
+              -X github.com/huangchengsir/pipewright/internal/version.Commit=${COMMIT:0:7} \
+              -X github.com/huangchengsir/pipewright/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o pipewright ./cmd/pipewright
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pipewright-linux-${{ matrix.arch }}
+          path: pipewright
+          if-no-files-found: error
+          compression-level: 0
+
+  # 每架构一个 job:同一份 context 里 --target 出两档镜像,直接 --push 带架构后缀的临时标签,
+  # 最后由 manifest job 合并成多架构清单(和 .goreleaser.yaml 的 dockers + docker_manifests 同思路)。
+  image:
+    needs: [prepare, binaries]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pipewright-linux-${{ matrix.arch }}
+          path: imgctx
+
+      - name: 构建并推送 linux/${{ matrix.arch }} 两档镜像
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          # Dockerfile.goreleaser 期望「二进制在 context 根」,所以只把这三样凑进 imgctx/。
+          cp Dockerfile.goreleaser imgctx/
+          chmod +x imgctx/pipewright
+          # oci-mediatypes=false:ACR 个人版对 OCI 媒体类型/attestation 支持不全,退回 docker schema2
+          # 最稳;--provenance=false 同理(不然会多推一份 referrers,老仓库直接报错)。
+          for spec in "runtime:" "with-docker:-docker"; do
+            target="${spec%%:*}"
+            suffix="${spec#*:}"
+            docker buildx build --platform "linux/${ARCH}" \
+              --file imgctx/Dockerfile.goreleaser --target "$target" \
+              --tag "${IMAGE}:${VERSION}${suffix}-${ARCH}" \
+              --output type=registry,oci-mediatypes=false,push=true \
+              --provenance=false imgctx
+          done
+
+  # 合并多架构清单:<ver> / <ver>-docker,正式版(或手动勾了 push_latest)再加 latest / latest-docker。
+  manifest:
+    needs: [prepare, image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
+      - name: 创建并推送多架构清单
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IS_STABLE: ${{ needs.prepare.outputs.is_stable }}
+          PUSH_LATEST: ${{ github.event.inputs.push_latest }}
+        run: |
+          set -euo pipefail
+          create() { # create <目标标签> <架构后缀>
+            docker buildx imagetools create \
+              --tag "${IMAGE}:$1" \
+              "${IMAGE}:$2-amd64" "${IMAGE}:$2-arm64"
+          }
+          create "$VERSION" "$VERSION"
+          create "${VERSION}-docker" "${VERSION}-docker"
+          if [ "$IS_STABLE" = true ] || [ "$PUSH_LATEST" = true ]; then
+            create latest "$VERSION"
+            create latest-docker "${VERSION}-docker"
+            echo "已更新 latest / latest-docker"
+          else
+            echo "预发布版本 $VERSION:跳过 latest(手动勾了 push_latest 才会覆盖)"
+          fi
