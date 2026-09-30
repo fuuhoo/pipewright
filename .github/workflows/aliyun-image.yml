@@ -169,14 +169,29 @@ jobs:
           chmod +x imgctx/pipewright
           # oci-mediatypes=false:ACR 个人版对 OCI 媒体类型/attestation 支持不全,退回 docker schema2
           # 最稳;--provenance=false 同理(不然会多推一份 referrers,老仓库直接报错)。
+          # 跨境推到青岛又慢又脆:实测 2026-09-30 单档推层要 8~13min,且 0.5.0-docker-arm64 在层推完
+          # 757s 后取 OAuth token 时被 connection reset by peer。已上传的层仓库会复用,所以整档失败
+          # 就退避重试,别让一次抖动废掉整条发布。
+          push_tier() { # push_tier <完整 tag> <Dockerfile target>
+            local tag="$1" target="$2" try=1
+            until docker buildx build --platform "linux/${ARCH}" \
+              --file imgctx/Dockerfile.goreleaser --target "$target" \
+              --tag "$tag" \
+              --output type=registry,oci-mediatypes=false,push=true \
+              --provenance=false imgctx; do
+              if [ "$try" -ge 3 ]; then
+                echo "::error::推送 ${tag} 连续 3 次失败"
+                return 1
+              fi
+              echo "::warning::第 ${try} 次推送 ${tag} 失败,30s 后重试(已上传的层会复用)"
+              try=$((try + 1))
+              sleep 30
+            done
+          }
           for spec in "runtime:" "with-docker:-docker"; do
             target="${spec%%:*}"
             suffix="${spec#*:}"
-            docker buildx build --platform "linux/${ARCH}" \
-              --file imgctx/Dockerfile.goreleaser --target "$target" \
-              --tag "${IMAGE}:${VERSION}${suffix}-${ARCH}" \
-              --output type=registry,oci-mediatypes=false,push=true \
-              --provenance=false imgctx
+            push_tier "${IMAGE}:${VERSION}${suffix}-${ARCH}" "$target"
           done
 
   # 合并多架构清单:<ver> / <ver>-docker,正式版(或手动勾了 push_latest)再加 latest / latest-docker。
@@ -199,10 +214,20 @@ jobs:
           PUSH_LATEST: ${{ github.event.inputs.push_latest }}
         run: |
           set -euo pipefail
+          # 合并清单同样只有一两个小 manifest 要走网络,抖动一次就整条红,所以给 3 次退避。
           create() { # create <目标标签> <架构后缀>
-            docker buildx imagetools create \
-              --tag "${IMAGE}:$1" \
-              "${IMAGE}:$2-amd64" "${IMAGE}:$2-arm64"
+            local dst="$1" src="$2" try=1
+            until docker buildx imagetools create \
+              --tag "${IMAGE}:${dst}" \
+              "${IMAGE}:${src}-amd64" "${IMAGE}:${src}-arm64"; do
+              if [ "$try" -ge 3 ]; then
+                echo "::error::合并清单 ${dst} 连续 3 次失败"
+                return 1
+              fi
+              echo "::warning::第 ${try} 次合并 ${dst} 失败,15s 后重试"
+              try=$((try + 1))
+              sleep 15
+            done
           }
           create "$VERSION" "$VERSION"
           create "${VERSION}-docker" "${VERSION}-docker"
