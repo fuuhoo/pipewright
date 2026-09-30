@@ -6,8 +6,8 @@
 单个 Go 静态二进制(内嵌前端,运行时零依赖),
 一个工具替掉「CI + Ansible/Kamal + Portainer」三件套。
 
-[![Release](https://img.shields.io/github/v/release/huangchengsir/pipewright)](https://github.com/huangchengsir/pipewright/releases)
-[![CI](https://github.com/huangchengsir/pipewright/actions/workflows/ci.yml/badge.svg)](https://github.com/huangchengsir/pipewright/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fuuhoo/pipewright)](https://github.com/fuuhoo/pipewright/releases)
+[![CI](https://github.com/fuuhoo/pipewright/actions/workflows/ci.yml/badge.svg)](https://github.com/fuuhoo/pipewright/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [English](README.md) | 简体中文
@@ -84,11 +84,11 @@
 从 GitHub Release 下载对应平台的静态二进制装到 `/usr/local/bin`(含校验和核验 + Docker 检测):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huangchengsir/pipewright/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
 # 钉版本 / 自定义目录 / Linux 顺带自动装 Docker:
 VERSION=v0.5.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/huangchengsir/pipewright/master/install.sh)"
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
 # 运行(首次启动引导管理员;master key 用于凭据保险库)
 PIPEWRIGHT_MASTER_KEY=$(openssl rand -base64 32) \
@@ -99,23 +99,23 @@ PIPEWRIGHT_ADMIN_PASSWORD=change-me \
 **推荐:装为 systemd 服务**(开机自启 + 崩溃重启 + 一键自更新可用;Linux,需 root)。脚本会自动持久化 master key 到 `/etc/pipewright/master.key`、数据落 `/var/lib/pipewright`、配置写 `/etc/pipewright/pipewright.env`:
 
 ```bash
-SETUP_SERVICE=1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/huangchengsir/pipewright/master/install.sh)"
+SETUP_SERVICE=1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 # 状态 / 日志:systemctl status pipewright  ·  journalctl -u pipewright -f
 # 改端口等:编辑 /etc/pipewright/pipewright.env 后 systemctl restart pipewright
 
 # 用 MySQL 而非默认 SQLite(DSN 为 go-sql-driver 格式,parseTime=true 必带):
 SETUP_SERVICE=1 PIPEWRIGHT_DB_DRIVER=mysql \
   PIPEWRIGHT_DB_DSN='user:pw@tcp(host:3306)/pipewright?parseTime=true&charset=utf8mb4' \
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/huangchengsir/pipewright/master/install.sh)"
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 ```
 
-> Windows 用户:到 [Releases](https://github.com/huangchengsir/pipewright/releases) 下载 `.zip`。
+> Windows 用户:到 [Releases](https://github.com/fuuhoo/pipewright/releases) 下载 `.zip`。
 
 ### ② docker compose(推荐自托管)
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/huangchengsir/pipewright/master/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/huangchengsir/pipewright/master/.env.example
+curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/.env.example
 cp .env.example .env       # 至少设 PIPEWRIGHT_ADMIN_PASSWORD,并 openssl rand -base64 32 填 MASTER_KEY
 docker compose up -d       # 数据持久化在具名卷 pipewright-data;切 MySQL 见 .env 注释
 ```
@@ -124,7 +124,7 @@ compose 文件本身只读这几个变量(平台自身的环境变量见下方[�
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_IMAGE` | 镜像仓库前缀 | `ghcr.io/huangchengsir/pipewright`;境内网络可换 `registry.cn-qingdao.aliyuncs.com/fubin/pipewright` |
+| `PIPEWRIGHT_IMAGE` | 镜像仓库前缀 | `registry.cn-qingdao.aliyuncs.com/fubin/pipewright`(阿里云 ACR 青岛,两档都有);`ghcr.io/fuuhoo/pipewright` 也能用,但只有默认档 |
 | `PIPEWRIGHT_VERSION` | 镜像标签。**两档**见下 | `latest` |
 | `PIPEWRIGHT_PORT` | 宿主侧发布端口 | `8080` |
 | `PIPEWRIGHT_WORK_DIR` | 容器内构建的工作区目录(宿主绝对路径)。仅「容器内打包镜像」需要,见下 | 空(此时容器内隔离构建不可用) |
@@ -139,11 +139,11 @@ compose 文件本身只读这几个变量(平台自身的环境变量见下方[�
 | `<版本>` / `latest` | distroless:非 root、无 shell、无容器 CLI | **不能**。启动日志会明说回退桩构建器 |
 | `<版本>-docker` / `latest-docker` | alpine + docker CLI,以 root 运行 | 能,还要再挂宿主 socket(见下) |
 
-两档都由 `.github/workflows/aliyun-image.yml` 出多架构镜像并发布到阿里云容器镜像服务(青岛)。ghcr 上的官方镜像(GoReleaser 发的 `latest` / `<版本>`)只有默认档 —— 要 `-docker` 档就从 ACR 拉,或用根目录 `Dockerfile` 自行 `--target with-docker` 构建。默认档是刻意选的:最小攻击面;只有确实要在平台容器里构建/推镜像,才升 `-docker` 档。
+两档都由 `.github/workflows/aliyun-image.yml` 出多架构镜像并发布到阿里云容器镜像服务(青岛),compose / `.env` 默认就拉它。推 `v*` tag 时 GoReleaser 另外把默认档发到 `ghcr.io/fuuhoo/pipewright`(`latest` / `<版本>`);ghcr 上没有 `-docker` 档 —— 要 `-docker` 就从 ACR 拉,或用根目录 `Dockerfile` 自行 `--target with-docker` 构建。默认档是刻意选的:最小攻击面;只有确实要在平台容器里构建/推镜像,才升 `-docker` 档。
 
 #### 让平台在容器里打包镜像(三处一起改,缺一不可)
 
-1. `.env` 里换到 `-docker` 档:取消 ACR 两行注释(`PIPEWRIGHT_IMAGE=registry.cn-qingdao.aliyuncs.com/fubin/pipewright` + `PIPEWRIGHT_VERSION=latest-docker`)。ghcr 上没有 `-docker` 档,只改标签会拉不到镜像;
+1. `.env` 里换到 `-docker` 档:`PIPEWRIGHT_VERSION=latest-docker`(默认 `PIPEWRIGHT_IMAGE` 已经是 ACR,两档都有 —— 若换成 `ghcr.io/fuuhoo/pipewright`,ghcr 上没有 `-docker` 标签,会拉不到镜像);
 2. 放开 `docker-compose.yml` 的 `- /var/run/docker.sock:/var/run/docker.sock`。**挂 socket 等同授予容器宿主 root 级权限**,只在信任的自托管机器上开;
 3. 放开工作区目录的自绑定,并把 `TMPDIR` 指到同一目录 —— 三者的值都是 `.env` 里的 `PIPEWRIGHT_WORK_DIR`。
 
@@ -176,7 +176,7 @@ extra_hosts:
 docker run -d -p 8080:8080 -v pipewright-data:/data \
   -e PIPEWRIGHT_ADMIN_PASSWORD=change-me \
   -e PIPEWRIGHT_MASTER_KEY=$(openssl rand -base64 32) \
-  ghcr.io/huangchengsir/pipewright:latest
+  registry.cn-qingdao.aliyuncs.com/fubin/pipewright:latest
 ```
 
 ### 从源码构建
@@ -207,7 +207,7 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 | `PIPEWRIGHT_PUBLIC_URL` | 外部可访问的基址(如 `https://ci.example.com`)。webhook 回调、OAuth 回跳、通知里的签名审批链接、PR 状态跳转链接都需要它 | 无 |
 | `PIPEWRIGHT_ADMIN_USERNAME` | 首次启动管理员用户名 | `admin` |
 | `PIPEWRIGHT_TRUST_PROXY` | 采信 `X-Forwarded-For` 首段作为审计来源 IP(`1`/`true`/`yes`/`on`)。除非前面确有可信反代,否则别开 —— 否则任意客户端都能伪造审计来源 IP | 关 |
-| `PIPEWRIGHT_RELEASE_REPO` | 检查更新所查的 GitHub 仓库(fork 可改) | `huangchengsir/pipewright` |
+| `PIPEWRIGHT_RELEASE_REPO` | 检查更新所查的 GitHub 仓库(fork 可改) | `fuuhoo/pipewright` |
 | `PIPEWRIGHT_RUNTIME` | 设 `docker` 显式声明容器部署形态(影响自更新方式);否则经 `/.dockerenv` 自动探测 | 自动探测 |
 | `PIPEWRIGHT_AUDIT_SINK` | 远端审计 sink:`http(s)://` 端点,或填其它值作为第二份本地 JSON Lines 文件路径。本地库被删后审计仍完整 | 无 |
 
@@ -242,7 +242,7 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 | `PIPEWRIGHT_PR_STATUS` | `1` 对**所有项目**强开 PR 状态回写,无视各项目开关 | 关 |
 | `PIPEWRIGHT_PR_STATUS_GITHUB_BASE` | GitHub API 基址(GitHub Enterprise 用) | 公有 GitHub |
 | `PIPEWRIGHT_PR_STATUS_GITEE_BASE` | Gitee API 基址(自建 Gitee 用) | 公有 Gitee |
-| `PIPEWRIGHT_CADDY_IMAGE` | 反代镜像。默认是自构建的 Caddy(含 DNS-01 / ratelimit / layer4 插件);用原版 `caddy:2` 也能跑,但会失去 DNS-01/通配符/TCP 能力 | `ghcr.io/huangchengsir/pipewright-caddy:latest` |
+| `PIPEWRIGHT_CADDY_IMAGE` | 反代镜像。默认是自构建的 Caddy(含 DNS-01 / ratelimit / layer4 插件);用原版 `caddy:2` 也能跑,但会失去 DNS-01/通配符/TCP 能力 | `ghcr.io/fuuhoo/pipewright-caddy:latest` |
 | `PIPEWRIGHT_PREVIEW_SWEEP_INTERVAL` | 预览环境回收扫描间隔(Go duration,如 `10m`) | `5m` |
 
 **运维监控**
@@ -377,7 +377,7 @@ stages:
 
 ## 开发状态
 
-✅ **已正式发布**,持续迭代中 —— 最新版本见 [Releases](https://github.com/huangchengsir/pipewright/releases)(tag 驱动发版:6 平台二进制 + ghcr 多架构镜像)。已在真实生产环境承载多项目的构建、部署与日常运维。
+✅ **已正式发布**,持续迭代中 —— 最新版本见 [Releases](https://github.com/fuuhoo/pipewright/releases)(tag 驱动发版:6 平台二进制 + ghcr 与阿里云 ACR 多架构镜像)。已在真实生产环境承载多项目的构建、部署与日常运维。
 
 ## 贡献 / Contributing
 

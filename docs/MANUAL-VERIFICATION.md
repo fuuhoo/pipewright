@@ -167,7 +167,7 @@ ls web/src/i18n/locales/{en,zh-TW,ja,ko,es,fr,de}/{buildEnvs,configProfiles,admi
 cd /path/to/pipewright
 ./start.sh compose           # 本地构建镜像(首次 ~5 分钟)
 # 或:
-./start.sh compose --pull    # 拉 ghcr.io 预构建镜像
+./start.sh compose --pull    # 拉预构建镜像(仓库取 .env 的 PIPEWRIGHT_IMAGE,默认阿里云 ACR)
 
 # 启动后验证:
 ./start.sh status
