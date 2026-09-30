@@ -10,10 +10,11 @@
 # 镜像有两档(见 .env 的 PIPEWRIGHT_IMAGE / PIPEWRIGHT_VERSION):
 #   <版本>          distroless:最小攻击面、无 shell、无容器 CLI —— 容器内**不能**打包镜像。
 #   <版本>-docker   alpine + docker CLI —— 挂上宿主 docker.sock 后容器内能真构建/推镜像。
-# 默认拉 ghcr;境内网络换 ACR(青岛) registry.cn-qingdao.aliyuncs.com/fubin/pipewright,两档都有。
+# 默认走阿里云 ACR(青岛,两档都有,由 .github/workflows/aliyun-image.yml 发布);
+# ghcr 只有 distroless 档(.goreleaser.yaml 发的),要换过去设 PIPEWRIGHT_IMAGE=ghcr.io/fuuhoo/pipewright。
 services:
   pipewright:
-    image: ${PIPEWRIGHT_IMAGE:-ghcr.io/huangchengsir/pipewright}:${PIPEWRIGHT_VERSION:-latest}
+    image: ${PIPEWRIGHT_IMAGE:-registry.cn-qingdao.aliyuncs.com/fubin/pipewright}:${PIPEWRIGHT_VERSION:-latest}
     container_name: pipewright
     restart: unless-stopped
     ports:

@@ -18,7 +18,7 @@
 #   --data-dir DIR  数据目录(默认 ./data;sqlite 库 / 产物 / 仓库缓存落此)
 #
 # 常用选项(compose):
-#   --pull          强制从 ghcr.io 拉取镜像(而非本地构建)
+#   --pull          强制拉取预构建镜像(仓库取 .env 的 PIPEWRIGHT_IMAGE,而非本地构建)
 #   --profile mysql 额外启用 MySQL(见 docker-compose.yml)
 #
 # 首次运行会生成 .env(含随机 MASTER_KEY 与随机管理员口令);.env 已被 .gitignore 忽略。
@@ -396,12 +396,15 @@ start_compose() {
 
   local img_args=()
   if (( use_pull )); then
-    info "拉取镜像 ghcr.io/huangchengsir/pipewright"
-    docker pull "ghcr.io/huangchengsir/pipewright:$(env_get PIPEWRIGHT_VERSION || echo latest)" \
+    local repo tag
+    repo="$(env_get PIPEWRIGHT_IMAGE)"; repo="${repo:-registry.cn-qingdao.aliyuncs.com/fubin/pipewright}"
+    tag="$(env_get PIPEWRIGHT_VERSION)"; tag="${tag:-latest}"
+    info "拉取镜像 ${repo}:${tag}"
+    docker pull "${repo}:${tag}" \
       || warn "拉取失败(可能是网络或镜像不存在),将回退为本地构建"
   else
     info "从本地 Dockerfile 构建镜像(含前端构建,首次较慢)"
-    dim "如需改用 ghcr 预构建镜像,加 --pull"
+    dim "如需改用预构建镜像,加 --pull"
     # shellcheck disable=SC2086
     $dc -p "$COMPOSE_PROJECT" build ${extra_profiles[@]+"${extra_profiles[@]/#/--profile }"} \
       || die "镜像构建失败(查看上方 docker 输出)。"
