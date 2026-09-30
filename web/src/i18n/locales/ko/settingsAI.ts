@@ -9,14 +9,18 @@ export default {
   providerClaudeTag: '진단 추천',
   providerOllamaDesc: '로컬 / 자체 호스팅',
   providerOllamaTag: '외부 전송 없음',
+  protocolClaude: 'Claude 프로토콜',
+  protocolOpenAI: 'OpenAI 프로토콜',
+  protocolOllama: 'Ollama 프로토콜',
+  protocolOpenAIDesc: 'GPT-4o, DeepSeek 등 호환 엔드포인트',
 
   guidanceAria: 'AI 구성 가이드',
   guidanceTitle: 'AI 진단을 활성화하려면 LLM을 구성하세요',
   guidanceBody:
-    'Claude, OpenAI 또는 로컬 Ollama를 연결하면 파이프라인 실패 시 Pipewright가 근본 원인 가설과 수정 제안을 자동으로 생성하여 수동 로그 분석이 필요 없습니다.',
+    'Claude 프로토콜, OpenAI 프로토콜(DeepSeek 등 호환 엔드포인트) 또는 로컬 Ollama를 연결하면 파이프라인 실패 시 Pipewright가 근본 원인 가설과 수정 제안을 자동으로 생성하여 수동 로그 분석이 필요 없습니다.',
 
-  selectProvider: '제공자 선택',
-  providerRadioAria: 'AI 제공자 선택',
+  selectProvider: '프로토콜 선택',
+  providerRadioAria: 'AI 프로토콜 선택',
   selectProviderAria: '{name} 선택',
   providerConfig: '{name} 구성',
   lastSaved: '마지막 저장 {time}',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: '접속 주소 (Base URL)',
   baseUrlHint: '기본값: {url}',
+  presetLabel: '자주 쓰는 엔드포인트',
+  presetApplyAria: '{name} 프리셋으로 엔드포인트와 모델 입력',
 
   modelLabel: '모델',
-  modelHint: '진단에 사용하는 기본 모델, 예: claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: '진단에 사용하는 기본 모델, 예: claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: '연결 테스트',
   testOk: '연결 정상 · 지연 {ms}ms',

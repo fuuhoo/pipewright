@@ -9,14 +9,18 @@ export default {
   providerClaudeTag: 'Recommended for diagnosis',
   providerOllamaDesc: 'Local / self-hosted',
   providerOllamaTag: 'Zero egress',
+  protocolClaude: 'Claude protocol',
+  protocolOpenAI: 'OpenAI protocol',
+  protocolOllama: 'Ollama protocol',
+  protocolOpenAIDesc: 'GPT-4o, DeepSeek and other compatible endpoints',
 
   guidanceAria: 'AI configuration guide',
   guidanceTitle: 'Configure an LLM to unlock AI diagnosis',
   guidanceBody:
-    'Once you connect Claude, OpenAI, or a local Ollama, Pipewright automatically generates root-cause hypotheses and fix suggestions when a pipeline fails — no manual log digging required.',
+    'Once you connect the Claude protocol, the OpenAI protocol (DeepSeek and other compatible endpoints) or a local Ollama, Pipewright automatically generates root-cause hypotheses and fix suggestions when a pipeline fails — no manual log digging required.',
 
-  selectProvider: 'Select a provider',
-  providerRadioAria: 'AI provider selection',
+  selectProvider: 'Select a protocol',
+  providerRadioAria: 'AI protocol selection',
   selectProviderAria: 'Select {name}',
   providerConfig: '{name} configuration',
   lastSaved: 'Last saved {time}',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: 'Base URL',
   baseUrlHint: 'Default: {url}',
+  presetLabel: 'Common endpoint presets',
+  presetApplyAria: 'Fill endpoint and model from the {name} preset',
 
   modelLabel: 'Model',
-  modelHint: 'Primary model used for diagnosis, e.g. claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: 'Primary model used for diagnosis, e.g. claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: 'Test connection',
   testOk: 'Connection OK · latency {ms}ms',

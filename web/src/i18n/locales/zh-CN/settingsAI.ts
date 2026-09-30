@@ -9,16 +9,20 @@ export default {
   providerClaudeTag: '诊断推荐',
   providerOllamaDesc: '本地 / 自托管',
   providerOllamaTag: '零外发',
+  protocolClaude: 'Claude 协议',
+  protocolOpenAI: 'OpenAI 协议',
+  protocolOllama: 'Ollama 协议',
+  protocolOpenAIDesc: 'GPT-4o、DeepSeek 等兼容端点',
 
   guidanceAria: 'AI 配置引导',
   guidanceTitle: '配置 LLM 以解锁 AI 诊断',
   guidanceBody:
-    '接入 Claude、OpenAI 或本地 Ollama 后,流水线失败时 Pipewright 将自动生成根因假说与修复建议,无需手动排查日志。',
+    '接入 Claude 协议、OpenAI 协议(含 DeepSeek 等兼容端点)或本地 Ollama 后,流水线失败时 Pipewright 将自动生成根因假说与修复建议,无需手动排查日志。',
 
-  selectProvider: '选择提供商',
-  providerRadioAria: 'AI 提供商选择',
+  selectProvider: '选择协议',
+  providerRadioAria: 'AI 协议选择',
   selectProviderAria: '选择 {name}',
-  providerConfig: '{name} 配置',
+  providerConfig: '{name}配置',
   lastSaved: '上次保存 {time}',
 
   apiKeyHint: '写入后仅显示掩码;留空则保留已存密钥',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: '接入地址 (Base URL)',
   baseUrlHint: '默认: {url}',
+  presetLabel: '常用端点预设',
+  presetApplyAria: '用 {name} 预设填写地址与模型',
 
   modelLabel: '模型',
-  modelHint: '用于诊断的主模型,如 claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: '用于诊断的主模型,如 claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: '测试连接',
   testOk: '连接正常 · 延迟 {ms}ms',

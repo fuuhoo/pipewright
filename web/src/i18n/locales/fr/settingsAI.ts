@@ -9,16 +9,20 @@ export default {
   providerClaudeTag: 'Recommandé pour le diagnostic',
   providerOllamaDesc: 'Local / auto-hébergé',
   providerOllamaTag: 'Aucune sortie de données',
+  protocolClaude: 'Protocole Claude',
+  protocolOpenAI: 'Protocole OpenAI',
+  protocolOllama: 'Protocole Ollama',
+  protocolOpenAIDesc: 'GPT-4o, DeepSeek et autres points d’accès compatibles',
 
   guidanceAria: 'Guide de configuration AI',
   guidanceTitle: 'Configurez un LLM pour activer le diagnostic AI',
   guidanceBody:
-    'Une fois Claude, OpenAI ou un Ollama local connecté, Pipewright génère automatiquement des hypothèses de cause racine et des suggestions de correction lorsqu’un pipeline échoue, sans avoir à fouiller les journaux manuellement.',
+    'Une fois le protocole Claude, le protocole OpenAI (DeepSeek et autres points d’accès compatibles) ou un Ollama local connecté, Pipewright génère automatiquement des hypothèses de cause racine et des suggestions de correction lorsqu’un pipeline échoue, sans avoir à fouiller les journaux manuellement.',
 
-  selectProvider: 'Sélectionnez un fournisseur',
-  providerRadioAria: 'Sélection du fournisseur AI',
+  selectProvider: 'Sélectionnez un protocole',
+  providerRadioAria: 'Sélection du protocole AI',
   selectProviderAria: 'Sélectionner {name}',
-  providerConfig: 'Configuration de {name}',
+  providerConfig: 'Configuration du {name}',
   lastSaved: 'Dernier enregistrement {time}',
 
   apiKeyHint: 'Seule une valeur masquée s’affiche après l’enregistrement ; laissez vide pour conserver la clé existante',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: 'Base URL',
   baseUrlHint: 'Par défaut : {url}',
+  presetLabel: 'Points d’accès courants',
+  presetApplyAria: 'Renseigner le point d’accès et le modèle avec le préreset {name}',
 
   modelLabel: 'Modèle',
-  modelHint: 'Modèle principal utilisé pour le diagnostic, par ex. claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: 'Modèle principal utilisé pour le diagnostic, par ex. claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: 'Tester la connexion',
   testOk: 'Connexion correcte · latence {ms}ms',

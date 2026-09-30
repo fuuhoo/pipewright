@@ -3,8 +3,9 @@
  * SettingsAI (Story 7.1) — AI provider configuration (FR-24).
  *
  * Delivers:
- *   - Provider selection cards (Claude / OpenAI / Ollama)
- *   - baseUrl auto-filled by provider, editable
+ *   - Provider selection cards = wire protocols (Claude / OpenAI / Ollama), not vendors
+ *   - baseUrl auto-filled by protocol, editable, plus endpoint presets for OpenAI-compatible
+ *     vendors (DeepSeek, …)
  *   - model text input
  *   - apiKey: WRITE-ONLY — never echoed from server; masked placeholder when configured
  *   - Ollama hides apiKey (no key needed for local provider)
@@ -52,11 +53,12 @@ const { t } = useI18n()
 
 // ─── provider metadata ───────────────────────────────────────────────────────
 
+// 三张卡选的是**通信协议**,不是厂商:同一协议下各家服务商用 ENDPOINT_PRESETS 一键切。
 const PROVIDERS: ProviderMeta[] = [
   {
     id: 'claude',
-    label: 'Claude',
-    desc: 'Anthropic',
+    label: t('settingsAI.protocolClaude'),
+    desc: 'Anthropic Messages API',
     logoText: 'A',
     logoStyle: 'background:#D97757;color:#fff',
     tag: t('settingsAI.providerClaudeTag'),
@@ -64,14 +66,14 @@ const PROVIDERS: ProviderMeta[] = [
   },
   {
     id: 'openai',
-    label: 'OpenAI',
-    desc: 'GPT-4o / o-series',
+    label: t('settingsAI.protocolOpenAI'),
+    desc: t('settingsAI.protocolOpenAIDesc'),
     logoText: '○',
     logoStyle: 'background:oklch(70% 0.14 160);color:#0b1f17',
   },
   {
     id: 'ollama',
-    label: 'Ollama',
+    label: t('settingsAI.protocolOllama'),
     desc: t('settingsAI.providerOllamaDesc'),
     logoText: 'Ll',
     logoStyle: 'background:var(--color-inset);color:var(--color-dim);font-size:0.72rem',
@@ -84,6 +86,20 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   claude: 'https://api.anthropic.com',
   openai: 'https://api.openai.com',
   ollama: 'http://localhost:11434',
+}
+
+interface EndpointPreset {
+  name: string
+  baseUrl: string
+  model: string
+}
+
+// 同协议下的常用端点(点一下填 baseUrl + 默认模型,仍可手改)。
+const ENDPOINT_PRESETS: Record<string, EndpointPreset[]> = {
+  openai: [
+    { name: 'OpenAI', baseUrl: 'https://api.openai.com', model: 'gpt-4o' },
+    { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  ],
 }
 
 // ─── toast ────────────────────────────────────────────────────────────────────
@@ -198,6 +214,19 @@ function selectProvider(id: AIProvider): void {
   errors.value.apiKey = ''
   testState.value = 'idle'
   testResult.value = null
+}
+
+// ─── endpoint presets ─────────────────────────────────────────────────────────
+
+const endpointPresets = computed<EndpointPreset[]>(
+  () => ENDPOINT_PRESETS[selectedProvider.value] ?? [],
+)
+
+// 预设只填 baseUrl + 模型两个字段(点完仍可手改),不代填密钥、不触发保存。
+function applyEndpointPreset(preset: EndpointPreset): void {
+  baseUrl.value = preset.baseUrl
+  model.value = preset.model
+  errors.value.baseUrl = ''
 }
 
 // ─── test connection ──────────────────────────────────────────────────────────
@@ -507,6 +536,24 @@ function relativeTime(iso: string | null): string {
                     />
                   </template>
                 </FormField>
+              </div>
+
+              <!-- Endpoint presets: other vendors speaking the same protocol -->
+              <div v-if="endpointPresets.length" class="config-row preset-row">
+                <span class="preset-label">{{ t('settingsAI.presetLabel') }}</span>
+                <div class="preset-chips">
+                  <button
+                    v-for="preset in endpointPresets"
+                    :key="preset.name"
+                    type="button"
+                    class="preset-chip"
+                    :aria-label="t('settingsAI.presetApplyAria', { name: preset.name })"
+                    :disabled="saving"
+                    @click="applyEndpointPreset(preset)"
+                  >
+                    {{ preset.name }}
+                  </button>
+                </div>
               </div>
 
               <!-- Model -->
@@ -1006,6 +1053,49 @@ function relativeTime(iso: string | null): string {
 
 .config-row {
   /* No extra styling needed — FormField handles layout */
+}
+
+/* ─── endpoint presets ────────────────────────────────────────────────────── */
+.preset-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -8px;
+}
+
+.preset-label {
+  font-size: 0.76rem;
+  color: var(--color-dim);
+}
+
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset-chip {
+  height: 26px;
+  padding: 0 11px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--color-dim);
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-full);
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease;
+}
+
+.preset-chip:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+
+.preset-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ─── field input ─────────────────────────────────────────────────────────── */

@@ -9,16 +9,20 @@ export default {
   providerClaudeTag: 'Empfohlen für Diagnose',
   providerOllamaDesc: 'Lokal / selbst gehostet',
   providerOllamaTag: 'Kein Datenabfluss',
+  protocolClaude: 'Claude-Protokoll',
+  protocolOpenAI: 'OpenAI-Protokoll',
+  protocolOllama: 'Ollama-Protokoll',
+  protocolOpenAIDesc: 'GPT-4o, DeepSeek und andere kompatible Endpoints',
 
   guidanceAria: 'AI-Konfigurationsleitfaden',
   guidanceTitle: 'Konfiguriere ein LLM, um die AI-Diagnose freizuschalten',
   guidanceBody:
-    'Sobald du Claude, OpenAI oder ein lokales Ollama verbindest, generiert Pipewright bei einem Pipeline-Fehler automatisch Ursachenhypothesen und Korrekturvorschläge – ohne manuelles Durchsuchen der Logs.',
+    'Sobald du das Claude-Protokoll, das OpenAI-Protokoll (DeepSeek und andere kompatible Endpoints) oder ein lokales Ollama verbindest, generiert Pipewright bei einem Pipeline-Fehler automatisch Ursachenhypothesen und Korrekturvorschläge – ohne manuelles Durchsuchen der Logs.',
 
-  selectProvider: 'Anbieter auswählen',
-  providerRadioAria: 'AI-Anbieterauswahl',
+  selectProvider: 'Protokoll auswählen',
+  providerRadioAria: 'Auswahl des AI-Protokolls',
   selectProviderAria: '{name} auswählen',
-  providerConfig: '{name}-Konfiguration',
+  providerConfig: '{name} — Konfiguration',
   lastSaved: 'Zuletzt gespeichert {time}',
 
   apiKeyHint: 'Nach dem Speichern wird nur ein maskierter Wert angezeigt; leer lassen, um den vorhandenen Schlüssel zu behalten',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: 'Base URL',
   baseUrlHint: 'Standard: {url}',
+  presetLabel: 'Übliche Endpoints',
+  presetApplyAria: 'Endpoint und Modell mit {name}-Vorgabe ausfüllen',
 
   modelLabel: 'Modell',
-  modelHint: 'Hauptmodell für die Diagnose, z. B. claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: 'Hauptmodell für die Diagnose, z. B. claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: 'Verbindung testen',
   testOk: 'Verbindung OK · Latenz {ms}ms',

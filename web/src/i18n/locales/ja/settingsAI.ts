@@ -9,16 +9,20 @@ export default {
   providerClaudeTag: '診断におすすめ',
   providerOllamaDesc: 'ローカル / セルフホスト',
   providerOllamaTag: '外部送信なし',
+  protocolClaude: 'Claude プロトコル',
+  protocolOpenAI: 'OpenAI プロトコル',
+  protocolOllama: 'Ollama プロトコル',
+  protocolOpenAIDesc: 'GPT-4o、DeepSeek などの互換エンドポイント',
 
   guidanceAria: 'AI 設定ガイド',
   guidanceTitle: 'AI 診断を有効化するには LLM を設定してください',
   guidanceBody:
-    'Claude、OpenAI、またはローカルの Ollama を接続すると、パイプライン障害時に Pipewright が根本原因の仮説と修正案を自動生成し、手動でのログ調査が不要になります。',
+    'Claude プロトコル、OpenAI プロトコル(DeepSeek などの互換エンドポイント)、またはローカルの Ollama を接続すると、パイプライン障害時に Pipewright が根本原因の仮説と修正案を自動生成し、手動でのログ調査が不要になります。',
 
-  selectProvider: 'プロバイダーを選択',
-  providerRadioAria: 'AI プロバイダーの選択',
+  selectProvider: 'プロトコルを選択',
+  providerRadioAria: 'AI プロトコルの選択',
   selectProviderAria: '{name} を選択',
-  providerConfig: '{name} の設定',
+  providerConfig: '{name}の設定',
   lastSaved: '前回の保存 {time}',
 
   apiKeyHint: '入力後はマスク表示のみ。空欄のままにすると既存のキーを保持します',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: '接続先 (Base URL)',
   baseUrlHint: 'デフォルト: {url}',
+  presetLabel: 'よく使うエンドポイント',
+  presetApplyAria: '{name} のプリセットでエンドポイントとモデルを入力',
 
   modelLabel: 'モデル',
-  modelHint: '診断に使用するメインモデル。例: claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: '診断に使用するメインモデル。例: claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: '接続テスト',
   testOk: '接続正常 · レイテンシ {ms}ms',

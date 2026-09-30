@@ -9,16 +9,20 @@ export default {
   providerClaudeTag: 'Recomendado para diagnóstico',
   providerOllamaDesc: 'Local / autoalojado',
   providerOllamaTag: 'Sin salida de datos',
+  protocolClaude: 'Protocolo Claude',
+  protocolOpenAI: 'Protocolo OpenAI',
+  protocolOllama: 'Protocolo Ollama',
+  protocolOpenAIDesc: 'GPT-4o, DeepSeek y otros endpoints compatibles',
 
   guidanceAria: 'Guía de configuración de AI',
   guidanceTitle: 'Configura un LLM para desbloquear el diagnóstico con AI',
   guidanceBody:
-    'Una vez que conectes Claude, OpenAI o un Ollama local, Pipewright generará automáticamente hipótesis de causa raíz y sugerencias de corrección cuando falle un pipeline, sin necesidad de revisar registros manualmente.',
+    'Una vez que conectes el protocolo Claude, el protocolo OpenAI (DeepSeek y otros endpoints compatibles) o un Ollama local, Pipewright generará automáticamente hipótesis de causa raíz y sugerencias de corrección cuando falle un pipeline, sin necesidad de revisar registros manualmente.',
 
-  selectProvider: 'Selecciona un proveedor',
-  providerRadioAria: 'Selección de proveedor de AI',
+  selectProvider: 'Selecciona un protocolo',
+  providerRadioAria: 'Selección de protocolo de AI',
   selectProviderAria: 'Seleccionar {name}',
-  providerConfig: 'Configuración de {name}',
+  providerConfig: 'Configuración del {name}',
   lastSaved: 'Último guardado {time}',
 
   apiKeyHint: 'Tras guardarla solo se muestra un valor enmascarado; déjala en blanco para conservar la clave existente',
@@ -31,9 +35,11 @@ export default {
 
   baseUrlLabel: 'Base URL',
   baseUrlHint: 'Predeterminado: {url}',
+  presetLabel: 'Endpoints habituales',
+  presetApplyAria: 'Rellenar endpoint y modelo con el preset {name}',
 
   modelLabel: 'Modelo',
-  modelHint: 'Modelo principal usado para el diagnóstico, p. ej. claude-opus-4-7 / gpt-4o / llama3',
+  modelHint: 'Modelo principal usado para el diagnóstico, p. ej. claude-opus-4-7 / gpt-4o / deepseek-chat / llama3',
 
   testConnection: 'Probar conexión',
   testOk: 'Conexión correcta · latencia {ms}ms',
