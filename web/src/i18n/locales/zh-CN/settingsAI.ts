@@ -49,6 +49,8 @@ export default {
   budgetLabel: '月 Token 上限',
   budgetHint: '超出后暂停 AI 诊断(留空=不限制;本期仅声明,下一 Epic 强制执行)',
   budgetPlaceholder: '如 500000,留空不限制',
+  usedThisMonth: '本月已用 输入 {prompt} / 输出 {completion}',
+  usedNone: '本月还没用过',
 
   enableAi: '设为当前生效协议',
   enableAiDesc: '诊断与配置生成只用这一档;开启后其他协议自动停用',

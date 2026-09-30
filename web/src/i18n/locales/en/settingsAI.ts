@@ -49,6 +49,8 @@ export default {
   budgetLabel: 'Monthly Token Limit',
   budgetHint: 'Pauses AI diagnosis once exceeded (blank = unlimited; declared this cycle, enforced in the next Epic)',
   budgetPlaceholder: 'e.g. 500000, blank = unlimited',
+  usedThisMonth: 'This month · {prompt} in / {completion} out',
+  usedNone: 'No usage this month yet',
 
   enableAi: 'Set as active protocol',
   enableAiDesc: 'Diagnosis and config generation use this protocol; enabling it deactivates the others',

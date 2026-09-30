@@ -49,6 +49,8 @@ export default {
   budgetLabel: '월 Token 한도',
   budgetHint: '초과 시 AI 진단을 일시 중지합니다(비워 두면 무제한. 이번 주기에는 선언만, 다음 Epic에서 강제 적용)',
   budgetPlaceholder: '예: 500000, 비워 두면 무제한',
+  usedThisMonth: '이번 달 사용량 · 입력 {prompt} / 출력 {completion}',
+  usedNone: '이번 달 사용 기록이 없습니다',
 
   enableAi: '이 프로토콜을 현재 사용으로 설정',
   enableAiDesc: '진단과 설정 생성은 이 프로토콜만 사용합니다. 활성화하면 나머지는 자동으로 비활성화됩니다',

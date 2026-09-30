@@ -24,6 +24,7 @@ import FormField from '../../components/ui/FormField.vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import { useToast } from '../../composables/useToast'
 import { HttpError } from '../../api/http'
+import { aiMonthUsageParts } from '../../lib/aiUsage'
 import {
   getAISettings,
   saveAISettings,
@@ -184,6 +185,12 @@ const hasExistingKey = computed(() => !!savedConfig.value?.apiKeyMasked)
 
 /** True when apiKey input has been touched (rotation intent) */
 const isRotatingKey = computed(() => draft.value.apiKey.length > 0)
+
+/**
+ * 这一档本月已用的 tokens,读服务端快照(不跟草稿走):上限填了还没保存时,
+ * 「已使用」仍应是库里那笔真实的账。
+ */
+const monthUsageParts = computed(() => aiMonthUsageParts(savedConfig.value?.usage))
 
 const anyConfigured = computed(() =>
   Object.values(savedByProvider.value).some(c => c?.configured),
@@ -729,6 +736,14 @@ function relativeTime(iso: string | null): string {
                         :aria-describedby="ariaDescribedby"
                         :disabled="saving"
                       />
+                      <!-- 本月已用(库里的账,不随草稿编辑变):0 也是事实,要说清楚而不是藏掉 -->
+                      <span
+                        v-if="monthUsageParts"
+                        class="budget-used"
+                        :class="{ 'budget-used--empty': monthUsageParts.empty }"
+                      >{{ monthUsageParts.empty
+                        ? t('settingsAI.usedNone')
+                        : t('settingsAI.usedThisMonth', monthUsageParts) }}</span>
                     </div>
                   </template>
                 </FormField>
@@ -1353,10 +1368,25 @@ function relativeTime(iso: string | null): string {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .budget-input {
   max-width: 220px;
+}
+
+/* 本月已用:数字用等宽 + tabular,两组数字才对齐;整行不换到第二行去,
+   但允许它自己换到输入框下方(卡片窄时 flex-wrap 兜住,不挤压输入框)。 */
+.budget-used {
+  font-size: var(--text-micro);
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.budget-used--empty {
+  font-family: var(--font-sans);
 }
 
 /* ─── toggle ──────────────────────────────────────────────────────────────── */

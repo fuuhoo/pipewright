@@ -49,6 +49,8 @@ export default {
   budgetLabel: '月間 Token 上限',
   budgetHint: '超過すると AI 診断を一時停止します（空欄=無制限。今回は宣言のみ、次の Epic で強制適用）',
   budgetPlaceholder: '例: 500000、空欄で無制限',
+  usedThisMonth: '今月の使用量 · 入力 {prompt} / 出力 {completion}',
+  usedNone: '今月はまだ使用していません',
 
   enableAi: 'このプロトコルを有効にする',
   enableAiDesc: '診断と設定生成はこのプロトコルのみを使用します。有効にすると他は自動的に無効になります',

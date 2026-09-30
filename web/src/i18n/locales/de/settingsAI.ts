@@ -49,6 +49,8 @@ export default {
   budgetLabel: 'Monatliches Token-Limit',
   budgetHint: 'Pausiert die AI-Diagnose bei Überschreitung (leer = unbegrenzt; in diesem Zyklus nur deklariert, im nächsten Epic erzwungen)',
   budgetPlaceholder: 'z. B. 500000, leer = unbegrenzt',
+  usedThisMonth: 'Diesen Monat · {prompt} Eingabe / {completion} Ausgabe',
+  usedNone: 'In diesem Monat noch keine Nutzung',
 
   enableAi: 'Als aktives Protokoll setzen',
   enableAiDesc: 'Diagnose und Generator nutzen dieses Protokoll; beim Aktivieren werden die anderen automatisch deaktiviert',

@@ -12,6 +12,7 @@
  */
 
 import { http } from './http'
+import type { AIMonthUsage } from '../lib/aiUsage'
 
 /** 三档协议;'' 只出现在「还没选过任何一档」的前端初始态。 */
 export type AIProvider = 'claude' | 'openai' | 'ollama' | ''
@@ -33,6 +34,8 @@ export interface AIProviderConfig {
   /** Server-computed mask, e.g. "sk-ant-••••a91f" — never plaintext. */
   apiKeyMasked: string
   budget: AIBudget
+  /** 本自然月(UTC)累计用量,与 budget.monthlyTokenLimit 配对;没用过为 0/0。 */
+  usage: AIMonthUsage
   updatedAt: string | null
 }
 
