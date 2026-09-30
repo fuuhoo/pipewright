@@ -6,9 +6,14 @@
 #
 # 数据(sqlite 库 / 构建产物 / 仓库缓存)持久化在具名卷 pipewright-data(挂到容器 /data,
 # 镜像已将 /data 设为 nonroot 属主与工作目录)。master key 务必持久保存:换 key 旧凭据无法解密。
+#
+# 镜像有两档(见 .env 的 PIPEWRIGHT_IMAGE / PIPEWRIGHT_VERSION):
+#   <版本>          distroless:最小攻击面、无 shell、无容器 CLI —— 容器内**不能**打包镜像。
+#   <版本>-docker   alpine + docker CLI —— 挂上宿主 docker.sock 后容器内能真构建/推镜像。
+# 默认拉 ghcr;境内网络换 ACR(青岛) registry.cn-qingdao.aliyuncs.com/fubin/pipewright,两档都有。
 services:
   pipewright:
-    image: ghcr.io/huangchengsir/pipewright:${PIPEWRIGHT_VERSION:-latest}
+    image: ${PIPEWRIGHT_IMAGE:-ghcr.io/huangchengsir/pipewright}:${PIPEWRIGHT_VERSION:-latest}
     container_name: pipewright
     restart: unless-stopped
     ports:
@@ -26,12 +31,29 @@ services:
       # 运行执行器:默认 DAG(真按 UI 可视化流水线 stages 执行)。仅需回退旧版固定流程时
       # 显式设 PIPEWRIGHT_RUNNER=legacy(clone→对仓库根 docker build→deploy,不跑可视化流水线)。
       PIPEWRIGHT_RUNNER: ${PIPEWRIGHT_RUNNER:-}
+      # 构建工作区落点(配合下方 volumes 的 ②③)。留空 = 容器默认 /tmp,此时容器内隔离构建不可用。
+      TMPDIR: ${PIPEWRIGHT_WORK_DIR:-}
     volumes:
       - pipewright-data:/data
-      # 隔离构建 / 镜像部署需要 Docker:取消下一行挂宿主 docker.sock(注意:等同授予宿主 root 级权限,
-      # 仅在信任的自托管环境开启)。注意 distroless 镜像不含 docker CLI;需要容器内跑 docker 构建时,
-      # 建议改用 install.sh 把二进制装在带 Docker 的宿主上,而非在本容器内构建。
+      # ---- 想让平台在容器里打包镜像?三行一起放开(缺一不可)----
+      # 前提:用 <版本>-docker 档镜像(默认 distroless 档里没有 docker CLI,放开下面三行也没用)。
+      #
+      # ① 宿主 Docker socket:平台的构建器是在进程内 exec 容器 CLI(internal/build/driver.go),
+      #    有了 socket 它就通过 CLI 指挥**宿主** daemon 构建/推送,产出的镜像也就是宿主镜像。
+      #    注意:挂 socket 等同授予容器宿主 root 级权限,只在信任的自托管机器上开。
       # - /var/run/docker.sock:/var/run/docker.sock
+      #
+      # ② 工作区目录必须在宿主与容器里**同名同路径**。原因:script 节点跑「隔离构建」用的是
+      #    docker run -v <工作区>:<挂载点>,而 daemon 是宿主的 —— 它按**宿主路径**解析 -v 的源。
+      #    路径不一致时 daemon 会在宿主凭空建一个空目录,构建拿到空工作区(症状:日志里全是
+      #    "no such file or directory",而平台侧看着一切正常)。
+      # ③ 把 TMPDIR 指到那个目录:构建工作区由 os.MkdirTemp 创建,落点跟 TMPDIR 走。
+      #    把 PIPEWRIGHT_WORK_DIR 同时写进 .env 与下面两行(值必须一致,且是宿主绝对路径)。
+      # - ${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}:${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}
+    # 容器内的 localhost 是容器自己,不是宿主。要在 UI 里看**宿主机**的镜像列表 / 部署容器
+    # (那两条路走 SSH 而非 socket),就把宿主登记成主机 host.docker.internal 的服务器。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       # 静态镜像无 curl/wget;用二进制自身做 TCP 探活的最小手段:复用 --version(进程可执行即健康)。
       test: ["CMD", "/pipewright", "--version"]
