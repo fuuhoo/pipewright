@@ -9,6 +9,7 @@ const ko: typeof zhCN = {
     allArrow: '전체 →',
     detailArrow: '상세 →',
     close: '닫기',
+    aiTokens: '이번 호출 · 입력 {prompt} / 출력 {completion} tokens',
   },
 
   locale: {

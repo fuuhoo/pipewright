@@ -7,6 +7,7 @@
  */
 
 import { http } from './http'
+import type { AITokenUsage } from '../lib/aiUsage'
 
 // ─── Status vocabulary (fixed six-word set; do not alias) ────────────────────
 
@@ -112,6 +113,8 @@ export interface DiagnosisDTO {
   fixScript: string
   evidence: DiagnosisEvidence[]
   generatedAt: string         // RFC3339
+  /** Tokens this diagnosis call consumed. Both zero = provider didn't report usage. */
+  usage: AITokenUsage
 }
 
 /** @deprecated Use DiagnosisDTO — removed in 7-2 */

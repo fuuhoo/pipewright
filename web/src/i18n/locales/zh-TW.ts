@@ -9,6 +9,7 @@ const zhTW: typeof zhCN = {
     allArrow: '全部 →',
     detailArrow: '詳情 →',
     close: '關閉',
+    aiTokens: '本次呼叫 · 輸入 {prompt} / 輸出 {completion} tokens',
   },
 
   locale: {

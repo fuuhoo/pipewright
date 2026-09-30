@@ -3,10 +3,11 @@
   AiDiagnosisModal.vue — 容器 AI 诊断 / 看日志。取容器最近日志 → ai.Diagnose,
   展示根因假说 + 置信度 + 修复建议 + 可粘贴修复脚本 + 证据行。AI 未配/失败优雅降级。
 */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { diagnoseContainer, type ContainerDiagnosis } from '../../api/containers'
 import { HttpError } from '../../api/http'
+import { aiUsageParts } from '../../lib/aiUsage'
 import { useToast } from '../../composables/useToast'
 
 const props = defineProps<{ serverId: string; containerName: string }>()
@@ -24,6 +25,8 @@ const CONFIDENCE_LABEL: Record<string, () => string> = {
   low: () => t('opsContainer.diag.confLow'),
   '': () => '',
 }
+
+const usageParts = computed(() => aiUsageParts(diag.value?.usage))
 
 async function run(): Promise<void> {
   state.value = 'loading'
@@ -122,6 +125,8 @@ void run()
             >{{ e.text }}
 </span></pre>
           </section>
+
+          <p v-if="usageParts" class="usage">{{ t('common.aiTokens', usageParts) }}</p>
         </template>
       </div>
 
@@ -319,6 +324,13 @@ void run()
 .evline--hl {
   color: var(--color-amber);
   background: var(--color-amber-soft);
+}
+.usage {
+  margin: 0;
+  font-size: var(--text-micro);
+  color: var(--color-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .modal__foot {
   display: flex;

@@ -12,6 +12,7 @@
  */
 
 import { http } from './http'
+import type { AITokenUsage } from '../lib/aiUsage'
 
 export type RiskLevel = 'high' | 'medium' | 'low'
 export type RiskSource = 'rule' | 'ai'
@@ -37,6 +38,8 @@ export interface AnalyzeRisksResponse {
   /** Human reason when aiEnhanced=false (AI unconfigured/failed). Never contains secrets. */
   aiReason: string
   generatedAt: string
+  /** Tokens the LLM pass consumed. Both zero = rule-only or provider didn't report usage. */
+  usage: AITokenUsage
 }
 
 export async function analyzeRisks(projectId: string): Promise<AnalyzeRisksResponse> {

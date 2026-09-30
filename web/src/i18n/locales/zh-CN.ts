@@ -8,6 +8,7 @@ export default {
     allArrow: '全部 →',
     detailArrow: '详情 →',
     close: '关闭',
+    aiTokens: '本次调用 · 输入 {prompt} / 输出 {completion} tokens',
   },
 
   locale: {

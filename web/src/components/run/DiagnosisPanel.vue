@@ -31,6 +31,7 @@ import type { DiagnosisDTO, FeedbackVerdict } from '../../api/runs'
 const { t } = useI18n()
 import { diagnoseRun, submitDiagnosisFeedback } from '../../api/runs'
 import { HttpError } from '../../api/http'
+import { aiUsageParts } from '../../lib/aiUsage'
 import AppButton from '../ui/AppButton.vue'
 
 const props = defineProps<{
@@ -49,6 +50,9 @@ const diagnoseError = ref('')
 
 // Expand/collapse alternate causes
 const altCausesExpanded = ref(false)
+
+// 本次调用 token 用量(旧记录无 usage / 用量为 0 → null,不显示)
+const usageParts = computed(() => aiUsageParts(props.diagnosis?.usage))
 
 async function handleDiagnose(): Promise<void> {
   if (diagnosing.value) return
@@ -400,6 +404,9 @@ function confidenceLabel(level: DiagnosisDTO['confidence']): ConfLabel {
         </div>
 
       </div>
+
+      <!-- ── 本次调用 token 用量(非零才显示)──────────────────────────── -->
+      <p v-if="usageParts" class="dp-usage">{{ t('common.aiTokens', usageParts) }}</p>
 
       <!-- ── Feedback footer (Story 7-5, FR-26) — append-only ──────────── -->
       <div class="dp-feedback">
@@ -1132,6 +1139,15 @@ function confidenceLabel(level: DiagnosisDTO['confidence']): ConfLabel {
 }
 
 /* ─── Feedback footer (Story 7-5, FR-26) ─────────────────────────────────── */
+.dp-usage {
+  margin: 0;
+  padding: 0 20px 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+}
+
 .dp-feedback {
   display: flex;
   flex-direction: column;

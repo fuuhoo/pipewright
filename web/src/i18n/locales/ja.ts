@@ -9,6 +9,7 @@ const ja: typeof zhCN = {
     allArrow: 'すべて →',
     detailArrow: '詳細 →',
     close: '閉じる',
+    aiTokens: 'この呼び出し · 入力 {prompt} / 出力 {completion} tokens',
   },
 
   locale: {

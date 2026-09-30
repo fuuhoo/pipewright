@@ -17,6 +17,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { analyzeRisks, type RiskFinding, type RiskLevel } from '../../api/aiRisk'
 import { HttpError } from '../../api/http'
+import { aiUsageParts, type AITokenUsage } from '../../lib/aiUsage'
 import AppButton from '../ui/AppButton.vue'
 
 const props = defineProps<{
@@ -32,6 +33,9 @@ const errorMsg = ref('')
 const findings = ref<RiskFinding[]>([])
 const aiEnhanced = ref(false)
 const aiReason = ref('')
+const usage = ref<AITokenUsage | null>(null)
+
+const usageParts = computed(() => aiUsageParts(usage.value))
 
 const LEVEL_ORDER: Record<RiskLevel, number> = { high: 0, medium: 1, low: 2 }
 
@@ -68,6 +72,7 @@ async function runAnalysis(): Promise<void> {
     findings.value = res.findings
     aiEnhanced.value = res.aiEnhanced
     aiReason.value = res.aiReason
+    usage.value = res.usage
     state.value = 'done'
   } catch (err) {
     if (err instanceof HttpError) {
@@ -119,6 +124,7 @@ async function runAnalysis(): Promise<void> {
         <span v-else-if="state === 'done'" class="rap-source" :class="{ 'rap-source--ai': aiEnhanced }">
           {{ aiEnhanced ? t('pipelinePanels.rapAiEnhanced') : (aiReason || t('pipelinePanels.rapRulesOnly')) }}
         </span>
+        <span v-if="usageParts" class="rap-usage">{{ t('common.aiTokens', usageParts) }}</span>
       </div>
 
       <!-- Error -->
@@ -257,6 +263,12 @@ async function runAnalysis(): Promise<void> {
 
 .rap-source--ai {
   color: var(--color-cyan);
+}
+
+.rap-usage {
+  font-size: 0.72rem;
+  color: var(--color-faint);
+  font-family: var(--font-mono);
 }
 
 .rap-error {

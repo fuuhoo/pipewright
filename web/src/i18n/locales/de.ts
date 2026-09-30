@@ -9,6 +9,7 @@ const de: typeof zhCN = {
     allArrow: 'Alle →',
     detailArrow: 'Details →',
     close: 'Schließen',
+    aiTokens: 'Dieser Aufruf · {prompt} Eingabe / {completion} Ausgabe Tokens',
   },
 
   locale: {

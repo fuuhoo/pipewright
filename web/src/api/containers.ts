@@ -17,6 +17,7 @@
  */
 
 import { http } from './http'
+import type { AITokenUsage } from '../lib/aiUsage'
 
 /** One container as reported by `docker ps -a`. */
 export interface ContainerInfo {
@@ -279,6 +280,8 @@ export interface ContainerDiagnosis {
   fixScript: string
   evidence: DiagnosisEvidence[]
   generatedAt: string
+  /** 本次诊断这一趟 chat 的 token 用量;两项皆 0 表示模型未回传。 */
+  usage: AITokenUsage
 }
 
 /**
