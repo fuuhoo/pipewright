@@ -1,0 +1,31 @@
+# 源码构建(root Dockerfile)的 context 排除清单。
+# 不写这个,`COPY . .` 会把下面这些一起发给 daemon:数百 MB 的 node_modules、本地 sqlite 库、
+# 代码管理区的私有仓库 bare 镜像 repos/、依赖缓存与构建产物。既拖慢构建,也可能把不该进镜像的
+# 东西(本地库、私有仓库镜像)带进中间层。
+#
+# 注:web/dist 也排除 —— 根 Dockerfile 用 npm 阶段现建再 COPY --from=web 覆盖,带进来只会是陈旧产物。
+.git
+.github
+.idea
+.vscode
+node_modules
+web/node_modules
+web/dist
+data
+dist
+artifacts
+repos
+cache
+coverage
+docs
+screenshots
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.out
+.env
+.env.*
+!.env.example
+pipewright
+pipewright.exe

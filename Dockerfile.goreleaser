@@ -1,11 +1,32 @@
-# 发版专用:包装 GoReleaser 已交叉编译好的静态二进制(前端已 go:embed),不在镜像内重编。
-# 由 dockers_v2 跨架构构建并合并多架构清单。手动 docker build 请用根目录 Dockerfile。
+# 发版专用:包装已交叉编译好的静态二进制(前端已 go:embed),不在镜像内重编。
+# 由 .goreleaser.yaml 的 dockers 按架构各建一份再合并多架构清单;ACR 发布流水线
+# (.github/workflows/aliyun-image.yml)也用它,靠 --target 一次出两档镜像。
+# 手动 docker build 请用根目录 Dockerfile。
+#
+# 两档运行时与取舍同根目录 Dockerfile 顶部注释:默认(最后一个阶段)= distroless,
+# 容器内不能打包镜像;要容器内构建就用 --target with-docker 并挂宿主 docker.sock。
+
+# 版本由构建方传入:国内构建换 daocloud 前缀,如 docker.m.daocloud.io/library/docker:cli。
+# 注:必须走「全局 ARG → 命名阶段」这条路,COPY --from 不做变量展开。
+ARG DOCKER_CLI_IMAGE=docker:cli
+FROM ${DOCKER_CLI_IMAGE} AS dockercli
 
 # distroless 无 shell,借 busybox 预建归 nonroot(65532)所有的 /data,供持久化卷继承属主。
 FROM busybox AS prep
 RUN mkdir -p /data && chown 65532:65532 /data
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# ---- 带容器 CLI 的运行镜像(--target with-docker)----
+# docker 二进制是全静态链接的,搬进 alpine 即跑;root 运行是刻意的(挂 socket 等同宿主 root)。
+FROM alpine:3.20 AS with-docker
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY pipewright /pipewright
+RUN mkdir -p /data
+WORKDIR /data
+EXPOSE 8080
+ENTRYPOINT ["/pipewright"]
+
+# ---- 运行镜像(默认档)----
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 COPY pipewright /pipewright
 COPY --from=prep --chown=65532:65532 /data /data
 # 工作目录设为 /data:sqlite(pipewright.db)与相对路径产物默认落此,持久化卷一挂即生效。
