@@ -425,13 +425,34 @@ func probeRequest(provider, baseURL, apiKey string) (string, map[string]string) 
 	}
 }
 
-// mapStatusError 把非 2xx 状态映射为人读错误(绝无密钥)。
+// mapStatusError 把探测(probe)的非 2xx 状态映射为人读错误(绝无密钥)。
 func mapStatusError(status int) string {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return fmt.Sprintf("认证失败(HTTP %d):请检查 API 密钥", status)
 	default:
 		return fmt.Sprintf("探测失败:HTTP %d", status)
+	}
+}
+
+// mapChatStatusError 把**生成调用**(chat)的非 2xx 状态映射为人读错误。
+// 与探测文案分开:chat 失败时用户看到的是「探测失败」会指错方向——最常见的一档其实是
+// 模型名写错(Ollama 模型名区分大小写,如 gemma4:e4b 写成 Gemm4:e4b → 404)。
+func mapChatStatusError(provider, model string, status int) string {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return fmt.Sprintf("认证失败(HTTP %d):请检查 API 密钥", status)
+	case status == http.StatusNotFound:
+		if provider == ProviderOllama && strings.TrimSpace(model) != "" {
+			return fmt.Sprintf("Ollama 里没有模型 %q(HTTP 404):模型名区分大小写,且需已 ollama pull", strings.TrimSpace(model))
+		}
+		return "调用地址或模型不存在(HTTP 404):请检查 baseUrl 与模型名"
+	case status == http.StatusTooManyRequests:
+		return "请求过于频繁(HTTP 429):请稍后重试"
+	case status >= 500:
+		return fmt.Sprintf("provider 服务异常(HTTP %d):请稍后重试", status)
+	default:
+		return fmt.Sprintf("调用模型失败(HTTP %d)", status)
 	}
 }
 

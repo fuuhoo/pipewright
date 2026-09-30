@@ -70,6 +70,9 @@ type RiskReport struct {
 	AIEnhanced  bool          `json:"aiEnhanced"` // 是否实际跑了 LLM 增强(false=仅确定性规则)
 	AIReason    string        `json:"aiReason"`   // AIEnhanced=false 时的人读原因(未配 / 失败;绝无密钥)
 	GeneratedAt time.Time     `json:"generatedAt"`
+	// Usage 是本次 LLM 增强那一趟 chat 的 token 用量(additive 字段;仅显示,不入库累计)。
+	// AIEnhanced=false 或模型未回传用量时为零值,前端此时隐藏。
+	Usage TokenUsage `json:"usage"`
 }
 
 // AnnotateRisksInput 是风险标注入参。Masker 出网前脱敏(进 prompt 的脚本一律 Scrub);
@@ -203,13 +206,15 @@ func (s *service) AnnotateRisks(ctx context.Context, in AnnotateRisksInput) (*Ri
 	// 出网前脱敏:脚本进 prompt 前一律 Scrub。
 	prompt := buildRiskPrompt(masker, in.Steps)
 
-	text, cerr := s.chatWithTokens(ctx, provider, baseURL, cfg.Model, apiKey, prompt, riskAnnotateMaxTokens)
+	text, usage, cerr := s.chatWithTokens(ctx, provider, baseURL, cfg.Model, apiKey, prompt, riskAnnotateMaxTokens)
 	apiKey = "" // 明文用完即弃
 	_ = apiKey
 	if cerr != nil {
 		report.AIReason = "AI 增强分析失败:" + humanizeDiagnoseErr(cerr)
 		return report, nil
 	}
+	// 钱已经花了:哪怕后面解析失败,用量照实回报(前端只在非零时显示)。
+	report.Usage = usage
 
 	aiFindings, perr := parseRiskFindings(text)
 	if perr != nil {

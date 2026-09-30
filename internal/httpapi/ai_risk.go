@@ -39,6 +39,8 @@ type analyzeRisksDTO struct {
 	AIEnhanced  bool             `json:"aiEnhanced"`
 	AIReason    string           `json:"aiReason"`
 	GeneratedAt string           `json:"generatedAt"`
+	// Usage 是本次 LLM 增强那一趟 chat 的 token 用量(additive 字段;仅规则扫描或未回传则为 0)。
+	Usage tokenUsageDTO `json:"usage"`
 }
 
 func toAnalyzeRisksDTO(r *ai.RiskReport) analyzeRisksDTO {
@@ -59,6 +61,7 @@ func toAnalyzeRisksDTO(r *ai.RiskReport) analyzeRisksDTO {
 		AIEnhanced:  r.AIEnhanced,
 		AIReason:    r.AIReason,
 		GeneratedAt: r.GeneratedAt.UTC().Format(time.RFC3339),
+		Usage:       tokenUsageDTO{Prompt: r.Usage.Prompt, Completion: r.Usage.Completion},
 	}
 }
 

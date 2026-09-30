@@ -218,6 +218,13 @@ type Diagnosis struct {
 	FixScript       string              // 可执行修复脚本/补丁片段(护城河;脱敏后搬运;空串=无)
 	Evidence        []DiagnosisEvidence // 脱敏后日志证据
 	GeneratedAt     time.Time           // 生成时刻
+	Usage           TokenUsage          // 本次诊断那一趟 chat 的 token 用量(仅显示用;零值=模型未回传)
+}
+
+// TokenUsage 是一次 AI chat 调用的 token 用量(搬运形状;run 包不 import ai)。
+type TokenUsage struct {
+	Prompt     int // 输入 tokens
+	Completion int // 输出 tokens
 }
 
 // ListFilter 是运行列表筛选/分页入参(零值合理:不筛选、首页)。

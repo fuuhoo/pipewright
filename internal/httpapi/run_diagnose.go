@@ -24,6 +24,13 @@ type diagnosisEvidenceDTO struct {
 	Highlight bool   `json:"highlight"`
 }
 
+// tokenUsageDTO 是一次 AI chat 调用的 token 用量(additive 字段,诊断与风险标注共用)。
+// 两项皆 0 = 模型这次没回传用量,前端隐藏整行。
+type tokenUsageDTO struct {
+	Prompt     int `json:"prompt"`
+	Completion int `json:"completion"`
+}
+
 // diagnosisDTO 是冻结的 diagnosis 子 DTO。status≠ready 时 hypothesis 等为空、reason 人读。
 type diagnosisDTO struct {
 	Status          string   `json:"status"` // ready | unavailable | pending
@@ -37,6 +44,8 @@ type diagnosisDTO struct {
 	FixScript   string                 `json:"fixScript"`
 	Evidence    []diagnosisEvidenceDTO `json:"evidence"`
 	GeneratedAt string                 `json:"generatedAt"`
+	// Usage 是本次诊断那一趟 chat 的 token 用量(additive 字段;模型未回传则为 0)。
+	Usage tokenUsageDTO `json:"usage"`
 }
 
 // toDiagnosisDTO 把领域 run.Diagnosis 映射为冻结 DTO(nil → nil,run-detail diagnosis=null)。
@@ -66,6 +75,7 @@ func toDiagnosisDTO(d *run.Diagnosis) *diagnosisDTO {
 		FixScript:       d.FixScript,
 		Evidence:        ev,
 		GeneratedAt:     d.GeneratedAt.UTC().Format(time.RFC3339),
+		Usage:           tokenUsageDTO{Prompt: d.Usage.Prompt, Completion: d.Usage.Completion},
 	}
 }
 
@@ -88,6 +98,7 @@ func aiToRunDiagnosis(d *ai.Diagnosis) *run.Diagnosis {
 		FixScript:       d.FixScript,
 		Evidence:        ev,
 		GeneratedAt:     d.GeneratedAt,
+		Usage:           run.TokenUsage{Prompt: d.Usage.Prompt, Completion: d.Usage.Completion},
 	}
 }
 

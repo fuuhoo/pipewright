@@ -43,7 +43,7 @@ func (s *service) GenerateCompose(ctx context.Context, in GenerateComposeInput) 
 	}
 
 	prompt := buildComposePrompt(masker, nl)
-	text, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, composeGenMaxTokens)
+	text, _, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, composeGenMaxTokens)
 	apiKey = "" // 明文用完即弃
 	_ = apiKey
 	if cerr != nil {

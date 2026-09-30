@@ -69,6 +69,9 @@ type Diagnosis struct {
 	FixScript   string              `json:"fixScript"`
 	Evidence    []DiagnosisEvidence `json:"evidence"`
 	GeneratedAt time.Time           `json:"generatedAt"`
+	// Usage 是本次诊断这一趟 chat 的 token 用量(additive 字段;不入库累计,仅供显示)。
+	// 零值 = 模型没回传用量(部分兼容端点如此),前端此时隐藏。
+	Usage TokenUsage `json:"usage"`
 }
 
 // unavailable 构造一个 status=unavailable 的诊断(带人读 reason;绝无密钥)。
@@ -145,7 +148,7 @@ func (s *service) Diagnose(ctx context.Context, in DiagnoseInput) (*Diagnosis, e
 
 	prompt := buildDiagnosePrompt(maskedLines, maskedStep, maskedProject)
 
-	text, cerr := s.chat(ctx, provider, baseURL, cfg.Model, apiKey, prompt)
+	text, usage, cerr := s.chat(ctx, provider, baseURL, cfg.Model, apiKey, prompt)
 	apiKey = "" // 明文用完即弃
 	_ = apiKey
 	if cerr != nil {
@@ -175,6 +178,7 @@ func (s *service) Diagnose(ctx context.Context, in DiagnoseInput) (*Diagnosis, e
 		FixScript:       masker.Scrub(strings.TrimSpace(parsed.FixScript)),
 		Evidence:        evidence,
 		GeneratedAt:     time.Now().UTC(),
+		Usage:           usage,
 	}
 	return d, nil
 }
@@ -262,6 +266,13 @@ func parseDiagnosis(text string) (*llmDiagnosis, error) {
 // humanizeDiagnoseErr 把 chat 错误转人读消息(绝无明文密钥;ErrGenerateFailed 已人读)。
 func humanizeDiagnoseErr(err error) string {
 	msg := err.Error()
+	// 内部哨兵绝不进 UI:chat 包出来的形状是 "ai: generate failed: <人读>",只取尾巴。
+	if prefix := ErrGenerateFailed.Error() + ": "; strings.HasPrefix(msg, prefix) {
+		if tail := strings.TrimSpace(msg[len(prefix):]); tail != "" {
+			return tail
+		}
+		return "调用模型失败,请稍后重试"
+	}
 	if i := strings.Index(msg, ": "); i >= 0 {
 		return strings.TrimSpace(msg[i+2:])
 	}

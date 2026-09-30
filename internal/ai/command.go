@@ -258,7 +258,7 @@ func (s *service) CommandSuggest(ctx context.Context, in CommandSuggestInput) (*
 	}
 
 	prompt := buildCommandPrompt(masker, nl, in.Context)
-	text, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, commandSuggestMaxTokens)
+	text, _, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, commandSuggestMaxTokens)
 	apiKey = "" // 明文用完即弃
 	_ = apiKey
 	if cerr != nil {
@@ -298,7 +298,7 @@ func (s *service) ExplainCommand(ctx context.Context, in ExplainCommandInput) (*
 	}
 
 	prompt := buildExplainPrompt(masker, cmd, in.Context)
-	text, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, explainMaxTokens)
+	text, _, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, explainMaxTokens)
 	apiKey = ""
 	_ = apiKey
 	if cerr != nil {
@@ -334,7 +334,7 @@ func (s *service) CompleteCommand(ctx context.Context, in CompleteCommandInput) 
 	}
 
 	prompt := buildCompletePrompt(masker, partial, in.Context)
-	text, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, completeMaxTokens)
+	text, _, cerr := s.chatWithTokens(ctx, provider, baseURL, s.modelFor(ctx), apiKey, prompt, completeMaxTokens)
 	apiKey = ""
 	_ = apiKey
 	if cerr != nil {

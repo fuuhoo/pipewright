@@ -25,12 +25,19 @@ type diagnosisRow struct {
 	FixScript       string                 `json:"fixScript,omitempty"`
 	Evidence        []diagnosisEvidenceRow `json:"evidence"`
 	GeneratedAt     string                 `json:"generatedAt"`
+	// Usage 只在真的拿到用量时才写(旧记录无此字段 → 解码为零值,前端隐藏)。
+	Usage *tokenUsageRow `json:"usage,omitempty"`
 }
 
 type diagnosisEvidenceRow struct {
 	Line      int    `json:"line"`
 	Text      string `json:"text"`
 	Highlight bool   `json:"highlight"`
+}
+
+type tokenUsageRow struct {
+	Prompt     int `json:"prompt"`
+	Completion int `json:"completion"`
 }
 
 // encodeDiagnosis 把 Diagnosis 序列化为可入库的 JSON 字符串(nil → 空串,表未诊断)。
@@ -60,6 +67,9 @@ func encodeDiagnosis(d *Diagnosis) (string, error) {
 		FixScript:       d.FixScript,
 		Evidence:        ev,
 		GeneratedAt:     d.GeneratedAt.UTC().Format(time.RFC3339),
+	}
+	if d.Usage.Prompt > 0 || d.Usage.Completion > 0 {
+		row.Usage = &tokenUsageRow{Prompt: d.Usage.Prompt, Completion: d.Usage.Completion}
 	}
 	b, err := json.Marshal(row)
 	if err != nil {
@@ -92,6 +102,9 @@ func decodeDiagnosis(s string) (*Diagnosis, error) {
 		FixSuggestions:  row.FixSuggestions,
 		FixScript:       row.FixScript,
 		Evidence:        ev,
+	}
+	if row.Usage != nil {
+		d.Usage = TokenUsage{Prompt: row.Usage.Prompt, Completion: row.Usage.Completion}
 	}
 	if t, perr := time.Parse(time.RFC3339, row.GeneratedAt); perr == nil {
 		d.GeneratedAt = t.UTC()

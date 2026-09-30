@@ -133,7 +133,7 @@ func (s *service) Generate(ctx context.Context, in GenerateInput) (*Proposal, er
 
 	prompt := buildPrompt(in)
 
-	text, err := s.chat(ctx, provider, baseURL, cfg.Model, apiKey, prompt)
+	text, _, err := s.chat(ctx, provider, baseURL, cfg.Model, apiKey, prompt)
 	apiKey = "" // 明文用完即弃
 	_ = apiKey
 	if err != nil {
@@ -148,15 +148,15 @@ func (s *service) Generate(ctx context.Context, in GenerateInput) (*Proposal, er
 	return proposal, nil
 }
 
-// chat 按 provider 构造 chat 请求并取回助手文本(经注入 http.Client),使用默认 max_tokens。
+// chat 按 provider 构造 chat 请求并取回助手文本 + token 用量(经注入 http.Client),使用默认 max_tokens。
 // 失败统一返回 ErrGenerateFailed 包裹的人读错误(不携带底层网络错误,避免 URL 密钥外泄)。
-func (s *service) chat(ctx context.Context, provider, baseURL, model, apiKey, prompt string) (string, error) {
+func (s *service) chat(ctx context.Context, provider, baseURL, model, apiKey, prompt string) (string, TokenUsage, error) {
 	return s.chatWithTokens(ctx, provider, baseURL, model, apiKey, prompt, generateMaxTokens)
 }
 
 // chatWithTokens 同 chat,但允许调用方指定 claude 的 max_tokens(openai/ollama 沿用其默认)。
 // 复用同一套 per-provider 请求构造 / 响应解析 / 错误脱敏逻辑(供风险标注等较短回包场景调小)。
-func (s *service) chatWithTokens(ctx context.Context, provider, baseURL, model, apiKey, prompt string, maxTokens int) (string, error) {
+func (s *service) chatWithTokens(ctx context.Context, provider, baseURL, model, apiKey, prompt string, maxTokens int) (string, TokenUsage, error) {
 	base := strings.TrimRight(baseURL, "/")
 
 	var (
@@ -197,15 +197,15 @@ func (s *service) chatWithTokens(ctx context.Context, provider, baseURL, model, 
 			},
 		})
 	default:
-		return "", fmt.Errorf("%w: 不支持的 provider", ErrGenerateFailed)
+		return "", TokenUsage{}, fmt.Errorf("%w: 不支持的 provider", ErrGenerateFailed)
 	}
 	if err != nil {
-		return "", fmt.Errorf("%w: 请求构造失败", ErrGenerateFailed)
+		return "", TokenUsage{}, fmt.Errorf("%w: 请求构造失败", ErrGenerateFailed)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("%w: 请求构造失败(baseUrl 可能非法)", ErrGenerateFailed)
+		return "", TokenUsage{}, fmt.Errorf("%w: 请求构造失败(baseUrl 可能非法)", ErrGenerateFailed)
 	}
 	for k, v := range header {
 		req.Header.Set(k, v)
@@ -214,20 +214,20 @@ func (s *service) chatWithTokens(ctx context.Context, provider, baseURL, model, 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		// 绝不回显底层错误(可能含 endpoint/凭据细节)。
-		return "", fmt.Errorf("%w: %s", ErrGenerateFailed, mapTransportError(err))
+		return "", TokenUsage{}, fmt.Errorf("%w: %s", ErrGenerateFailed, mapTransportError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxLLMRespBytes))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("%w: %s", ErrGenerateFailed, mapStatusError(resp.StatusCode))
+		return "", TokenUsage{}, fmt.Errorf("%w: %s", ErrGenerateFailed, mapChatStatusError(provider, model, resp.StatusCode))
 	}
 
 	text, err := extractChatText(provider, raw)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
-	return text, nil
+	return text, extractChatUsage(provider, raw), nil
 }
 
 // extractChatText 按 provider 从响应 JSON 取助手回复文本。
