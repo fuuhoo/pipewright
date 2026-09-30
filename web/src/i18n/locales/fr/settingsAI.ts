@@ -1,9 +1,10 @@
 export default {
   title: 'Fournisseur AI',
   subtitle:
-    'Pipewright n’entraîne aucun modèle propre — connectez votre propre LLM pour le diagnostic des échecs et la génération de configuration. Les clés ne résident que dans le coffre chiffré de cette instance et n’en sortent jamais.',
+    'Pipewright n’entraîne aucun modèle propre — connectez votre propre LLM pour le diagnostic des échecs et la génération de configuration. Chaque protocole conserve ses propres réglages et un seul est actif à la fois. Les clés ne résident que dans le coffre chiffré de cette instance et n’en sortent jamais.',
   statusConfigured: 'Configuré',
   statusUnconfigured: 'Non configuré',
+  activeBadge: 'En cours d’utilisation',
   retry: 'Réessayer',
 
   providerClaudeTag: 'Recommandé pour le diagnostic',
@@ -49,15 +50,15 @@ export default {
   budgetHint: 'Met en pause le diagnostic AI une fois dépassée (vide = illimité ; déclarée ce cycle, appliquée au prochain Epic)',
   budgetPlaceholder: 'par ex. 500000, vide = illimité',
 
-  enableAi: 'Activer les fonctions AI',
-  enableAiDesc: 'Désactivé, le diagnostic AI est ignoré silencieusement et les pipelines CI/CD principaux ne sont pas affectés',
+  enableAi: 'Définir comme protocole actif',
+  enableAiDesc: 'Le diagnostic et la génération utilisent ce protocole ; l’activer désactive automatiquement les autres',
 
-  dirtyNote: 'Vous avez des modifications non enregistrées',
-  cleanNote: 'Aucune modification',
+  dirtyNote: 'Ce protocole a des modifications non enregistrées',
+  cleanNote: 'Aucune modification sur ce protocole',
   discard: 'Abandonner',
   saveChanges: 'Enregistrer les modifications',
 
-  toastSaveSuccess: 'Configuration AI enregistrée',
+  toastSaveSuccess: 'Réglages du protocole enregistrés',
   toastSaveFailed: 'Échec de l’enregistrement',
 
   errServerUnreachable: 'Impossible de joindre le serveur. Vérifiez que le backend est en cours d’exécution et réessayez.',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: 'Échec du chargement ({status})',
   errLoadGeneric: 'Échec du chargement de la configuration AI. Veuillez réessayer plus tard.',
   errBudgetInvalid: 'La limite mensuelle de tokens doit être un entier positif ou laissée vide',
-  errProviderInvalid: 'Veuillez sélectionner un fournisseur valide',
+  errProviderInvalid: 'Veuillez sélectionner un protocole valide',
   errBaseUrlRequired: 'Veuillez saisir la base URL',
   errApiKeyRequired: 'La API Key ne peut pas être vide (obligatoire sauf pour Ollama)',
   errRequestFailed: 'Échec de la requête ({status})',

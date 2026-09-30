@@ -1,28 +1,33 @@
 /**
- * AI Settings API — aligns to frozen 7.1 contract.
+ * AI Settings API — 三档协议各存一份配置。
  *
- * GET  /api/settings/ai          → AISettings
- * PUT  /api/settings/ai          → AISettings  (needs CSRF)
+ * GET  /api/settings/ai          → AISettings   (整份总览:active + 三档各自配置)
+ * PUT  /api/settings/ai          → AISettings   (needs CSRF;只写 body.provider 那一档)
  * POST /api/settings/ai/test     → AITestResult (needs CSRF)
  *
  * apiKey is WRITE-ONLY: the server never returns plaintext.
  * GET/PUT responses only include apiKeyMasked (e.g. "sk-ant-••••a91f").
  * Ollama does not require an apiKey.
+ * `active` 是当前生效的那一档;enabled=true 保存后其他档自动停用(同一时刻只有一份生效)。
  */
 
 import { http } from './http'
 
+/** 三档协议;'' 只出现在「还没选过任何一档」的前端初始态。 */
 export type AIProvider = 'claude' | 'openai' | 'ollama' | ''
+
+/** 可保存的三档(服务端总览里恒有这三项)。 */
+export type SavedProvider = 'claude' | 'openai' | 'ollama'
 
 export interface AIBudget {
   monthlyTokenLimit: number | null
 }
 
-/** GET /api/settings/ai response — never contains plaintext apiKey */
-export interface AISettings {
+/** 单档协议的配置;绝不包含明文 apiKey。 */
+export interface AIProviderConfig {
+  provider: SavedProvider
   configured: boolean
   enabled: boolean
-  provider: AIProvider
   baseUrl: string
   model: string
   /** Server-computed mask, e.g. "sk-ant-••••a91f" — never plaintext. */
@@ -31,17 +36,24 @@ export interface AISettings {
   updatedAt: string | null
 }
 
-/** PUT /api/settings/ai request body */
+/** GET/PUT 响应:当前生效档 + 三档各自的配置(未配过的档位为空默认)。 */
+export interface AISettings {
+  active: AIProvider
+  configs: AIProviderConfig[]
+}
+
+/** PUT /api/settings/ai request body — 只写 provider 那一行,其余两档不动。 */
 export interface SaveAISettingsInput {
-  provider: AIProvider
+  provider: SavedProvider
   baseUrl: string
   model: string
   /**
-   * Write-only: omit or leave empty to keep existing key unchanged.
+   * Write-only: omit or leave empty to keep that provider's existing key unchanged.
    * Non-empty rotates to the new key.
    */
   apiKey?: string
   budget: AIBudget
+  /** true = 把这一档设为当前生效(其他档随之停用)。 */
   enabled: boolean
 }
 

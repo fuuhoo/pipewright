@@ -1,9 +1,10 @@
 export default {
   title: 'AI Provider',
   subtitle:
-    'Pipewright trains no models of its own — bring your own LLM for failure diagnosis and config generation. Keys live only in this instance’s encrypted vault and never leave it.',
+    'Pipewright trains no models of its own — bring your own LLM for failure diagnosis and config generation. Each protocol keeps its own settings and only one is active at a time. Keys live only in this instance’s encrypted vault and never leave it.',
   statusConfigured: 'Configured',
   statusUnconfigured: 'Not configured',
+  activeBadge: 'In use',
   retry: 'Retry',
 
   providerClaudeTag: 'Recommended for diagnosis',
@@ -49,15 +50,15 @@ export default {
   budgetHint: 'Pauses AI diagnosis once exceeded (blank = unlimited; declared this cycle, enforced in the next Epic)',
   budgetPlaceholder: 'e.g. 500000, blank = unlimited',
 
-  enableAi: 'Enable AI features',
-  enableAiDesc: 'When off, AI diagnosis is silently skipped and core CI/CD pipelines are unaffected',
+  enableAi: 'Set as active protocol',
+  enableAiDesc: 'Diagnosis and config generation use this protocol; enabling it deactivates the others',
 
-  dirtyNote: 'You have unsaved changes',
-  cleanNote: 'No changes',
+  dirtyNote: 'This protocol has unsaved changes',
+  cleanNote: 'No changes for this protocol',
   discard: 'Discard',
   saveChanges: 'Save changes',
 
-  toastSaveSuccess: 'AI settings saved',
+  toastSaveSuccess: 'Protocol settings saved',
   toastSaveFailed: 'Save failed',
 
   errServerUnreachable: 'Cannot reach the server. Check that the backend is running and retry.',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: 'Load failed ({status})',
   errLoadGeneric: 'Failed to load AI settings. Please try again later.',
   errBudgetInvalid: 'Monthly token limit must be a positive integer or left blank',
-  errProviderInvalid: 'Please select a valid provider',
+  errProviderInvalid: 'Please select a valid protocol',
   errBaseUrlRequired: 'Please enter the base URL',
   errApiKeyRequired: 'API Key cannot be empty (required for non-Ollama)',
   errRequestFailed: 'Request failed ({status})',

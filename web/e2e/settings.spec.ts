@@ -61,8 +61,20 @@ test.describe('Settings · credential vault', () => {
   })
 })
 
-test.describe('Settings · AI provider', () => {
-  test('renders the provider radiogroup from GET /api/settings/ai', async ({ page }) => {
+test.describe('Settings · AI protocols', () => {
+  // 三档协议各存一行:响应是 { active, configs:[claude|openai|ollama] }。
+  const blankConfig = (provider: string) => ({
+    provider,
+    configured: false,
+    enabled: false,
+    baseUrl: '',
+    model: '',
+    apiKeyMasked: '',
+    budget: { monthlyTokenLimit: null },
+    updatedAt: null,
+  })
+
+  test('renders the protocol radiogroup from GET /api/settings/ai', async ({ page }) => {
     await stubLoggedIn(page)
     await page.route(
       (u) => u.pathname === '/api/settings/ai',
@@ -70,14 +82,8 @@ test.describe('Settings · AI provider', () => {
         if (route.request().method() !== 'GET') return route.fallback()
         return route.fulfill(
           fulfillJson({
-            configured: false,
-            enabled: false,
-            provider: '',
-            baseUrl: '',
-            model: '',
-            apiKeyMasked: '',
-            budget: { monthlyTokenLimit: null },
-            updatedAt: null,
+            active: '',
+            configs: ['claude', 'openai', 'ollama'].map(blankConfig),
           }),
         )
       },
@@ -85,14 +91,14 @@ test.describe('Settings · AI provider', () => {
     await page.goto('/settings/ai')
 
     await expect(page.getByRole('heading', { name: 'AI 提供商' })).toBeVisible()
-    const radios = page.getByRole('radiogroup', { name: 'AI 提供商选择' })
+    const radios = page.getByRole('radiogroup', { name: 'AI 协议选择' })
     await expect(radios).toBeVisible()
-    await expect(radios.getByLabel('选择 Claude')).toBeVisible()
-    await expect(radios.getByLabel('选择 OpenAI')).toBeVisible()
-    await expect(radios.getByLabel('选择 Ollama')).toBeVisible()
+    await expect(radios.getByLabel('选择 Claude 协议')).toBeVisible()
+    await expect(radios.getByLabel('选择 OpenAI 协议')).toBeVisible()
+    await expect(radios.getByLabel('选择 Ollama 协议')).toBeVisible()
   })
 
-  test('selecting a provider reveals the config detail panel', async ({ page }) => {
+  test('selecting a protocol reveals its own config detail panel', async ({ page }) => {
     await stubLoggedIn(page)
     await page.route(
       (u) => u.pathname === '/api/settings/ai',
@@ -100,17 +106,55 @@ test.describe('Settings · AI provider', () => {
         if (route.request().method() !== 'GET') return route.fallback()
         return route.fulfill(
           fulfillJson({
-            configured: false, enabled: false, provider: '', baseUrl: '', model: '',
-            apiKeyMasked: '', budget: { monthlyTokenLimit: null }, updatedAt: null,
+            active: '',
+            configs: ['claude', 'openai', 'ollama'].map(blankConfig),
           }),
         )
       },
     )
     await page.goto('/settings/ai')
 
-    await page.getByRole('radiogroup', { name: 'AI 提供商选择' }).getByLabel('选择 Claude').click()
-    // baseUrl gets auto-filled to the Claude default once a provider is chosen.
+    await page.getByRole('radiogroup', { name: 'AI 协议选择' }).getByLabel('选择 Claude 协议').click()
+    // baseUrl gets auto-filled to the Claude default once a protocol is chosen.
     await expect(page.locator('#ai-baseurl')).toHaveValue('https://api.anthropic.com')
+  })
+
+  test('the three protocols keep independent baseUrl / model / key', async ({ page }) => {
+    await stubLoggedIn(page)
+    // 只有 claude 存过:切到 ollama 应看到空白,而不是 claude 的地址与模型。
+    const claude = {
+      ...blankConfig('claude'),
+      configured: true,
+      enabled: true,
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-opus-4-7',
+      apiKeyMasked: '••••abcd',
+    }
+    await page.route(
+      (u) => u.pathname === '/api/settings/ai',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        return route.fulfill(
+          fulfillJson({
+            active: 'claude',
+            configs: [claude, blankConfig('openai'), blankConfig('ollama')],
+          }),
+        )
+      },
+    )
+    await page.goto('/settings/ai')
+
+    const radios = page.getByRole('radiogroup', { name: 'AI 协议选择' })
+    // 默认停在生效档,回填的是 claude 自己的值。
+    await expect(page.locator('#ai-baseurl')).toHaveValue('https://api.anthropic.com')
+    await expect(page.locator('#ai-model')).toHaveValue('claude-opus-4-7')
+    await expect(radios.getByText('使用中')).toBeVisible()
+
+    await radios.getByLabel('选择 Ollama 协议').click()
+    await expect(page.locator('#ai-baseurl')).toHaveValue('http://localhost:11434')
+    await expect(page.locator('#ai-model')).toHaveValue('')
+    // ollama 无密钥字段,claude 的掩码不应出现在这里。
+    await expect(page.getByText('••••abcd')).toHaveCount(0)
   })
 })
 

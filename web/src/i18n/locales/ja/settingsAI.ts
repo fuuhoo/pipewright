@@ -1,9 +1,10 @@
 export default {
   title: 'AI プロバイダー',
   subtitle:
-    'Pipewright は独自のモデルを学習しません —— 障害診断と設定生成には自前の LLM を接続します。キーはこのインスタンスの暗号化された保管庫にのみ保存され、外部には決して漏れません。',
+    'Pipewright は独自のモデルを学習しません —— 障害診断と設定生成には自前の LLM を接続します。3 つのプロトコルはそれぞれ設定を保持し、同時に有効になるのは 1 つだけです。キーはこのインスタンスの暗号化された保管庫にのみ保存され、外部には決して漏れません。',
   statusConfigured: '設定済み',
   statusUnconfigured: '未設定',
+  activeBadge: '使用中',
   retry: '再試行',
 
   providerClaudeTag: '診断におすすめ',
@@ -49,15 +50,15 @@ export default {
   budgetHint: '超過すると AI 診断を一時停止します（空欄=無制限。今回は宣言のみ、次の Epic で強制適用）',
   budgetPlaceholder: '例: 500000、空欄で無制限',
 
-  enableAi: 'AI 機能を有効化',
-  enableAiDesc: 'オフの場合 AI 診断は静かにスキップされ、コアの CI/CD パイプラインには影響しません',
+  enableAi: 'このプロトコルを有効にする',
+  enableAiDesc: '診断と設定生成はこのプロトコルのみを使用します。有効にすると他は自動的に無効になります',
 
-  dirtyNote: '未保存の変更があります',
-  cleanNote: '変更なし',
+  dirtyNote: 'このプロトコルに未保存の変更があります',
+  cleanNote: 'このプロトコルに変更はありません',
   discard: '破棄',
   saveChanges: '変更を保存',
 
-  toastSaveSuccess: 'AI 設定を保存しました',
+  toastSaveSuccess: 'プロトコルの設定を保存しました',
   toastSaveFailed: '保存に失敗しました',
 
   errServerUnreachable: 'サーバーに接続できません。バックエンドが稼働しているか確認して再試行してください。',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: '読み込みに失敗しました（{status}）',
   errLoadGeneric: 'AI 設定の読み込みに失敗しました。しばらくしてから再試行してください。',
   errBudgetInvalid: '月間 token 上限は正の整数か空欄である必要があります',
-  errProviderInvalid: '有効なプロバイダーを選択してください',
+  errProviderInvalid: '有効なプロトコルを選択してください',
   errBaseUrlRequired: '接続先を入力してください',
   errApiKeyRequired: 'API Key は空にできません（Ollama 以外は必須）',
   errRequestFailed: 'リクエストに失敗しました（{status}）',

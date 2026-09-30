@@ -1,9 +1,10 @@
 export default {
   title: 'AI-Anbieter',
   subtitle:
-    'Pipewright trainiert keine eigenen Modelle – binde dein eigenes LLM für die Fehlerdiagnose und Konfigurationserstellung ein. Schlüssel liegen ausschließlich im verschlüsselten Tresor dieser Instanz und verlassen ihn nie.',
+    'Pipewright trainiert keine eigenen Modelle – binde dein eigenes LLM für die Fehlerdiagnose und Konfigurationserstellung ein. Jedes Protokoll führt seine eigenen Einstellungen; aktiv sein kann immer nur eines. Schlüssel liegen ausschließlich im verschlüsselten Tresor dieser Instanz und verlassen ihn nie.',
   statusConfigured: 'Konfiguriert',
   statusUnconfigured: 'Nicht konfiguriert',
+  activeBadge: 'In Verwendung',
   retry: 'Erneut versuchen',
 
   providerClaudeTag: 'Empfohlen für Diagnose',
@@ -49,15 +50,15 @@ export default {
   budgetHint: 'Pausiert die AI-Diagnose bei Überschreitung (leer = unbegrenzt; in diesem Zyklus nur deklariert, im nächsten Epic erzwungen)',
   budgetPlaceholder: 'z. B. 500000, leer = unbegrenzt',
 
-  enableAi: 'AI-Funktionen aktivieren',
-  enableAiDesc: 'Im ausgeschalteten Zustand wird die AI-Diagnose still übersprungen und die zentralen CI/CD-Pipelines bleiben unberührt',
+  enableAi: 'Als aktives Protokoll setzen',
+  enableAiDesc: 'Diagnose und Generator nutzen dieses Protokoll; beim Aktivieren werden die anderen automatisch deaktiviert',
 
-  dirtyNote: 'Es gibt ungespeicherte Änderungen',
-  cleanNote: 'Keine Änderungen',
+  dirtyNote: 'Dieses Protokoll hat ungespeicherte Änderungen',
+  cleanNote: 'Keine Änderungen an diesem Protokoll',
   discard: 'Verwerfen',
   saveChanges: 'Änderungen speichern',
 
-  toastSaveSuccess: 'AI-Einstellungen gespeichert',
+  toastSaveSuccess: 'Protokolleinstellungen gespeichert',
   toastSaveFailed: 'Speichern fehlgeschlagen',
 
   errServerUnreachable: 'Server nicht erreichbar. Prüfe, ob das Backend läuft, und versuche es erneut.',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: 'Laden fehlgeschlagen ({status})',
   errLoadGeneric: 'AI-Einstellungen konnten nicht geladen werden. Bitte später erneut versuchen.',
   errBudgetInvalid: 'Das monatliche Token-Limit muss eine positive Ganzzahl oder leer sein',
-  errProviderInvalid: 'Bitte einen gültigen Anbieter auswählen',
+  errProviderInvalid: 'Bitte ein gültiges Protokoll auswählen',
   errBaseUrlRequired: 'Bitte die Base URL eingeben',
   errApiKeyRequired: 'API Key darf nicht leer sein (außer bei Ollama erforderlich)',
   errRequestFailed: 'Anfrage fehlgeschlagen ({status})',

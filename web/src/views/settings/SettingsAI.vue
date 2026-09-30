@@ -29,8 +29,10 @@ import {
   saveAISettings,
   testAIConnection,
   type AIProvider,
+  type AIProviderConfig,
   type AISettings,
   type AITestResult,
+  type SavedProvider,
 } from '../../api/aiSettings'
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -38,7 +40,7 @@ import {
 type LoadState = 'loading' | 'ready' | 'error'
 
 interface ProviderMeta {
-  id: AIProvider
+  id: SavedProvider
   label: string
   desc: string
   logoText: string
@@ -110,16 +112,53 @@ const toast = useToast()
 
 const loadState = ref<LoadState>('loading')
 const loadError = ref('')
-const savedSettings = ref<AISettings | null>(null)
 
-// ─── form state ───────────────────────────────────────────────────────────────
+// ─── per-protocol state ───────────────────────────────────────────────────────
+//
+// 三档协议各自一份配置:savedByProvider 是服务端快照,drafts 是本地编辑缓冲。
+// 切协议只是换 selectedProvider 指针,所以在一档里填了一半的内容不会被另一档盖掉。
+
+interface ProviderDraft {
+  baseUrl: string
+  model: string
+  apiKey: string                 // write-only: blank = keep existing; non-blank = rotate
+  monthlyTokenLimit: string      // string for input binding; coerced on save
+  enabled: boolean               // true = 把这一档设为当前生效
+}
+
+function emptyDraft(): ProviderDraft {
+  return { baseUrl: '', model: '', apiKey: '', monthlyTokenLimit: '', enabled: false }
+}
+
+function draftOf(cfg: AIProviderConfig): ProviderDraft {
+  return {
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    apiKey: '',  // 明文永不回填
+    monthlyTokenLimit: cfg.budget.monthlyTokenLimit != null ? String(cfg.budget.monthlyTokenLimit) : '',
+    enabled: cfg.enabled,
+  }
+}
+
+const savedByProvider = ref<Partial<Record<SavedProvider, AIProviderConfig>>>({})
+const drafts = ref<Record<SavedProvider, ProviderDraft>>({
+  claude: emptyDraft(),
+  openai: emptyDraft(),
+  ollama: emptyDraft(),
+})
+const activeProvider = ref<AIProvider>('')
 
 const selectedProvider = ref<AIProvider>('')
-const baseUrl = ref('')
-const model = ref('')
-const apiKey = ref('')          // write-only: blank = keep existing; non-blank = rotate
-const monthlyTokenLimit = ref<string>('')  // string for input binding; coerced on save
-const enabled = ref(false)
+
+/** 当前展示那一档的编辑缓冲(selectedProvider 为 '' 时表单不渲染,拿到的空草稿写了也不落地)。 */
+const draft = computed<ProviderDraft>(() =>
+  selectedProvider.value ? drafts.value[selectedProvider.value as SavedProvider] : emptyDraft(),
+)
+
+/** 当前那一档的服务端快照(未存过为 undefined)。 */
+const savedConfig = computed<AIProviderConfig | undefined>(() =>
+  selectedProvider.value ? savedByProvider.value[selectedProvider.value as SavedProvider] : undefined,
+)
 
 // field errors (422 mapping)
 const errors = ref({
@@ -141,25 +180,35 @@ const testResult = ref<AITestResult | null>(null)
 const isOllama = computed(() => selectedProvider.value === 'ollama')
 
 /** True when there is an existing configured key in the saved settings */
-const hasExistingKey = computed(
-  () => !!savedSettings.value?.apiKeyMasked,
-)
+const hasExistingKey = computed(() => !!savedConfig.value?.apiKeyMasked)
 
 /** True when apiKey input has been touched (rotation intent) */
-const isRotatingKey = computed(() => apiKey.value.length > 0)
+const isRotatingKey = computed(() => draft.value.apiKey.length > 0)
 
-const isDirty = computed(() => {
-  if (!savedSettings.value) return selectedProvider.value !== ''
-  const s = savedSettings.value
+const anyConfigured = computed(() =>
+  Object.values(savedByProvider.value).some(c => c?.configured),
+)
+
+/** 某一档的草稿是否偏离服务端快照(密钥只要填了就算偏离:它是只写的)。 */
+function draftDiffers(p: SavedProvider): boolean {
+  const d = drafts.value[p]
+  const s = savedByProvider.value[p]
+  if (!s) {
+    return d.baseUrl !== '' || d.model !== '' || d.apiKey !== '' ||
+      d.monthlyTokenLimit !== '' || d.enabled
+  }
   return (
-    selectedProvider.value !== s.provider ||
-    baseUrl.value !== s.baseUrl ||
-    model.value !== s.model ||
-    apiKey.value !== '' ||
-    String(s.budget.monthlyTokenLimit ?? '') !== monthlyTokenLimit.value ||
-    enabled.value !== s.enabled
+    d.baseUrl !== s.baseUrl ||
+    d.model !== s.model ||
+    d.apiKey !== '' ||
+    String(s.budget.monthlyTokenLimit ?? '') !== d.monthlyTokenLimit ||
+    d.enabled !== s.enabled
   )
-})
+}
+
+const isDirty = computed(() =>
+  selectedProvider.value ? draftDiffers(selectedProvider.value as SavedProvider) : false,
+)
 
 // ─── load ─────────────────────────────────────────────────────────────────────
 
@@ -168,7 +217,7 @@ async function loadSettings(): Promise<void> {
   loadError.value = ''
   try {
     const data = await getAISettings()
-    applySettings(data)
+    applyOverview(data, false)
     loadState.value = 'ready'
   } catch (err) {
     if (err instanceof HttpError) {
@@ -186,16 +235,26 @@ async function loadSettings(): Promise<void> {
   }
 }
 
-function applySettings(data: AISettings): void {
-  savedSettings.value = data
-  selectedProvider.value = data.provider
-  baseUrl.value = data.baseUrl
-  model.value = data.model
-  apiKey.value = ''  // never pre-fill
-  monthlyTokenLimit.value = data.budget.monthlyTokenLimit != null
-    ? String(data.budget.monthlyTokenLimit)
-    : ''
-  enabled.value = data.enabled
+/**
+ * 吃下服务端总览。keepEdits=true 用于保存后回填:其他档若有未保存的编辑就保留,
+ * 只刷新没动过的那几档,免得存 Claude 把 Ollama 里填了一半的内容冲掉。
+ */
+function applyOverview(data: AISettings, keepEdits: boolean): void {
+  const prev = savedByProvider.value
+  const next: Partial<Record<SavedProvider, AIProviderConfig>> = {}
+  for (const c of data.configs) {
+    next[c.provider] = c
+    if (!(keepEdits && draftDiffers(c.provider))) {
+      drafts.value[c.provider] = draftOf(c)
+    }
+  }
+  savedByProvider.value = next
+  activeProvider.value = data.active
+  if (selectedProvider.value === '') {
+    // 打开页面先停在使用中的那档;一份都没启用则停在配好的第一档,都没有才显示引导。
+    const firstConfigured = data.configs.find(c => c.configured)
+    selectedProvider.value = data.active || firstConfigured?.provider || ''
+  }
 }
 
 onMounted(loadSettings)
@@ -203,12 +262,14 @@ onMounted(loadSettings)
 // ─── provider card selection ──────────────────────────────────────────────────
 
 function selectProvider(id: AIProvider): void {
-  if (selectedProvider.value === id) return
-  const oldDefault = DEFAULT_BASE_URLS[selectedProvider.value] ?? ''
-  const wasDefault = baseUrl.value === '' || baseUrl.value === oldDefault
+  if (selectedProvider.value === id || id === '') return
   selectedProvider.value = id
-  if (wasDefault) {
-    baseUrl.value = DEFAULT_BASE_URLS[id] ?? ''
+  const p = id as SavedProvider
+  const d = drafts.value[p]
+  // 没配过、草稿还空着 → 预填该协议默认地址(纯便利,保存前可改)。
+  // 注意:清单里三档恒有行(未配的字段全空),所以判据是 configured 而不是「有没有这一行」。
+  if (!savedByProvider.value[p]?.configured && d.baseUrl === '') {
+    d.baseUrl = DEFAULT_BASE_URLS[p] ?? ''
   }
   errors.value.provider = ''
   errors.value.apiKey = ''
@@ -224,8 +285,8 @@ const endpointPresets = computed<EndpointPreset[]>(
 
 // 预设只填 baseUrl + 模型两个字段(点完仍可手改),不代填密钥、不触发保存。
 function applyEndpointPreset(preset: EndpointPreset): void {
-  baseUrl.value = preset.baseUrl
-  model.value = preset.model
+  draft.value.baseUrl = preset.baseUrl
+  draft.value.model = preset.model
   errors.value.baseUrl = ''
 }
 
@@ -234,13 +295,14 @@ function applyEndpointPreset(preset: EndpointPreset): void {
 async function handleTest(): Promise<void> {
   testState.value = 'running'
   testResult.value = null
+  const d = draft.value
   try {
-    const draft: { provider?: AIProvider; baseUrl?: string; model?: string; apiKey?: string } = {}
-    if (selectedProvider.value) draft.provider = selectedProvider.value
-    if (baseUrl.value)           draft.baseUrl  = baseUrl.value
-    if (model.value)             draft.model    = model.value
-    if (apiKey.value)            draft.apiKey   = apiKey.value
-    const result = await testAIConnection(draft)
+    const draftReq: { provider?: AIProvider; baseUrl?: string; model?: string; apiKey?: string } = {}
+    if (selectedProvider.value) draftReq.provider = selectedProvider.value
+    if (d.baseUrl) draftReq.baseUrl = d.baseUrl.trim()
+    if (d.model)   draftReq.model = d.model.trim()
+    if (d.apiKey)  draftReq.apiKey = d.apiKey
+    const result = await testAIConnection(draftReq)
     testResult.value = result
     testState.value = result.ok ? 'ok' : 'fail'
   } catch (err) {
@@ -265,10 +327,13 @@ function clearErrors(): void {
 }
 
 async function handleSave(): Promise<void> {
+  const p = selectedProvider.value
+  if (!p) return
   clearErrors()
   saving.value = true
+  const d = drafts.value[p]
   try {
-    const limit = monthlyTokenLimit.value.trim()
+    const limit = d.monthlyTokenLimit.trim()
     const parsed = limit === '' ? null : Number(limit)
     if (limit !== '' && (Number.isNaN(parsed) || (parsed !== null && parsed < 0))) {
       saving.value = false
@@ -277,16 +342,16 @@ async function handleSave(): Promise<void> {
     }
 
     const payload = {
-      provider: selectedProvider.value,
-      baseUrl: baseUrl.value.trim(),
-      model: model.value.trim(),
-      ...(apiKey.value ? { apiKey: apiKey.value } : {}),
+      provider: p,
+      baseUrl: d.baseUrl.trim(),
+      model: d.model.trim(),
+      ...(d.apiKey ? { apiKey: d.apiKey } : {}),
       budget: { monthlyTokenLimit: parsed },
-      enabled: enabled.value,
+      enabled: d.enabled,
     }
 
     const updated = await saveAISettings(payload)
-    applySettings(updated)
+    applyOverview(updated, true)
     toast.success(t('settingsAI.toastSaveSuccess'))
   } catch (err) {
     if (err instanceof HttpError) {
@@ -319,8 +384,11 @@ async function handleSave(): Promise<void> {
 // ─── discard ─────────────────────────────────────────────────────────────────
 
 function handleDiscard(): void {
-  if (savedSettings.value) {
-    applySettings(savedSettings.value)
+  const p = selectedProvider.value
+  if (p) {
+    const snap = savedByProvider.value[p]
+    // 配过就回到自己那档的快照;没配过则清空(而不是留下预填的默认地址假装是改动)。
+    drafts.value[p] = snap?.configured ? draftOf(snap) : emptyDraft()
   }
   clearErrors()
   testState.value = 'idle'
@@ -353,11 +421,11 @@ function relativeTime(iso: string | null): string {
         </p>
       </div>
       <!-- Connection status badge -->
-      <div v-if="loadState === 'ready' && savedSettings?.configured" class="status-chip status-chip--ok">
+      <div v-if="loadState === 'ready' && anyConfigured" class="status-chip status-chip--ok">
         <span class="status-dot status-dot--ok" aria-hidden="true" />
         {{ t('settingsAI.statusConfigured') }}
       </div>
-      <div v-else-if="loadState === 'ready' && !savedSettings?.configured" class="status-chip status-chip--idle">
+      <div v-else-if="loadState === 'ready' && !anyConfigured" class="status-chip status-chip--idle">
         <span class="status-dot" aria-hidden="true" />
         {{ t('settingsAI.statusUnconfigured') }}
       </div>
@@ -393,7 +461,7 @@ function relativeTime(iso: string | null): string {
 
       <!-- Unconfigured guidance banner -->
       <div
-        v-if="!savedSettings?.configured && selectedProvider === ''"
+        v-if="!anyConfigured && selectedProvider === ''"
         class="guidance-banner"
         role="note"
         :aria-label="t('settingsAI.guidanceAria')"
@@ -439,6 +507,21 @@ function relativeTime(iso: string | null): string {
               <div class="prov-logo" :style="prov.logoStyle" aria-hidden="true">{{ prov.logoText }}</div>
               <div class="prov-name">{{ prov.label }}</div>
               <div class="prov-desc">{{ prov.desc }}</div>
+              <!-- 这一档自己的状态:各协议存一份,所以状态也得各标各的 -->
+              <div
+                class="prov-state"
+                :class="{
+                  'prov-state--active': activeProvider === prov.id,
+                  'prov-state--configured': activeProvider !== prov.id && !!savedByProvider[prov.id]?.configured
+                }"
+              >
+                <span class="prov-state-dot" aria-hidden="true" />
+                {{ activeProvider === prov.id
+                  ? t('settingsAI.activeBadge')
+                  : (savedByProvider[prov.id]?.configured
+                    ? t('settingsAI.statusConfigured')
+                    : t('settingsAI.statusUnconfigured')) }}
+              </div>
               <span v-if="prov.tag" class="prov-tag" :style="prov.tagStyle">{{ prov.tag }}</span>
             </button>
           </div>
@@ -458,8 +541,8 @@ function relativeTime(iso: string | null): string {
               {{ PROVIDERS.find(p => p.id === selectedProvider)?.logoText }}
             </div>
             {{ t('settingsAI.providerConfig', { name: PROVIDERS.find(p => p.id === selectedProvider)?.label ?? '' }) }}
-            <span v-if="savedSettings?.updatedAt" class="panel-updated">
-              {{ t('settingsAI.lastSaved', { time: relativeTime(savedSettings.updatedAt) }) }}
+            <span v-if="savedConfig?.updatedAt" class="panel-updated">
+              {{ t('settingsAI.lastSaved', { time: relativeTime(savedConfig.updatedAt) }) }}
             </span>
           </div>
           <div class="panel-body">
@@ -478,7 +561,7 @@ function relativeTime(iso: string | null): string {
                     <div class="key-row">
                       <input
                         :id="fieldId"
-                        v-model="apiKey"
+                        v-model="draft.apiKey"
                         type="password"
                         class="field-input field-input--mono"
                         :class="{ 'field-input--error': errors.apiKey }"
@@ -494,9 +577,9 @@ function relativeTime(iso: string | null): string {
                       <span
                         v-if="hasExistingKey && !isRotatingKey"
                         class="key-masked"
-                        :aria-label="t('settingsAI.apiKeyMaskedAria', { masked: savedSettings?.apiKeyMasked })"
+                        :aria-label="t('settingsAI.apiKeyMaskedAria', { masked: savedConfig?.apiKeyMasked })"
                       >
-                        <span class="mono dim">{{ savedSettings?.apiKeyMasked }}</span>
+                        <span class="mono dim">{{ savedConfig?.apiKeyMasked }}</span>
                       </span>
                     </div>
                   </template>
@@ -523,7 +606,7 @@ function relativeTime(iso: string | null): string {
                   <template #default="{ fieldId, ariaDescribedby }">
                     <input
                       :id="fieldId"
-                      v-model="baseUrl"
+                      v-model="draft.baseUrl"
                       type="url"
                       class="field-input field-input--mono"
                       :class="{ 'field-input--error': errors.baseUrl }"
@@ -566,7 +649,7 @@ function relativeTime(iso: string | null): string {
                   <template #default="{ fieldId, ariaDescribedby }">
                     <input
                       :id="fieldId"
-                      v-model="model"
+                      v-model="draft.model"
                       type="text"
                       class="field-input field-input--mono"
                       :placeholder="selectedProvider === 'claude'
@@ -638,7 +721,7 @@ function relativeTime(iso: string | null): string {
                     <div class="budget-row">
                       <input
                         :id="fieldId"
-                        v-model="monthlyTokenLimit"
+                        v-model="draft.monthlyTokenLimit"
                         type="number"
                         min="0"
                         class="field-input budget-input"
@@ -651,17 +734,17 @@ function relativeTime(iso: string | null): string {
                 </FormField>
               </div>
 
-              <!-- Enabled toggle -->
+              <!-- Enabled toggle:这份是否当前生效 -->
               <div class="toggle-row">
                 <button
                   type="button"
                   class="toggle-track"
-                  :class="{ 'toggle-track--on': enabled }"
+                  :class="{ 'toggle-track--on': draft.enabled }"
                   role="switch"
-                  :aria-checked="enabled"
+                  :aria-checked="draft.enabled"
                   :aria-label="t('settingsAI.enableAi')"
                   :disabled="saving"
-                  @click="enabled = !enabled"
+                  @click="draft.enabled = !draft.enabled"
                 >
                   <span class="toggle-thumb" />
                 </button>
@@ -1034,6 +1117,41 @@ function relativeTime(iso: string | null): string {
 .prov-desc {
   font-size: 0.74rem;
   color: var(--color-faint);
+}
+
+/* 每张卡标自己那一档的状态:使用中 / 已配置 / 未配置 */
+.prov-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-dim);
+}
+
+.prov-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--rounded-full);
+  background: var(--color-border-strong);
+  flex-shrink: 0;
+}
+
+.prov-state--configured {
+  color: var(--color-green);
+}
+
+.prov-state--configured .prov-state-dot {
+  background: var(--color-green);
+}
+
+.prov-state--active {
+  color: var(--color-primary);
+}
+
+.prov-state--active .prov-state-dot {
+  background: var(--color-primary);
 }
 
 .prov-tag {

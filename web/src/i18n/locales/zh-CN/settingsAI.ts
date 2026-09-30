@@ -1,9 +1,10 @@
 export default {
   title: 'AI 提供商',
   subtitle:
-    'Pipewright 不自训模型 —— 接入你自己的 LLM 用于失败诊断与配置生成。密钥仅存于本实例的加密保险库,绝不外泄。',
+    'Pipewright 不自训模型 —— 接入你自己的 LLM 用于失败诊断与配置生成。三档协议各存一份配置,当前生效的只有一档。密钥仅存于本实例的加密保险库,绝不外泄。',
   statusConfigured: '已配置',
   statusUnconfigured: '未配置',
+  activeBadge: '使用中',
   retry: '重试',
 
   providerClaudeTag: '诊断推荐',
@@ -49,15 +50,15 @@ export default {
   budgetHint: '超出后暂停 AI 诊断(留空=不限制;本期仅声明,下一 Epic 强制执行)',
   budgetPlaceholder: '如 500000,留空不限制',
 
-  enableAi: '启用 AI 功能',
-  enableAiDesc: '关闭时 AI 诊断静默跳过,核心 CI/CD 流水线不受影响',
+  enableAi: '设为当前生效协议',
+  enableAiDesc: '诊断与配置生成只用这一档;开启后其他协议自动停用',
 
-  dirtyNote: '有未保存的改动',
-  cleanNote: '暂无改动',
+  dirtyNote: '这一协议有未保存的改动',
+  cleanNote: '这一协议暂无改动',
   discard: '放弃',
   saveChanges: '保存更改',
 
-  toastSaveSuccess: 'AI 配置已保存',
+  toastSaveSuccess: '协议配置已保存',
   toastSaveFailed: '保存失败',
 
   errServerUnreachable: '无法连接到服务器,请检查后端是否运行后重试',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: '加载失败({status})',
   errLoadGeneric: '加载 AI 配置失败,请稍后重试',
   errBudgetInvalid: '月 token 上限须为正整数或留空',
-  errProviderInvalid: '请选择有效的提供商',
+  errProviderInvalid: '请选择有效的协议',
   errBaseUrlRequired: '请填写接入地址',
   errApiKeyRequired: 'API Key 不可为空(非 Ollama 必填)',
   errRequestFailed: '请求失败({status})',

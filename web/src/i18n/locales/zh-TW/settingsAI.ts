@@ -1,9 +1,10 @@
 export default {
   title: 'AI 服務商',
   subtitle:
-    'Pipewright 不自訓模型 —— 接入你自己的 LLM 用於失敗診斷與設定生成。金鑰僅存於本實例的加密保險庫,絕不外洩。',
+    'Pipewright 不自訓模型 —— 接入你自己的 LLM 用於失敗診斷與設定生成。三檔協定各存一份設定,同一時刻只有一檔生效。金鑰僅存於本實例的加密保險庫,絕不外洩。',
   statusConfigured: '已設定',
   statusUnconfigured: '未設定',
+  activeBadge: '使用中',
   retry: '重試',
 
   providerClaudeTag: '診斷推薦',
@@ -49,15 +50,15 @@ export default {
   budgetHint: '超出後暫停 AI 診斷(留空=不限制;本期僅宣告,下一 Epic 強制執行)',
   budgetPlaceholder: '如 500000,留空不限制',
 
-  enableAi: '啟用 AI 功能',
-  enableAiDesc: '關閉時 AI 診斷靜默略過,核心 CI/CD 流水線不受影響',
+  enableAi: '設為目前生效協定',
+  enableAiDesc: '診斷與設定生成僅使用這一檔;啟用後其他協定自動停用',
 
-  dirtyNote: '有未儲存的變更',
-  cleanNote: '暫無變更',
+  dirtyNote: '這一協定有未儲存的變更',
+  cleanNote: '這一協定暫無變更',
   discard: '捨棄',
   saveChanges: '儲存變更',
 
-  toastSaveSuccess: 'AI 設定已儲存',
+  toastSaveSuccess: '協定設定已儲存',
   toastSaveFailed: '儲存失敗',
 
   errServerUnreachable: '無法連線到伺服器,請檢查後端是否執行後重試',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: '載入失敗({status})',
   errLoadGeneric: '載入 AI 設定失敗,請稍後重試',
   errBudgetInvalid: '每月 token 上限須為正整數或留空',
-  errProviderInvalid: '請選擇有效的服務商',
+  errProviderInvalid: '請選擇有效的協定',
   errBaseUrlRequired: '請填寫接入位址',
   errApiKeyRequired: 'API Key 不可為空(非 Ollama 必填)',
   errRequestFailed: '請求失敗({status})',

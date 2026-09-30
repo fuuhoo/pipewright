@@ -1,9 +1,10 @@
 export default {
   title: 'Proveedor de AI',
   subtitle:
-    'Pipewright no entrena modelos propios: conecta tu propio LLM para el diagnóstico de fallos y la generación de configuración. Las claves se guardan solo en la bóveda cifrada de esta instancia y nunca salen de ella.',
+    'Pipewright no entrena modelos propios: conecta tu propio LLM para el diagnóstico de fallos y la generación de configuración. Cada protocolo guarda su propia configuración y solo uno está activo a la vez. Las claves se guardan solo en la bóveda cifrada de esta instancia y nunca salen de ella.',
   statusConfigured: 'Configurado',
   statusUnconfigured: 'Sin configurar',
+  activeBadge: 'En uso',
   retry: 'Reintentar',
 
   providerClaudeTag: 'Recomendado para diagnóstico',
@@ -49,15 +50,15 @@ export default {
   budgetHint: 'Pausa el diagnóstico con AI al superarlo (en blanco = sin límite; declarado en este ciclo, aplicado en el próximo Epic)',
   budgetPlaceholder: 'p. ej. 500000, en blanco = sin límite',
 
-  enableAi: 'Activar funciones de AI',
-  enableAiDesc: 'Cuando está desactivado, el diagnóstico con AI se omite silenciosamente y los pipelines de CI/CD principales no se ven afectados',
+  enableAi: 'Usar este protocolo como activo',
+  enableAiDesc: 'El diagnóstico y la generación usan este protocolo; al activarlo los demás se desactivan automáticamente',
 
-  dirtyNote: 'Tienes cambios sin guardar',
-  cleanNote: 'Sin cambios',
+  dirtyNote: 'Este protocolo tiene cambios sin guardar',
+  cleanNote: 'Sin cambios en este protocolo',
   discard: 'Descartar',
   saveChanges: 'Guardar cambios',
 
-  toastSaveSuccess: 'Configuración de AI guardada',
+  toastSaveSuccess: 'Configuración del protocolo guardada',
   toastSaveFailed: 'Error al guardar',
 
   errServerUnreachable: 'No se puede conectar con el servidor. Comprueba que el backend esté en ejecución y reintenta.',
@@ -66,7 +67,7 @@ export default {
   errLoadFailed: 'Error al cargar ({status})',
   errLoadGeneric: 'No se pudo cargar la configuración de AI. Inténtalo de nuevo más tarde.',
   errBudgetInvalid: 'El límite mensual de tokens debe ser un entero positivo o quedar en blanco',
-  errProviderInvalid: 'Selecciona un proveedor válido',
+  errProviderInvalid: 'Selecciona un protocolo válido',
   errBaseUrlRequired: 'Introduce la base URL',
   errApiKeyRequired: 'La API Key no puede estar vacía (obligatoria salvo en Ollama)',
   errRequestFailed: 'La solicitud falló ({status})',
