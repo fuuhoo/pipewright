@@ -21,8 +21,8 @@ func TestMigrationsApplied(t *testing.T) {
 			t.Fatalf("count migrations: %v", err)
 		}
 		// 与 migrations/{sqlite,mysql} 下的 .sql 文件数一致;新增迁移需同步改此值。
-		if n != 61 {
-			t.Fatalf("应用迁移数 = %d, 期望 61", n)
+		if n != 62 {
+			t.Fatalf("应用迁移数 = %d, 期望 62", n)
 		}
 		// 核心领域表存在(随手验一张)。
 		if _, err := st.DB.ExecContext(ctx, `SELECT 1 FROM audit_log WHERE 1=0`); err != nil {
@@ -57,29 +57,30 @@ func TestAuditAppendOnly(t *testing.T) {
 }
 
 // TestUpsertSuffixRoundtrip 验证 UpsertSuffix 在真库上"冲突即更新"语义两方言一致。
+// 夹具用 ai_config:它按 provider 一行(claude/openai/ollama 各一份,互不覆盖)。
 func TestUpsertSuffixRoundtrip(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, st *store.Store) {
 		ctx := context.Background()
-		suffix := store.UpsertSuffix(st.Dialect, []string{"id"}, []string{"provider", "updated_at"})
-		q := `INSERT INTO ai_config (id, provider, created_at, updated_at) VALUES (1, ?, ?, ?) ` + suffix
+		suffix := store.UpsertSuffix(st.Dialect, []string{"provider"}, []string{"base_url", "updated_at"})
+		q := `INSERT INTO ai_config (provider, base_url, created_at, updated_at) VALUES (?, ?, ?, ?) ` + suffix
 
-		if _, err := st.DB.ExecContext(ctx, q, "claude", now(), now()); err != nil {
+		if _, err := st.DB.ExecContext(ctx, q, "claude", "https://a", now(), now()); err != nil {
 			t.Fatalf("first upsert: %v", err)
 		}
-		if _, err := st.DB.ExecContext(ctx, q, "openai", now(), now()); err != nil {
+		if _, err := st.DB.ExecContext(ctx, q, "claude", "https://b", now(), now()); err != nil {
 			t.Fatalf("second upsert: %v", err)
 		}
 
-		var provider string
+		var baseURL string
 		var count int
-		if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(1), MAX(provider) FROM ai_config`).Scan(&count, &provider); err != nil {
+		if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(1), MAX(base_url) FROM ai_config`).Scan(&count, &baseURL); err != nil {
 			t.Fatalf("read back: %v", err)
 		}
 		if count != 1 {
-			t.Fatalf("单例表应只 1 行, got %d", count)
+			t.Fatalf("同一 provider 冲突更新后应只 1 行, got %d", count)
 		}
-		if provider != "openai" {
-			t.Fatalf("冲突更新后 provider 应为 openai, got %q", provider)
+		if baseURL != "https://b" {
+			t.Fatalf("冲突更新后 base_url 应为第二次值, got %q", baseURL)
 		}
 	})
 }
@@ -89,8 +90,8 @@ func TestErrorClassification(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, st *store.Store) {
 		ctx := context.Background()
 
-		// 唯一/主键冲突:ai_config 单例 id=1 重复插入(不带 upsert)→ IsUniqueErr。
-		ins := `INSERT INTO ai_config (id, created_at, updated_at) VALUES (1, ?, ?)`
+		// 唯一/主键冲突:ai_config 同一 provider 重复插入(不带 upsert)→ IsUniqueErr。
+		ins := `INSERT INTO ai_config (provider, created_at, updated_at) VALUES ('claude', ?, ?)`
 		if _, err := st.DB.ExecContext(ctx, ins, now(), now()); err != nil {
 			t.Fatalf("first ai_config insert: %v", err)
 		}

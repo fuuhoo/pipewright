@@ -38,23 +38,44 @@ func newService(t *testing.T, client *http.Client) (Service, *sql.DB, string) {
 
 func ctx() context.Context { return context.Background() }
 
-func TestGetLazyEmptyDefault(t *testing.T) {
+// itemOf 从总览里取某一档;List 恒按 Providers 顺序给全三档,取不到即实现漏档。
+func itemOf(t *testing.T, ov *Overview, provider string) *Config {
+	t.Helper()
+	for _, c := range ov.Items {
+		if c.Provider == provider {
+			return c
+		}
+	}
+	t.Fatalf("总览缺少 %q 一档: %+v", provider, ov)
+	return nil
+}
+
+func TestListLazyEmptyDefault(t *testing.T) {
 	svc, _, _ := newService(t, http.DefaultClient)
-	cfg, err := svc.Get(ctx())
+	ov, err := svc.List(ctx())
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("List: %v", err)
 	}
-	if cfg.Configured || cfg.Enabled {
-		t.Fatalf("首次无配置应 configured/enabled=false: %+v", cfg)
+	if ov.Active != "" {
+		t.Fatalf("无配置时不应有生效档: %q", ov.Active)
 	}
-	if cfg.Provider != "" || cfg.BaseURL != "" || cfg.APIKeyMasked != "" {
-		t.Fatalf("空默认应全空: %+v", cfg)
+	if len(ov.Items) != len(Providers) {
+		t.Fatalf("应给全 %d 档: %+v", len(Providers), ov.Items)
 	}
-	if cfg.UpdatedAt != nil {
-		t.Fatalf("空默认 updatedAt 应 nil")
-	}
-	if cfg.Budget.MonthlyTokenLimit != nil {
-		t.Fatalf("空默认预算应 nil")
+	for _, p := range Providers {
+		cfg := itemOf(t, ov, p)
+		if cfg.Configured || cfg.Enabled {
+			t.Fatalf("%s 首次无配置应 configured/enabled=false: %+v", p, cfg)
+		}
+		if cfg.BaseURL != "" || cfg.APIKeyMasked != "" {
+			t.Fatalf("%s 空默认应全空: %+v", p, cfg)
+		}
+		if cfg.UpdatedAt != nil {
+			t.Fatalf("%s 空默认 updatedAt 应 nil", p)
+		}
+		if cfg.Budget.MonthlyTokenLimit != nil {
+			t.Fatalf("%s 空默认预算应 nil", p)
+		}
 	}
 }
 
@@ -199,8 +220,9 @@ func TestBudgetPersisted(t *testing.T) {
 		t.Fatalf("预算应持久化: %+v", cfg.Budget)
 	}
 	// 回读。
-	got, _ := svc.Get(ctx())
-	if got.Budget.MonthlyTokenLimit == nil || *got.Budget.MonthlyTokenLimit != limit {
+	ov, _ := svc.List(ctx())
+	if got := itemOf(t, ov, ProviderOllama); got.Budget.MonthlyTokenLimit == nil ||
+		*got.Budget.MonthlyTokenLimit != limit {
 		t.Fatalf("回读预算丢失: %+v", got.Budget)
 	}
 }
@@ -382,15 +404,16 @@ func TestTestKeyOmittedUsesStoredKey(t *testing.T) {
 	defer stub.Close()
 
 	svc, _, _ := newService(t, stub.Client())
-	// 先存 claude + key + baseUrl 指向 stub。
+	// 先存 claude + key + baseUrl 指向 stub,并设为当前生效(Test 省略 provider 时打的就是它)。
 	if _, err := svc.Save(ctx(), SaveInput{
 		Provider: ProviderClaude,
 		BaseURL:  stub.URL,
 		APIKey:   strp("sk-ant-STORED-key1"),
+		Enabled:  true,
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	// Test 省略所有字段 → 回退已存配置 + 已存密钥。
+	// Test 省略所有字段 → 回退当前生效档的地址 + 该档已存密钥。
 	res, err := svc.Test(ctx(), TestInput{})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
@@ -400,5 +423,82 @@ func TestTestKeyOmittedUsesStoredKey(t *testing.T) {
 	}
 	if gotKey != "sk-ant-STORED-key1" {
 		t.Fatalf("Test 省略 key 应用已存密钥, got %q", gotKey)
+	}
+}
+
+// 三档协议各存一行:配 Claude 再配 Ollama,切回来 Claude 的地址/模型/密钥都还在。
+func TestSaveKeepsOtherProvidersIntact(t *testing.T) {
+	svc, _, _ := newService(t, http.DefaultClient)
+	if _, err := svc.Save(ctx(), SaveInput{
+		Provider: ProviderClaude,
+		BaseURL:  "https://gateway.internal/anthropic",
+		Model:    "claude-sonnet-4",
+		APIKey:   strp("sk-ant-claudeKEY1"),
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("Save claude: %v", err)
+	}
+	if _, err := svc.Save(ctx(), SaveInput{
+		Provider: ProviderOllama,
+		BaseURL:  "http://127.0.0.1:11434",
+		Model:    "llama3",
+	}); err != nil {
+		t.Fatalf("Save ollama: %v", err)
+	}
+
+	ov, err := svc.List(ctx())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	claude := itemOf(t, ov, ProviderClaude)
+	if claude.BaseURL != "https://gateway.internal/anthropic" || claude.Model != "claude-sonnet-4" {
+		t.Fatalf("配 ollama 不该动 claude 的地址/模型: %+v", claude)
+	}
+	if !strings.HasSuffix(claude.APIKeyMasked, "KEY1") {
+		t.Fatalf("claude 自己的密钥应留着: %q", claude.APIKeyMasked)
+	}
+	ollama := itemOf(t, ov, ProviderOllama)
+	if ollama.BaseURL != "http://127.0.0.1:11434" || ollama.Model != "llama3" {
+		t.Fatalf("ollama 应存自己的地址/模型: %+v", ollama)
+	}
+	// openai 从未配置:惰性空默认,且不带任何一方的密钥。
+	openai := itemOf(t, ov, ProviderOpenAI)
+	if openai.Configured || openai.APIKeyMasked != "" || openai.BaseURL != "" {
+		t.Fatalf("未配的 openai 应为空默认: %+v", openai)
+	}
+}
+
+// enabled 是「当前生效」开关:启用另一档会把上一档摘下来,任何时刻至多一份生效。
+func TestEnabledIsMutuallyExclusive(t *testing.T) {
+	svc, _, _ := newService(t, http.DefaultClient)
+	if _, err := svc.Save(ctx(), SaveInput{Provider: ProviderClaude, APIKey: strp("sk-ant-a1"), Enabled: true}); err != nil {
+		t.Fatalf("Save claude: %v", err)
+	}
+	if _, err := svc.Save(ctx(), SaveInput{Provider: ProviderOllama, Enabled: true}); err != nil {
+		t.Fatalf("Save ollama: %v", err)
+	}
+	ov, _ := svc.List(ctx())
+	if ov.Active != ProviderOllama {
+		t.Fatalf("最后启用的 ollama 应是生效档: %q", ov.Active)
+	}
+	if itemOf(t, ov, ProviderClaude).Enabled {
+		t.Fatalf("启用 ollama 后 claude 应自动停用")
+	}
+
+	// 把 ollama 关掉 → 无生效档(其余档不会被顺带启用)。
+	if _, err := svc.Save(ctx(), SaveInput{Provider: ProviderOllama, Enabled: false}); err != nil {
+		t.Fatalf("Save ollama disabled: %v", err)
+	}
+	ov, _ = svc.List(ctx())
+	if ov.Active != "" {
+		t.Fatalf("关掉唯一生效档后应无生效档: %q", ov.Active)
+	}
+}
+
+// 按档保存必须指明写哪一行:空 provider 不再表示「清空整份配置」。
+func TestSaveEmptyProviderRejected(t *testing.T) {
+	svc, _, _ := newService(t, http.DefaultClient)
+	if _, err := svc.Save(ctx(), SaveInput{Provider: ""}); err != ErrInvalidProvider {
+		t.Fatalf("空 provider 应 ErrInvalidProvider, got %v", err)
 	}
 }

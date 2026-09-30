@@ -32,7 +32,7 @@ type diagStubAI struct {
 	gotNL      string
 }
 
-func (s *diagStubAI) Get(context.Context) (*ai.Config, error) { return &ai.Config{}, nil }
+func (s *diagStubAI) List(context.Context) (*ai.Overview, error) { return &ai.Overview{}, nil }
 func (s *diagStubAI) Save(context.Context, ai.SaveInput) (*ai.Config, error) {
 	return &ai.Config{}, nil
 }

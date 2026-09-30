@@ -34,6 +34,29 @@ func setupAIServer(t *testing.T, client *http.Client) (*httptest.Server, *http.C
 	return srv, c, csrf
 }
 
+// aiOverview 解析 GET/PUT 响应体:当前生效者 + 三档各自的配置(缺档即契约漏档)。
+func aiOverview(t *testing.T, raw []byte) (string, map[string]map[string]any) {
+	t.Helper()
+	var dto struct {
+		Active  string           `json:"active"`
+		Configs []map[string]any `json:"configs"`
+	}
+	if err := json.Unmarshal(raw, &dto); err != nil {
+		t.Fatalf("解析总览失败: %v (%s)", err, raw)
+	}
+	items := make(map[string]map[string]any, len(dto.Configs))
+	for _, c := range dto.Configs {
+		p, _ := c["provider"].(string)
+		items[p] = c
+	}
+	for _, p := range []string{"claude", "openai", "ollama"} {
+		if _, ok := items[p]; !ok {
+			t.Fatalf("总览应含 %q 一档: %s", p, raw)
+		}
+	}
+	return dto.Active, items
+}
+
 func TestAIGetLazyDefault(t *testing.T) {
 	srv, client, csrf := setupAIServer(t, nil)
 	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/settings/ai", csrf, "")
@@ -42,20 +65,24 @@ func TestAIGetLazyDefault(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	raw, _ := io.ReadAll(resp.Body)
-	var dto map[string]any
-	_ = json.Unmarshal(raw, &dto)
-	if dto["configured"] != false || dto["enabled"] != false {
-		t.Fatalf("默认应 configured/enabled=false: %s", raw)
+	active, items := aiOverview(t, raw)
+	if active != "" {
+		t.Fatalf("无配置时 active 应空: %q", active)
 	}
-	if dto["provider"] != "" || dto["apiKeyMasked"] != "" {
-		t.Fatalf("默认应空 provider/apiKeyMasked: %s", raw)
-	}
-	if dto["updatedAt"] != nil {
-		t.Fatalf("默认 updatedAt 应 null: %v", dto["updatedAt"])
-	}
-	b, _ := dto["budget"].(map[string]any)
-	if _, ok := b["monthlyTokenLimit"]; !ok {
-		t.Fatalf("budget.monthlyTokenLimit 字段应存在: %s", raw)
+	for p, dto := range items {
+		if dto["configured"] != false || dto["enabled"] != false {
+			t.Fatalf("%s 默认应 configured/enabled=false: %s", p, raw)
+		}
+		if dto["apiKeyMasked"] != "" {
+			t.Fatalf("%s 默认 apiKeyMasked 应空: %s", p, raw)
+		}
+		if dto["updatedAt"] != nil {
+			t.Fatalf("%s 默认 updatedAt 应 null: %v", p, dto["updatedAt"])
+		}
+		b, _ := dto["budget"].(map[string]any)
+		if _, ok := b["monthlyTokenLimit"]; !ok {
+			t.Fatalf("%s budget.monthlyTokenLimit 字段应存在: %s", p, raw)
+		}
 	}
 }
 
@@ -72,19 +99,25 @@ func TestAIPutClaudeMaskedNoPlaintext(t *testing.T) {
 	if strings.Contains(string(raw), "PLAINTEXT") || strings.Contains(string(raw), "sk-ant-PLAINTEXT") {
 		t.Fatalf("响应不应含明文 key: %s", raw)
 	}
-	var dto map[string]any
-	_ = json.Unmarshal(raw, &dto)
-	if dto["configured"] != true || dto["enabled"] != true {
-		t.Fatalf("应 configured/enabled=true: %s", raw)
+	active, items := aiOverview(t, raw)
+	if active != "claude" {
+		t.Fatalf("active 应是 claude: %q", active)
 	}
-	masked, _ := dto["apiKeyMasked"].(string)
+	claude := items["claude"]
+	if claude["configured"] != true || claude["enabled"] != true {
+		t.Fatalf("claude 档应 configured/enabled=true: %s", raw)
+	}
+	masked, _ := claude["apiKeyMasked"].(string)
 	if !strings.Contains(masked, "••••") || !strings.HasSuffix(masked, "abcd") {
 		t.Fatalf("apiKeyMasked 应掩码保末 4: %q", masked)
 	}
-	if dto["baseUrl"] != "https://api.anthropic.com" {
-		t.Fatalf("baseUrl 应兜底默认: %v", dto["baseUrl"])
+	if claude["baseUrl"] != "https://api.anthropic.com" {
+		t.Fatalf("baseUrl 应兜底默认: %v", claude["baseUrl"])
 	}
-	if dto["updatedAt"] == nil {
+	if claude["model"] != "claude-sonnet-4" {
+		t.Fatalf("model 应存下来: %v", claude["model"])
+	}
+	if claude["updatedAt"] == nil {
 		t.Fatalf("保存后 updatedAt 应非 null")
 	}
 }
@@ -97,9 +130,8 @@ func TestAIPutKeyOmittedRetains(t *testing.T) {
 		`{"provider":"claude","apiKey":"sk-ant-firstKEY9","budget":{"monthlyTokenLimit":null},"enabled":true}`)
 	raw1, _ := io.ReadAll(r1.Body)
 	r1.Body.Close()
-	var d1 map[string]any
-	_ = json.Unmarshal(raw1, &d1)
-	mask1, _ := d1["apiKeyMasked"].(string)
+	_, items1 := aiOverview(t, raw1)
+	mask1, _ := items1["claude"]["apiKeyMasked"].(string)
 	if mask1 == "" {
 		t.Fatalf("首存应有掩码: %s", raw1)
 	}
@@ -112,13 +144,58 @@ func TestAIPutKeyOmittedRetains(t *testing.T) {
 	if r2.StatusCode != http.StatusOK {
 		t.Fatalf("二次保存 status=%d: %s", r2.StatusCode, raw2)
 	}
-	var d2 map[string]any
-	_ = json.Unmarshal(raw2, &d2)
-	if d2["configured"] != true {
+	_, items2 := aiOverview(t, raw2)
+	claude2 := items2["claude"]
+	if claude2["configured"] != true {
 		t.Fatalf("省略 key 应仍 configured: %s", raw2)
 	}
-	if d2["apiKeyMasked"] != mask1 {
-		t.Fatalf("省略 key 应保留旧掩码: %v != %q", d2["apiKeyMasked"], mask1)
+	if claude2["apiKeyMasked"] != mask1 {
+		t.Fatalf("省略 key 应保留旧掩码: %v != %q", claude2["apiKeyMasked"], mask1)
+	}
+}
+
+// 保存 ollama 只动 ollama 那一行:claude 的地址/模型/密钥原样留着,切回来还在。
+func TestAIPutOtherProviderDoesNotClobber(t *testing.T) {
+	srv, client, csrf := setupAIServer(t, nil)
+	base := srv.URL + "/api/settings/ai"
+	put := func(body string) []byte {
+		t.Helper()
+		r := doJSON(t, client, http.MethodPut, base, csrf, body)
+		defer r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(r.Body)
+			t.Fatalf("PUT %s status=%d: %s", body, r.StatusCode, raw)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		return raw
+	}
+
+	put(`{"provider":"claude","baseUrl":"https://gw.internal/anthropic","model":"claude-sonnet-4",
+	     "apiKey":"sk-ant-claudeKEY1","budget":{"monthlyTokenLimit":null},"enabled":true}`)
+	raw := put(`{"provider":"ollama","baseUrl":"http://127.0.0.1:11434","model":"llama3",
+	     "budget":{"monthlyTokenLimit":null},"enabled":true}`)
+
+	active, items := aiOverview(t, raw)
+	claude := items["claude"]
+	if claude["baseUrl"] != "https://gw.internal/anthropic" || claude["model"] != "claude-sonnet-4" {
+		t.Fatalf("ollama 保存不该覆盖 claude 的地址/模型: %+v", claude)
+	}
+	if !strings.HasSuffix(claude["apiKeyMasked"].(string), "KEY1") {
+		t.Fatalf("claude 自己的密钥应留着: %v", claude["apiKeyMasked"])
+	}
+	if claude["enabled"] != false {
+		t.Fatalf("ollama 成为生效档后 claude 应停用: %+v", claude)
+	}
+	if active != "ollama" {
+		t.Fatalf("active 应是 ollama: %q", active)
+	}
+	if items["ollama"]["model"] != "llama3" {
+		t.Fatalf("ollama 应存自己的模型: %+v", items["ollama"])
+	}
+	// 从未配过的 openai 一档仍是空的,不会被两边的值污染。
+	openai := items["openai"]
+	if openai["configured"] != false || openai["baseUrl"] != "" || openai["apiKeyMasked"] != "" {
+		t.Fatalf("未配的 openai 应为空默认: %+v", openai)
 	}
 }
 

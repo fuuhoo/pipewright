@@ -1,9 +1,13 @@
 // Package ai 是「可配置 AI 提供商」的领域层(FR-24 / NFR-10 / Story 7.1)。
 //
-// 平台持有一份单例 AI 配置:provider(claude|openai|ollama)+ baseUrl + model +
-// apiKey(加密)+ budget 声明 + enabled 开关。apiKey 明文经 vault secretbox(master
-// key)加密后仅以**密文 BLOB** 入库;DB dump 绝无明文 key(AC-SEC)。对外(REST)
-// 常态只暴露掩码;明文仅在 Test 探测时进程内解密取用、用完即弃,绝不回显/日志。
+// 每档协议(claude|openai|ollama)在 ai_config 里各占一行,自带 baseUrl + model +
+// apiKey(加密)+ budget 声明,互不覆盖:配好 Claude 再试 Ollama,切回来还在。
+// enabled 表示「这份是当前生效的」——同一时刻只有一份生效(保存时互斥置位),
+// 生成/诊断/命令助手一律只认这一份。
+//
+// apiKey 明文经 vault secretbox(master key)加密后仅以**密文 BLOB** 入库;DB dump 绝无
+// 明文 key(AC-SEC)。对外(REST)常态只暴露掩码;明文仅在 Test 探测时进程内解密取用、
+// 用完即弃,绝不回显/日志。
 //
 // master key 缺失时,涉及读已存密钥的操作降级为明确错误(ErrVaultUnconfigured),
 // 平台不 panic。未配置 / 未 enabled → 下游优雅禁用,核心 CI/CD 路径完全不依赖此服务
@@ -47,6 +51,9 @@ const (
 	defaultBaseURLOllama = "http://localhost:11434"
 )
 
+// Providers 是三档协议的固定展示顺序(设置页每档一行,缺配置也占位)。
+var Providers = []string{ProviderClaude, ProviderOpenAI, ProviderOllama}
+
 // 领域错误。错误体永不含 apiKey 明文/密文/master key。
 var (
 	// ErrInvalidProvider 表示 provider 枚举非法(非 claude|openai|ollama 且非空)。
@@ -68,7 +75,7 @@ type Budget struct {
 	MonthlyTokenLimit *int64 `json:"monthlyTokenLimit"`
 }
 
-// Config 是 AI 配置领域模型。APIKeyMasked 为掩码;apiKey 明文绝不在此模型常驻。
+// Config 是单档协议的配置领域模型。APIKeyMasked 为掩码;apiKey 明文绝不在此模型常驻。
 // Configured = provider 非空 +(provider=ollama 无需 key / 否则有 key)。
 type Config struct {
 	Configured   bool
@@ -81,8 +88,15 @@ type Config struct {
 	UpdatedAt    *time.Time
 }
 
-// SaveInput 是保存配置的入参。
-// APIKey 为**只写**指针:nil/空串 = 保留既有密钥(不清空);非空 = 轮换为新密钥。
+// Overview 是三档协议的总览:Items 恒为 Providers 顺序的三项(未配置的那档为惰性空默认),
+// Active 为当前生效的 provider(一份都没启用时为空)。
+type Overview struct {
+	Active string
+	Items  []*Config
+}
+
+// SaveInput 是保存某一档协议配置的入参。Provider 必填(claude|openai|ollama)。
+// APIKey 为**只写**指针:nil/空串 = 保留该档既有密钥(不清空);非空 = 轮换为新密钥。
 type SaveInput struct {
 	Provider string
 	BaseURL  string
@@ -111,11 +125,12 @@ type TestResult struct {
 
 // Service 定义 AI 配置领域对外接口。
 type Service interface {
-	// Get 返回单例 AI 配置(apiKey 仅掩码)。首次无配置时返回惰性空默认
-	// (provider 空 / enabled false / configured false)。
-	Get(ctx context.Context) (*Config, error)
-	// Save 校验并持久化配置;apiKey 省略/空保留旧密文、非空轮换(vault.SealSecret 加密)。
-	// 返回更新后配置(掩码)。
+	// List 返回三档协议各自的配置(apiKey 仅掩码)+ 当前生效者。
+	// 从未配置的那档为惰性空默认(provider 保留 / configured、enabled false)。
+	List(ctx context.Context) (*Overview, error)
+	// Save 校验并持久化**该 provider 自己那一行**(其余两档不动);
+	// apiKey 省略/空保留该行旧密文、非空轮换(vault.SealSecret 加密)。
+	// Enabled=true 时把其他两档置为不生效。返回更新后该档配置(掩码)。
 	Save(ctx context.Context, in SaveInput) (*Config, error)
 	// Test 向 provider 发轻量探测(注入的 http.Client),回显 ok/延迟/错误(人读,绝无密钥)。
 	Test(ctx context.Context, in TestInput) (*TestResult, error)
@@ -170,35 +185,44 @@ func New(db *sql.DB, v vault.Vault, client *http.Client) Service {
 	return &service{db: db, vault: v, client: client}
 }
 
-func (s *service) Get(ctx context.Context) (*Config, error) {
-	cfg, _, err := s.load(ctx)
-	if err != nil {
-		return nil, err
+func (s *service) List(ctx context.Context) (*Overview, error) {
+	items := make([]*Config, 0, len(Providers))
+	active := ""
+	for _, p := range Providers {
+		cfg, _, err := s.loadProvider(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Enabled {
+			active = p
+		}
+		items = append(items, cfg)
 	}
-	return cfg, nil
+	return &Overview{Active: active, Items: items}, nil
 }
 
 func (s *service) Save(ctx context.Context, in SaveInput) (*Config, error) {
 	provider, err := normalizeProvider(in.Provider)
-	if err != nil {
-		return nil, err
+	if err != nil || provider == "" {
+		// 按档保存:必须指明写哪一行,不再有「清空整份配置」这种写法。
+		return nil, ErrInvalidProvider
 	}
 
-	// 读既有行(判 apiKey 保留语义 + budget 兜底);无行视为空默认。
-	_, existingSealed, err := s.load(ctx)
+	// 读该档既有行(判 apiKey 保留语义);无行视为空默认。
+	_, existingSealed, err := s.loadProvider(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
 
 	baseURL := strings.TrimSpace(in.BaseURL)
-	if provider != "" && baseURL == "" {
+	if baseURL == "" {
 		baseURL = defaultBaseURL(provider)
 	}
-	if provider != "" && baseURL == "" {
+	if baseURL == "" {
 		return nil, ErrBaseURLRequired
 	}
 
-	// apiKey 保留语义:nil/空 → 沿用既有密文;非空 → 轮换(SealSecret 加密)。
+	// apiKey 保留语义:nil/空 → 沿用该档既有密文;非空 → 轮换(SealSecret 加密)。
 	sealed := existingSealed
 	if in.APIKey != nil && *in.APIKey != "" {
 		if s.vault == nil {
@@ -215,7 +239,7 @@ func (s *service) Save(ctx context.Context, in SaveInput) (*Config, error) {
 	}
 
 	// 非 ollama provider 须有 key(既有或新轮换)。
-	if provider != "" && provider != ProviderOllama && len(sealed) == 0 {
+	if provider != ProviderOllama && len(sealed) == 0 {
 		return nil, ErrAPIKeyRequired
 	}
 
@@ -230,33 +254,55 @@ func (s *service) Save(ctx context.Context, in SaveInput) (*Config, error) {
 	}
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
-	// 单例 upsert:首存 INSERT(id=1),已存 ON CONFLICT 更新各列(created_at 保留)。
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO ai_config
-		   (id, provider, base_url, model, api_key_ciphertext, budget_json, enabled, created_at, updated_at)
-		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?) `+
-			store.UpsertSuffix(store.DialectOf(s.db), []string{"id"},
-				[]string{"provider", "base_url", "model", "api_key_ciphertext", "budget_json", "enabled", "updated_at"}),
-		provider, baseURL, strings.TrimSpace(in.Model), sealed, string(budgetJSON), enabled, nowStr, nowStr,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("ai: upsert config: %w", err)
-	}
-	return s.Get(ctx)
-}
-
-func (s *service) Test(ctx context.Context, in TestInput) (*TestResult, error) {
-	// 读既有行作为 draft 字段的回退值(apiKey 回退到已存密钥)。
-	_, existingSealed, err := s.load(ctx)
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		// 生效互斥:启用本档就把其他档摘下来,保证「当前生效」至多一份。
+		if enabled == 1 {
+			if _, e := tx.ExecContext(ctx,
+				`UPDATE ai_config SET enabled = 0 WHERE provider <> ? AND enabled <> 0`, provider,
+			); e != nil {
+				return fmt.Errorf("ai: deactivate other providers: %w", e)
+			}
+		}
+		// 按 provider upsert:首存 INSERT,已存 ON CONFLICT 更新各列(created_at 保留)。
+		_, e := tx.ExecContext(ctx,
+			`INSERT INTO ai_config
+			   (provider, base_url, model, api_key_ciphertext, budget_json, enabled, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?) `+
+				store.UpsertSuffix(store.DialectOf(s.db), []string{"provider"},
+					[]string{"base_url", "model", "api_key_ciphertext", "budget_json", "enabled", "updated_at"}),
+			provider, baseURL, strings.TrimSpace(in.Model), sealed, string(budgetJSON), enabled, nowStr, nowStr,
+		)
+		if e != nil {
+			return fmt.Errorf("ai: upsert config: %w", e)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	var existing Config
-	if c, _, lerr := s.load(ctx); lerr == nil {
-		existing = *c
-	}
+	cfg, _, err := s.loadProvider(ctx, provider)
+	return cfg, err
+}
 
-	provider := existing.Provider
+// inTx 在单个事务里跑 fn,出错回滚。跨方言一致(SQLite 事务内 DDL 无关,MySQL 只有 DML)。
+func (s *service) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("ai: begin tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ai: commit: %w", err)
+	}
+	return nil
+}
+
+func (s *service) Test(ctx context.Context, in TestInput) (*TestResult, error) {
+	// 探测哪一档:draft 指明优先;未指明则打当前生效那档。
+	provider := ""
 	if in.Provider != nil {
 		p, perr := normalizeProvider(*in.Provider)
 		if perr != nil {
@@ -265,7 +311,20 @@ func (s *service) Test(ctx context.Context, in TestInput) (*TestResult, error) {
 		provider = p
 	}
 	if provider == "" {
+		active, _, err := s.load(ctx)
+		if err != nil {
+			return nil, err
+		}
+		provider = active.Provider
+	}
+	if provider == "" {
 		return nil, ErrInvalidProvider
+	}
+
+	// draft 省略的字段回退**该档**已存值(apiKey 也只回退本档密钥,不串档)。
+	existing, existingSealed, err := s.loadProvider(ctx, provider)
+	if err != nil {
+		return nil, err
 	}
 
 	baseURL := existing.BaseURL
@@ -388,9 +447,28 @@ func mapTransportError(err error) string {
 	return "连接失败:无法连接到 provider"
 }
 
-// load 读取单例配置行 + 既有密文(密文绝不外泄,仅供保存/探测内部用)。
-// 无行 → 返回惰性空默认 Config(configured/enabled false),nil 密文,无错误。
+// load 读取**当前生效**那一档(enabled=1)——生成/诊断/命令助手/风险标注的唯一读取入口。
+// 没有任何一档生效 → 返回惰性空默认(configured/enabled false),无错误。
 func (s *service) load(ctx context.Context) (*Config, []byte, error) {
+	return s.queryConfig(ctx, `WHERE enabled = 1 ORDER BY provider LIMIT 1`, nil)
+}
+
+// loadProvider 读取指定那一档自己的行(保存/探测/总览用)。
+// 该档从未配置 → 惰性空默认(Provider 回填成所请求档位)。
+func (s *service) loadProvider(ctx context.Context, provider string) (*Config, []byte, error) {
+	cfg, sealed, err := s.queryConfig(ctx, `WHERE provider = ?`, []any{provider})
+	if err != nil {
+		return nil, nil, err
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = provider
+	}
+	return cfg, sealed, nil
+}
+
+// queryConfig 按 where 子句取一行配置并映射为领域模型(密文仅供内部使用,绝不外泄)。
+// 无行 → 惰性空默认,无错误(整库可能一行都没有,也可能只缺 requested 那一档)。
+func (s *service) queryConfig(ctx context.Context, where string, args []any) (*Config, []byte, error) {
 	var (
 		provider   string
 		baseURL    string
@@ -398,16 +476,19 @@ func (s *service) load(ctx context.Context) (*Config, []byte, error) {
 		sealed     []byte
 		budgetJSON string
 		enabledInt int
-		createdStr string
 		updatedStr string
 	)
-	err := s.db.QueryRowContext(ctx,
-		`SELECT provider, base_url, model, api_key_ciphertext, budget_json, enabled, created_at, updated_at
-		 FROM ai_config WHERE id = 1`,
-	).Scan(&provider, &baseURL, &model, &sealed, &budgetJSON, &enabledInt, &createdStr, &updatedStr)
+	q := `SELECT provider, base_url, model, api_key_ciphertext, budget_json, enabled, updated_at
+	      FROM ai_config ` + where
+	var err error
+	if len(args) == 0 {
+		err = s.db.QueryRowContext(ctx, q).Scan(&provider, &baseURL, &model, &sealed, &budgetJSON, &enabledInt, &updatedStr)
+	} else {
+		err = s.db.QueryRowContext(ctx, q, args...).Scan(&provider, &baseURL, &model, &sealed, &budgetJSON, &enabledInt, &updatedStr)
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// 惰性空默认:从未配置。
+			// 惰性空默认:该档从未配置。
 			return &Config{
 				Configured:   false,
 				Enabled:      false,
@@ -439,7 +520,7 @@ func (s *service) load(ctx context.Context) (*Config, []byte, error) {
 
 	// 掩码:有密钥时解密即时算掩码、明文用完即弃;无密钥(ollama / 未设)为空。
 	// master key 缺失/轮换致密钥不可解密时**优雅降级**(NFR-10):掩码退化为占位,
-	// 其余字段(provider/baseUrl/model/budget/enabled)照常返回,**不让整个 GET 503**;
+	// 其余字段(provider/baseUrl/model/budget/enabled)照常返回,**不让整个读取 503**;
 	// 需要明文的 Save/Test 仍在各自解密路径报 ErrVaultUnconfigured。
 	if len(sealed) > 0 {
 		masked, merr := s.maskSealed(sealed)

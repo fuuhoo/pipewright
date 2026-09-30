@@ -15,7 +15,7 @@ type aiBudgetDTO struct {
 	MonthlyTokenLimit *int64 `json:"monthlyTokenLimit"`
 }
 
-// aiConfigDTO 是 GET/PUT 响应体(冻结契约;apiKey 只暴露掩码 apiKeyMasked,绝无明文)。
+// aiConfigDTO 是**单档协议**的配置条目(apiKey 只暴露掩码 apiKeyMasked,绝无明文)。
 type aiConfigDTO struct {
 	Configured   bool        `json:"configured"`
 	Enabled      bool        `json:"enabled"`
@@ -33,6 +33,13 @@ type aiTestResultDTO struct {
 	LatencyMs int64   `json:"latencyMs"`
 	Detail    string  `json:"detail"`
 	Error     *string `json:"error"`
+}
+
+// aiSettingsDTO 是 GET/PUT 响应体:三档协议各自的配置 + 当前生效者。
+// 每档一行互不覆盖,所以前端切协议时拿得到那一档自己存过的地址/模型/掩码。
+type aiSettingsDTO struct {
+	Active  string        `json:"active"`
+	Configs []aiConfigDTO `json:"configs"`
 }
 
 // toAIConfigDTO 把领域 Config 转契约 DTO(apiKey 仅掩码;updatedAt 未设为 null)。
@@ -53,6 +60,14 @@ func toAIConfigDTO(c *ai.Config) aiConfigDTO {
 	return dto
 }
 
+func toAISettingsDTO(o *ai.Overview) aiSettingsDTO {
+	dto := aiSettingsDTO{Active: o.Active, Configs: make([]aiConfigDTO, 0, len(o.Items))}
+	for _, c := range o.Items {
+		dto.Configs = append(dto.Configs, toAIConfigDTO(c))
+	}
+	return dto
+}
+
 // writeAIError 把领域错误映射为契约错误码/状态码;绝不回显 apiKey 明文/密文。
 func writeAIError(w http.ResponseWriter, err error) {
 	switch {
@@ -69,25 +84,26 @@ func writeAIError(w http.ResponseWriter, err error) {
 	}
 }
 
-// makeGetAISettingsHandler 返回 GET /api/settings/ai handler。
-// 首次无配置 → 惰性空默认(configured/enabled=false);apiKey 仅掩码,绝无明文。
+// makeGetAISettingsHandler 返回 GET /api/settings/ai handler:三档协议各自的配置 + 生效者。
+// 从未配置的那档为惰性空默认(configured/enabled=false);apiKey 仅掩码,绝无明文。
 func makeGetAISettingsHandler(svc ai.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "AI 配置服务未初始化")
 			return
 		}
-		cfg, err := svc.Get(r.Context())
+		overview, err := svc.List(r.Context())
 		if err != nil {
 			writeAIError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toAIConfigDTO(cfg))
+		writeJSON(w, http.StatusOK, toAISettingsDTO(overview))
 	}
 }
 
-// makeSaveAISettingsHandler 返回 PUT /api/settings/ai handler。
-// apiKey 只写:省略/空保留既有,非空轮换(加密)。绝不在响应回明文。校验失败 → 422 定位。
+// makeSaveAISettingsHandler 返回 PUT /api/settings/ai handler:只写 body.provider 那一档,
+// 其余两档原样不动。apiKey 只写:省略/空保留该档既有,非空轮换(加密)。绝不在响应回明文。
+// enabled=true 表示把这一档设为当前生效(其他档随之停用)。响应同 GET(整份总览)。
 func makeSaveAISettingsHandler(svc ai.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -111,7 +127,7 @@ func makeSaveAISettingsHandler(svc ai.Service) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := svc.Save(r.Context(), ai.SaveInput{
+		_, err := svc.Save(r.Context(), ai.SaveInput{
 			Provider: req.Provider,
 			BaseURL:  req.BaseURL,
 			Model:    req.Model,
@@ -123,7 +139,12 @@ func makeSaveAISettingsHandler(svc ai.Service) http.HandlerFunc {
 			writeAIError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toAIConfigDTO(cfg))
+		overview, err := svc.List(r.Context())
+		if err != nil {
+			writeAIError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toAISettingsDTO(overview))
 	}
 }
 

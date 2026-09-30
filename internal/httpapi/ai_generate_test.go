@@ -26,7 +26,9 @@ type stubAIService struct {
 	gotClone bool // 记录最近一次 Analysis.Cloned
 }
 
-func (s *stubAIService) Get(context.Context) (*ai.Config, error) { return &ai.Config{}, nil }
+func (s *stubAIService) List(context.Context) (*ai.Overview, error) {
+	return &ai.Overview{}, nil
+}
 func (s *stubAIService) Save(context.Context, ai.SaveInput) (*ai.Config, error) {
 	return &ai.Config{}, nil
 }
