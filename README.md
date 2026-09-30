@@ -87,7 +87,7 @@ Downloads the static binary for your platform from GitHub Releases and installs 
 curl -fsSL https://raw.githubusercontent.com/huangchengsir/pipewright/master/install.sh | sh
 
 # Pin a version / custom dir / auto-install Docker on Linux too:
-VERSION=v1.0.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
+VERSION=v0.5.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/huangchengsir/pipewright/master/install.sh)"
 
 # Run (first launch bootstraps the admin; master key is for the credential vault)
