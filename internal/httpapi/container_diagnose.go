@@ -25,6 +25,13 @@ import (
 
 const diagnoseLogTail = "200"
 
+// 取日志与生成各自计时:一次 SSH 30s 足够,而一次真生成在本地模型上常要几十秒
+// (实测 Ollama ~40s)。共用一个短 ctx 会把慢机型的诊断永远打成降级态。
+const (
+	containerLogsBudget     = 30 * time.Second
+	containerDiagnoseBudget = 2 * time.Minute
+)
+
 // makeContainerDiagnoseHandler 返回 POST /api/servers/{id}/containers/{containerId}/diagnose
 // (认证 + CSRF;读容器日志 + 调 AI)。
 func makeContainerDiagnoseHandler(svc target.Service, aiSvc ai.Service) http.HandlerFunc {
@@ -54,16 +61,17 @@ func makeContainerDiagnoseHandler(svc target.Service, aiSvc ai.Service) http.Han
 			return
 		}
 
-		cctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-
 		// 取日志(docker logs 同时走 stdout/stderr,合并)。失败不致命:空日志也能让 AI 据状态推断。
-		logText := fetchContainerLogs(cctx, svc, id, containerID)
+		logCtx, cancelLog := context.WithTimeout(r.Context(), containerLogsBudget)
+		logText := fetchContainerLogs(logCtx, svc, id, containerID)
+		cancelLog()
 		if strings.TrimSpace(logText) == "" {
 			logText = "(该容器无日志输出)"
 		}
 
-		diag, err := aiSvc.Diagnose(cctx, ai.DiagnoseInput{
+		diagCtx, cancelDiag := context.WithTimeout(r.Context(), containerDiagnoseBudget)
+		defer cancelDiag()
+		diag, err := aiSvc.Diagnose(diagCtx, ai.DiagnoseInput{
 			FailureLog:  logText,
 			StepName:    "容器 " + containerID,
 			ProjectName: "",

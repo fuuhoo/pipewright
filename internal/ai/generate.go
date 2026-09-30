@@ -211,7 +211,7 @@ func (s *service) chatWithTokens(ctx context.Context, provider, baseURL, model, 
 		req.Header.Set(k, v)
 	}
 
-	resp, err := s.client.Do(req)
+	resp, err := s.chatClient.Do(req)
 	if err != nil {
 		// 绝不回显底层错误(可能含 endpoint/凭据细节)。
 		return "", TokenUsage{}, fmt.Errorf("%w: %s", ErrGenerateFailed, mapTransportError(err))

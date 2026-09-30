@@ -168,7 +168,13 @@ type service struct {
 	db     *sql.DB
 	vault  vault.Vault
 	client *http.Client
+	// chatClient 专供生成(见 New 注释:与探测分开计时)。
+	chatClient *http.Client
 }
+
+// chatTimeout 是一次 chat 生成的上限。本地模型一轮可达几十秒(实测 Ollama ~40s),
+// 需要远大于探测超时;调用方(handler)可用更短的 ctx 收紧。
+const chatTimeout = 2 * time.Minute
 
 // New 构造 Service。
 //   - db:经参数化 SQL 触库。
@@ -177,12 +183,19 @@ type service struct {
 //   - client:Test 探测用的 HTTP 客户端(应带超时,如 ~8s);为 nil 时回退默认带超时客户端。
 //     单测可注入指向本地 stub server 的 client + 短超时。
 //
+// 生成走独立的 chatClient(探测几毫秒就该判失败,一次真生成在本地模型上要几十秒)。
+//
 // 不在此做任何重活(无 init() 副作用,避免抬高空载内存)。
 func New(db *sql.DB, v vault.Vault, client *http.Client) Service {
 	if client == nil {
 		client = &http.Client{Timeout: 8 * time.Second}
 	}
-	return &service{db: db, vault: v, client: client}
+	return &service{
+		db:         db,
+		vault:      v,
+		client:     client,
+		chatClient: &http.Client{Transport: client.Transport, Timeout: chatTimeout},
+	}
 }
 
 func (s *service) List(ctx context.Context) (*Overview, error) {
