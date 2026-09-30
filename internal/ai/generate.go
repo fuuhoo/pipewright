@@ -227,7 +227,11 @@ func (s *service) chatWithTokens(ctx context.Context, provider, baseURL, model, 
 	if err != nil {
 		return "", TokenUsage{}, err
 	}
-	return text, extractChatUsage(provider, raw), nil
+	usage := extractChatUsage(provider, raw)
+	// 月度账在这里记:所有生成路径(生成/诊断/风险/命令助手/compose)都收口于此,
+	// 记不上也不影响已经拿到手的回复。
+	_ = s.recordUsage(ctx, provider, usage)
+	return text, usage, nil
 }
 
 // extractChatText 按 provider 从响应 JSON 取助手回复文本。

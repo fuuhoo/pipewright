@@ -14,7 +14,8 @@
 // (NFR-10)。
 //
 // 本期为「最小可用」:Test 仅向 provider 发轻量探测(GET models/tags)校验连通 +
-// 认证;budget 仅存声明(monthlyTokenLimit),不强制执行/计量(Epic7 用量统计后做)。
+// 认证;budget.monthlyTokenLimit 仍是声明(不强制执行上限),但每次生成会把 tokens
+// 记进 ai_token_usage,让设置页能显示这一档本月已用多少(见 usage.go)。
 package ai
 
 import (
@@ -86,6 +87,9 @@ type Config struct {
 	APIKeyMasked string
 	Budget       Budget
 	UpdatedAt    *time.Time
+	// Usage 是这一档**本自然月**的累计用量(UTC 月,读自 ai_token_usage;没用过为零值)。
+	// 与 Budget.MonthlyTokenLimit 配对显示;仅统计,不强制执行。
+	Usage MonthUsage
 }
 
 // Overview 是三档协议的总览:Items 恒为 Providers 顺序的三项(未配置的那档为惰性空默认),
@@ -199,6 +203,13 @@ func New(db *sql.DB, v vault.Vault, client *http.Client) Service {
 }
 
 func (s *service) List(ctx context.Context) (*Overview, error) {
+	// 本月用量一次读全(一条按当前月键的查询),再按档挂到各自 Config.Usage;
+	// 表里没行的档就是零用量,不是错误 —— 新装的实例本来就没用过。
+	usage, err := s.monthUsageByProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]*Config, 0, len(Providers))
 	active := ""
 	for _, p := range Providers {
@@ -206,6 +217,7 @@ func (s *service) List(ctx context.Context) (*Overview, error) {
 		if err != nil {
 			return nil, err
 		}
+		cfg.Usage = usage[p]
 		if cfg.Enabled {
 			active = p
 		}

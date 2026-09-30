@@ -1,20 +1,30 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huangchengsir/pipewright/internal/ai"
 	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/huangchengsir/pipewright/internal/store"
 	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // setupAIServer 构造带 auth + vault + ai 的测试 server;ai 用注入 client(默认指向给定 stub)。
 func setupAIServer(t *testing.T, client *http.Client) (*httptest.Server, *http.Client, string) {
+	srv, c, csrf, _ := setupAIServerWithStore(t, client)
+	return srv, c, csrf
+}
+
+// setupAIServerWithStore 同上,另回 *store.Store:月度用量台账没有对外写入口
+// (只有内部 chat 记账),测读数就得自己按行灌库。
+func setupAIServerWithStore(t *testing.T, client *http.Client) (*httptest.Server, *http.Client, string, *store.Store) {
 	t.Helper()
 	st := testStoreAuth(t)
 	svc := auth.NewService(st.DB, nil, nil)
@@ -31,7 +41,7 @@ func setupAIServer(t *testing.T, client *http.Client) (*httptest.Server, *http.C
 
 	c := newTestClient(t)
 	csrf := loginWithClient(t, c, srv.URL)
-	return srv, c, csrf
+	return srv, c, csrf, st
 }
 
 // aiOverview 解析 GET/PUT 响应体:当前生效者 + 三档各自的配置(缺档即契约漏档)。
@@ -82,6 +92,57 @@ func TestAIGetLazyDefault(t *testing.T) {
 		b, _ := dto["budget"].(map[string]any)
 		if _, ok := b["monthlyTokenLimit"]; !ok {
 			t.Fatalf("%s budget.monthlyTokenLimit 字段应存在: %s", p, raw)
+		}
+		u, _ := dto["usage"].(map[string]any)
+		if u == nil || u["monthPrompt"] != float64(0) || u["monthCompletion"] != float64(0) {
+			t.Fatalf("%s usage 应是零值本月用量(字段恒在): %v / %s", p, dto["usage"], raw)
+		}
+	}
+}
+
+// TestAIGetCarriesMonthUsage 验证 GET 把「本月已用」带进每档的 usage:与 monthlyTokenLimit
+// 同一口径(UTC 自然月),上月的行绝不串进本月 —— 否则页面数字只增不减,月上限形同虚设。
+func TestAIGetCarriesMonthUsage(t *testing.T) {
+	srv, client, csrf, st := setupAIServerWithStore(t, nil)
+	now := time.Now().UTC()
+	thisMonth := now.Format("2006-01")
+	firstOfThisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	lastMonth := firstOfThisMonth.AddDate(0, 0, -1).Format("2006-01")
+
+	seed := func(provider, month string, prompt, completion int64) {
+		t.Helper()
+		_, err := st.DB.ExecContext(context.Background(),
+			`INSERT INTO ai_token_usage
+			   (provider, usage_month, prompt_tokens, completion_tokens, updated_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			provider, month, prompt, completion, firstOfThisMonth.Format(time.RFC3339),
+		)
+		if err != nil {
+			t.Fatalf("灌 %s %s 用量: %v", provider, month, err)
+		}
+	}
+	seed("ollama", thisMonth, 12345, 678)
+	seed("ollama", lastMonth, 9_999_999, 9_999_999)
+	seed("claude", thisMonth, 7, 3)
+
+	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/settings/ai", csrf, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_, items := aiOverview(t, raw)
+
+	want := map[string][2]int64{"ollama": {12345, 678}, "claude": {7, 3}, "openai": {0, 0}}
+	for p, w := range want {
+		u, _ := items[p]["usage"].(map[string]any)
+		if u == nil {
+			t.Fatalf("%s 应带 usage 对象: %s", p, raw)
+		}
+		gotP, _ := u["monthPrompt"].(float64)
+		gotC, _ := u["monthCompletion"].(float64)
+		if int64(gotP) != w[0] || int64(gotC) != w[1] {
+			t.Errorf("%s usage = {%v,%v}, want {%d,%d} (%s)", p, gotP, gotC, w[0], w[1], raw)
 		}
 	}
 }

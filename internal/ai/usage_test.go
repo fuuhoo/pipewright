@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stubLLMWithUsage 起一个响应里带 token 用量的 chat stub(三档 usage 字段位置各不相同)。
@@ -176,5 +177,110 @@ func TestHumanizeDiagnoseErrDropsInternalSentinel(t *testing.T) {
 	wrapped := fmt.Errorf("%w: %s", ErrGenerateFailed, "调用模型失败(HTTP 500)")
 	if got := humanizeDiagnoseErr(wrapped); got != "调用模型失败(HTTP 500)" {
 		t.Errorf("只应留人读尾巴,得 %q", got)
+	}
+}
+
+// TestUsageMonthKeyIsUTC 验证月键按 UTC 折:服务器在 UTC+8 时,北京时间 9 月 1 日 07:00
+// 仍是 8 月的账(与库里其余时间列一律 RFC3339 UTC 同口径,不掺本地时区)。
+func TestUsageMonthKeyIsUTC(t *testing.T) {
+	utcPlus8 := time.FixedZone("UTC+8", 8*60*60)
+	if got := usageMonth(time.Date(2026, 9, 1, 7, 0, 0, 0, utcPlus8)); got != "2026-08" {
+		t.Errorf("月键 = %q, want 2026-08", got)
+	}
+	if got := usageMonth(time.Date(2026, 9, 30, 23, 0, 0, 0, time.UTC)); got != "2026-09" {
+		t.Errorf("月键 = %q, want 2026-09", got)
+	}
+}
+
+// TestRecordUsageAccumulatesPerProvider 验证同档多次调用累加进同一行、跨档互不串账,
+// 且拿不到用量(兼容端点不回 usage)时不落 0/0 的空行。
+func TestRecordUsageAccumulatesPerProvider(t *testing.T) {
+	svc, _, _ := newService(t, http.DefaultClient)
+	s := svc.(*service)
+
+	record := func(provider string, u TokenUsage) {
+		t.Helper()
+		if err := s.recordUsage(ctx(), provider, u); err != nil {
+			t.Fatalf("recordUsage(%s, %+v): %v", provider, u, err)
+		}
+	}
+	record(ProviderClaude, TokenUsage{Prompt: 1200, Completion: 340})
+	record(ProviderClaude, TokenUsage{Prompt: 800, Completion: 60})
+	record(ProviderOllama, TokenUsage{Prompt: 7, Completion: 3})
+	record(ProviderOpenAI, TokenUsage{}) // 没用量 → 不记账
+
+	ov, err := svc.List(ctx())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	cases := []struct {
+		provider                   string
+		wantPrompt, wantCompletion int64
+	}{
+		{ProviderClaude, 2000, 400},
+		{ProviderOllama, 7, 3},
+		{ProviderOpenAI, 0, 0},
+	}
+	for _, c := range cases {
+		got := itemOf(t, ov, c.provider).Usage
+		if got.Prompt != c.wantPrompt || got.Completion != c.wantCompletion {
+			t.Errorf("%s 用量 = %+v, want prompt=%d completion=%d", c.provider, got, c.wantPrompt, c.wantCompletion)
+		}
+	}
+}
+
+// TestMonthUsageExcludesOtherMonths 验证「已使用」只算本月:上月那行再大也不进来
+// (跨月自动归零,否则页面数字只增不减,月上限就失去意义了)。
+func TestMonthUsageExcludesOtherMonths(t *testing.T) {
+	svc, db, _ := newService(t, http.DefaultClient)
+	s := svc.(*service)
+	if err := s.recordUsage(ctx(), ProviderClaude, TokenUsage{Prompt: 5, Completion: 6}); err != nil {
+		t.Fatalf("recordUsage: %v", err)
+	}
+
+	now := time.Now().UTC()
+	firstOfThisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	prevMonth := firstOfThisMonth.AddDate(0, 0, -1).Format("2006-01")
+	if _, err := db.ExecContext(ctx(),
+		`INSERT INTO ai_token_usage (provider, usage_month, prompt_tokens, completion_tokens, updated_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		ProviderClaude, prevMonth, 9_000_000, 9_000_000, firstOfThisMonth.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert 上月用量: %v", err)
+	}
+
+	ov, err := svc.List(ctx())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got := itemOf(t, ov, ProviderClaude).Usage; got.Prompt != 5 || got.Completion != 6 {
+		t.Errorf("本月用量 = %+v, want prompt=5 completion=6(上月行不该算进来)", got)
+	}
+}
+
+// TestChatRecordsUsageIntoMonthLedger 验证真实生成路径会自动记账:调用方只调 Diagnose,
+// 不用自己写台账(所有生成入口都收口在 chatWithTokens,漏一处就少一处账)。
+func TestChatRecordsUsageIntoMonthLedger(t *testing.T) {
+	srv := stubLLMWithUsage(t, ProviderOllama, stubDiagnosisJSON)
+	svc, _, _ := newService(t, srv.Client())
+	configureEnabled(t, svc, ProviderOllama, srv.URL)
+
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Diagnose(ctx(), DiagnoseInput{
+			FailureLog: failureLogWithSecret,
+			StepName:   "构建镜像",
+			Masker:     maskerWithSecret(),
+		}); err != nil {
+			t.Fatalf("Diagnose #%d: %v", i+1, err)
+		}
+	}
+
+	ov, err := svc.List(ctx())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	// stub 每轮回 1200/340,两轮就该是 2400/680。
+	if got := itemOf(t, ov, ProviderOllama).Usage; got.Prompt != 2400 || got.Completion != 680 {
+		t.Errorf("两轮生成后本月用量 = %+v, want prompt=2400 completion=680", got)
 	}
 }

@@ -21,8 +21,8 @@ func TestMigrationsApplied(t *testing.T) {
 			t.Fatalf("count migrations: %v", err)
 		}
 		// 与 migrations/{sqlite,mysql} 下的 .sql 文件数一致;新增迁移需同步改此值。
-		if n != 62 {
-			t.Fatalf("应用迁移数 = %d, 期望 62", n)
+		if n != 63 {
+			t.Fatalf("应用迁移数 = %d, 期望 63", n)
 		}
 		// 核心领域表存在(随手验一张)。
 		if _, err := st.DB.ExecContext(ctx, `SELECT 1 FROM audit_log WHERE 1=0`); err != nil {

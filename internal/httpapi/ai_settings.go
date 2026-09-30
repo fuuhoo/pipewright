@@ -15,6 +15,14 @@ type aiBudgetDTO struct {
 	MonthlyTokenLimit *int64 `json:"monthlyTokenLimit"`
 }
 
+// aiUsageDTO 是这一档**本自然月**(UTC 月,与 monthlyTokenLimit 同口径)的累计用量。
+// 字段名自带 month 前缀:读数只覆盖本月,跨月归零,别让人当成历史总量。
+// 仅作展示 —— 上限本身仍不强制执行。
+type aiUsageDTO struct {
+	MonthPrompt     int64 `json:"monthPrompt"`
+	MonthCompletion int64 `json:"monthCompletion"`
+}
+
 // aiConfigDTO 是**单档协议**的配置条目(apiKey 只暴露掩码 apiKeyMasked,绝无明文)。
 type aiConfigDTO struct {
 	Configured   bool        `json:"configured"`
@@ -24,6 +32,7 @@ type aiConfigDTO struct {
 	Model        string      `json:"model"`
 	APIKeyMasked string      `json:"apiKeyMasked"`
 	Budget       aiBudgetDTO `json:"budget"`
+	Usage        aiUsageDTO  `json:"usage"`
 	UpdatedAt    *string     `json:"updatedAt"`
 }
 
@@ -52,6 +61,7 @@ func toAIConfigDTO(c *ai.Config) aiConfigDTO {
 		Model:        c.Model,
 		APIKeyMasked: c.APIKeyMasked,
 		Budget:       aiBudgetDTO{MonthlyTokenLimit: c.Budget.MonthlyTokenLimit},
+		Usage:        aiUsageDTO{MonthPrompt: c.Usage.Prompt, MonthCompletion: c.Usage.Completion},
 	}
 	if c.UpdatedAt != nil {
 		s := c.UpdatedAt.UTC().Format(time.RFC3339)
