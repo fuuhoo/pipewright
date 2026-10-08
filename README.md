@@ -61,7 +61,7 @@ It has since grown past that trio: publishing a deployed service on an HTTPS dom
 - **🧩 Projects & pipelines** — visual orchestration canvas (stage DAG + intra-stage job-level DAG) · matrix builds · manual approval gates (approve straight from a notification via signed link) · sidecar services (attach DB/Redis for tests) · stage `when` conditions + post-stage steps · typed run parameters (enum/bool/number, validated at trigger time) · triggers: webhook, branch→environment mapping, 5-field cron, and upstream→downstream pipeline chaining (loop-safe by depth + path guards) · per-project concurrency caps with FIFO queueing · a reuse library of pipeline templates, variable groups, and custom nodes · server-authoritative validation.
 - **📝 Pipeline as code** — commit the pipeline structure to `.pipewright.yml` and let it evolve per branch, with the canvas as the always-available fallback ([details below](#pipeline-as-code-gitops)).
 - **🏗 Isolated builds & artifacts** — version-pinned isolated builds inside containers (docker/nerdctl/podman) · a local bare-mirror repo cache (incremental fetch, then a workspace in seconds) · build dependency caching keyed by branch + lockfile hash · a content-addressed artifact store that keeps the **real bytes** of jar/dist for deployment (not just a placeholder reference) · image build + push to private registries with image GC · an optional remote build machine per project (build is offloaded over SSH; tokens stay on the control node) · JUnit + Cobertura test reports feeding quality gates that fail the stage and block downstream deploys · live terminal logs (SSE) + history replay · read-only code browsing (Monaco).
-- **🚀 Multi-server deployment** — agentless deploy over SSH · artifacts laid directly into the target directory you name (`jar`/`dist` contents land as-is) + restart command + health gating · image deploys swap the running container and roll back to the previous image on failure · parallel fan-out across hosts + visible partial failures · command-style deploys (restart a service with no artifact) · **environments as first-class objects**: per-environment deployment timeline, current active version, and one-click rollback to the last fully successful deploy · environment promotion chains (dev→staging→prod) with per-environment variables/secrets and approval gates.
+- **🚀 Multi-server deployment** — agentless deploy over SSH · artifacts laid directly into the target directory you name (`jar`/`dist` contents land as-is) + restart command + health gating · image deploys swap the running container and roll back to the previous image on failure · **whole compose stacks** (a `docker-compose.yml` from your repo handed to the target machine's compose CLI, the same stack the Containers page manages) · **Kubernetes releases** (the platform talks to the cluster API directly, no jump host) · parallel fan-out across hosts + visible partial failures · command-style deploys (restart a service with no artifact) · **environments as first-class objects**: per-environment deployment timeline, current active version, and one-click rollback to the last fully successful deploy · environment promotion chains (dev→staging→prod) with per-environment variables/secrets and approval gates.
 - **🌐 Auto HTTPS + domain reverse proxy** — one managed Caddy container per target host, orchestrated over the same SSH + docker path as container ops (render Caddyfile → `docker cp` → graceful reload). Certificates are issued and renewed automatically by Let's Encrypt over HTTP-01, or over **DNS-01 with Cloudflare / DNSPod / Alibaba Cloud DNS** for wildcards. Plus: multi-domain aliases, path routing (`/api`→A, `/`→B), redirects, access control (basic auth, IP allow/deny CIDR), HSTS / security headers / compression, load balancing across upstreams with active health-check failover, WebSocket / gRPC (h2c) / TCP passthrough (caddy-l4), a certificate dashboard that probes the real 443 handshake, and one-click subdomain allocation.
 - **🔎 Per-PR preview environments** — when a PR's run deploys successfully, it automatically gets a throwaway `pr-<n>-<proj>.<base>` domain with its own certificate and route, so reviewers open one link and see that PR actually running. Idempotent per PR, and reclaimed automatically — but **only** once the PR is provably closed or merged.
 - **📣 Notifications** — WeCom / DingTalk / Lark (Feishu) / Slack / email / custom webhook · fine-grained event→channel routing · templates + custom variables · rich Lark cards with approve/detail action buttons and a release summary · in-pipeline notification nodes.
@@ -262,6 +262,54 @@ The listen address can also be set on the command line, which wins over `PIPEWRI
 | `PIPEWRIGHT_METRICS_SAMPLE_INTERVAL` | Server metrics sampling interval in seconds (source of the trend charts); `0` disables sampling | `60` |
 | `PIPEWRIGHT_METRICS_RETENTION_DAYS` | How many days of metric samples to keep | `7` |
 
+## Delivery forms: which deploy node to reach for
+
+Every deploy node runs over SSH with **zero agents on the target**; commands are arrayified (never interpolated into a shell string), and artifacts and file bodies land as files only.
+
+| Node | What it delivers | Key config | On failure |
+|---|---|---|---|
+| `deploy_ssh` | File artifacts (jar / dist) laid straight into the directory you name | `serverIds` + `deployPath` (+ `restartCommand`) | Overwrites in place, no auto-rollback (re-run the previous deploy to go back) |
+| `deploy_docker` · `run` | One container: pull the upstream image, stop old / start new | `containerName` / `ports` / `runArgs` | Automatically rolls back to the previous image |
+| `deploy_docker` · `compose` | A whole stack: one `docker-compose.yml` handed to the target's compose CLI | `stackName` + compose body source (**takes no artifact**) | That host is marked failed, the others continue; retry only the failed host |
+| `deploy_k8s` | An image or a manifest in a cluster | `clusterId` + `manifestSource` | A stalled rollout backfills the previous image by default |
+
+### Whole-stack compose deploys (`deploy_docker` with `dockerMode: compose`)
+
+Install docker plus a compose CLI on the target and you can deliver a set of services in one step.
+
+- **Two ways to supply the body**: `composeSource: repo` + `composeFile: deploy/docker-compose.yml` (read the file from your project's repo, so it evolves with the code through PR review and per branch), or `composeSource: paste` + `composeYaml` (keep the body in the node). Body capped at 512 KiB, `stackName` at 128 characters.
+- **It is the same stack the Containers page manages**: the body is uploaded verbatim as `/opt/pipewright/stacks/<stackName>/docker-compose.yml` on the target, then `docker compose -p <stackName> up -d` runs. A stack released by a pipeline therefore shows up in that host's Stacks list on the Containers page, where you can keep reading its logs, restart it, or `down` it — not two deploys that cannot see each other.
+- **8-minute budget** for the whole chain (mkdir + upload + `up`, since `up` pulls images on the target). This mode **ignores `strategy`**: batching is about rolling out to many hosts, and a single stack has nothing to batch; multiple hosts are still handled one after another.
+- **How it divides work with `run`**: only the image changes and the topology stays put → `run` (it reuses the image-artifact path, complete with stop-old/start-new and rollback on failure); services, networks, or volumes change together → `compose`.
+
+Health gating is optional for both `deploy_ssh` and `deploy_docker`: `healthProbe: http` + `healthUrl` (the URL is from the **deploy host's own point of view**, e.g. `http://localhost:8080/healthz`), or `healthProbe: command` + `healthCommand`. A failing probe marks that deploy task failed and blocks downstream stages.
+
+```yaml
+version: 1
+stages:
+  - id: stg_src
+    name: Source
+    kind: source
+    jobs:
+      - name: Repo source
+        type: git_source
+  - id: stg_deploy
+    name: Deploy
+    kind: deploy
+    needs: [stg_src]
+    jobs:
+      - name: Compose stack
+        type: deploy_docker
+        config:
+          serverIds: "1"
+          dockerMode: compose
+          composeSource: repo
+          composeFile: deploy/docker-compose.yml
+          stackName: shop-web
+          healthProbe: http
+          healthUrl: http://localhost:8080/healthz
+```
+
 ## Pipeline as code (GitOps)
 
 Commit your pipeline structure to `.pipewright.yml` in the repo — **same source of truth as your code, reviewable in a PR, evolving per branch** — instead of relying on implicit drift in the canvas.
@@ -271,7 +319,7 @@ Commit your pipeline structure to `.pipewright.yml` in the repo — **same sourc
 - **Never breaks a run**: if the file is **missing** → falls back to the pipeline configured in the canvas (UI); if it exists but is **invalid YAML** → also falls back to the stored canvas config.
 - **Scope**: the YAML controls **pipeline structure only** (stages / jobs / `needs` / DAG layout). **Variables & cache, environments & credentials, and trigger rules** still come from the canvas (UI) settings — they are **not** in the YAML.
 - **Schema** is the same one used by the platform's "Import from YAML" (`version` + `stages` → `jobs`; a job uses a nested `script:` block for `image`/`commands`/`env`/`workdir`).
-- **Job types** available in both the canvas and the YAML: `git_source`, `script`, `build_backend`, `build_frontend`, `build_image`, `push_image`, `deploy_ssh`, `deploy_frontend`, `health_check`, `notify`, `templated`, `custom`.
+- **Job types** available in both the canvas and the YAML: `git_source`, `script`, `build_backend`, `build_frontend`, `build_image`, `push_image`, `deploy_ssh`, `deploy_docker`, `deploy_k8s`, `deploy_frontend`, `notify`, `templated`, `custom`.
 
 ```yaml
 version: 1

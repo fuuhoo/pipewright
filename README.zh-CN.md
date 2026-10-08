@@ -61,7 +61,7 @@
 - **🧩 项目与流水线** —— 可视化编排画布(阶段 DAG + 阶段内任务级 DAG)· 矩阵构建 · 人工审批门(可直接在通知里点签名链接审批)· 旁挂服务(测试挂 DB/Redis)· 阶段 `when` 条件 + 阶段后置步骤 · 类型化运行参数(枚举/布尔/数字,触发时即校验)· 触发方式:webhook、分支→环境映射、5 字段 cron 定时、上游→下游流水线串联(深度门 + 路径门防环)· 项目级并发上限 + 超限 FIFO 排队 · 复用库:流水线模板 / 变量组 / 自定义节点 · 服务端权威合法性校验。
 - **📝 流水线即代码** —— 把流水线结构写进 `.pipewright.yml`、按分支各自演进,画布配置始终作为兜底回退([详见下文](#流水线即代码gitops))。
 - **🏗 隔离构建与产物** —— 版本钉死的容器内隔离构建(docker/nerdctl/podman)· 代码管理区:本地 bare 镜像 + 增量 fetch,秒级出工作区 · 构建依赖缓存(按分支 + lockfile hash 寻址)· 内容寻址制品库,jar/dist 存**真字节**供部署(而非占位 reference)· 镜像构建 + 推送私有仓库 + 镜像 GC · 每项目可指定远程构建机(构建经 SSH 下沉到远程,token 只留控制机)· JUnit + Cobertura 测试报告喂质量门禁,不过则阶段失败、阻断下游部署 · 实时终端日志(SSE)+ 历史回放 · 只读代码浏览(Monaco)。
-- **🚀 多服务器部署** —— 经 SSH 免 Agent 部署 · 产物直铺到指定目录(`jar`/`dist` 落进去就是内容本身)+ 重启命令 + 健康门控 · 镜像部署停旧起新、失败回滚上一镜像 · 多机并行扇出 + 部分失败可见 · 命令型部署(无产物,直接重启服务)· **环境一等公民**:逐环境部署时间线、当前活跃版本、一键回滚到上一次全成功部署 · 环境晋级流(dev→staging→prod)+ 逐环境变量/密钥 + 审批门。
+- **🚀 多服务器部署** —— 经 SSH 免 Agent 部署 · 产物直铺到指定目录(`jar`/`dist` 落进去就是内容本身)+ 重启命令 + 健康门控 · 镜像部署停旧起新、失败回滚上一镜像 · **compose 整栈交付**(仓库里那份 `docker-compose.yml` 直接交目标机的 compose CLI,与「容器」页管的是同一份栈)· **K8s 发布**(平台直连集群 API,不经跳板机)· 多机并行扇出 + 部分失败可见 · 命令型部署(无产物,直接重启服务)· **环境一等公民**:逐环境部署时间线、当前活跃版本、一键回滚到上一次全成功部署 · 环境晋级流(dev→staging→prod)+ 逐环境变量/密钥 + 审批门。
 - **🌐 自动 HTTPS + 域名反向代理** —— 每台目标主机一个托管 Caddy 容器,复用与容器运维同一套 SSH + docker 手法编排(渲染 Caddyfile → `docker cp` → 优雅 reload)。证书经 Let's Encrypt 自动签发/续期:HTTP-01,或**经 Cloudflare / DNSPod / 阿里云 DNS 走 DNS-01**(通配符必需)。另有:多域名别名、路径路由(`/api`→A、`/`→B)、重定向、访问控制(basic auth、IP 允许/拒绝 CIDR)、HSTS / 安全头 / 压缩、多上游负载均衡 + 主动健康检查故障转移、WebSocket / gRPC(h2c) / TCP 透传(caddy-l4)、按真实 443 握手探测的证书大盘、一键子域名。
 - **🔎 Per-PR 预览环境** —— 某 PR 的运行成功部署后,自动分配一次性域名 `pr-<n>-<proj>.<base>`(带自己的证书与路由),评审者点开链接就能看到这条 PR 真实跑起来的样子。同一 PR 幂等复用;自动回收,但**仅在**确证 PR 已关闭/合并时才回收。
 - **📣 通知** —— 企业微信 / 钉钉 / 飞书 / Slack / 邮件 / 自定义 webhook · 事件→渠道细粒度路由 · 模板 + 变量自定义 · 飞书富卡片(审批/详情行动按钮 + 发版汇总)· 流水线内通知节点。
@@ -254,6 +254,54 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 | `PIPEWRIGHT_METRICS_SAMPLE_INTERVAL` | 服务器指标采样间隔(秒,趋势图数据源);`0` 关闭采样 | `60` |
 | `PIPEWRIGHT_METRICS_RETENTION_DAYS` | 指标样本保留天数 | `7` |
 
+## 部署到目标机:四种交付形态
+
+部署节点一律经 SSH 下发,**目标机零 Agent**;命令 array 化(绝不拼进 shell 字符串),产物与正文只以文件落地。按交付物选一种:
+
+| 节点 | 交付什么 | 关键配置 | 失败时 |
+|---|---|---|---|
+| `deploy_ssh` | jar / dist 等文件产物,直铺进你指定的目录 | `serverIds` + `deployPath`(+ `restartCommand`) | 就地覆盖、无自动回滚(要回到上一版本就重跑那次部署) |
+| `deploy_docker` · `run` | 单容器:拉上游镜像 → 停旧起新 | `containerName` / `ports` / `runArgs` | 自动回滚到上一镜像 |
+| `deploy_docker` · `compose` | 整栈:一份 `docker-compose.yml` 交目标机的 compose CLI | `stackName` + 正文来源(**不接产物**) | 该机记 failed,其余机器继续,可只重试失败机 |
+| `deploy_k8s` | 集群里的镜像或清单 | `clusterId` + `manifestSource` | 滚动失败默认回填上一镜像 |
+
+### compose 整栈部署(`deploy_docker` + `dockerMode: compose`)
+
+目标机装好 docker 与 compose CLI,就能一次交付一套服务。
+
+- **正文来源二选一**:`composeSource: repo` + `composeFile: deploy/docker-compose.yml`(读项目仓库里那份,跟代码一起走 PR 评审、按分支演进),或 `composeSource: paste` + `composeYaml`(把正文粘在节点里)。正文上限 512 KiB,`stackName` ≤128 字符。
+- **和「容器」页管的是同一份栈**:正文原样上传为目标机的 `/opt/pipewright/stacks/<stackName>/docker-compose.yml`,再执行 `docker compose -p <stackName> up -d`。流水线发出去的栈因此直接出现在容器页那台机器的 Stacks 里,能在界面上接着看日志、重启、down —— 不是两份互相看不见的部署。
+- **时间预算 8 分钟**(建目录 + 上传 + `up`,因为 `up` 要在目标机拉镜像)。这一档**不读 `strategy`**:分批是「多台机器逐台铺」的编排,单个栈没有分批对象;多主机时仍是逐台执行。
+- **与 `run` 的分工**:只换镜像、拓扑不变 → `run`(它复用镜像产物链路,自带停旧起新与失败回滚);服务数量/网络/卷要一起变 → `compose`。
+
+健康门控对 `deploy_ssh` 与 `deploy_docker` 两档都可选:`healthProbe: http` + `healthUrl`(地址是**部署机本机视角**,如 `http://localhost:8080/healthz`),或 `healthProbe: command` + `healthCommand`;探测不通即该部署任务失败并阻断下游。
+
+```yaml
+version: 1
+stages:
+  - id: stg_src
+    name: 流水线源
+    kind: source
+    jobs:
+      - name: 仓库源
+        type: git_source
+  - id: stg_deploy
+    name: 部署
+    kind: deploy
+    needs: [stg_src]
+    jobs:
+      - name: compose 整栈
+        type: deploy_docker
+        config:
+          serverIds: "1"
+          dockerMode: compose
+          composeSource: repo
+          composeFile: deploy/docker-compose.yml
+          stackName: shop-web
+          healthProbe: http
+          healthUrl: http://localhost:8080/healthz
+```
+
 ## 流水线即代码(GitOps)
 
 把流水线结构写进仓库的 `.pipewright.yml`,**跟代码同源、走 PR 评审、按分支演进**——不再依赖画布配置的隐式漂移。
@@ -263,7 +311,7 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 - **永不卡住运行的回退**:文件**缺失** → 回退到画布(UI)里已配置的流水线;文件存在但 **YAML 非法** → 同样回退到已存的画布配置。
 - **作用范围**:YAML 只管**流水线结构**(阶段 / 任务 / `needs` / DAG 编排);**变量与缓存、环境与凭据、触发规则**仍来自画布(UI)设置,**不写在 YAML 里**。
 - **schema** 与平台「从 YAML 导入」用的是同一套(`version` + `stages` → `jobs`,job 用嵌套 `script:` 块写 `image`/`commands`/`env`/`workdir`)。
-- **节点类型**(画布与 YAML 通用):`git_source`、`script`、`build_backend`、`build_frontend`、`build_image`、`push_image`、`deploy_ssh`、`deploy_frontend`、`health_check`、`notify`、`templated`、`custom`。
+- **节点类型**(画布与 YAML 通用):`git_source`、`script`、`build_backend`、`build_frontend`、`build_image`、`push_image`、`deploy_ssh`、`deploy_docker`、`deploy_k8s`、`deploy_frontend`、`notify`、`templated`、`custom`。
 
 ```yaml
 version: 1
