@@ -2,175 +2,175 @@
 
 # Pipewright
 
-**A lightweight, self-hosted CI/CD + deployment + ops platform.**
-A single static Go binary (frontend embedded, zero runtime dependencies) —
-one tool replacing the "CI + Ansible/Kamal + Portainer" trio.
+**一个轻量、自托管的 CI/CD + 部署 + 运维一体化平台。**
+单个 Go 静态二进制(内嵌前端,运行时零依赖),
+一个工具替掉「CI + Ansible/Kamal + Portainer」三件套。
 
 [![Release](https://img.shields.io/github/v/release/fuuhoo/pipewright)](https://github.com/fuuhoo/pipewright/releases)
 [![CI](https://github.com/fuuhoo/pipewright/actions/workflows/ci.yml/badge.svg)](https://github.com/fuuhoo/pipewright/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-English | [简体中文](README.zh-CN.md)
+简体中文 | [English](README.en.md)
 
 </div>
 
 ---
 
-## Why Pipewright
+## 为什么是 Pipewright
 
-Mainstream options are either heavy (Jenkins with a pile of plugins + JVM) or a three-tool assembly (Woodpecker/Drone + Ansible/Kamal + Portainer). Pipewright packs "continuous integration, multi-server deployment, and server/container ops" into **one static binary**: download, start, open the browser — that's the entire install.
+主流方案要么重(Jenkins 一堆插件 + JVM),要么是三个工具拼装(Woodpecker/Drone + Ansible/Kamal + Portainer)。Pipewright 把「持续集成、多服务器部署、服务器/容器运维」装进**一个静态二进制**:下载、启动、打开浏览器,就是全部安装过程。
 
-It has since grown past that trio: publishing a deployed service on an HTTPS domain (the nginx + certbot step) and giving every pull request its own live preview URL are built in too.
+如今它已长过那三件套:把部署好的服务挂上 HTTPS 域名(原本的 nginx + certbot 那一步)、给每个 PR 一个能点开的预览地址,也都内置了。
 
 | | Pipewright | Jenkins | Drone + Ansible + Portainer |
 |---|:---:|:---:|:---:|
-| Single-binary deploy | ✅ | ❌ JVM + plugins | ❌ three-tool assembly |
-| Visual pipeline orchestration (DAG) | ✅ built-in canvas | plugin | hand-written YAML |
-| Pipeline as code (per-branch YAML) | ✅ | plugin | ✅ |
-| Isolated builds | ✅ | ✅ | ✅ |
-| Multi-server deploy (SSH, agentless) | ✅ built-in | plugin | Ansible |
-| Server / container ops | ✅ built-in | ❌ | Portainer |
-| Image zero-downtime + failure rollback | ✅ | plugin | DIY |
-| Auto HTTPS + domain reverse proxy | ✅ built-in | ❌ | ❌ |
-| Per-PR preview environments | ✅ built-in | ❌ | ❌ |
-| DORA metrics | ✅ built-in | plugin | ❌ |
-| AI failure diagnosis | ✅ optional | ❌ | ❌ |
-| One-click self-update | ✅ | ❌ | ❌ |
+| 单二进制部署 | ✅ | ❌ JVM + 插件 | ❌ 三套拼装 |
+| 可视化流水线编排(DAG) | ✅ 内置画布 | 插件 | YAML 手写 |
+| 流水线即代码(按分支演进) | ✅ | 插件 | ✅ |
+| 隔离构建 | ✅ | ✅ | ✅ |
+| 多服务器部署(SSH,免 Agent) | ✅ 内置 | 插件 | Ansible |
+| 服务器 / 容器运维 | ✅ 内置 | ❌ | Portainer |
+| 镜像零停机 + 失败回滚 | ✅ | 插件 | 自己写 |
+| 自动 HTTPS + 域名反向代理 | ✅ 内置 | ❌ | ❌ |
+| Per-PR 预览环境 | ✅ 内置 | ❌ | ❌ |
+| DORA 指标 | ✅ 内置 | 插件 | ❌ |
+| AI 失败诊断 | ✅ 可选 | ❌ | ❌ |
+| 一键自更新 | ✅ | ❌ | ❌ |
 
-## Screenshots
+## 界面预览
 
-**Global overview** — projects, run success rate, environment deployment status, server health, and DORA metrics, all on one screen:
+**全局概览** —— 项目、运行成功率、环境部署态、服务器健康、DORA 指标,一屏全局:
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-**Visual pipeline orchestration** — a two-level (stage/job) DAG canvas: horizontal links for serial, vertical side-by-side for true parallel. Supports matrix builds, manual approval gates, sidecar services, and post-stage steps; the canvas and YAML round-trip both ways:
+**可视化流水线编排** —— 阶段/任务两级 DAG 画布:横向连线串行、纵向并排真并行,支持矩阵构建、人工审批门、旁挂服务、阶段后置步骤;画布与 YAML 双向往返:
 
-![Pipeline canvas](docs/screenshots/pipeline-canvas.png)
+![流水线编排画布](docs/screenshots/pipeline-canvas.png)
 
-**Run detail** — stage transitions, live logs (SSE push + history replay), build artifacts and image references, and per-step status:
+**运行详情** —— 阶段流转、实时日志(SSE 推送 + 历史回放)、构建产物与镜像引用、逐步骤状态:
 
-![Run detail](docs/screenshots/run-detail.png)
+![运行详情](docs/screenshots/run-detail.png)
 
-**Container management** — one-stop management of containers/images/Stacks/volumes/networks across hosts, with lifecycle operations, live stats, logs, and an interactive terminal:
+**容器管理** —— 跨主机容器/镜像/Stacks/卷/网络一站管理,生命周期操作、实时 stats、日志、交互终端:
 
-![Container management](docs/screenshots/containers.png)
+![容器管理](docs/screenshots/containers.png)
 
-## Feature Overview
+## 能力总览
 
-- **🔐 Security foundation** — single-admin auth (argon2id + CSRF) · encrypted credential vault (NaCl secretbox, masked display, never plaintext) · OAuth app onboarding for Gitee / GitHub / GitLab / self-hosted instances (the access token lands straight in the vault as a reusable credential) · append-only audit (SQLite triggers hard-block UPDATE/DELETE) with an optional remote sink · per-run secret redaction across logs, diagnostics, and notifications.
-- **🧩 Projects & pipelines** — visual orchestration canvas (stage DAG + intra-stage job-level DAG) · matrix builds · manual approval gates (approve straight from a notification via signed link) · sidecar services (attach DB/Redis for tests) · stage `when` conditions + post-stage steps · typed run parameters (enum/bool/number, validated at trigger time) · triggers: webhook, branch→environment mapping, 5-field cron, and upstream→downstream pipeline chaining (loop-safe by depth + path guards) · per-project concurrency caps with FIFO queueing · a reuse library of pipeline templates, variable groups, and custom nodes · server-authoritative validation.
-- **📝 Pipeline as code** — commit the pipeline structure to `.pipewright.yml` and let it evolve per branch, with the canvas as the always-available fallback ([details below](#pipeline-as-code-gitops)).
-- **🏗 Isolated builds & artifacts** — version-pinned isolated builds inside containers (docker/nerdctl/podman) · a local bare-mirror repo cache (incremental fetch, then a workspace in seconds) · build dependency caching keyed by branch + lockfile hash · a content-addressed artifact store that keeps the **real bytes** of jar/dist for deployment (not just a placeholder reference) · image build + push to private registries with image GC · an optional remote build machine per project (build is offloaded over SSH; tokens stay on the control node) · JUnit + Cobertura test reports feeding quality gates that fail the stage and block downstream deploys · live terminal logs (SSE) + history replay · read-only code browsing (Monaco).
-- **🚀 Multi-server deployment** — agentless deploy over SSH · artifacts laid directly into the target directory you name (`jar`/`dist` contents land as-is) + restart command + health gating · image deploys swap the running container and roll back to the previous image on failure · **whole compose stacks** (a `docker-compose.yml` from your repo handed to the target machine's compose CLI, the same stack the Containers page manages) · **Kubernetes releases** (the platform talks to the cluster API directly, no jump host) · parallel fan-out across hosts + visible partial failures · command-style deploys (restart a service with no artifact) · **environments as first-class objects**: per-environment deployment timeline, current active version, and one-click rollback to the last fully successful deploy · environment promotion chains (dev→staging→prod) with per-environment variables/secrets and approval gates.
-- **🌐 Auto HTTPS + domain reverse proxy** — one managed Caddy container per target host, orchestrated over the same SSH + docker path as container ops (render Caddyfile → `docker cp` → graceful reload). Certificates are issued and renewed automatically by Let's Encrypt over HTTP-01, or over **DNS-01 with Cloudflare / DNSPod / Alibaba Cloud DNS** for wildcards. Plus: multi-domain aliases, path routing (`/api`→A, `/`→B), redirects, access control (basic auth, IP allow/deny CIDR), HSTS / security headers / compression, load balancing across upstreams with active health-check failover, WebSocket / gRPC (h2c) / TCP passthrough (caddy-l4), a certificate dashboard that probes the real 443 handshake, and one-click subdomain allocation.
-- **🔎 Per-PR preview environments** — when a PR's run deploys successfully, it automatically gets a throwaway `pr-<n>-<proj>.<base>` domain with its own certificate and route, so reviewers open one link and see that PR actually running. Idempotent per PR, and reclaimed automatically — but **only** once the PR is provably closed or merged.
-- **📣 Notifications** — WeCom / DingTalk / Lark (Feishu) / Slack / email / custom webhook · fine-grained event→channel routing · templates + custom variables · rich Lark cards with approve/detail action buttons and a release summary · in-pipeline notification nodes.
-- **🖥 Server & container ops** — multi-host status overview (CPU/memory/disk) plus time-series trend charts · container/image/Stacks/volume/network management · container create/inspect/prune · live + historical service logs · live stats · interactive container terminal · web ops terminal (host shell, full copy-paste/signal support) · configurable anomaly detection that runs on a timer, dedupes by cooldown, and routes alerts to your notification channels.
-- **🤖 AI assist (optional, fully degradable)** — bring your own Claude / OpenAI / Ollama endpoint (API key encrypted in the vault). Automatic root-cause diagnosis when a build or deploy fails, with a 👍/👎 feedback loop and accuracy stats · repo analysis → generated pipeline draft · success-vs-failure commit diff · script risk annotation · natural-language→shell assistant and container diagnosis in the ops terminal. The core CI/CD path never depends on any of it (NFR-10).
-- **📈 Metrics** — the four DORA metrics (deployment frequency / lead time for changes / change failure rate / mean time to restore) out of the box, with Elite/High/Medium/Low performance bands.
-- **🧹 Housekeeping & platform** — configurable run-data retention sweeper (off by default; never touches in-flight runs) · SQLite (pure Go) or MySQL · 8 UI languages (zh-CN / zh-TW / en / ja / ko / de / fr / es) including server-side localization of API error messages.
-- **🔄 Update check + one-click self-update** — Settings → System checks GitHub for the latest release with semantic comparison; binary deployments can **auto-update with one click** from the UI (download + checksum verification + atomic replace + self-restart), while Docker deployments get the exact upgrade command.
+- **🔐 安全地基** —— 单管理员认证(argon2id + CSRF)· 凭据加密保险库(NaCl secretbox,掩码呈现,绝无明文)· OAuth 应用接入 Gitee / GitHub / GitLab / 自建实例(拿到的 access token 直接存成可复用的保险库凭据)· append-only 审计(SQLite trigger 硬拦 UPDATE/DELETE)+ 可选远端 sink · 按 run 解析真实凭据后对日志 / 诊断 / 通知全链路脱敏。
+- **🧩 项目与流水线** —— 可视化编排画布(阶段 DAG + 阶段内任务级 DAG)· 矩阵构建 · 人工审批门(可直接在通知里点签名链接审批)· 旁挂服务(测试挂 DB/Redis)· 阶段 `when` 条件 + 阶段后置步骤 · 类型化运行参数(枚举/布尔/数字,触发时即校验)· 触发方式:webhook、分支→环境映射、5 字段 cron 定时、上游→下游流水线串联(深度门 + 路径门防环)· 项目级并发上限 + 超限 FIFO 排队 · 复用库:流水线模板 / 变量组 / 自定义节点 · 服务端权威合法性校验。
+- **📝 流水线即代码** —— 把流水线结构写进 `.pipewright.yml`、按分支各自演进,画布配置始终作为兜底回退([详见下文](#流水线即代码gitops))。
+- **🏗 隔离构建与产物** —— 版本钉死的容器内隔离构建(docker/nerdctl/podman)· 代码管理区:本地 bare 镜像 + 增量 fetch,秒级出工作区 · 构建依赖缓存(按分支 + lockfile hash 寻址)· 内容寻址制品库,jar/dist 存**真字节**供部署(而非占位 reference)· 镜像构建 + 推送私有仓库 + 镜像 GC · 每项目可指定远程构建机(构建经 SSH 下沉到远程,token 只留控制机)· JUnit + Cobertura 测试报告喂质量门禁,不过则阶段失败、阻断下游部署 · 实时终端日志(SSE)+ 历史回放 · 只读代码浏览(Monaco)。
+- **🚀 多服务器部署** —— 经 SSH 免 Agent 部署 · 产物直铺到指定目录(`jar`/`dist` 落进去就是内容本身)+ 重启命令 + 健康门控 · 镜像部署停旧起新、失败回滚上一镜像 · **compose 整栈交付**(仓库里那份 `docker-compose.yml` 直接交目标机的 compose CLI,与「容器」页管的是同一份栈)· **K8s 发布**(平台直连集群 API,不经跳板机)· 多机并行扇出 + 部分失败可见 · 命令型部署(无产物,直接重启服务)· **环境一等公民**:逐环境部署时间线、当前活跃版本、一键回滚到上一次全成功部署 · 环境晋级流(dev→staging→prod)+ 逐环境变量/密钥 + 审批门。
+- **🌐 自动 HTTPS + 域名反向代理** —— 每台目标主机一个托管 Caddy 容器,复用与容器运维同一套 SSH + docker 手法编排(渲染 Caddyfile → `docker cp` → 优雅 reload)。证书经 Let's Encrypt 自动签发/续期:HTTP-01,或**经 Cloudflare / DNSPod / 阿里云 DNS 走 DNS-01**(通配符必需)。另有:多域名别名、路径路由(`/api`→A、`/`→B)、重定向、访问控制(basic auth、IP 允许/拒绝 CIDR)、HSTS / 安全头 / 压缩、多上游负载均衡 + 主动健康检查故障转移、WebSocket / gRPC(h2c) / TCP 透传(caddy-l4)、按真实 443 握手探测的证书大盘、一键子域名。
+- **🔎 Per-PR 预览环境** —— 某 PR 的运行成功部署后,自动分配一次性域名 `pr-<n>-<proj>.<base>`(带自己的证书与路由),评审者点开链接就能看到这条 PR 真实跑起来的样子。同一 PR 幂等复用;自动回收,但**仅在**确证 PR 已关闭/合并时才回收。
+- **📣 通知** —— 企业微信 / 钉钉 / 飞书 / Slack / 邮件 / 自定义 webhook · 事件→渠道细粒度路由 · 模板 + 变量自定义 · 飞书富卡片(审批/详情行动按钮 + 发版汇总)· 流水线内通知节点。
+- **🖥 服务器与容器运维** —— 多机状态总览(CPU/内存/磁盘)+ 指标时序趋势图 · 容器/镜像/Stacks/卷/网络管理 · 容器创建/inspect/prune · 实时 + 历史服务日志 · 实时 stats · 容器交互终端 · Web 运维终端(主机 shell,完整复制粘贴/信号支持)· 可配置异常检测:定时自动跑、冷却去重、命中走通知渠道。
+- **🤖 AI 辅助(可选,完全可降级)** —— 自带 Claude / OpenAI / Ollama 端点(apiKey 密文入保险库)。构建/部署失败自动根因诊断 + 👍/👎 反馈飞轮与准确率统计 · 仓库分析 → 生成流水线草案 · 成功/失败提交差异 · 脚本风险标注 · 运维终端的自然语言→shell 助手与容器诊断。核心 CI/CD 路径完全不依赖它(NFR-10)。
+- **📈 度量** —— DORA 四指标(部署频率/变更前置时长/变更失败率/平均恢复时长)开箱即用,并给 Elite/High/Medium/Low 绩效分档。
+- **🧹 数据与平台** —— 运行数据保留清理器(默认关;绝不动在跑的运行)· SQLite(纯 Go)或 MySQL · 8 种界面语言(简中 / 繁中 / 英 / 日 / 韩 / 德 / 法 / 西),API 错误信息亦服务端本地化。
+- **🔄 检查 + 一键自更新** —— 设置→系统 一键查 GitHub 最新发布并语义比对;二进制部署可页面**一键自动更新**(下载 + 校验和核验 + 原子替换 + 自重启),Docker 部署给出精确升级命令。
 
-> Security is non-negotiable: credentials stored as ciphertext only, commands arrayified against injection, outbound SSRF locked down, logs redacted.
+> 安全不可妥协:凭据仅以密文存储、命令 array 化防注入、出网 SSRF 收口、日志脱敏。
 
-## Install / Deploy
+## 安装 / 部署
 
-Pick any of three form factors. The platform itself is a single static binary with **zero runtime dependencies** (no Go/Node required).
+三种形态任选,平台本体是单静态二进制、**运行时零依赖**(无需 Go/Node)。
 
-> **Docker prerequisite**: the platform itself doesn't depend on Docker, but **"isolated builds / container deployment" do require Docker** (without it, it degrades to a stub runner and performs no real builds). The console / SSH deployment / notifications don't need Docker. The one-click script **detects Docker** and prompts if it's missing; on Linux you can set `INSTALL_DOCKER=1` to auto-install it (via the official get.docker.com); on macOS, install Docker Desktop.
+> **Docker 前置**:平台本体不依赖 Docker,但**「隔离构建 / 容器部署」需要 Docker**(没有则降级到桩 runner、不做真实构建)。控制台 / SSH 部署 / 通知不需要。一键脚本会**检测 Docker** 并在缺失时提示;Linux 下可 `INSTALL_DOCKER=1` 自动安装(经官方 get.docker.com),macOS 请装 Docker Desktop。
 
-### ① One-click script (Linux / macOS)
+### ① 一键脚本(Linux / macOS)
 
-Downloads the static binary for your platform from GitHub Releases and installs it to `/usr/local/bin` (with checksum verification + Docker detection):
+从 GitHub Release 下载对应平台的静态二进制装到 `/usr/local/bin`(含校验和核验 + Docker 检测):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
-# Pin a version / custom dir / auto-install Docker on Linux too:
+# 钉版本 / 自定义目录 / Linux 顺带自动装 Docker:
 VERSION=v0.5.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
-# Run (first launch bootstraps the admin; master key is for the credential vault)
+# 运行(首次启动引导管理员;master key 用于凭据保险库)
 PIPEWRIGHT_MASTER_KEY=$(openssl rand -base64 32) \
 PIPEWRIGHT_ADMIN_PASSWORD=change-me \
-  pipewright          # open http://localhost:8080, log in with admin / change-me
+  pipewright          # 打开 http://localhost:8080,用 admin / change-me 登录
 ```
 
-**Recommended: install as a systemd service** (auto-start on boot + restart on crash + one-click self-update available; Linux, requires root). The script persists the master key to `/etc/pipewright/master.key`, stores data in `/var/lib/pipewright`, and writes config to `/etc/pipewright/pipewright.env`:
+**推荐:装为 systemd 服务**(开机自启 + 崩溃重启 + 一键自更新可用;Linux,需 root)。脚本会自动持久化 master key 到 `/etc/pipewright/master.key`、数据落 `/var/lib/pipewright`、配置写 `/etc/pipewright/pipewright.env`:
 
 ```bash
 SETUP_SERVICE=1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
-# Status / logs: systemctl status pipewright  ·  journalctl -u pipewright -f
-# Change port etc.: edit /etc/pipewright/pipewright.env then systemctl restart pipewright
+# 状态 / 日志:systemctl status pipewright  ·  journalctl -u pipewright -f
+# 改端口等:编辑 /etc/pipewright/pipewright.env 后 systemctl restart pipewright
 
-# Use MySQL instead of the default SQLite (DSN is go-sql-driver format; parseTime=true is required):
+# 用 MySQL 而非默认 SQLite(DSN 为 go-sql-driver 格式,parseTime=true 必带):
 SETUP_SERVICE=1 PIPEWRIGHT_DB_DRIVER=mysql \
   PIPEWRIGHT_DB_DSN='user:pw@tcp(host:3306)/pipewright?parseTime=true&charset=utf8mb4' \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 ```
 
-> Windows users: download the `.zip` from [Releases](https://github.com/fuuhoo/pipewright/releases).
+> Windows 用户:到 [Releases](https://github.com/fuuhoo/pipewright/releases) 下载 `.zip`。
 
-### ② docker compose (recommended for self-hosting)
+### ② docker compose(推荐自托管)
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/docker-compose.yml
 curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/.env.example
-cp .env.example .env       # at minimum set PIPEWRIGHT_ADMIN_PASSWORD, and openssl rand -base64 32 for MASTER_KEY
-docker compose up -d       # data persists in the named volume pipewright-data; see .env comments to switch to MySQL
+cp .env.example .env       # 至少设 PIPEWRIGHT_ADMIN_PASSWORD,并 openssl rand -base64 32 填 MASTER_KEY
+docker compose up -d       # 数据持久化在具名卷 pipewright-data;切 MySQL 见 .env 注释
 ```
 
-The compose file itself only reads these (the app's own variables are in the [configuration](#configuration-environment-variables) table below):
+compose 文件本身只读这几个变量(平台自身的环境变量见下方[配置](#配置环境变量)表):
 
-| Variable | Purpose | Default |
+| 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_IMAGE` | Image repository prefix | `registry.cn-qingdao.aliyuncs.com/fubin/pipewright` (Aliyun ACR, Qingdao — both tiers); `ghcr.io/fuuhoo/pipewright` works too but ships only the default tier |
-| `PIPEWRIGHT_VERSION` | Image tag — **two tiers**, see below | `latest` |
-| `PIPEWRIGHT_PORT` | Host-side published port | `8080` |
-| `PIPEWRIGHT_WORK_DIR` | Build workspace directory (absolute host path). Only needed to build images inside the container | empty (in-container isolated builds unavailable) |
-| `PIPEWRIGHT_RUNNER` | Empty = the default DAG runner; `legacy` falls back to the old fixed flow | empty |
+| `PIPEWRIGHT_IMAGE` | 镜像仓库前缀 | `registry.cn-qingdao.aliyuncs.com/fubin/pipewright`(阿里云 ACR 青岛,两档都有);`ghcr.io/fuuhoo/pipewright` 也能用,但只有默认档 |
+| `PIPEWRIGHT_VERSION` | 镜像标签。**两档**见下 | `latest` |
+| `PIPEWRIGHT_PORT` | 宿主侧发布端口 | `8080` |
+| `PIPEWRIGHT_WORK_DIR` | 容器内构建的工作区目录(宿主绝对路径)。仅「容器内打包镜像」需要,见下 | 空(此时容器内隔离构建不可用) |
+| `PIPEWRIGHT_RUNNER` | 留空即默认 DAG 执行器;`legacy` 回退旧版固定流程 | 空 |
 
-Everything the app stores (SQLite DB, artifact library, repo cache, build dependency cache) lives under `/data` in the container, persisted by the named volume `pipewright-data`. Keep the master key forever once credentials exist — rotating it makes stored credentials undecryptable.
+数据(sqlite 库、制品库、代码管理区、构建依赖缓存)全落在容器 `/data`,由具名卷 `pipewright-data` 持久化。master key 一旦写入凭据就要长期保存 —— 换 key 会让已存凭据无法解密。
 
-#### Two image tiers: building images inside the container
+#### 两档镜像:要不要在容器里打包镜像
 
-| Tag | Base | Can build images in-container |
+| 标签 | 基底 | 容器内能否构建镜像 |
 |---|---|---|
-| `<version>` / `latest` | distroless: non-root, no shell, no container CLI | **No.** Startup logs say the builder fell back to the stub |
-| `<version>-docker` / `latest-docker` | alpine + docker CLI, runs as root | Yes, once you also mount the host socket (below) |
+| `<版本>` / `latest` | distroless:非 root、无 shell、无容器 CLI | **不能**。启动日志会明说回退桩构建器 |
+| `<版本>-docker` / `latest-docker` | alpine + docker CLI,以 root 运行 | 能,还要再挂宿主 socket(见下) |
 
-CI publishes both tiers as multi-arch images to Aliyun Container Registry (Qingdao) via `.github/workflows/aliyun-image.yml` — that is also what `docker-compose.yml` and `.env.example` default to. GoReleaser additionally publishes the default tier to `ghcr.io/fuuhoo/pipewright` (`latest` / `<version>`) when you push a `v*` tag; ghcr ships no `-docker` tier, so pull `-docker` from ACR, or build it yourself from the root `Dockerfile` with `--target with-docker`. The default tier is deliberate: smallest attack surface. Upgrade to `-docker` only if the platform really has to build/push images from inside its own container.
+两档都由 `.github/workflows/aliyun-image.yml` 出多架构镜像并发布到阿里云容器镜像服务(青岛),compose / `.env` 默认就拉它。推 `v*` tag 时 GoReleaser 另外把默认档发到 `ghcr.io/fuuhoo/pipewright`(`latest` / `<版本>`);ghcr 上没有 `-docker` 档 —— 要 `-docker` 就从 ACR 拉,或用根目录 `Dockerfile` 自行 `--target with-docker` 构建。默认档是刻意选的:最小攻击面;只有确实要在平台容器里构建/推镜像,才升 `-docker` 档。
 
-#### Let the platform build images inside its container (change all three, none optional)
+#### 让平台在容器里打包镜像(三处一起改,缺一不可)
 
-1. switch `.env` to the `-docker` tier: `PIPEWRIGHT_VERSION=latest-docker` (the default `PIPEWRIGHT_IMAGE` is already ACR, which has both tiers — if you set it to `ghcr.io/fuuhoo/pipewright`, ghcr has no `-docker` tag and the pull will fail);
-2. uncomment `- /var/run/docker.sock:/var/run/docker.sock` in `docker-compose.yml`. **Mounting the socket is equivalent to granting the container root-level access to the host** — only do it on a machine you trust;
-3. uncomment the workspace self-bind and point `TMPDIR` at the same directory — all three values come from `PIPEWRIGHT_WORK_DIR` in `.env`.
+1. `.env` 里换到 `-docker` 档:`PIPEWRIGHT_VERSION=latest-docker`(默认 `PIPEWRIGHT_IMAGE` 已经是 ACR,两档都有 —— 若换成 `ghcr.io/fuuhoo/pipewright`,ghcr 上没有 `-docker` 标签,会拉不到镜像);
+2. 放开 `docker-compose.yml` 的 `- /var/run/docker.sock:/var/run/docker.sock`。**挂 socket 等同授予容器宿主 root 级权限**,只在信任的自托管机器上开;
+3. 放开工作区目录的自绑定,并把 `TMPDIR` 指到同一目录 —— 三者的值都是 `.env` 里的 `PIPEWRIGHT_WORK_DIR`。
 
-Step 3 is not busywork: an isolated script-job build issues `docker run -v <workspace>:<mount>`, and the daemon is the **host's** — it resolves the `-v` source as a host path. When the paths differ the daemon silently creates an empty directory on the host and the build gets an empty workspace; the symptom is a log full of `no such file or directory` while the platform looks healthy. The `volumes` comments in `docker-compose.yml` spell it out line by line.
+第 3 步不是洁癖:script 节点跑隔离构建发的是 `docker run -v <工作区>:<挂载点>`,而 daemon 是**宿主**的 —— 它按宿主路径解析 `-v` 的源。路径不一致时 daemon 会在宿主凭空建一个空目录,构建拿到空工作区,症状是日志里全是 `no such file or directory` 而平台侧看着一切正常。`docker-compose.yml` 的 `volumes` 注释里有逐行说明。
 
-One command proves it works (the `-docker` tier has a shell):
+起容器后一条命令验证是否真通(`-docker` 档有 shell,可以在容器里直接试):
 
 ```bash
 docker exec pipewright sh -c 'mkdir -p "$TMPDIR/probe" && printf "FROM alpine:3.20\nRUN echo ok\n" > "$TMPDIR/probe/Dockerfile" && docker build -q "$TMPDIR/probe"'
 ```
 
-A `sha256:…` on the last line means success. The `DEPRECATED: The legacy builder is deprecated` notice in between is expected: the `-docker` tier ships no buildx plugin on purpose (with buildx installed, `docker build` hands off to buildx, which puts requirements on the host daemon version; without it any daemon works).
+打印出 `sha256:…` 即成。中间那行 `DEPRECATED: The legacy builder is deprecated` 是预期内的:`-docker` 档刻意不带 buildx 插件(带了 `docker build` 就转给 buildx,对宿主 daemon 版本有要求;不带则任何版本都能跑)。
 
-#### Seeing the host's images / containers from inside the container
+#### 在容器里看宿主机上的镜像 / 容器
 
-Those screens use SSH, not the socket — the image and container panels always SSH to the target machine, there is no "read my local socket" shortcut. And `localhost` inside a container is the container itself, so compose ships:
+这两块走的是 SSH 而非 socket —— 平台的镜像与容器面板一律 SSH 到目标机执行命令,没有「读本机 socket」这条捷径。而容器内的 `localhost` 是容器自己,所以 compose 已配好:
 
 ```yaml
 extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
 
-which resolves `host.docker.internal` to the host gateway. The remaining step is in the UI: add a server in **Settings → Servers** with host `host.docker.internal` (port 22, authenticated with the host's SSH key or password). That server's "Images" and "Containers" screens then show the host daemon's content, and container deploys go there too.
+它把 `host.docker.internal` 解析到宿主网关。剩下的一步在界面里:**设置 → 服务器** 新增一台主机填 `host.docker.internal`(端口 22,凭据用宿主的 SSH 私钥或口令)。登记后该服务器卡的「镜像」「容器」屏读的就是宿主 daemon 的内容,部署容器也一样。
 
-> Building in-container and registering the host over SSH are independent: the first only affects whether pipelines can produce images inside the platform container, the second only whether the UI can list host images. If you only deploy, the distroless tier without a socket is enough.
+> 容器内构建与「SSH 登记宿主」两件事互不依赖:前者只影响流水线里能不能在平台容器里出镜像,后者只影响 UI 能否看见宿主镜像。只用平台做部署、构建在别处的话,一档 distroless + 不挂 socket 就够了。
 
-### ③ docker run (fastest trial)
+### ③ docker run(最快试用)
 
 ```bash
 docker run -d -p 8080:8080 -v pipewright-data:/data \
@@ -179,126 +179,118 @@ docker run -d -p 8080:8080 -v pipewright-data:/data \
   registry.cn-qingdao.aliyuncs.com/fubin/pipewright:latest
 ```
 
-### Build from source
+### 从源码构建
 
 ```bash
-make build          # frontend build → go:embed → single static binary ./pipewright (pure Go, no CGO)
+make build          # 前端构建 → go:embed → 单个静态二进制 ./pipewright(纯 Go,无 CGO)
 ./pipewright --version
 ```
 
-### Updating
+### 更新
 
-Open **Settings → System** and click "Check for updates" to query the latest release; when a new version is available:
+打开 **设置 → 系统**,点「检查更新」查最新发布;有新版时:
 
-- **Binary deployment**: click "Update now" to auto-download the new version + verify checksum + replace + restart (requires write permission to the binary file; installing to `$HOME/.local/bin` avoids sudo, and a root systemd service installed via `SETUP_SERVICE=1` also satisfies this).
-- **Docker deployment**: the container doesn't replace its own image; follow the prompt to run `docker compose pull && docker compose up -d` on the host (the data volume is preserved).
+- **二进制部署**:点「立即更新」即自动下载新版 + 校验和核验 + 替换 + 重启(需对二进制文件有写权限;装在 `$HOME/.local/bin` 免 sudo,或用 `SETUP_SERVICE=1` 装的 root systemd 服务亦满足)。
+- **Docker 部署**:容器不替换自身镜像,按提示在宿主执行 `docker compose pull && docker compose up -d`(数据卷保留)。
 
-### Configuration (environment variables)
+### 配置(环境变量)
 
-A normal install only needs the first two (plus `PIPEWRIGHT_PUBLIC_URL` if you run behind a reverse proxy); everything else has a sane default.
+正常安装只需前两个(若跑在反代后面再加 `PIPEWRIGHT_PUBLIC_URL`),其余都有合理默认值。
 
-The listen address can also be set on the command line, which wins over `PIPEWRIGHT_ADDR` (works the same on Linux/macOS/Windows; both `--flag value` and `--flag=value`, and a single dash, are accepted):
+**核心**
 
-| Flag | Description | Example |
+| 变量 | 说明 | 默认 |
 |---|---|---|
-| `--addr` | Full listen address; leave the host empty to bind every interface | `pipewright --addr :9090`, `pipewright --addr 127.0.0.1:9090` |
-| `--port` | Port only, keeping the host part of the current address | `pipewright.exe --port 9090` |
-| `--version` | Print version/commit/build date and exit (before any side effects) | `pipewright --version` |
+| `PIPEWRIGHT_ADMIN_PASSWORD` | 首次启动管理员口令 | 无(须设置) |
+| `PIPEWRIGHT_MASTER_KEY` | 凭据保险库主密钥(base64 的 32 字节);或用 `PIPEWRIGHT_MASTER_KEY_FILE` 指文件 | 未配则保险库禁用 |
+| `PIPEWRIGHT_ADDR` | HTTP 监听地址 | `:8080` |
+| `PIPEWRIGHT_PUBLIC_URL` | 外部可访问的基址(如 `https://ci.example.com`)。webhook 回调、OAuth 回跳、通知里的签名审批链接、PR 状态跳转链接都需要它 | 无 |
+| `PIPEWRIGHT_ADMIN_USERNAME` | 首次启动管理员用户名 | `admin` |
+| `PIPEWRIGHT_TRUST_PROXY` | 采信 `X-Forwarded-For` 首段作为审计来源 IP(`1`/`true`/`yes`/`on`)。除非前面确有可信反代,否则别开 —— 否则任意客户端都能伪造审计来源 IP | 关 |
+| `PIPEWRIGHT_RELEASE_REPO` | 检查更新所查的 GitHub 仓库(fork 可改) | `fuuhoo/pipewright` |
+| `PIPEWRIGHT_RUNTIME` | 设 `docker` 显式声明容器部署形态(影响自更新方式);否则经 `/.dockerenv` 自动探测 | 自动探测 |
+| `PIPEWRIGHT_AUDIT_SINK` | 远端审计 sink:`http(s)://` 端点,或填其它值作为第二份本地 JSON Lines 文件路径。本地库被删后审计仍完整 | 无 |
 
-**Core**
+**数据库**
 
-| Variable | Description | Default |
+| 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_ADMIN_PASSWORD` | Admin password on first launch | none (must be set) |
-| `PIPEWRIGHT_MASTER_KEY` | Credential vault master key (base64-encoded 32 bytes); or use `PIPEWRIGHT_MASTER_KEY_FILE` to point to a file | vault disabled if unset |
-| `PIPEWRIGHT_ADDR` | HTTP listen address | `:8080` |
-| `PIPEWRIGHT_PUBLIC_URL` | Externally reachable base URL (e.g. `https://ci.example.com`). Required for webhook callbacks, OAuth redirects, signed approval links in notifications, and PR status links | none |
-| `PIPEWRIGHT_ADMIN_USERNAME` | Admin username on first launch | `admin` |
-| `PIPEWRIGHT_TRUST_PROXY` | Trust the first `X-Forwarded-For` hop as the audit client IP (`1`/`true`/`yes`/`on`). Leave off unless a trusted reverse proxy sits in front — otherwise anyone can forge audit source IPs | off |
-| `PIPEWRIGHT_RELEASE_REPO` | GitHub repo queried for update checks (change it for a fork) | `fuuhoo/pipewright` |
-| `PIPEWRIGHT_RUNTIME` | Set `docker` to declare a container deployment (affects self-update mode); otherwise auto-detected via `/.dockerenv` | auto-detect |
-| `PIPEWRIGHT_AUDIT_SINK` | Remote audit sink: an `http(s)://` endpoint, or any other value as a second local JSON Lines file path. Keeps audit records complete even if the local DB is wiped | none |
+| `PIPEWRIGHT_DB_DRIVER` | 数据库驱动:`sqlite` 或 `mysql` | `sqlite` |
+| `PIPEWRIGHT_DB` | SQLite 数据库路径(driver=sqlite 时) | `pipewright.db` |
+| `PIPEWRIGHT_DB_DSN` | MySQL DSN(driver=mysql 时必填) | 无 |
 
-**Database**
+**运行与构建**
 
-| Variable | Description | Default |
+| 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_DB_DRIVER` | Database driver: `sqlite` or `mysql` | `sqlite` |
-| `PIPEWRIGHT_DB` | SQLite database path (when driver=sqlite) | `pipewright.db` |
-| `PIPEWRIGHT_DB_DSN` | MySQL DSN (required when driver=mysql) | none |
+| `PIPEWRIGHT_RUNNER` | 运行执行器:默认 DAG(按画布 stages/script/deploy_ssh/notify 编排执行);设 `legacy` 回退旧版固定流程 | `dag` |
+| `PIPEWRIGHT_BUILDER` | `auto` 探测到 docker/nerdctl/podman 用真实构建、否则回退桩;`real` 无容器 CLI 直接启动失败;`stub` 完全不碰容器 | `auto` |
+| `PIPEWRIGHT_MAX_CONCURRENT` | 全局同时运行上限(超出保持 queued 排队,FIFO)。项目级上限在界面里配 | worker 数(4) |
+| `PIPEWRIGHT_ARTIFACT_DIR` | 制品库目录(jar/dist 真字节) | `<DB 同级>/artifacts` |
+| `PIPEWRIGHT_REPO_CACHE_DIR` | 代码管理区(本地 bare 镜像)目录 | `<DB 同级>/repos` |
+| `PIPEWRIGHT_NO_REPO_CACHE` | `1` 关闭代码管理区(每次构建直连网络克隆) | 关 |
+| `PIPEWRIGHT_CACHE_DIR` | 构建依赖缓存目录 | `<DB 同级>/cache` |
+| `PIPEWRIGHT_NO_BUILD_CACHE` | `1` 关闭构建依赖缓存(每次冷构建) | 关 |
+| `PIPEWRIGHT_NO_IMAGE_GC` | `1` 保留构建出的镜像,不做垃圾回收 | 关 |
+| `PIPEWRIGHT_PAC_RUNTIME` | `1` 对**所有项目**强开流水线即代码,无视各项目开关 | 关 |
+| `PIPEWRIGHT_CHAIN_MAX_DEPTH` | 流水线串联深度上限(防无限链的硬兜底) | `5` |
 
-**Runs & builds**
+**集成**
 
-| Variable | Description | Default |
+| 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_RUNNER` | Run executor: default DAG (orchestrates stages/script/deploy_ssh/notify per the canvas); set `legacy` to fall back to the old fixed flow | `dag` |
-| `PIPEWRIGHT_BUILDER` | `auto` uses a real container build when docker/nerdctl/podman is found and falls back to a stub otherwise; `real` refuses to start without a container CLI; `stub` never touches containers | `auto` |
-| `PIPEWRIGHT_MAX_CONCURRENT` | Global cap on simultaneously running runs (excess stays queued, FIFO). Per-project caps are configured in the UI | worker count (4) |
-| `PIPEWRIGHT_ARTIFACT_DIR` | Artifact store directory (real jar/dist bytes) | `<db dir>/artifacts` |
-| `PIPEWRIGHT_REPO_CACHE_DIR` | Local bare-mirror repo cache directory | `<db dir>/repos` |
-| `PIPEWRIGHT_NO_REPO_CACHE` | `1` disables the repo cache (every build clones over the network) | off |
-| `PIPEWRIGHT_CACHE_DIR` | Build dependency cache directory | `<db dir>/cache` |
-| `PIPEWRIGHT_NO_BUILD_CACHE` | `1` disables build dependency caching (always a cold build) | off |
-| `PIPEWRIGHT_NO_IMAGE_GC` | `1` keeps built images instead of garbage-collecting them | off |
-| `PIPEWRIGHT_PAC_RUNTIME` | `1` forces pipeline-as-code on for **all** projects, ignoring the per-project toggle | off |
-| `PIPEWRIGHT_CHAIN_MAX_DEPTH` | Max pipeline-chaining depth (hard stop against runaway chains) | `5` |
+| `PIPEWRIGHT_PR_STATUS` | `1` 对**所有项目**强开 PR 状态回写,无视各项目开关 | 关 |
+| `PIPEWRIGHT_PR_STATUS_GITHUB_BASE` | GitHub API 基址(GitHub Enterprise 用) | 公有 GitHub |
+| `PIPEWRIGHT_PR_STATUS_GITEE_BASE` | Gitee API 基址(自建 Gitee 用) | 公有 Gitee |
+| `PIPEWRIGHT_CADDY_IMAGE` | 反代镜像。默认是自构建的 Caddy(含 DNS-01 / ratelimit / layer4 插件);用原版 `caddy:2` 也能跑,但会失去 DNS-01/通配符/TCP 能力 | `ghcr.io/fuuhoo/pipewright-caddy:latest` |
+| `PIPEWRIGHT_PREVIEW_SWEEP_INTERVAL` | 预览环境回收扫描间隔(Go duration,如 `10m`) | `5m` |
 
-**Integrations**
+**运维监控**
 
-| Variable | Description | Default |
+| 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_PR_STATUS` | `1` forces PR status reporting on for **all** projects, ignoring the per-project toggle | off |
-| `PIPEWRIGHT_PR_STATUS_GITHUB_BASE` | GitHub API base URL (for GitHub Enterprise) | public GitHub |
-| `PIPEWRIGHT_PR_STATUS_GITEE_BASE` | Gitee API base URL (for self-hosted Gitee) | public Gitee |
-| `PIPEWRIGHT_CADDY_IMAGE` | Reverse-proxy image. The default is a self-built Caddy bundling the DNS-01, ratelimit, and layer4 plugins; stock `caddy:2` works but loses DNS-01/wildcard/TCP support | `ghcr.io/fuuhoo/pipewright-caddy:latest` |
-| `PIPEWRIGHT_PREVIEW_SWEEP_INTERVAL` | How often to check whether preview environments can be reclaimed (Go duration, e.g. `10m`) | `5m` |
+| `PIPEWRIGHT_ANOMALY_INTERVAL` | 异常检测间隔(秒);`0` 关闭定时(仍可手动「立即检测」) | `60` |
+| `PIPEWRIGHT_ANOMALY_COOLDOWN` | 同「服务器×规则」重复告警的最小间隔(秒) | `600` |
+| `PIPEWRIGHT_METRICS_SAMPLE_INTERVAL` | 服务器指标采样间隔(秒,趋势图数据源);`0` 关闭采样 | `60` |
+| `PIPEWRIGHT_METRICS_RETENTION_DAYS` | 指标样本保留天数 | `7` |
 
-**Ops monitoring**
+## 部署到目标机:四种交付形态
 
-| Variable | Description | Default |
-|---|---|---|
-| `PIPEWRIGHT_ANOMALY_INTERVAL` | Anomaly detection interval in seconds; `0` disables the timer (manual checks still work) | `60` |
-| `PIPEWRIGHT_ANOMALY_COOLDOWN` | Minimum seconds between repeat alerts for the same server×rule | `600` |
-| `PIPEWRIGHT_METRICS_SAMPLE_INTERVAL` | Server metrics sampling interval in seconds (source of the trend charts); `0` disables sampling | `60` |
-| `PIPEWRIGHT_METRICS_RETENTION_DAYS` | How many days of metric samples to keep | `7` |
+部署节点一律经 SSH 下发,**目标机零 Agent**;命令 array 化(绝不拼进 shell 字符串),产物与正文只以文件落地。按交付物选一种:
 
-## Delivery forms: which deploy node to reach for
-
-Every deploy node runs over SSH with **zero agents on the target**; commands are arrayified (never interpolated into a shell string), and artifacts and file bodies land as files only.
-
-| Node | What it delivers | Key config | On failure |
+| 节点 | 交付什么 | 关键配置 | 失败时 |
 |---|---|---|---|
-| `deploy_ssh` | File artifacts (jar / dist) laid straight into the directory you name | `serverIds` + `deployPath` (+ `restartCommand`) | Overwrites in place, no auto-rollback (re-run the previous deploy to go back) |
-| `deploy_docker` · `run` | One container: pull the upstream image, stop old / start new | `containerName` / `ports` / `runArgs` | Automatically rolls back to the previous image |
-| `deploy_docker` · `compose` | A whole stack: one `docker-compose.yml` handed to the target's compose CLI | `stackName` + compose body source (**takes no artifact**) | That host is marked failed, the others continue; retry only the failed host |
-| `deploy_k8s` | An image or a manifest in a cluster | `clusterId` + `manifestSource` | A stalled rollout backfills the previous image by default |
+| `deploy_ssh` | jar / dist 等文件产物,直铺进你指定的目录 | `serverIds` + `deployPath`(+ `restartCommand`) | 就地覆盖、无自动回滚(要回到上一版本就重跑那次部署) |
+| `deploy_docker` · `run` | 单容器:拉上游镜像 → 停旧起新 | `containerName` / `ports` / `runArgs` | 自动回滚到上一镜像 |
+| `deploy_docker` · `compose` | 整栈:一份 `docker-compose.yml` 交目标机的 compose CLI | `stackName` + 正文来源(**不接产物**) | 该机记 failed,其余机器继续,可只重试失败机 |
+| `deploy_k8s` | 集群里的镜像或清单 | `clusterId` + `manifestSource` | 滚动失败默认回填上一镜像 |
 
-### Whole-stack compose deploys (`deploy_docker` with `dockerMode: compose`)
+### compose 整栈部署(`deploy_docker` + `dockerMode: compose`)
 
-Install docker plus a compose CLI on the target and you can deliver a set of services in one step.
+目标机装好 docker 与 compose CLI,就能一次交付一套服务。
 
-- **Two ways to supply the body**: `composeSource: repo` + `composeFile: deploy/docker-compose.yml` (read the file from your project's repo, so it evolves with the code through PR review and per branch), or `composeSource: paste` + `composeYaml` (keep the body in the node). Body capped at 512 KiB, `stackName` at 128 characters.
-- **It is the same stack the Containers page manages**: the body is uploaded verbatim as `/opt/pipewright/stacks/<stackName>/docker-compose.yml` on the target, then `docker compose -p <stackName> up -d` runs. A stack released by a pipeline therefore shows up in that host's Stacks list on the Containers page, where you can keep reading its logs, restart it, or `down` it — not two deploys that cannot see each other.
-- **8-minute budget** for the whole chain (mkdir + upload + `up`, since `up` pulls images on the target). This mode **ignores `strategy`**: batching is about rolling out to many hosts, and a single stack has nothing to batch; multiple hosts are still handled one after another.
-- **How it divides work with `run`**: only the image changes and the topology stays put → `run` (it reuses the image-artifact path, complete with stop-old/start-new and rollback on failure); services, networks, or volumes change together → `compose`.
+- **正文来源二选一**:`composeSource: repo` + `composeFile: deploy/docker-compose.yml`(读项目仓库里那份,跟代码一起走 PR 评审、按分支演进),或 `composeSource: paste` + `composeYaml`(把正文粘在节点里)。正文上限 512 KiB,`stackName` ≤128 字符。
+- **和「容器」页管的是同一份栈**:正文原样上传为目标机的 `/opt/pipewright/stacks/<stackName>/docker-compose.yml`,再执行 `docker compose -p <stackName> up -d`。流水线发出去的栈因此直接出现在容器页那台机器的 Stacks 里,能在界面上接着看日志、重启、down —— 不是两份互相看不见的部署。
+- **时间预算 8 分钟**(建目录 + 上传 + `up`,因为 `up` 要在目标机拉镜像)。这一档**不读 `strategy`**:分批是「多台机器逐台铺」的编排,单个栈没有分批对象;多主机时仍是逐台执行。
+- **与 `run` 的分工**:只换镜像、拓扑不变 → `run`(它复用镜像产物链路,自带停旧起新与失败回滚);服务数量/网络/卷要一起变 → `compose`。
 
-Health gating is optional for both `deploy_ssh` and `deploy_docker`: `healthProbe: http` + `healthUrl` (the URL is from the **deploy host's own point of view**, e.g. `http://localhost:8080/healthz`), or `healthProbe: command` + `healthCommand`. A failing probe marks that deploy task failed and blocks downstream stages.
+健康门控对 `deploy_ssh` 与 `deploy_docker` 两档都可选:`healthProbe: http` + `healthUrl`(地址是**部署机本机视角**,如 `http://localhost:8080/healthz`),或 `healthProbe: command` + `healthCommand`;探测不通即该部署任务失败并阻断下游。
 
 ```yaml
 version: 1
 stages:
   - id: stg_src
-    name: Source
+    name: 流水线源
     kind: source
     jobs:
-      - name: Repo source
+      - name: 仓库源
         type: git_source
   - id: stg_deploy
-    name: Deploy
+    name: 部署
     kind: deploy
     needs: [stg_src]
     jobs:
-      - name: Compose stack
+      - name: compose 整栈
         type: deploy_docker
         config:
           serverIds: "1"
@@ -310,32 +302,32 @@ stages:
           healthUrl: http://localhost:8080/healthz
 ```
 
-## Pipeline as code (GitOps)
+## 流水线即代码(GitOps)
 
-Commit your pipeline structure to `.pipewright.yml` in the repo — **same source of truth as your code, reviewable in a PR, evolving per branch** — instead of relying on implicit drift in the canvas.
+把流水线结构写进仓库的 `.pipewright.yml`,**跟代码同源、走 PR 评审、按分支演进**——不再依赖画布配置的隐式漂移。
 
-- **Enable**: flip the "Pipeline as code" toggle on the project's pipeline page (per project).
-- **How it works**: once enabled, every run reads `.pipewright.yml` from the **repo root** on the **branch being built** (falling back to the project default branch when the branch is empty), and the pipeline spec in that file drives the run. Different branches can carry different `.pipewright.yml`. The file is fetched with the project's bound repo credential (ephemeral; no new exposure).
-- **Never breaks a run**: if the file is **missing** → falls back to the pipeline configured in the canvas (UI); if it exists but is **invalid YAML** → also falls back to the stored canvas config.
-- **Scope**: the YAML controls **pipeline structure only** (stages / jobs / `needs` / DAG layout). **Variables & cache, environments & credentials, and trigger rules** still come from the canvas (UI) settings — they are **not** in the YAML.
-- **Schema** is the same one used by the platform's "Import from YAML" (`version` + `stages` → `jobs`; a job uses a nested `script:` block for `image`/`commands`/`env`/`workdir`).
-- **Job types** available in both the canvas and the YAML: `git_source`, `script`, `build_backend`, `build_frontend`, `build_image`, `push_image`, `deploy_ssh`, `deploy_docker`, `deploy_k8s`, `deploy_frontend`, `notify`, `templated`, `custom`.
+- **开启**:在项目的流水线页打开「流水线即代码 / Pipeline as code」开关(按项目维度)。
+- **生效方式**:开启后,每次运行都从**本次构建分支**的**仓库根**读取 `.pipewright.yml`(分支为空时回退项目默认分支),用其中的流水线 spec 驱动本次运行;不同分支可携带各自的 `.pipewright.yml`。文件用项目绑定的仓库凭据临时拉取,无新增暴露面。
+- **永不卡住运行的回退**:文件**缺失** → 回退到画布(UI)里已配置的流水线;文件存在但 **YAML 非法** → 同样回退到已存的画布配置。
+- **作用范围**:YAML 只管**流水线结构**(阶段 / 任务 / `needs` / DAG 编排);**变量与缓存、环境与凭据、触发规则**仍来自画布(UI)设置,**不写在 YAML 里**。
+- **schema** 与平台「从 YAML 导入」用的是同一套(`version` + `stages` → `jobs`,job 用嵌套 `script:` 块写 `image`/`commands`/`env`/`workdir`)。
+- **节点类型**(画布与 YAML 通用):`git_source`、`script`、`build_backend`、`build_frontend`、`build_image`、`push_image`、`deploy_ssh`、`deploy_docker`、`deploy_k8s`、`deploy_frontend`、`notify`、`templated`、`custom`。
 
 ```yaml
 version: 1
 stages:
-  - id: stg_src             # needs references stages by id, so cross-stage deps need an explicit id
-    name: Source
+  - id: stg_src              # needs 按阶段 id 引用,故跨阶段依赖须显式写 id
+    name: 流水线源
     kind: source
     jobs:
-      - name: Gitee source
+      - name: Gitee 源
         type: git_source
   - id: stg_build
-    name: Build
+    name: 构建
     kind: build
     needs: [stg_src]
     jobs:
-      - name: Run tests
+      - name: 运行测试
         type: script
         script:
           image: golang:1.23
@@ -346,105 +338,105 @@ stages:
             CGO_ENABLED: "0"
           workdir: src/app
   - id: stg_deploy
-    name: Deploy
+    name: 部署
     kind: deploy
     needs: [stg_build]
-    gate: true              # manual approval gate
+    gate: true               # 人工审批门
     when:
       branches: [main, release/*]
     jobs:
-      - name: SSH deploy
+      - name: SSH 部署
         type: deploy_ssh
         config:
           targetEnv: prod
 ```
 
-> You can also force pipeline-as-code on for **all projects** (ignoring the per-project toggle) via the global env var `PIPEWRIGHT_PAC_RUNTIME=1`, for back-compat / power users.
+> 也可用全局环境变量 `PIPEWRIGHT_PAC_RUNTIME=1` 对**所有项目**强制开启流水线即代码(无视各项目开关),供向后兼容 / 高级用户使用。
 
-## Tech Stack
+## 技术栈
 
-- **Backend**: Go · Chi (routing) · modernc/sqlite (pure Go, no CGO) + go-sql-driver/mysql · go-git (no host git dependency) · NaCl secretbox (vault) · argon2id + bcrypt · golang.org/x/crypto/ssh (agentless deployment) · coder/websocket (terminals) · Caddy (orchestrated on target hosts for auto HTTPS)
-- **Frontend**: Vue 3 `<script setup>` · Vite · naive-ui · OKLCH dual theme · Monaco (read-only code browsing) · Vitest + Playwright · embedded into the binary via `go:embed`
+- **后端**:Go · Chi(路由)· modernc/sqlite(纯 Go,无 CGO)+ go-sql-driver/mysql · go-git(不依赖宿主 git)· NaCl secretbox(保险库)· argon2id + bcrypt · golang.org/x/crypto/ssh(免 Agent 部署)· coder/websocket(终端)· Caddy(在目标主机上编排,提供自动 HTTPS)
+- **前端**:Vue 3 `<script setup>` · Vite · naive-ui · OKLCH 双主题 · Monaco(只读代码浏览)· Vitest + Playwright · 经 `go:embed` 内嵌进二进制
 
-Deliberately dependency-lean: the cron parser, DAG engine, DNS provider clients, artifact/build caches, and Caddyfile renderer are all in-tree rather than pulled in as libraries.
+依赖刻意保持精简:cron 解析器、DAG 引擎、DNS 厂商客户端、制品库/构建缓存、Caddyfile 渲染器全部自己实现,不引三方库。
 
-## Architecture
+## 架构
 
-One process, ~45 domain packages. `internal/httpapi` is the only package that touches HTTP; every domain package is injected into it, and `cmd/pipewright/main.go` is the single wiring layer (including the adapters that keep otherwise-circular packages pointing one way).
+一个进程,约 45 个领域包。`internal/httpapi` 是唯一碰 HTTP 的包,所有领域包注入其中;`cmd/pipewright/main.go` 是唯一的装配层(包内互引经这里的适配器晚绑,保持包间单向依赖)。
 
 ```
-single static binary (cmd/pipewright)
+单静态二进制 (cmd/pipewright)
 │
-├─ foundation
-│  ├── internal/config        env config + master key loading
-│  ├── internal/store         DB open + migrations (sqlite / mysql dialects)
-│  ├── internal/auth          auth + sessions + CSRF
-│  ├── internal/vault         encrypted credential vault (secretbox)
-│  ├── internal/oauth         OAuth app onboarding → token stored as a vault credential
-│  ├── internal/audit         append-only audit + optional remote sink
-│  ├── internal/mask          secret redaction (logs / diagnostics / notifications)
-│  ├── internal/i18n          server-side localization of user-facing messages
-│  └── internal/version       release check + one-click self-update
+├─ 地基
+│  ├── internal/config        env 配置 + master key 加载
+│  ├── internal/store         开库 + 迁移(sqlite / mysql 双方言)
+│  ├── internal/auth          认证 + 会话 + CSRF
+│  ├── internal/vault         凭据加密保险库(secretbox)
+│  ├── internal/oauth         OAuth 应用接入 → token 存成保险库凭据
+│  ├── internal/audit         append-only 审计 + 可选远端 sink
+│  ├── internal/mask          secret 脱敏(日志 / 诊断 / 通知)
+│  ├── internal/i18n          用户可见信息的服务端本地化
+│  └── internal/version       版本检查 + 一键自更新
 │
-├─ pipelines
-│  ├── internal/project       project onboarding + repo detection
-│  ├── internal/pipeline      pipeline spec + build/deploy config + validation
-│  ├── internal/pipelineyaml  YAML ↔ spec round-trip (import / export)
-│  ├── internal/pacloader     pipeline-as-code loader (.pipewright.yml, per branch)
-│  ├── internal/library       reusable templates + variable groups + custom nodes
-│  ├── internal/trigger       webhook + branch→environment mapping
-│  ├── internal/cron          5-field cron parser + minute-granularity scheduler
-│  └── internal/chain         upstream→downstream chaining (loop-safe)
+├─ 流水线
+│  ├── internal/project       项目接入 + 仓库探测
+│  ├── internal/pipeline      流水线 spec + 构建/部署配置 + 校验
+│  ├── internal/pipelineyaml  YAML ↔ spec 双向往返(导入 / 导出)
+│  ├── internal/pacloader     流水线即代码加载(.pipewright.yml,按分支)
+│  ├── internal/library       可复用模板 + 变量组 + 自定义节点
+│  ├── internal/trigger       webhook + 分支→环境映射
+│  ├── internal/cron          5 字段 cron 解析器 + 分钟粒度调度器
+│  └── internal/chain         上游→下游串联(防环)
 │
-├─ execution
-│  ├── internal/run           run model + worker pool + logs + artifacts + parameters
-│  ├── internal/dag           pure DAG scheduling kernel (no I/O)
-│  ├── internal/dagrun        DAG run orchestration (stage + job level, matrix expansion)
-│  ├── internal/build         isolated container builds + images + stage executor
-│  ├── internal/runner        per-project remote build machine config
-│  ├── internal/repocache     local bare-mirror repo cache (incremental fetch)
-│  ├── internal/buildcache    build dependency cache (branch + lockfile keyed)
-│  ├── internal/artifactstore content-addressed artifact bytes
-│  ├── internal/testreport    JUnit + Cobertura parsing
-│  ├── internal/qualitygate   pure quality-gate evaluation
-│  ├── internal/approval      manual approval gates (coordinator + persistence)
-│  └── internal/retention     run data retention sweeper
+├─ 执行
+│  ├── internal/run           运行模型 + worker pool + 日志 + 产物 + 参数
+│  ├── internal/dag           纯 DAG 调度内核(零 I/O)
+│  ├── internal/dagrun        DAG 运行编排(阶段级 + 任务级,矩阵展开)
+│  ├── internal/build         容器内隔离构建 + 镜像 + 阶段执行器
+│  ├── internal/runner        每项目远程构建机配置
+│  ├── internal/repocache     代码管理区(本地 bare 镜像 + 增量 fetch)
+│  ├── internal/buildcache    构建依赖缓存(分支 + lockfile 寻址)
+│  ├── internal/artifactstore 内容寻址的产物字节存储
+│  ├── internal/testreport    JUnit + Cobertura 解析
+│  ├── internal/qualitygate   纯质量门禁评估
+│  ├── internal/approval      人工审批门(协调器 + 持久化)
+│  └── internal/retention     运行数据保留清理
 │
-├─ delivery
-│  ├── internal/target        generic SSH exec/session layer (shared by deploy + ops)
-│  ├── internal/deploy        SSH deploy execution + health gating + rollback
-│  ├── internal/environments  environments as first-class objects + rollback targets
-│  ├── internal/promotion     environment promotion chains + per-env vars
-│  ├── internal/prstatus      PR / commit status reporting (GitHub / Gitee)
-│  ├── internal/proxy         auto HTTPS + domain reverse proxy (Caddy orchestration)
-│  ├── internal/dnsprovider   Cloudflare / DNSPod / Alibaba DNS (DNS-01 + subdomains)
-│  └── internal/previewenv    per-PR preview environments + auto reclamation
+├─ 交付
+│  ├── internal/target        通用 SSH exec/session 层(部署 + 运维共享)
+│  ├── internal/deploy        SSH 部署执行 + 健康门控 + 回滚
+│  ├── internal/environments  环境一等公民 + 回滚目标定位
+│  ├── internal/promotion     环境晋级流 + 逐环境变量
+│  ├── internal/prstatus      PR / 提交状态回写(GitHub / Gitee)
+│  ├── internal/proxy         自动 HTTPS + 域名反向代理(Caddy 编排)
+│  ├── internal/dnsprovider   Cloudflare / DNSPod / 阿里云 DNS(DNS-01 + 子域名)
+│  └── internal/previewenv    Per-PR 预览环境 + 自动回收
 │
-├─ observability
-│  ├── internal/notify        multi-channel notifications + event routing + templates
-│  ├── internal/anomaly       configurable threshold detection + alerts
-│  ├── internal/metrics       server metric time series (trend charts)
-│  ├── internal/dora          DORA metrics + performance bands
-│  └── internal/ai            optional AI: diagnosis, repo analysis, run diff, risk
+├─ 可观测
+│  ├── internal/notify        多渠道通知 + 事件路由 + 模板
+│  ├── internal/anomaly       可配置阈值检测 + 告警
+│  ├── internal/metrics       服务器指标时序(趋势图)
+│  ├── internal/dora          DORA 指标 + 绩效分档
+│  └── internal/ai            可选 AI:诊断 / 仓库分析 / 差异 / 风险标注
 │
-├── internal/httpapi          the sole outward HTTP surface (~188 routes)
-└── web/                      Vue 3 frontend (embedded via go:embed)
+├── internal/httpapi          唯一对外 HTTP 面(约 188 条路由)
+└── web/                      Vue3 前端(go:embed 内嵌)
 ```
 
-## Project Status
+## 开发状态
 
-✅ **Officially released** and under active iteration — see the latest version in [Releases](https://github.com/fuuhoo/pipewright/releases) (tag-driven releases: 6-platform binaries + multi-arch images on both ghcr and Aliyun ACR). Already running in real production, carrying builds, deployments, and daily ops for multiple projects.
+✅ **已正式发布**,持续迭代中 —— 最新版本见 [Releases](https://github.com/fuuhoo/pipewright/releases)(tag 驱动发版:6 平台二进制 + ghcr 与阿里云 ACR 多架构镜像)。已在真实生产环境承载多项目的构建、部署与日常运维。
 
-## Contributing
+## 贡献 / Contributing
 
-PRs and issues welcome! Before you start, please read [CONTRIBUTING.md](CONTRIBUTING.md) (environment setup / testing / commit conventions) and follow the [Code of Conduct](CODE_OF_CONDUCT.md). For security vulnerabilities, please use the private channel described in [SECURITY.md](SECURITY.md).
+欢迎 PR 与 Issue!动手前请读 [CONTRIBUTING.md](CONTRIBUTING.md)(搭环境 / 测试 / 提交规范),并遵守[行为准则](CODE_OF_CONDUCT.md)。安全漏洞请走私密渠道,见 [SECURITY.md](SECURITY.md)。
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — 见 [LICENSE](LICENSE)。
 
 ---
 
 <div align="center">
-<sub>Pipewright — CI, deployment, and ops in a single binary.</sub>
+<sub>Pipewright —— 把 CI、部署与运维装进一个二进制。</sub>
 </div>
