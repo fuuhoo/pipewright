@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // [R13 + P0#3] 原子写:tmp+fsync+rename,DB 与磁盘一致;失败时无残留 tmp。

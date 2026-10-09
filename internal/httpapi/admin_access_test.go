@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/users"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/users"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupAccessServer 起一套「认证 + 用户服务 + 保险库」齐全的测试 server。

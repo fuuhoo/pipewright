@@ -8,14 +8,14 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuuhoo/pipewright/internal/ai"
+	"github.com/fuuhoo/pipewright/internal/buildenv"
+	"github.com/fuuhoo/pipewright/internal/library"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/trigger"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/ai"
-	"github.com/huangchengsir/pipewright/internal/buildenv"
-	"github.com/huangchengsir/pipewright/internal/library"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/trigger"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // ---- AI 生成 / 应用 DTO(冻结契约;camelCase;绝无明文密钥) ----

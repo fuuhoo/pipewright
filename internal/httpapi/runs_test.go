@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupRunServer 构造带 auth + project + run(含 worker pool)的测试 server,返回项目 id。

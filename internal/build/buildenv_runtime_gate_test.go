@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
 )
 
 // 执行期预置目录的测试夹具(#9/#10)。

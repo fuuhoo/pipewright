@@ -28,8 +28,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // newRealExecWorkspace 拨一条真连接并强制走 exec 兜底实现。

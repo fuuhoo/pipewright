@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupAuditServer 构造带认证 + vault + audit 的测试 server。

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // fakeReportSink 记录 SaveTestReport 调用(替代真 run.Service)。

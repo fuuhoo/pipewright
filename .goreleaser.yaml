@@ -28,9 +28,9 @@ builds:
     mod_timestamp: "{{ .CommitTimestamp }}" # 可复现构建
     ldflags:
       - -s -w
-      - -X github.com/huangchengsir/pipewright/internal/version.Version={{ .Version }}
-      - -X github.com/huangchengsir/pipewright/internal/version.Commit={{ .ShortCommit }}
-      - -X github.com/huangchengsir/pipewright/internal/version.Date={{ .CommitDate }}
+      - -X github.com/fuuhoo/pipewright/internal/version.Version={{ .Version }}
+      - -X github.com/fuuhoo/pipewright/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/fuuhoo/pipewright/internal/version.Date={{ .CommitDate }}
 
 archives:
   - id: default

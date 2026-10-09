@@ -18,10 +18,10 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
+	"github.com/fuuhoo/pipewright/internal/gitauth"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/go-git/go-git/v5/storage/memory"
-	"github.com/huangchengsir/pipewright/internal/gitauth"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // ---- 冻结 source 契约(Story 3.6;FR-4 预埋;camelCase) ----------------------

@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/anomaly"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/target"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/anomaly"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupAnomalyAPI 构造带 auth + vault + target + anomaly 的测试 server。

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
 )
 
 // auditActorFallback 是兜底值(请求无 session 上下文时,如内部启动期任务)。

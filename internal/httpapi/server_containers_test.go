@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // --- 纯解析单元测试 ---

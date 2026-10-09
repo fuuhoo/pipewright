@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
 )
 
 // TestWritePipelineErrorMapsEveryJobTypeSentinel 守住一条容易被忘的对应关系:

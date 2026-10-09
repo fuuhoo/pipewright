@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/target"
 )
 
 // 容器管理 —— 一键清理(docker system df / prune)。

@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/access"
 )
 
 // 领域错误。HTTP 层按 errors.Is 映射状态码,包装一律用 %w;错误体不带 SQL 细节。

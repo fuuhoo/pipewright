@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/audit"
 )
 
 // fs_upload_test.go —— 会话式分块上传的契约测试。

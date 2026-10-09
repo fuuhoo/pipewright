@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/group"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/role"
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/users"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/group"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/role"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/users"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupRoleServer 起一套「角色 + 用户 + 判定」齐全的测试 server。

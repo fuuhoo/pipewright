@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // artifact_source_test.go 覆盖「并行构建 → 部署节点按来源任务取产物」:

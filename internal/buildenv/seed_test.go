@@ -3,7 +3,7 @@ package buildenv
 import (
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // TestSeedIfEmpty_InsertsFirstTime 验证空 DB 时 seed 插入所有内置条目。

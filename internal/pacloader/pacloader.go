@@ -24,8 +24,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/pipelineyaml"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/pipelineyaml"
 )
 
 // DefaultFile 是仓库根「流水线即代码」文件名。

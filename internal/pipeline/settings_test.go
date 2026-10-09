@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // testMasterKey 返回确定性测试用 master key。

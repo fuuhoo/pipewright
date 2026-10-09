@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // --- 纯函数解析器单测(AC:健壮容错,空/格式异常 → 不 panic、false) ---

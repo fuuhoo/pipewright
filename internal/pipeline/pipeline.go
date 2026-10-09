@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/dag"
+	"github.com/fuuhoo/pipewright/internal/store"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/dag"
-	"github.com/huangchengsir/pipewright/internal/store"
 	yaml "gopkg.in/yaml.v3"
 )
 

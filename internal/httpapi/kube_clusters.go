@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/kube"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/kube"
 )
 
 // kubeClusterDTO 是集群对外响应体(camelCase;无凭据明文、无 kubeconfig 正文)。

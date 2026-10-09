@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/deploy"
+	"github.com/fuuhoo/pipewright/internal/deployenv"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/deploy"
-	"github.com/huangchengsir/pipewright/internal/deployenv"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // stubDeploy 是一个记录入参的部署服务替身(回滚端点只需 Deploy 被以正确参数调用)。

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/approval"
-	"github.com/huangchengsir/pipewright/internal/notify"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/approval"
+	"github.com/fuuhoo/pipewright/internal/notify"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // NewNotifyHook 把 run.Service + notify.Service 适配为 run.WorkerPool 的 best-effort 通知钩子

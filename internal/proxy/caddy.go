@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // Caddy 编排常量(每主机一个 Caddy 容器,跑在共享 docker 网络上,按上游容器名路由)。

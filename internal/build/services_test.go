@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // svcDriver 实现 Driver + ServiceRunner,记录服务生命周期 + 脚本容器看到的网络。

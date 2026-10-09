@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/approval"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/build"
+	"github.com/fuuhoo/pipewright/internal/dagrun"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/approval"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/build"
-	"github.com/huangchengsir/pipewright/internal/dagrun"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/run"
 )
 
 // approvals.go 实现人工审批门(Epic 8 · Story 8-4)的 gate hook 与审批端点。

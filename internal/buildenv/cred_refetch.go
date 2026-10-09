@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // vaultCredentialRefetch 是 buildenv.CredentialRefetch 的 vault 实现。

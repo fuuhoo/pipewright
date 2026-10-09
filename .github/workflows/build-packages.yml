@@ -47,7 +47,7 @@ permissions:
 
 env:
   NODE_VERSION: "22"
-  VPKG: github.com/huangchengsir/pipewright/internal/version
+  VPKG: github.com/fuuhoo/pipewright/internal/version
 
 jobs:
   # 一次性把版本元数据和「这次要编哪些平台」算出来,后面的矩阵 job 只消费。

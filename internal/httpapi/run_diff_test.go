@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/ai"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/ai"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // makeTwoCommitRepo 建一个含两次提交的裸仓库(file:// 可克隆),返回 URL + [baselineSha, currentSha]。

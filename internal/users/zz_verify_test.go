@@ -3,7 +3,7 @@ package users
 import (
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // 回归:`GetByID` 曾因 scanView 复用 scanInternal(9 列)而永远失败

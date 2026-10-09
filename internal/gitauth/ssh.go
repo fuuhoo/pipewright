@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fuuhoo/pipewright/internal/giturl"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/huangchengsir/pipewright/internal/giturl"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 

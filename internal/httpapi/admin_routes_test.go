@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/buildenv"
-	"github.com/huangchengsir/pipewright/internal/configprofile"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/users"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/buildenv"
+	"github.com/fuuhoo/pipewright/internal/configprofile"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/users"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupAdminServer 构造带 admin 子组服务的测试 server。

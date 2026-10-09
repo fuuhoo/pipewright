@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/kube"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/kube"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // kubeTokenMarker 冒充 SA token。它一旦出现在任何响应里就是泄漏,断言到处复用它。

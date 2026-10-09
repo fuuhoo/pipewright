@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
 )
 
 // buildenv_runtime.go 是执行期的预置目录解析入口(#9/#10)。

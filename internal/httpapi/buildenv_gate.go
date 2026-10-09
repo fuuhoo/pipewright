@@ -6,9 +6,9 @@
 package httpapi
 
 import (
-	"github.com/huangchengsir/pipewright/internal/buildenv"
-	"github.com/huangchengsir/pipewright/internal/configprofile"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/buildenv"
+	"github.com/fuuhoo/pipewright/internal/configprofile"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
 )
 
 // buildEnvGate 每次保存即时读目录(不缓存):流水线编辑与管理员改目录是并发的两件事,

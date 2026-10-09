@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/approval"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/approval"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // approvals_guard_test.go —— 审批 / 分批确认端点的两道关:

@@ -41,9 +41,9 @@ COPY . .
 COPY --from=web /app/web/dist ./web/dist
 RUN go build \
     -ldflags "-s -w \
-      -X github.com/huangchengsir/pipewright/internal/version.Version=${VERSION} \
-      -X github.com/huangchengsir/pipewright/internal/version.Commit=${COMMIT} \
-      -X github.com/huangchengsir/pipewright/internal/version.Date=${DATE}" \
+      -X github.com/fuuhoo/pipewright/internal/version.Version=${VERSION} \
+      -X github.com/fuuhoo/pipewright/internal/version.Commit=${COMMIT} \
+      -X github.com/fuuhoo/pipewright/internal/version.Date=${DATE}" \
     -o /pipewright ./cmd/pipewright
 # 预建数据目录,归 nonroot(65532)所有:具名卷挂到 /data 会继承此属主,免手动 chown。
 RUN mkdir -p /data

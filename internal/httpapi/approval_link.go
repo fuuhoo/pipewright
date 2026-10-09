@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/huangchengsir/pipewright/internal/approval"
-	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/approval"
+	"github.com/fuuhoo/pipewright/internal/audit"
 )
 
 // approval_link.go 实现「从通知直接审批」的**公开**端点(无会话;token 即认证)。

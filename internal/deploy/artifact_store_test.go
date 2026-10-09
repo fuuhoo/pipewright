@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuuhoo/pipewright/internal/artifactstore"
+	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/artifactstore"
-	"github.com/huangchengsir/pipewright/internal/run"
 )
 
 // seedSuccessRunWithStoredArtifact 像 seedSuccessRunWithArtifact,但产物带制品库句柄 + metadata

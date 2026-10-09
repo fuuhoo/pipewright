@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuuhoo/pipewright/internal/ai"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/ai"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // ---- 冻结 run-diff 契约(Story 7.3;FR-25;camelCase) -------------------------

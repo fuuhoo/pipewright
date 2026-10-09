@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/dagrun"
-	"github.com/huangchengsir/pipewright/internal/deploy"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/project"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/dagrun"
+	"github.com/fuuhoo/pipewright/internal/deploy"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // ─── 测试替身 ──────────────────────────────────────────────────────────────────

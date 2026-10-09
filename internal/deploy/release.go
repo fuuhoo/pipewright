@@ -30,8 +30,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // fileDeployArtifact 判定产物是否走「文件直铺」发布(dist / jar / archive 同形:

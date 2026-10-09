@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 	_ "modernc.org/sqlite"
 )
 

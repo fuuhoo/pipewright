@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/buildenv"
+	"github.com/fuuhoo/pipewright/internal/buildenv"
 )
 
 func item(lang, ver, image string) buildenv.TransferItem {

@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // 领域错误。错误体永不含 kubeconfig / token / 证书内容。

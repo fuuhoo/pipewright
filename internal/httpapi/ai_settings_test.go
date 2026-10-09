@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/ai"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/ai"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // setupAIServer 构造带 auth + vault + ai 的测试 server;ai 用注入 client(默认指向给定 stub)。

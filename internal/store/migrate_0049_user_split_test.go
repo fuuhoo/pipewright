@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // TestMigration0049UserSplit 验证 0049 迁移:

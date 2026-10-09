@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/audit"
 )
 
 // --- 注入脚本的形状约束(这几条都是真机 pty 踩出来的,不是审美) ---

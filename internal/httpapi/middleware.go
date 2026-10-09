@@ -21,8 +21,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/auth"
 )
 
 // requireAuth 中间件:校验会话 cookie → 注入 Session 到 context;未过 → 401 JSON。

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/role"
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/role"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // role 服务的测试:自定义角色的读写与三条硬边界。

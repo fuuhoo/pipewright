@@ -7,7 +7,7 @@
 // 后续 v6.3+ 计划删除本文件;新代码请直接 import "internal/deployenv"。
 package environments
 
-import "github.com/huangchengsir/pipewright/internal/deployenv"
+import "github.com/fuuhoo/pipewright/internal/deployenv"
 
 // 类型别名:旧 import "internal/environments" 仍可见同名符号;
 // 类型身份与 deployenv.* 完全相同(deployenv.X 与 environments.X == X)。

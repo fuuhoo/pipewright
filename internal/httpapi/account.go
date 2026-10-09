@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/users"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/users"
 )
 
 // accountService 是账户设置 handler 依赖的窄接口(改口令 / 会话列表 / 撤销)。

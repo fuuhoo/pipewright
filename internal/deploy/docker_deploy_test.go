@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // docker_deploy_test.go 覆盖「docker 部署」节点(deploy_docker)在目标机上的落地。

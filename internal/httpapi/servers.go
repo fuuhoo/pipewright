@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/target"
 )
 
 // serverDTO 是服务器对外响应体(冻结契约;camelCase;无明文/无私钥/无口令)。

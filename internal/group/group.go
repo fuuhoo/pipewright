@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/store"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/store"
 )
 
 // 领域错误。HTTP 层按 errors.Is 映射状态码,包装一律用 %w。

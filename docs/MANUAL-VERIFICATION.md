@@ -205,7 +205,7 @@ package main
 import (
   "database/sql"; "fmt"; "os"
   _ "modernc.org/sqlite"
-  "github.com/huangchengsir/pipewright/internal/auth"
+  "github.com/fuuhoo/pipewright/internal/auth"
 )
 func main() {
   h, err := auth.HashPassword(os.Args[2])

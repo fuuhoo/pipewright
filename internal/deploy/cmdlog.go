@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 const (

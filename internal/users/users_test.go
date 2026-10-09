@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/users"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/users"
 )
 
 const (

@@ -122,9 +122,9 @@ jobs:
           set -euo pipefail
           CGO_ENABLED=0 GOOS=linux GOARCH="${{ matrix.arch }}" go build -trimpath \
             -ldflags "-s -w \
-              -X github.com/huangchengsir/pipewright/internal/version.Version=${VERSION} \
-              -X github.com/huangchengsir/pipewright/internal/version.Commit=${COMMIT:0:7} \
-              -X github.com/huangchengsir/pipewright/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -X github.com/fuuhoo/pipewright/internal/version.Version=${VERSION} \
+              -X github.com/fuuhoo/pipewright/internal/version.Commit=${COMMIT:0:7} \
+              -X github.com/fuuhoo/pipewright/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o pipewright ./cmd/pipewright
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

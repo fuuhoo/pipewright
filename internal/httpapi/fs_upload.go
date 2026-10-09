@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/i18n"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/i18n"
-	"github.com/huangchengsir/pipewright/internal/target"
 )
 
 // fs_upload.go —— 会话式分块上传(「远程」面板传文件 / 传文件夹的后端)。

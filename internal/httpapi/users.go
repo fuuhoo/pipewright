@@ -19,10 +19,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/users"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/users"
 )
 
 // userDTO 是用户对外响应体(camelCase;不含 password_hash)。

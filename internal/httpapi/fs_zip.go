@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // fs_zip.go —— 目录下载(平台侧流式打包)+ 长传的静默看门狗。

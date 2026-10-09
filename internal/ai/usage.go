@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/store"
 )
 
 // TokenUsage 是一次 chat 调用的 token 用量。三档 provider 字段名各异,统一成进/出两项。

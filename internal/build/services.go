@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/huangchengsir/pipewright/internal/dagrun"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/dagrun"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // services.go 实现阶段「旁挂服务」(P1 · 对标 GitLab services / Woodpecker services)。

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // TestRunDetailArtifactsSlot 验证成功 run 的 run-detail DTO 填了 artifacts slot(FR-6),

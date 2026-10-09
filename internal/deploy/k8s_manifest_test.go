@@ -14,10 +14,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/kube"
-	"github.com/huangchengsir/pipewright/internal/kube/kubetest"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/kube"
+	"github.com/fuuhoo/pipewright/internal/kube/kubetest"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // ---- 脚手架:真 run.Service + 真 kube.Service(指向假集群) -------------------------

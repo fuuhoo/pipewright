@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/target"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // --- 纯函数:容器目标校验(AC-SEC-02 要害) ---

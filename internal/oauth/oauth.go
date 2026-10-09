@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // 领域错误(续 provider.go)。错误体永不含 client_secret / access_token 明文。

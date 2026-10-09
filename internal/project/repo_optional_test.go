@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // 「不绑仓库的项目」= 只用来发布(把别处产出的产物/镜像发到目标机),源码这一环整个不存在。

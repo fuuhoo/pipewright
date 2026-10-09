@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // TestHealthCheckFromConfig 覆盖部署节点 cfg → 健康门控配置的组装(键名与前端表单一致)。

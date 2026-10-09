@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // newE2EService 建一个真 vault + 真 dialer 的 target.Service,把容器登记为目标服务器,返回 (svc, serverID)。

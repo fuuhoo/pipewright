@@ -3,7 +3,7 @@ package configprofile
 import (
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 func TestSeedIfEmpty_InsertsFirstTime(t *testing.T) {

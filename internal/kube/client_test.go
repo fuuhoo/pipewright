@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/kube/kubetest"
+	"github.com/fuuhoo/pipewright/internal/kube/kubetest"
 )
 
 // seedDeploymentYAML 是种子负载:与真实自建集群最常见的形状对齐(2 副本、单业务容器)。

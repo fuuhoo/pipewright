@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // TestMigration0062Roles 验证 0062 角色表落地:

@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/users"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/users"
 )
 
 // role_guard_test.go —— 功能轴(角色档位)在 HTTP 收口上的真机断言。

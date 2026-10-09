@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/proxy"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/proxy"
 )
 
 // stubProxyService 是不触网的 proxy.Service 桩,捕获 Update 入参、按需返回固定路由。

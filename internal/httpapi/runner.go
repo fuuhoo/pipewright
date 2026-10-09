@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/runner"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/runner"
 )
 
 // runner.go 暴露项目「远程构建 runner」配置端点(FR-8-14 远程 runner 池续):

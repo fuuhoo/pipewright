@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // TestMigration0063PresetRoles 验证 0063 的四档预置角色确实落进了库,且点集与它们

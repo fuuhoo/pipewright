@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/target"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // server_fs_test.go —— 远程文件面板端点的契约测试(内存工作区 + 真 HTTP 栈)。

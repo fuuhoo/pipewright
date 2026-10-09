@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // batchStubDialer 实现 batchDialer:记录每次 RunBatch 的整批命令,用于证明

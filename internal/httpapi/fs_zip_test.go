@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // fs_zip_test.go —— 目录流式打包与「静默即断」的契约测试。

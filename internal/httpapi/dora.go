@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/dora"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/dora"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // dora.go 挂载 DORA 四指标只读端点(FR-8-15):

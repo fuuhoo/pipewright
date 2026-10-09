@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // errStageFail 是矩阵测试里用的「阶段失败」哨兵。

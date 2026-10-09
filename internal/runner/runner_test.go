@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/storetest"
 )
 
 type fakeExister struct{ ids map[string]bool }

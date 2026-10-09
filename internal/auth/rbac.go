@@ -15,7 +15,7 @@
 //     普通用户端点不接受未登录。
 package auth
 
-import "github.com/huangchengsir/pipewright/internal/access"
+import "github.com/fuuhoo/pipewright/internal/access"
 
 // ActorFromSession 把 Session 转成 vault.Actor 的字段映射(v6.2 §5.7)。
 //
@@ -28,7 +28,7 @@ import "github.com/huangchengsir/pipewright/internal/access"
 // 注意:本函数不 import vault 包以避免循环依赖(auth → vault → ...)。vault.Actor
 // 是 {UserID, Role} 双字段结构体(见 internal/vault/rbac.go),调用方按字段组装即可:
 //
-//	import "github.com/huangchengsir/pipewright/internal/vault"
+//	import "github.com/fuuhoo/pipewright/internal/vault"
 //	actor := &vault.Actor{UserID: sess.UserID, Role: sess.Role}
 //
 // 本文件提供 IsAdmin / Role 判定供中间件直接复用。

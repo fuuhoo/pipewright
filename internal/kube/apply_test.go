@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/kube/kubetest"
+	"github.com/fuuhoo/pipewright/internal/kube/kubetest"
 )
 
 func TestParseManifestsSplitsDocsAndStampsNamespace(t *testing.T) {

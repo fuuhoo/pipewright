@@ -23,9 +23,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/huangchengsir/pipewright/internal/dagrun"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/dagrun"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 // RunnerLookup 解析某项目的远程 runner 服务器 id(空/false = 本地构建)。runner.Service 即满足。

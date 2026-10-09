@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/users"
+	"github.com/fuuhoo/pipewright/internal/users"
 )
 
 // Authenticator 定义认证领域对外接口。(-er 命名约定)

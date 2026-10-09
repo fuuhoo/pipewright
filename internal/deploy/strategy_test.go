@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // ---- 纯函数单元 ------------------------------------------------------------

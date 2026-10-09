@@ -35,7 +35,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/audit"
 )
 
 // sshE2EEnv 是本机 sshd 的登录参数(默认 cw@127.0.0.1:22 + 那份 id_ed25519)。

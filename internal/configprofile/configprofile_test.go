@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/configprofile"
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/configprofile"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 func newRepo(t *testing.T) configprofile.Repo {

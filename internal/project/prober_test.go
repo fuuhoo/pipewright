@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuuhoo/pipewright/internal/gitauth"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/huangchengsir/pipewright/internal/gitauth"
 )
 
 // TestProberUnreachable 验证真实 go-git prober 对不可达地址返回 ErrRepoUnreachable

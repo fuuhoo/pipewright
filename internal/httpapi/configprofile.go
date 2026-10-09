@@ -22,10 +22,10 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/configprofile"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/configprofile"
 )
 
 // configProfileDTO 是配置资源对外响应体(camelCase)。

@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/ai"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/ai"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/run"
 )
 
 // ---- 冻结 diagnosis 子 DTO(Story 7.2 定义并冻结;camelCase) ------------------

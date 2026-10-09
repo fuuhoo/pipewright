@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/vault"
 )
 
 // credentialDTO 是凭据对外响应体(冻结契约;camelCase;无明文/无密文)。

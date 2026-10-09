@@ -20,11 +20,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/role"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/role"
 )
 
 // roleDTO 是角色对外响应体(camelCase)。Builtin 决定前端能否给出编辑/删除入口。

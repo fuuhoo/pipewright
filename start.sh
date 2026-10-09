@@ -261,9 +261,9 @@ build_bin() {
   date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   CGO_ENABLED=0 GOTOOLCHAIN=local "$gobin" build \
     -ldflags "-s -w \
-      -X github.com/huangchengsir/pipewright/internal/version.Version=${version} \
-      -X github.com/huangchengsir/pipewright/internal/version.Commit=${commit} \
-      -X github.com/huangchengsir/pipewright/internal/version.Date=${date}" \
+      -X github.com/fuuhoo/pipewright/internal/version.Version=${version} \
+      -X github.com/fuuhoo/pipewright/internal/version.Commit=${commit} \
+      -X github.com/fuuhoo/pipewright/internal/version.Date=${date}" \
     -o "$BIN_PATH" ./cmd/pipewright
   ok "二进制就绪: $BIN_PATH ($(du -h "$BIN_PATH" | cut -f1))"
 }

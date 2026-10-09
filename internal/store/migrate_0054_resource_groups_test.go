@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // TestMigration0054ResourceGroups 验证 0054/0055 分组表落地:

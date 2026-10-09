@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // progDialer 按命令内容给答复,并逐条记下真正发到目标机上的 argv 与上传正文。

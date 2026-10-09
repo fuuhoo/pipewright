@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // server("a") 造一台够用的目标机桩(闸只认 serverID)。

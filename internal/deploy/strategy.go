@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // 部署策略枚举(DeployInput.Strategy / Config["strategy"];空 / 未知 → rolling)。

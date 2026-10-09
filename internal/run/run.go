@@ -19,7 +19,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/access"
 )
 
 // 运行状态枚举(DB 存小写串;JSON 同值)。状态机:

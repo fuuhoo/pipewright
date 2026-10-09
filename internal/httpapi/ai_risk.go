@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/ai"
+	"github.com/fuuhoo/pipewright/internal/mask"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/ai"
-	"github.com/huangchengsir/pipewright/internal/mask"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/project"
 )
 
 // ai_risk.go 是「AI 脚本风险标注」HTTP 层(护城河 · AI moat)。

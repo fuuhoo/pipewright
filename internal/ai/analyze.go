@@ -26,8 +26,8 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
+	"github.com/fuuhoo/pipewright/internal/gitauth"
 	"github.com/go-git/go-git/v5/storage/memory"
-	"github.com/huangchengsir/pipewright/internal/gitauth"
 )
 
 // cloneTimeout 是单次浅克隆的硬超时(防黑洞 IP / 慢 DNS 把 goroutine 挂死)。

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // [R11/P0#4] 三态校验:unchecked 拒、unavailable 强制 false、available 放行。

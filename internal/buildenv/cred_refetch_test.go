@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 func testMasterKey() *[32]byte {

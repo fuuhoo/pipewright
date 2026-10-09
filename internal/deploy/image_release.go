@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // imageState 是一台机的 image 蓝绿中间态(stageImageOne 产出,activateImageOne 消费)。

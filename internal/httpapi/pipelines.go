@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/pipeline"
+	"github.com/fuuhoo/pipewright/internal/pipelineyaml"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/pipeline"
-	"github.com/huangchengsir/pipewright/internal/pipelineyaml"
 )
 
 // pipelineDTO 是流水线配置对外响应体(冻结契约;camelCase)。外层形状定死,

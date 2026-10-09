@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // ResumeStageTargets 见 Service 注释:续发暂停中的落点,滚动铺完并回写目标行。

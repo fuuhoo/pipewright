@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/previewenv"
-	"github.com/huangchengsir/pipewright/internal/proxy"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/store"
-	"github.com/huangchengsir/pipewright/internal/target"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/previewenv"
+	"github.com/fuuhoo/pipewright/internal/proxy"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // --- parsePRNumber ---------------------------------------------------------

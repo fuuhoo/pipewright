@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
-	"github.com/huangchengsir/pipewright/internal/users"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/users"
 )
 
 // [R15] 首次启动 Bootstrap:admin_user 空 + 提供口令 → 建 admin,同步 users role='admin' 行。

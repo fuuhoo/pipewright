@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // group_test.go —— v6.2 分组权限落在项目领域的三件事:

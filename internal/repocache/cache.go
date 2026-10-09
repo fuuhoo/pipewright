@@ -29,8 +29,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
-	"github.com/huangchengsir/pipewright/internal/build"
-	"github.com/huangchengsir/pipewright/internal/gitauth"
+	"github.com/fuuhoo/pipewright/internal/build"
+	"github.com/fuuhoo/pipewright/internal/gitauth"
 )
 
 // fetchTimeout 是单次镜像 clone/fetch 的硬超时(防大仓库黑洞拖死构建)。

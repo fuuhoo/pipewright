@@ -20,10 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huangchengsir/pipewright/internal/artifactstore"
-	"github.com/huangchengsir/pipewright/internal/kube"
-	"github.com/huangchengsir/pipewright/internal/run"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/artifactstore"
+	"github.com/fuuhoo/pipewright/internal/kube"
+	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // 领域错误。错误体永不含明文 / 私钥 / 口令 / 内部栈。

@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/access"
 )
 
 // BootstrapAdminRegularUserID 是 admin 在 users 表中对应的固定 UUID。

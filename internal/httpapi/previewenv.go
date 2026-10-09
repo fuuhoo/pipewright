@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/previewenv"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/previewenv"
 )
 
 // previewenv.go 装配「Per-PR 预览环境」(R4 E4.1)的 HTTP API:

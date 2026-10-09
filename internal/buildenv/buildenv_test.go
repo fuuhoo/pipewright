@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/fuuhoo/pipewright/internal/buildenv"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 	"github.com/google/uuid"
-	"github.com/huangchengsir/pipewright/internal/buildenv"
-	"github.com/huangchengsir/pipewright/internal/storetest"
 )
 
 func newRepo(t *testing.T) buildenv.Repo {

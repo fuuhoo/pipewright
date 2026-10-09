@@ -16,7 +16,7 @@ import (
 
 	"github.com/pkg/sftp"
 
-	"github.com/huangchengsir/pipewright/internal/vault"
+	"github.com/fuuhoo/pipewright/internal/vault"
 )
 
 // TestOpenWorkspaceUnsupported 验可选能力的降级:假拨号器不实现 fsDialer 时,

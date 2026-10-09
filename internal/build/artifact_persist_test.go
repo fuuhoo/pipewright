@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/artifactstore"
-	"github.com/huangchengsir/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/artifactstore"
+	"github.com/fuuhoo/pipewright/internal/run"
 )
 
 func newStoreBuilder(t *testing.T) (*Builder, *artifactstore.Store) {

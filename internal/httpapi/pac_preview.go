@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuuhoo/pipewright/internal/pipelineyaml"
+	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/pipelineyaml"
-	"github.com/huangchengsir/pipewright/internal/project"
 )
 
 // pacPreviewFile 是「流水线即代码」预览/校验的固定目标文件名(与 pacloader.DefaultFile 同语义;

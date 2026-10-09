@@ -30,8 +30,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/target"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/target"
 )
 
 // e2eImageDefault 是本机一定拉得动的一份镜像(有 sh/sleep,够起一个长驻容器)。

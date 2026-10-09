@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/i18n"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/go-chi/chi/v5"
-	"github.com/huangchengsir/pipewright/internal/access"
-	"github.com/huangchengsir/pipewright/internal/audit"
-	"github.com/huangchengsir/pipewright/internal/auth"
-	"github.com/huangchengsir/pipewright/internal/i18n"
-	"github.com/huangchengsir/pipewright/internal/target"
 )
 
 // Story 6.4(FR-18):容器内交互终端(WS ↔ SSH → `docker exec -it`)。

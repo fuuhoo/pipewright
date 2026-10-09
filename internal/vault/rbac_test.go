@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/huangchengsir/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/storetest"
 )
 
 // 单元测试集中覆盖 rbac.go 的纯逻辑:
