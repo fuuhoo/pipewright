@@ -87,7 +87,7 @@ Downloads the static binary for your platform from GitHub Releases and installs 
 curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
 # Pin a version / custom dir / auto-install Docker on Linux too:
-VERSION=v0.5.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
+VERSION=v0.4.1 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
 # Run (first launch bootstraps the admin; master key is for the credential vault)
@@ -108,6 +108,17 @@ SETUP_SERVICE=1 PIPEWRIGHT_DB_DRIVER=mysql \
   PIPEWRIGHT_DB_DSN='user:pw@tcp(host:3306)/pipewright?parseTime=true&charset=utf8mb4' \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 ```
+
+**Portable mode: the binary and all of its data land in the directory you run the command from** (no root, no system paths; copying the directory is the migration). `cd` into it and run one command — the script also generates the master key, the runtime config and a launcher:
+
+```bash
+mkdir -p ~/pw && cd ~/pw
+LOCAL_INSTALL=1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
+
+PIPEWRIGHT_ADMIN_PASSWORD=change-me ./run.sh   # listens on :8080; the password is only used to bootstrap the admin account
+```
+
+Everything sits under the instance root (pass `INSTALL_DIR` to put it elsewhere): `./pipewright` binary · `./data/` (SQLite DB, with `artifacts/ repos/ cache/ config_profiles/` alongside it) · `./master.key` (0600) · `./pipewright.env` (0600 — change the port or switch to MySQL here; reinstalling never overwrites it) · `./run.sh` launcher. All data paths are written absolute, so launching `./run.sh` from another directory still opens the same database. Mutually exclusive with `SETUP_SERVICE=1` (portable mode writes no systemd unit); when migrating, always bring `master.key` along — a new key makes existing credentials undecryptable.
 
 > Windows users: download the `.zip` from [Releases](https://github.com/fuuhoo/pipewright/releases).
 

@@ -87,7 +87,7 @@
 curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
 # 钉版本 / 自定义目录 / Linux 顺带自动装 Docker:
-VERSION=v0.5.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
+VERSION=v0.4.1 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
 # 运行(首次启动引导管理员;master key 用于凭据保险库)
@@ -108,6 +108,17 @@ SETUP_SERVICE=1 PIPEWRIGHT_DB_DRIVER=mysql \
   PIPEWRIGHT_DB_DSN='user:pw@tcp(host:3306)/pipewright?parseTime=true&charset=utf8mb4' \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 ```
+
+**便携形态:二进制与全部数据都落在执行命令的那个目录**(免 root、免系统路径,整目录拷走就是迁移)。切进那个目录跑一条命令,脚本会顺手生成 master key、运行配置与启动器:
+
+```bash
+mkdir -p ~/pw && cd ~/pw
+LOCAL_INSTALL=1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
+
+PIPEWRIGHT_ADMIN_PASSWORD=change-me ./run.sh   # 默认监听 :8080;口令只在首启建账时用到
+```
+
+落点全在实例根(要换地方就显式传 `INSTALL_DIR`):`./pipewright` 二进制 · `./data/`(sqlite 库,`artifacts/ repos/ cache/ config_profiles/` 与它同级)· `./master.key`(0600)· `./pipewright.env`(0600,改端口/切 MySQL 都在这里,重装不覆盖)· `./run.sh` 启动器。数据路径一律写绝对路径,所以从别的目录拉起 `./run.sh` 也还认这一份库。与 `SETUP_SERVICE=1` 互斥(便携形态不写 systemd);整目录迁移时 `master.key` 务必同带,换 key 旧凭据无法解密。
 
 > Windows 用户:到 [Releases](https://github.com/fuuhoo/pipewright/releases) 下载 `.zip`。
 
