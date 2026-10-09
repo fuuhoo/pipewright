@@ -7,6 +7,16 @@
 # 可配环境变量:
 #   VERSION         钉某版本(如 v1.2.3);缺省取 latest(API 被限流时自动退回重定向解析)。
 #   INSTALL_DIR     安装目录;缺省 /usr/local/bin(不可写时自动 sudo)。
+#   LOCAL_INSTALL   =1 时进入**便携形态**:二进制与全部数据都落在执行本命令的当前目录,
+#                   免 root、免系统路径,整目录可拷贝迁移。落点(以当前目录为根):
+#                     ./pipewright            二进制
+#                     ./data/pipewright.db    sqlite 库(artifacts/ repos/ cache/ 与它同级)
+#                     ./master.key            凭据保险库主密钥(0600)
+#                     ./pipewright.env        运行配置(0600,重装不覆盖)
+#                     ./run.sh                启动器:逐行导出 env 后 exec ./pipewright
+#                   实例根默认取当前目录,显式传 INSTALL_DIR 可换到别处。
+#                   与 SETUP_SERVICE=1 互斥(便携形态不写 systemd);管理员口令刻意不落盘,
+#                   首启自带:PIPEWRIGHT_ADMIN_PASSWORD='…' ./run.sh
 #   INSTALL_DOCKER  =1 时,Linux 下若缺 Docker 自动经官方 get.docker.com 安装(隔离构建/容器部署需要)。
 #   SETUP_SERVICE   =1 装为 systemd 服务(开机自启 + 崩溃重启 + 自更新可用;Linux,需 root);=0 强制跳过;
 #                   缺省在交互式终端下询问。会持久化 master key 到 /etc/pipewright/master.key、
@@ -22,7 +32,14 @@ set -eu
 
 REPO="fuuhoo/pipewright"
 BIN="pipewright"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+LOCAL_INSTALL="${LOCAL_INSTALL:-0}"
+# 便携形态把「安装目录」当「实例根」:INSTALL_DIR 不再是 /usr/local/bin,而是执行处的当前目录
+# (要换地方就显式传 INSTALL_DIR)。数据目录/主密钥/env/启动器全部以它为根(见 setup_local)。
+if [ "$LOCAL_INSTALL" = "1" ]; then
+	INSTALL_DIR="${INSTALL_DIR:-$PWD}"
+else
+	INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+fi
 SERVICE_INSTALLED=0
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
@@ -113,6 +130,9 @@ chmod +x "${TMP}/${BIN}"
 info "安装到 ${INSTALL_DIR}…"
 if [ -w "$INSTALL_DIR" ]; then
 	mv "${TMP}/${BIN}" "${INSTALL_DIR}/${BIN}"
+elif [ "$LOCAL_INSTALL" = "1" ]; then
+	# 便携形态不借 sudo:sudo 装进来的二进制会变成 root 属主,之后既不能自更新也不能整目录搬走。
+	err "当前目录 ${INSTALL_DIR} 不可写。便携形态要在此读写(数据、日志、自更新),请换到可写目录重跑。"
 elif command -v sudo >/dev/null 2>&1; then
 	sudo mv "${TMP}/${BIN}" "${INSTALL_DIR}/${BIN}"
 else
@@ -128,6 +148,72 @@ if command -v restorecon >/dev/null 2>&1; then
 fi
 
 info "完成 ✓  $("${INSTALL_DIR}/${BIN}" --version 2>/dev/null || echo "${BIN} ${TAG}")"
+
+# ── 可选:便携形态(实例根 = 当前目录)──────────────────────────────
+# 产物、数据库、密钥、配置全在一个目录里,整目录拷走就是迁移;全程免 root、免系统路径。
+# 幂等:重装复用已有 master key / env(升级不丢保险库、不覆盖用户改的配置)。
+setup_local() {
+	LOCAL_HOME="$INSTALL_DIR"
+	DATA_DIR="${LOCAL_HOME}/data"
+	KEY_FILE="${LOCAL_HOME}/master.key"
+	ENV_FILE="${LOCAL_HOME}/pipewright.env"
+	RUN_FILE="${LOCAL_HOME}/run.sh"
+	ADDR="${PIPEWRIGHT_ADDR:-:8080}"
+
+	info "配置便携实例(实例根:${LOCAL_HOME})…"
+	mkdir -p "$DATA_DIR"
+
+	# master key 与 env 一律写**绝对路径**:相对路径会跟启动时的 cwd 走,换个目录拉起 pipewright
+	# 就会在别处另建一份空库(症状:界面数据「消失」,其实库在另一个目录下)。
+	if [ -s "$KEY_FILE" ]; then
+		info "复用已有 master key:${KEY_FILE}"
+	else
+		info "生成凭据保险库 master key:${KEY_FILE}"
+		head -c 32 /dev/urandom | base64 | tr -d '\n' >"$KEY_FILE"
+		chmod 600 "$KEY_FILE"
+	fi
+
+	if [ -f "$ENV_FILE" ]; then
+		info "保留已有运行配置:${ENV_FILE}(需改动请直接编辑)"
+	else
+		{
+			echo '# Pipewright 便携实例运行配置;改后重跑 ./run.sh 生效。'
+			echo "PIPEWRIGHT_ADDR=${ADDR}"
+			echo "PIPEWRIGHT_MASTER_KEY_FILE=${KEY_FILE}"
+			echo "PIPEWRIGHT_DB=${DATA_DIR}/pipewright.db"
+			echo "PIPEWRIGHT_DATA_DIR=${DATA_DIR}"
+			# 用 if 而非 [ -n ] && echo:末行命令返回非 0 会被 set -e 当场中止。
+			if [ -n "${PIPEWRIGHT_DB_DRIVER:-}" ]; then
+				echo "PIPEWRIGHT_DB_DRIVER=${PIPEWRIGHT_DB_DRIVER}"
+			fi
+			if [ -n "${PIPEWRIGHT_DB_DSN:-}" ]; then
+				echo "PIPEWRIGHT_DB_DSN=${PIPEWRIGHT_DB_DSN}"
+			fi
+			if [ -n "${PIPEWRIGHT_PUBLIC_URL:-}" ]; then
+				echo "PIPEWRIGHT_PUBLIC_URL=${PIPEWRIGHT_PUBLIC_URL}"
+			fi
+		} >"$ENV_FILE"
+		chmod 600 "$ENV_FILE"
+	fi
+
+	if [ -f "$RUN_FILE" ]; then
+		info "保留已有启动器:${RUN_FILE}"
+	else
+		# 逐行 export 而非 eval:DSN 里的 & 、口令里的 $ 都不会被重新解析。
+		{
+			echo '#!/bin/sh'
+			echo '# Pipewright 便携形态启动器(由 install.sh 生成)。改配置请编辑同目录 pipewright.env。'
+			echo 'set -eu'
+			echo 'cd "$(dirname "$0")"'
+			echo 'while IFS= read -r ln || [ -n "$ln" ]; do'
+			echo '	case "$ln" in "" | "#"*) continue ;; esac'
+			echo '	export "$ln"'
+			echo 'done < ./pipewright.env'
+			echo 'exec ./pipewright "$@"'
+		} >"$RUN_FILE"
+		chmod +x "$RUN_FILE"
+	fi
+}
 
 # ── 可选:装为 systemd 服务 ──────────────────────────────────────────
 # 「部署平台」需要开机自启 + 崩溃重启,且自更新(二进制自替换 + syscall.Exec 自重启)要求
@@ -216,6 +302,14 @@ setup_service() {
 
 # 决定是否装服务:SETUP_SERVICE=1 装 / =0 跳过 / 交互式询问 / 非交互且未设则给提示。
 maybe_setup_service() {
+	# 便携形态与 systemd 互斥:服务会把实例钉到 /var/lib/pipewright,那就不是「当前目录」了。
+	if [ "$LOCAL_INSTALL" = "1" ]; then
+		if [ "${SETUP_SERVICE:-}" = "1" ]; then
+			warn "LOCAL_INSTALL=1 与 SETUP_SERVICE=1 互斥,已按便携形态处理(不写 systemd)。"
+		fi
+		return 0
+	fi
+
 	[ "$OS" = "linux" ] || return 0
 	if ! command -v systemctl >/dev/null 2>&1; then
 		[ "${SETUP_SERVICE:-}" = "1" ] && warn "未检测到 systemd(systemctl),跳过服务安装。"
@@ -282,11 +376,18 @@ check_docker() {
 		fi
 	fi
 }
+[ "$LOCAL_INSTALL" = "1" ] && setup_local
 check_docker
 maybe_setup_service
 
 if [ "$SERVICE_INSTALLED" = "1" ]; then
 	info "完成 ✓  Pipewright 已作为 systemd 服务运行(开机自启 + 自更新可用)。"
+elif [ "$LOCAL_INSTALL" = "1" ]; then
+	info "完成 ✓  便携实例已装进 ${INSTALL_DIR}"
+	printf '  启动:%s\n' "./run.sh                # 监听 ${PIPEWRIGHT_ADDR:-:8080},配置在同目录 pipewright.env"
+	printf '  首启:%s\n' "PIPEWRIGHT_ADMIN_PASSWORD='你设的口令' ./run.sh   # 口令刻意不落盘"
+	printf '  数据:%s\n' "./data(pipewright.db 与 artifacts/ repos/ cache/ 同级)、./master.key"
+	printf '  迁移:%s\n' "整目录拷走即可,但 master.key 务必同带 —— 换 key 旧凭据无法解密"
 else
 	printf '启动:%s\n' "${BIN}   # 默认监听 :8080,数据落当前目录 pipewright.db"
 	printf '提示:%s\n' "如需开机自启 + 自更新,可重跑并加 SETUP_SERVICE=1 装为 systemd 服务。"
