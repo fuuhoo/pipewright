@@ -171,6 +171,18 @@ docker exec pipewright sh -c 'mkdir -p "$TMPDIR/probe" && printf "FROM alpine:3.
 
 A `sha256:…` on the last line means success. The `DEPRECATED: The legacy builder is deprecated` notice in between is expected: the `-docker` tier ships no buildx plugin on purpose (with buildx installed, `docker build` hands off to buildx, which puts requirements on the host daemon version; without it any daemon works).
 
+#### Already running a bare binary on this machine? Use the `docker-compose.devtest.yml` overlay
+
+Those three edits are already packaged as an overlay in the repo root, which also frees up the port and container name so the container tier can sit next to the bare instance on :8080:
+
+```bash
+# In .env set: PIPEWRIGHT_VERSION=<ver>-docker, PIPEWRIGHT_PORT=8081, PIPEWRIGHT_WORK_DIR=<absolute host path>
+mkdir -p "$PIPEWRIGHT_WORK_DIR"      # the dir must exist on the host first, otherwise the same-path bind is pointless
+docker compose -p pwtest -f docker-compose.yml -f docker-compose.devtest.yml up -d
+```
+
+The overlay does exactly three things: renames the container to `pipewright-composetest`; declares `ports` with `!override` so it **replaces** instead of appends (compose appends lists by default — without this it requests both 8080 and 8081 and fails to start next to the bare instance); and enables the docker.sock plus same-path workspace bind. Data lives in the `pwtest_pipewright-data` volume and dependency cache under `PIPEWRIGHT_WORK_DIR`, both namespaced by the project name `pwtest`, so nothing touches the default stack; `down` without `-v` keeps the data. Mounting the socket grants the container host-level root — this file is for a trusted local machine, don't copy it into production.
+
 #### Seeing the host's images / containers from inside the container
 
 Those screens use SSH, not the socket — the image and container panels always SSH to the target machine, there is no "read my local socket" shortcut. And `localhost` inside a container is the container itself, so compose ships:

@@ -171,6 +171,18 @@ docker exec pipewright sh -c 'mkdir -p "$TMPDIR/probe" && printf "FROM alpine:3.
 
 打印出 `sha256:…` 即成。中间那行 `DEPRECATED: The legacy builder is deprecated` 是预期内的:`-docker` 档刻意不带 buildx 插件(带了 `docker build` 就转给 buildx,对宿主 daemon 版本有要求;不带则任何版本都能跑)。
 
+#### 本机已经跑着裸二进制实例?套现成覆盖层 `docker-compose.devtest.yml`
+
+上面三处改动仓库里备了一份现成的叠加文件,顺带把端口与容器名让开,容器形态可以与 :8080 的裸实例并存:
+
+```bash
+# .env 里设:PIPEWRIGHT_VERSION=<版本>-docker、PIPEWRIGHT_PORT=8081、PIPEWRIGHT_WORK_DIR=<宿主绝对路径>
+mkdir -p "$PIPEWRIGHT_WORK_DIR"      # 工作区目录得先在宿主存在,同路径映射才有意义
+docker compose -p pwtest -f docker-compose.yml -f docker-compose.devtest.yml up -d
+```
+
+覆盖层只有三行动作:容器名换 `pipewright-composetest`;`ports` 用 `!override` **替换**而不是追加(compose 默认对列表是追加,不写就同时申请 8080 和 8081,和裸实例抢端口直接起不来);放开 docker.sock 与工作区的同路径自绑定。数据走 `pwtest_pipewright-data` 具名卷、依赖缓存走 `PIPEWRIGHT_WORK_DIR`,都在项目名 `pwtest` 底下,与默认那套 compose 互不干扰;`down` 不带 `-v` 即保留数据。挂 socket = 容器拿到宿主 root 级权限,这份文件是给信任的本机环境用的,别抄上生产。
+
 #### 在容器里看宿主机上的镜像 / 容器
 
 这两块走的是 SSH 而非 socket —— 平台的镜像与容器面板一律 SSH 到目标机执行命令,没有「读本机 socket」这条捷径。而容器内的 `localhost` 是容器自己,所以 compose 已配好:
