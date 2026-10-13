@@ -60,7 +60,7 @@
 - **🔐 安全地基** —— 单管理员认证(argon2id + CSRF)· 凭据加密保险库(NaCl secretbox,掩码呈现,绝无明文)· OAuth 应用接入 Gitee / GitHub / GitLab / 自建实例(拿到的 access token 直接存成可复用的保险库凭据)· append-only 审计(SQLite trigger 硬拦 UPDATE/DELETE)+ 可选远端 sink · 按 run 解析真实凭据后对日志 / 诊断 / 通知全链路脱敏。
 - **🧩 项目与流水线** —— 可视化编排画布(阶段 DAG + 阶段内任务级 DAG)· 矩阵构建 · 人工审批门(可直接在通知里点签名链接审批)· 旁挂服务(测试挂 DB/Redis)· 阶段 `when` 条件 + 阶段后置步骤 · 类型化运行参数(枚举/布尔/数字,触发时即校验)· 触发方式:webhook、分支→环境映射、5 字段 cron 定时、上游→下游流水线串联(深度门 + 路径门防环)· 项目级并发上限 + 超限 FIFO 排队 · 复用库:流水线模板 / 变量组 / 自定义节点 · 服务端权威合法性校验。
 - **📝 流水线即代码** —— 把流水线结构写进 `.pipewright.yml`、按分支各自演进,画布配置始终作为兜底回退([详见下文](#流水线即代码gitops))。
-- **🏗 隔离构建与产物** —— 版本钉死的容器内隔离构建(docker/nerdctl/podman)· 代码管理区:本地 bare 镜像 + 增量 fetch,秒级出工作区 · 构建依赖缓存(按分支 + lockfile hash 寻址)· 内容寻址制品库,jar/dist 存**真字节**供部署(而非占位 reference)· 镜像构建 + 推送私有仓库 + 镜像 GC · 每项目可指定远程构建机(构建经 SSH 下沉到远程,token 只留控制机)· JUnit + Cobertura 测试报告喂质量门禁,不过则阶段失败、阻断下游部署 · 实时终端日志(SSE)+ 历史回放 · 只读代码浏览(Monaco)。
+- **🏗 隔离构建与产物** —— 版本钉死的容器内隔离构建(docker/nerdctl/podman)· 代码管理区:本地 bare 镜像 + 增量 fetch,秒级出工作区 · 项目依赖缓存:每项目一个固定目录 bind 进构建容器,Maven/npm/Go/pip 跨运行复用,**流水线里零配置** · 任务级构建依赖缓存(按分支 + lockfile hash 寻址)· 内容寻址制品库,jar/dist 存**真字节**供部署(而非占位 reference)· 镜像构建 + 推送私有仓库 + 镜像 GC · 每项目可指定远程构建机(构建经 SSH 下沉到远程,token 只留控制机;远程侧按设计不留常驻缓存)· JUnit + Cobertura 测试报告喂质量门禁,不过则阶段失败、阻断下游部署 · 实时终端日志(SSE)+ 历史回放 · 只读代码浏览(Monaco)。
 - **🚀 多服务器部署** —— 经 SSH 免 Agent 部署 · 产物直铺到指定目录(`jar`/`dist` 落进去就是内容本身)+ 重启命令 + 健康门控 · 镜像部署停旧起新、失败回滚上一镜像 · **compose 整栈交付**(仓库里那份 `docker-compose.yml` 直接交目标机的 compose CLI,与「容器」页管的是同一份栈)· **K8s 发布**(平台直连集群 API,不经跳板机)· 多机并行扇出 + 部分失败可见 · 命令型部署(无产物,直接重启服务)· **环境一等公民**:逐环境部署时间线、当前活跃版本、一键回滚到上一次全成功部署 · 环境晋级流(dev→staging→prod)+ 逐环境变量/密钥 + 审批门。
 - **🌐 自动 HTTPS + 域名反向代理** —— 每台目标主机一个托管 Caddy 容器,复用与容器运维同一套 SSH + docker 手法编排(渲染 Caddyfile → `docker cp` → 优雅 reload)。证书经 Let's Encrypt 自动签发/续期:HTTP-01,或**经 Cloudflare / DNSPod / 阿里云 DNS 走 DNS-01**(通配符必需)。另有:多域名别名、路径路由(`/api`→A、`/`→B)、重定向、访问控制(basic auth、IP 允许/拒绝 CIDR)、HSTS / 安全头 / 压缩、多上游负载均衡 + 主动健康检查故障转移、WebSocket / gRPC(h2c) / TCP 透传(caddy-l4)、按真实 443 握手探测的证书大盘、一键子域名。
 - **🔎 Per-PR 预览环境** —— 某 PR 的运行成功部署后,自动分配一次性域名 `pr-<n>-<proj>.<base>`(带自己的证书与路由),评审者点开链接就能看到这条 PR 真实跑起来的样子。同一 PR 幂等复用;自动回收,但**仅在**确证 PR 已关闭/合并时才回收。
@@ -138,10 +138,13 @@ compose 文件本身只读这几个变量(平台自身的环境变量见下方[�
 | `PIPEWRIGHT_IMAGE` | 镜像仓库前缀 | `registry.cn-qingdao.aliyuncs.com/fubin/pipewright`(阿里云 ACR 青岛,两档都有);`ghcr.io/fuuhoo/pipewright` 也能用,但只有默认档 |
 | `PIPEWRIGHT_VERSION` | 镜像标签。**两档**见下 | `latest` |
 | `PIPEWRIGHT_PORT` | 宿主侧发布端口 | `8080` |
-| `PIPEWRIGHT_WORK_DIR` | 容器内构建的工作区目录(宿主绝对路径)。仅「容器内打包镜像」需要,见下 | 空(此时容器内隔离构建不可用) |
+| `PIPEWRIGHT_WORK_DIR` | 容器内构建的工作区目录(宿主绝对路径)。它同时是**项目依赖缓存**的落点(该目录下的 `pipewright-project-cache/`),所以想让容器里的构建跨运行吃到缓存,只需把这一条路径映射到宿主 | 空(此时容器内隔离构建不可用,缓存落容器 `/tmp`) |
 | `PIPEWRIGHT_RUNNER` | 留空即默认 DAG 执行器;`legacy` 回退旧版固定流程 | 空 |
+| `PIPEWRIGHT_BIN_DIR` | 宿主放二进制的目录,仅在「只换二进制」覆盖文件里用(见下) | `./bin` |
 
 数据(sqlite 库、制品库、代码管理区、构建依赖缓存)全落在容器 `/data`,由具名卷 `pipewright-data` 持久化。master key 一旦写入凭据就要长期保存 —— 换 key 会让已存凭据无法解密。
+
+**例外**:项目依赖缓存**不**放 `/data`。它是被 `docker run -v` 挂进构建容器的,而 `-v` 的源路径由**宿主** daemon 解析 —— `/data` 在宿主上的真身是 `/var/lib/docker/volumes/pipewright-data/_data`,拿 `/data/...` 当源只会在宿主根下凭空建一个空目录。所以它跟着 `PIPEWRIGHT_WORK_DIR`(要求宿主同路径)走,详见下节。
 
 #### 两档镜像:要不要在容器里打包镜像
 
@@ -181,6 +184,57 @@ extra_hosts:
 
 > 容器内构建与「SSH 登记宿主」两件事互不依赖:前者只影响流水线里能不能在平台容器里出镜像,后者只影响 UI 能否看见宿主镜像。只用平台做部署、构建在别处的话,一档 distroless + 不挂 socket 就够了。
 
+#### 只换二进制:把程序本体映射进容器
+
+发布镜像里真正属于程序的只有一个约 40MB 的静态二进制,其余都是运行环境(alpine / distroless、docker CLI、CA 证书、`/data`)。宿主拉镜像慢、或者你就是想让「升级」等于换文件,可以让镜像退化成运行环境,把宿主的二进制映射进容器里跑。
+
+在 `docker-compose.yml` 同目录放一个覆盖文件:
+
+```yaml
+# docker-compose.binary.yml —— 镜像只当运行环境,程序本体来自宿主
+services:
+  pipewright:
+    # 跑映射进来的那个,而不是镜像里烘焙的 /pipewright
+    entrypoint: ["/opt/pipewright/bin/pipewright"]
+    volumes:
+      # 挂目录而非单文件(原因见下);路径相对本文件所在目录,.env 里给绝对路径也行
+      - ${PIPEWRIGHT_BIN_DIR:-./bin}:/opt/pipewright/bin:ro
+    healthcheck:
+      # 必须跟着改到新路径:镜像里那个 /pipewright 还在,不改的话健康检查探的仍是它
+      test: ["CMD", "/opt/pipewright/bin/pipewright", "--version"]
+```
+
+compose 合并时 `volumes` 是**追加**(上方的 `pipewright-data:/data` 照旧生效),`entrypoint` 与 `healthcheck` 是覆盖。起容器:
+
+```bash
+mkdir -p bin
+# 二进制来源二选一 —— 要的是**容器**的平台,不是宿主的:
+#   a) 就在目标机上装(只落 ./bin,不写 systemd;变量要给 sh,不是给 curl)
+curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh |
+  INSTALL_DIR=./bin SETUP_SERVICE=0 sh
+#   b) 本机交叉编译(GOARCH 跟着容器架构;BIN= 是为了不覆盖仓库里的 ./pipewright)
+GOOS=linux GOARCH=amd64 make go-build BIN=bin/pipewright
+
+docker compose -f docker-compose.yml -f docker-compose.binary.yml up -d
+```
+
+之后升级 = 换那个文件 + restart,一次镜像都不拉:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh |
+  VERSION=v0.5.2 INSTALL_DIR=./bin SETUP_SERVICE=0 sh
+docker compose -f docker-compose.yml -f docker-compose.binary.yml restart
+curl -s localhost:8080/version    # {"version":"v0.5.2","commit":"dfe5f43",…} —— platform 就是你编译的那个 arch
+```
+
+几个要点,前两条是本机实测结论:
+
+- **架构要对容器**,不是对宿主:macOS 上 `make build` 出的是 darwin 二进制,挂进 linux 容器只会 `exec format error`。二进制是 `CGO_ENABLED=0` 纯静态,同一份文件在两档镜像里都能跑 —— 本机(arm64)在 `latest`(distroless, nonroot)与 `latest-docker`(alpine, root)都验过:容器里镜像自带的 `/pipewright --version` 报 `0.5.0`,映射进来的报 `v0.5.2`,`/version` 返回后者,登录与接口照常。
+- **挂目录,别挂单文件**:换二进制的安全姿势是「写临时文件 + rename」(`install.sh` 和平台自更新都这么做),而 rename 会换掉 inode。目录挂载跟着目录走,`restart` 就能看到新版;单文件挂载绑的是创建容器时那个 inode,之后能否看见新版取决于运行时怎么解析宿主路径(本机 OrbStack 上 `restart` 后确实换了,但别把这事赌在 Linux dockerd 上)。坚持挂单文件的话,换完用 `up -d --force-recreate`。
+- **权限**:二进制 `0755`,宿主目录得可遍历 —— 默认档以 nonroot(uid 65532)运行,靠的是 others 位的 r-x。SELinux enforcing 的机器(RHEL / Fedora 系)bind 进来可能 `permission denied`,给挂载加 `:z` 再试。
+- **别反向降级**:数据卷照旧,新版首启自动跑迁移;但拿旧二进制挂已经有新版 schema 的库不行 —— 迁移只往前走。想回退就连文件一起回退(留一份上一版二进制即可)。
+- **界面里的「立即更新」在这个形态下不适用**:容器里有 `/.dockerenv`,平台按 Docker 形态只给你 `docker compose pull && docker compose up -d`(`internal/version/selfupdate.go:29-43`),而 pull 换的是镜像层,真正跑的还是映射进来那个文件。要在 UI 里一键更新,用 ① 的二进制形态。
+
 ### ③ docker run(最快试用)
 
 ```bash
@@ -203,6 +257,7 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 
 - **二进制部署**:点「立即更新」即自动下载新版 + 校验和核验 + 替换 + 重启(需对二进制文件有写权限;装在 `$HOME/.local/bin` 免 sudo,或用 `SETUP_SERVICE=1` 装的 root systemd 服务亦满足)。
 - **Docker 部署**:容器不替换自身镜像,按提示在宿主执行 `docker compose pull && docker compose up -d`(数据卷保留)。
+- **映射二进制的 compose 形态**(见上节):换 `./bin/pipewright` 那个文件再 `docker compose -f docker-compose.yml -f docker-compose.binary.yml restart`,不拉镜像;`curl :8080/version` 核对新版本号。
 
 ### 配置(环境变量)
 
@@ -240,8 +295,10 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 | `PIPEWRIGHT_ARTIFACT_DIR` | 制品库目录(jar/dist 真字节) | `<DB 同级>/artifacts` |
 | `PIPEWRIGHT_REPO_CACHE_DIR` | 代码管理区(本地 bare 镜像)目录 | `<DB 同级>/repos` |
 | `PIPEWRIGHT_NO_REPO_CACHE` | `1` 关闭代码管理区(每次构建直连网络克隆) | 关 |
-| `PIPEWRIGHT_CACHE_DIR` | 构建依赖缓存目录 | `<DB 同级>/cache` |
+| `PIPEWRIGHT_CACHE_DIR` | 构建依赖缓存目录(任务里配了 `cachePaths` 的脚本节点,按 key 归档搬运**工作区内**目录) | `<DB 同级>/cache` |
 | `PIPEWRIGHT_NO_BUILD_CACHE` | `1` 关闭构建依赖缓存(每次冷构建) | 关 |
+| `PIPEWRIGHT_PROJECT_CACHE_DIR` | 项目依赖缓存根:每个项目一个固定目录并 bind 进构建容器(Maven/npm/Go/pip/Gradle 的家目录),流水线里零配置;容器形态下这一路径必须与宿主同路径,否则缓存不进持久盘 | 进程形态 `<DB 同级>/project-cache`;容器形态 `<TMPDIR>/pipewright-project-cache` |
+| `PIPEWRIGHT_NO_PROJECT_CACHE` | `1` 关闭项目依赖缓存(依赖每次重下) | 关 |
 | `PIPEWRIGHT_NO_IMAGE_GC` | `1` 保留构建出的镜像,不做垃圾回收 | 关 |
 | `PIPEWRIGHT_PAC_RUNTIME` | `1` 对**所有项目**强开流水线即代码,无视各项目开关 | 关 |
 | `PIPEWRIGHT_CHAIN_MAX_DEPTH` | 流水线串联深度上限(防无限链的硬兜底) | `5` |
@@ -407,6 +464,7 @@ stages:
 │  ├── internal/runner        每项目远程构建机配置
 │  ├── internal/repocache     代码管理区(本地 bare 镜像 + 增量 fetch)
 │  ├── internal/buildcache    构建依赖缓存(分支 + lockfile 寻址)
+│  ├── internal/projectcache  项目依赖缓存(每项目固定目录,bind 进构建容器)
 │  ├── internal/artifactstore 内容寻址的产物字节存储
 │  ├── internal/testreport    JUnit + Cobertura 解析
 │  ├── internal/qualitygate   纯质量门禁评估

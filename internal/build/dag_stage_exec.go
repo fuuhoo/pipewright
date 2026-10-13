@@ -275,7 +275,7 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 					// 构建依赖缓存(#61):执行前恢复(暖构建)、成功后保存(best-effort,缓存问题绝不让构建失败)。
 					// 任务级 timeout/retry(#63):零值时 runScriptStepWithOpts 退化为单次无超时执行(旧行为)。
 					b.restoreJobCache(ctx, jrep, jb, r.Trigger.Branch, workspace)
-					if err := b.runScriptStepWithOpts(ctx, jsink, 0, step, workspace); err != nil {
+					if err := b.runScriptStepWithOpts(ctx, jsink, 0, step, workspace, proj.ID); err != nil {
 						_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
 						return err // ErrBuildFailed / run.ErrCanceled
 					}
@@ -561,7 +561,7 @@ func (b *Builder) runScriptJobIsolated(
 		step.Resource.Network = svcNetwork
 	}
 	b.restoreJobCache(ctx, rep, jb, r.Trigger.Branch, ws)
-	if err := b.runScriptStepWithOpts(ctx, sink, 0, step, ws); err != nil {
+	if err := b.runScriptStepWithOpts(ctx, sink, 0, step, ws, proj.ID); err != nil {
 		return nil, err // ErrBuildFailed / run.ErrCanceled
 	}
 	b.saveJobCache(ctx, rep, jb, r.Trigger.Branch, ws)

@@ -49,15 +49,21 @@ func scriptSteps(settings *pipeline.Settings) []pipeline.PipelineStep {
 
 // runScriptStep 在隔离容器内执行一个 script 步骤(挂载克隆工作区为脚本上下文)。
 //
-// ordinal 是该步在整次运行步骤计划里的序号(已 StepRunning)。返回 nil=成功;
+// ordinal 是该步在整次运行步骤计划里的序号(已 StepRunning)。projectID 用于取该项目的固定依赖
+// 缓存目录(为空或平台未装缓存 → 不挂,行为同旧)。返回 nil=成功;
 // 非零退出 → ErrBuildFailed(调用方置 failed + SetFailureLog);ctx 取消 → run.ErrCanceled。
-func (b *Builder) runScriptStep(ctx context.Context, sink run.StepSink, ordinal int, step pipeline.PipelineStep, workspace string) error {
+func (b *Builder) runScriptStep(ctx context.Context, sink run.StepSink, ordinal int, step pipeline.PipelineStep, workspace, projectID string) error {
 	onLine := b.lineSink(sink, ordinal)
 
 	// env:非 secret → 明文 K=V;secret → vault.Reveal 明文 K=V(注入容器,绝不回显值)。
 	// 复用与构建变量同款拆分(buildArgs):secret 明文即取即用,脱敏由 per-run Masker 兜底。
 	plain, secretEnv := b.buildArgs(step.Env)
 	env := append(plain, secretEnv...)
+
+	// 项目依赖缓存(全局按项目固定目录,流水线里零配置):追加可写 bind 挂载 + 让工具改道过去的
+	// env。只在这条本地路径生效 —— 远程 runner 走 remote_stage_exec 自行直调 driver,不留残。
+	res := step.Resource
+	env = b.applyProjectCache(&res, env, projectID, onLine)
 
 	// 容器内工作目录:挂载点 + 可选相对子目录(WorkDir)。WorkDir 经 join 去穿越,落在挂载点内。
 	workdir := scriptWorkspaceMount
@@ -73,7 +79,7 @@ func (b *Builder) runScriptStep(ctx context.Context, sink run.StepSink, ordinal 
 	// 私有构建镜像:先按环境绑定的凭据登录(#9),再 docker run(它负责按需拉取)。
 	b.loginForImage(ctx, step.Image, step.ImageCredentialID, onLine)
 
-	code, err := b.driver.RunToolchain(ctx, step.Image, workspace, scriptWorkspaceMount, workdir, env, cmd, step.Resource, onLine)
+	code, err := b.driver.RunToolchain(ctx, step.Image, workspace, scriptWorkspaceMount, workdir, env, cmd, res, onLine)
 	if err != nil && code < 0 {
 		// 容器无法启动(镜像拉取失败/CLI 不可用等);ctx 取消时 code<0 但 ctx.Err 命中,由调用方归一。
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -99,7 +105,7 @@ func (b *Builder) runScriptStep(ctx context.Context, sink run.StepSink, ordinal 
 //
 // 重试(step.Retries>0):整步非零退出/容器启动失败时重跑,达上限(共 1+Retries 次尝试)才判失败。
 // run.ErrCanceled(取消)绝不重试。每次重试前再查一次 parent ctx。
-func (b *Builder) runScriptStepWithOpts(ctx context.Context, sink run.StepSink, ordinal int, step pipeline.PipelineStep, workspace string) error {
+func (b *Builder) runScriptStepWithOpts(ctx context.Context, sink run.StepSink, ordinal int, step pipeline.PipelineStep, workspace, projectID string) error {
 	onLine := b.lineSink(sink, ordinal)
 	attempts := step.Retries + 1
 	if attempts < 1 {
@@ -121,7 +127,7 @@ func (b *Builder) runScriptStepWithOpts(ctx context.Context, sink run.StepSink, 
 		if step.TimeoutSeconds > 0 {
 			attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutSeconds)*time.Second)
 		}
-		err := b.runScriptStep(attemptCtx, sink, ordinal, step, workspace)
+		err := b.runScriptStep(attemptCtx, sink, ordinal, step, workspace, projectID)
 		timedOut := step.TimeoutSeconds > 0 && errors.Is(attemptCtx.Err(), context.DeadlineExceeded)
 		cancel()
 

@@ -50,6 +50,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/previewenv"
 	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/projectcache"
 	"github.com/fuuhoo/pipewright/internal/promotion"
 	"github.com/fuuhoo/pipewright/internal/proxy"
 	"github.com/fuuhoo/pipewright/internal/prstatus"
@@ -372,6 +373,30 @@ func main() {
 		}
 	}
 
+	// 项目依赖缓存(project cache · 全局零配置):本地每次容器执行都为该项目挂上固定的依赖目录
+	// (Maven / npm / Go module / pip / Gradle / cargo 的家目录),跨 run 复用,流水线里不配任何东西
+	// 就能避免每次重下依赖。根目录按启动形态推导:进程形态 = DB 同级 project-cache;容器(compose)
+	// 形态 = TMPDIR 下的 pipewright-project-cache —— 容器形态必须让该路径在宿主与容器里**同名同路径**
+	// (见 docker-compose.yml 的 ②③),否则宿主 daemon 按宿主路径解析挂载点,缓存落不到持久盘。
+	// PIPEWRIGHT_PROJECT_CACHE_DIR 可显式指定,PIPEWRIGHT_NO_PROJECT_CACHE=1 关。
+	// 远程 runner 不走这条(设计上不在远端机器留残);任何缓存问题绝不让构建失败。
+	var projectCacheLayout *projectcache.Layout
+	if os.Getenv("PIPEWRIGHT_NO_PROJECT_CACHE") != "1" {
+		dir, warn := projectcache.DefaultRoot(cfg.DBPath,
+			strings.TrimSpace(os.Getenv("PIPEWRIGHT_PROJECT_CACHE_DIR")),
+			strings.TrimSpace(os.Getenv("TMPDIR")),
+			projectcache.LikelyInContainer())
+		if warn != "" {
+			log.Printf("[projectcache] 警告:%s", warn)
+		}
+		if l, lerr := projectcache.New(dir); lerr == nil {
+			projectCacheLayout = l
+			log.Printf("[projectcache] 项目依赖缓存已启用(每项目一个固定目录,零配置):%s", dir)
+		} else {
+			log.Printf("[projectcache] 警告:项目依赖缓存不可用(%v),依赖每次重新下载", lerr)
+		}
+	}
+
 	// 把代码缓存(若启用)做成 Builder 选项;未启用 → 无操作选项(保持默认直连克隆器)。
 	clonerOpt := func(*build.Builder) {}
 	repoFilesOpt := func(*build.Builder) {}
@@ -388,6 +413,12 @@ func main() {
 		buildCacheOpt = build.WithBuildCache(cacheStore)
 	}
 
+	// 项目依赖缓存布局(若可用)做成 Builder 选项;未启用 → 无操作(执行侧见 nil 自动跳过,零开销)。
+	projectCacheOpt := func(*build.Builder) {}
+	if projectCacheLayout != nil {
+		projectCacheOpt = build.WithProjectCache(projectCacheLayout)
+	}
+
 	// 部署服务(提前到 dag 装配前构造,供 deploy_ssh 流水线节点注入)。Story 4.6 诊断钩子复用 7-2。
 	deploySvc := deploy.New(targetSvc, runSvc, deploy.WithDiagnoseHook(httpapi.NewDiagnoseHook(runSvc, aiSvc, secretSrc)), deploy.WithArtifactStore(artStore), deploy.WithKube(kubeSvc))
 
@@ -398,7 +429,7 @@ func main() {
 	// DAG 模式探测不到容器 CLI(docker)时优雅回退 stub(现有逻辑,NFR-10)。
 	var runnerOpts []run.PoolOption
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PIPEWRIGHT_RUNNER")), "legacy") {
-		runnerOpts = buildRunnerOption(projectSvc, pipelineSettingsSvc, credVault, artStore, repoCache, buildEnvGate)
+		runnerOpts = buildRunnerOption(projectSvc, pipelineSettingsSvc, credVault, artStore, repoCache, buildEnvGate, projectCacheOpt)
 		log.Printf("[run] PIPEWRIGHT_RUNNER=legacy:旧版固定流程运行器已启用(clone→对仓库根 docker build→deploy,⚠ 不执行 UI 可视化流水线 stages;如需真按流水线跑请去掉该 env)")
 	} else {
 		// 阶段执行体(Story 8-2):探测到容器 CLI → 注入真实阶段执行器(script 类型 job 在隔离
@@ -411,7 +442,7 @@ func main() {
 		// 「首批后暂停」确认 hook(strategy=interactive):部署节点发完首批后置 run 为等待审批,
 		// 由同一个 approve/reject 端点(或签名链接)决定续发其余主机还是让它们保留旧版本。
 		deployGate := httpapi.NewDeployGate(runSvc, approvalCoord, approvalStore, approvalNotifier)
-		if b, berr := build.NewBuilder(projectSvc, pipelineSettingsSvc, credVault, build.WithArtifactStore(artStore), build.WithArtifactLister(runSvc.ListArtifacts), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithCommitRecorder(func(ctx context.Context, runID, commit string) { _ = runSvc.SetCommit(ctx, runID, commit) }), build.WithStageDeployer(deploySvc), build.WithStageNotifier(notifySvc), build.WithBuildEnvGate(buildEnvGate), build.WithDeployGate(deployGate), clonerOpt, buildCacheOpt, repoFilesOpt); berr == nil {
+		if b, berr := build.NewBuilder(projectSvc, pipelineSettingsSvc, credVault, build.WithArtifactStore(artStore), build.WithArtifactLister(runSvc.ListArtifacts), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithCommitRecorder(func(ctx context.Context, runID, commit string) { _ = runSvc.SetCommit(ctx, runID, commit) }), build.WithStageDeployer(deploySvc), build.WithStageNotifier(notifySvc), build.WithBuildEnvGate(buildEnvGate), build.WithDeployGate(deployGate), clonerOpt, buildCacheOpt, projectCacheOpt, repoFilesOpt); berr == nil {
 			// runSvc 作测试报告持久层注入(Story 8-6 / FR-8-6):script 步骤产报告 → 解析 →
 			// 落库 → 质量门禁裁决(不过则阶段失败,阻断下游部署)。
 			dagOpts = append(dagOpts, dagrun.WithStageExecutor(build.NewStageExecutorWithRunner(b, runSvc, runnerSvc, targetSvc)))
@@ -886,7 +917,7 @@ func (l pacSpecLoader) Get(ctx context.Context, projectID, branch string) (*pipe
 //   - 其它/缺省 auto:尝试构造真实 Builder,探测不到容器 CLI 时回退桩(优雅降级,NFR-10)。
 //
 // 返回 []run.PoolOption(可能为空):空 ⇒ 用 pool 默认 StubRunner。
-func buildRunnerOption(projectSvc project.Service, settingsSvc pipeline.SettingsService, v vault.Vault, artStore *artifactstore.Store, repoCache *repocache.Cache, envGate pipeline.BuildEnvGate) []run.PoolOption {
+func buildRunnerOption(projectSvc project.Service, settingsSvc pipeline.SettingsService, v vault.Vault, artStore *artifactstore.Store, repoCache *repocache.Cache, envGate pipeline.BuildEnvGate, projectCacheOpt build.BuilderOption) []run.PoolOption {
 	clonerOpt := func(*build.Builder) {}
 	if repoCache != nil {
 		clonerOpt = build.WithCloner(repoCache)
@@ -897,14 +928,14 @@ func buildRunnerOption(projectSvc project.Service, settingsSvc pipeline.Settings
 		log.Printf("[build] PIPEWRIGHT_BUILDER=stub:使用桩 runner(合成日志,不碰容器)")
 		return nil
 	case "real":
-		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithBuildEnvGate(envGate), clonerOpt)
+		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithBuildEnvGate(envGate), clonerOpt, projectCacheOpt)
 		if err != nil {
 			log.Fatalf("[build] PIPEWRIGHT_BUILDER=real 但构建器不可用:%v", err)
 		}
 		log.Printf("[build] 真实隔离构建器已启用(容器 CLI=%s)", b.DriverBinary())
 		return []run.PoolOption{run.WithRunner(b)}
 	default:
-		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithBuildEnvGate(envGate), clonerOpt)
+		b, err := build.NewBuilder(projectSvc, settingsSvc, v, build.WithArtifactStore(artStore), build.WithImageGC(os.Getenv("PIPEWRIGHT_NO_IMAGE_GC") != "1"), build.WithBuildEnvGate(envGate), clonerOpt, projectCacheOpt)
 		if err != nil {
 			log.Printf("[build] 未探测到容器 CLI(docker/nerdctl/podman),回退桩 runner(PIPEWRIGHT_BUILDER=real 可强制要求真实):%v", err)
 			return nil

@@ -35,6 +35,8 @@
 /repos/
 /artifacts/
 /cache/
+# 每项目固定依赖缓存(bind 进构建容器的宿主侧目录),同为运行时数据,不入库
+/project-cache/
 
 # install.sh LOCAL_INSTALL=1 的便携实例落在仓库目录时会生成这些 —— 主密钥/配置/启动器,绝不入库
 /master.key

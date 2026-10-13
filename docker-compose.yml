@@ -34,6 +34,12 @@ services:
       PIPEWRIGHT_RUNNER: ${PIPEWRIGHT_RUNNER:-}
       # 构建工作区落点(配合下方 volumes 的 ②③)。留空 = 容器默认 /tmp,此时容器内隔离构建不可用。
       TMPDIR: ${PIPEWRIGHT_WORK_DIR:-}
+      # 项目依赖缓存(每项目一个固定目录,流水线里零配置;Maven/npm/Go/pip 跨运行复用)。
+      # 两个都留空 = 自动:缓存落在上面那个目录的 pipewright-project-cache/ 子目录下 —— 也就是
+      # **只需映射 PIPEWRIGHT_WORK_DIR 这一条路径**,缓存与工作区同进同出。PROJECT_CACHE_DIR 只在
+      # 想换盘(挪到 NVMe 等)时填,填了就必须仍是宿主与容器同路径的目录,否则见下方 ② 的症状。
+      PIPEWRIGHT_PROJECT_CACHE_DIR: ${PIPEWRIGHT_PROJECT_CACHE_DIR:-}
+      PIPEWRIGHT_NO_PROJECT_CACHE: ${PIPEWRIGHT_NO_PROJECT_CACHE:-}
     volumes:
       - pipewright-data:/data
       # ---- 想让平台在容器里打包镜像?三行一起放开(缺一不可)----
@@ -50,6 +56,12 @@ services:
       #    "no such file or directory",而平台侧看着一切正常)。
       # ③ 把 TMPDIR 指到那个目录:构建工作区由 os.MkdirTemp 创建,落点跟 TMPDIR 走。
       #    把 PIPEWRIGHT_WORK_DIR 同时写进 .env 与下面两行(值必须一致,且是宿主绝对路径)。
+      #    顺带:项目依赖缓存(上面 PIPEWRIGHT_PROJECT_CACHE_DIR 留空时)也落在该目录的
+      #    pipewright-project-cache/ 子目录 —— 同样必须是这条宿主同路径映射。**不要**把缓存/工作区
+      #    指到 /data:那是具名卷,宿主真身在 /var/lib/docker/volumes/pipewright-data/_data 下,
+      #    daemon 按宿主路径解析 -v 的源,拿 /data 当源会在宿主根下凭空建一个空目录(看着在写,
+      #    实则不进卷、down -v 删不掉、备份不到)。没放开 ②③ 时缓存落容器 /tmp,重启即失,
+      #    启动日志会带一条 [projectcache] 告警说明这点。
       # - ${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}:${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}
     # 容器内的 localhost 是容器自己,不是宿主。要在 UI 里看**宿主机**的镜像列表 / 部署容器
     # (那两条路走 SSH 而非 socket),就把宿主登记成主机 host.docker.internal 的服务器。

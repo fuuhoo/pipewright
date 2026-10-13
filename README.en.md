@@ -60,7 +60,7 @@ It has since grown past that trio: publishing a deployed service on an HTTPS dom
 - **🔐 Security foundation** — single-admin auth (argon2id + CSRF) · encrypted credential vault (NaCl secretbox, masked display, never plaintext) · OAuth app onboarding for Gitee / GitHub / GitLab / self-hosted instances (the access token lands straight in the vault as a reusable credential) · append-only audit (SQLite triggers hard-block UPDATE/DELETE) with an optional remote sink · per-run secret redaction across logs, diagnostics, and notifications.
 - **🧩 Projects & pipelines** — visual orchestration canvas (stage DAG + intra-stage job-level DAG) · matrix builds · manual approval gates (approve straight from a notification via signed link) · sidecar services (attach DB/Redis for tests) · stage `when` conditions + post-stage steps · typed run parameters (enum/bool/number, validated at trigger time) · triggers: webhook, branch→environment mapping, 5-field cron, and upstream→downstream pipeline chaining (loop-safe by depth + path guards) · per-project concurrency caps with FIFO queueing · a reuse library of pipeline templates, variable groups, and custom nodes · server-authoritative validation.
 - **📝 Pipeline as code** — commit the pipeline structure to `.pipewright.yml` and let it evolve per branch, with the canvas as the always-available fallback ([details below](#pipeline-as-code-gitops)).
-- **🏗 Isolated builds & artifacts** — version-pinned isolated builds inside containers (docker/nerdctl/podman) · a local bare-mirror repo cache (incremental fetch, then a workspace in seconds) · build dependency caching keyed by branch + lockfile hash · a content-addressed artifact store that keeps the **real bytes** of jar/dist for deployment (not just a placeholder reference) · image build + push to private registries with image GC · an optional remote build machine per project (build is offloaded over SSH; tokens stay on the control node) · JUnit + Cobertura test reports feeding quality gates that fail the stage and block downstream deploys · live terminal logs (SSE) + history replay · read-only code browsing (Monaco).
+- **🏗 Isolated builds & artifacts** — version-pinned isolated builds inside containers (docker/nerdctl/podman) · a local bare-mirror repo cache (incremental fetch, then a workspace in seconds) · per-project dependency cache: one fixed directory bind-mounted into the build container, so Maven/npm/Go/pip artifacts survive across runs with **zero pipeline configuration** · build dependency caching keyed by branch + lockfile hash · a content-addressed artifact store that keeps the **real bytes** of jar/dist for deployment (not just a placeholder reference) · image build + push to private registries with image GC · an optional remote build machine per project (build is offloaded over SSH; tokens stay on the control node, and by design nothing is left cached on the remote box) · JUnit + Cobertura test reports feeding quality gates that fail the stage and block downstream deploys · live terminal logs (SSE) + history replay · read-only code browsing (Monaco).
 - **🚀 Multi-server deployment** — agentless deploy over SSH · artifacts laid directly into the target directory you name (`jar`/`dist` contents land as-is) + restart command + health gating · image deploys swap the running container and roll back to the previous image on failure · **whole compose stacks** (a `docker-compose.yml` from your repo handed to the target machine's compose CLI, the same stack the Containers page manages) · **Kubernetes releases** (the platform talks to the cluster API directly, no jump host) · parallel fan-out across hosts + visible partial failures · command-style deploys (restart a service with no artifact) · **environments as first-class objects**: per-environment deployment timeline, current active version, and one-click rollback to the last fully successful deploy · environment promotion chains (dev→staging→prod) with per-environment variables/secrets and approval gates.
 - **🌐 Auto HTTPS + domain reverse proxy** — one managed Caddy container per target host, orchestrated over the same SSH + docker path as container ops (render Caddyfile → `docker cp` → graceful reload). Certificates are issued and renewed automatically by Let's Encrypt over HTTP-01, or over **DNS-01 with Cloudflare / DNSPod / Alibaba Cloud DNS** for wildcards. Plus: multi-domain aliases, path routing (`/api`→A, `/`→B), redirects, access control (basic auth, IP allow/deny CIDR), HSTS / security headers / compression, load balancing across upstreams with active health-check failover, WebSocket / gRPC (h2c) / TCP passthrough (caddy-l4), a certificate dashboard that probes the real 443 handshake, and one-click subdomain allocation.
 - **🔎 Per-PR preview environments** — when a PR's run deploys successfully, it automatically gets a throwaway `pr-<n>-<proj>.<base>` domain with its own certificate and route, so reviewers open one link and see that PR actually running. Idempotent per PR, and reclaimed automatically — but **only** once the PR is provably closed or merged.
@@ -138,10 +138,13 @@ The compose file itself only reads these (the app's own variables are in the [co
 | `PIPEWRIGHT_IMAGE` | Image repository prefix | `registry.cn-qingdao.aliyuncs.com/fubin/pipewright` (Aliyun ACR, Qingdao — both tiers); `ghcr.io/fuuhoo/pipewright` works too but ships only the default tier |
 | `PIPEWRIGHT_VERSION` | Image tag — **two tiers**, see below | `latest` |
 | `PIPEWRIGHT_PORT` | Host-side published port | `8080` |
-| `PIPEWRIGHT_WORK_DIR` | Build workspace directory (absolute host path). Only needed to build images inside the container | empty (in-container isolated builds unavailable) |
+| `PIPEWRIGHT_WORK_DIR` | Build workspace directory (absolute host path). It is also where the per-project dependency cache lands (`pipewright-project-cache/` under it), so mapping this one path is all you need for cached builds inside the container | empty (in-container isolated builds unavailable, cache falls back to the container's `/tmp`) |
 | `PIPEWRIGHT_RUNNER` | Empty = the default DAG runner; `legacy` falls back to the old fixed flow | empty |
+| `PIPEWRIGHT_BIN_DIR` | Host directory holding the binary — only used by the "swap just the binary" override below | `./bin` |
 
 Everything the app stores (SQLite DB, artifact library, repo cache, build dependency cache) lives under `/data` in the container, persisted by the named volume `pipewright-data`. Keep the master key forever once credentials exist — rotating it makes stored credentials undecryptable.
+
+**One exception**: the per-project dependency cache does **not** live under `/data`. It is bind-mounted into build containers via `docker run -v`, and the source path of `-v` is resolved by the **host** daemon — `/data` on the host is really `/var/lib/docker/volumes/pipewright-data/_data`, so using `/data/...` as the source would just create an empty directory at the host root. It therefore follows `PIPEWRIGHT_WORK_DIR` (the one path that must exist at the same absolute location on host and container); see the next section.
 
 #### Two image tiers: building images inside the container
 
@@ -181,6 +184,58 @@ which resolves `host.docker.internal` to the host gateway. The remaining step is
 
 > Building in-container and registering the host over SSH are independent: the first only affects whether pipelines can produce images inside the platform container, the second only whether the UI can list host images. If you only deploy, the distroless tier without a socket is enough.
 
+#### Swap just the binary: mount the program into the container
+
+Only one ~40MB static binary in the published image is actually the app — everything else is runtime scaffolding (alpine / distroless, docker CLI, CA certificates, `/data`). If pulling images on your host is slow, or you simply want "upgrade" to mean "replace a file", let the image be the runtime and mount the binary from the host.
+
+Drop an override file next to `docker-compose.yml`:
+
+```yaml
+# docker-compose.binary.yml — image = runtime only, program = mounted from the host
+services:
+  pipewright:
+    # run the mounted binary, not the one baked into the image at /pipewright
+    entrypoint: ["/opt/pipewright/bin/pipewright"]
+    volumes:
+      # mount a directory, not a single file (why, below); relative to this file, or put an absolute host path in .env
+      - ${PIPEWRIGHT_BIN_DIR:-./bin}:/opt/pipewright/bin:ro
+    healthcheck:
+      # must move to the new path too: the image's own /pipewright is still there, so leaving this checks the stale binary
+      test: ["CMD", "/opt/pipewright/bin/pipewright", "--version"]
+```
+
+When compose merges overrides, `volumes` **appends** (the `pipewright-data:/data` above still applies) while `entrypoint` and `healthcheck` are replaced. Start it:
+
+```bash
+mkdir -p bin
+# Two ways to get the binary — it has to match the **container's** platform, not the host's:
+#   a) install right on the target machine (drops into ./bin only, writes no systemd unit;
+#      the variables belong to sh, not to curl)
+curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh |
+  INSTALL_DIR=./bin SETUP_SERVICE=0 sh
+#   b) cross-compile here (GOARCH = the container's architecture; BIN= keeps ./pipewright intact)
+GOOS=linux GOARCH=amd64 make go-build BIN=bin/pipewright
+
+docker compose -f docker-compose.yml -f docker-compose.binary.yml up -d
+```
+
+Upgrading afterwards is replace-the-file plus restart, with no image pull at all:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh |
+  VERSION=v0.5.2 INSTALL_DIR=./bin SETUP_SERVICE=0 sh
+docker compose -f docker-compose.yml -f docker-compose.binary.yml restart
+curl -s localhost:8080/version    # {"version":"v0.5.2","commit":"dfe5f43",…} — platform is whatever arch you compiled for
+```
+
+Key points; the first two are measured conclusions:
+
+- **Architecture follows the container, not the host.** A `make build` artifact from macOS is a darwin binary and the linux container will answer `exec format error`. The binary is `CGO_ENABLED=0` and fully static, so one file runs in both tiers — verified locally (arm64) on `latest` (distroless, nonroot) and `latest-docker` (alpine, root): inside the container the image's own `/pipewright --version` said `0.5.0`, the mounted one said `v0.5.2`, and `/version` returned the latter; login and API worked.
+- **Mount a directory, not a single file.** The safe way to replace a binary is "write a temp file, then rename" (`install.sh` and the platform's own updater both do it that way), and a rename swaps the inode. A directory mount tracks the directory, so `restart` picks up the new version; a single-file mount is bound to the inode resolved when the container was created, and whether it then sees the new file depends on how the runtime re-resolves the host path (OrbStack here did pick it up on `restart`, but don't bet that behaviour on Linux dockerd). If you do mount one file, use `up -d --force-recreate` after replacing it.
+- **Permissions.** Binary `0755`, and the host directory must be traversable — the default tier runs as nonroot (uid 65532) and executes via the others bits. On SELinux-enforcing hosts (RHEL / Fedora family) a bind mount can fail with `permission denied`; add `:z` to the mount and retry.
+- **Don't downgrade.** The data volume is untouched and a new version migrates on first boot, but an old binary against a schema that already moved forward will not work — migrations only go up. To roll back, roll the file back too (keep the previous binary around).
+- **The UI's "Update now" does not apply here.** `/.dockerenv` exists in the container, so the platform reports the Docker form and hands you `docker compose pull && docker compose up -d` (`internal/version/selfupdate.go:29-43`) — and pulling replaces the image layer, not the mounted file that is actually running. For one-click updates use the binary form in ①.
+
 ### ③ docker run (fastest trial)
 
 ```bash
@@ -203,6 +258,7 @@ Open **Settings → System** and click "Check for updates" to query the latest r
 
 - **Binary deployment**: click "Update now" to auto-download the new version + verify checksum + replace + restart (requires write permission to the binary file; installing to `$HOME/.local/bin` avoids sudo, and a root systemd service installed via `SETUP_SERVICE=1` also satisfies this).
 - **Docker deployment**: the container doesn't replace its own image; follow the prompt to run `docker compose pull && docker compose up -d` on the host (the data volume is preserved).
+- **Compose with a mounted binary** (see the section above): replace `./bin/pipewright`, then `docker compose -f docker-compose.yml -f docker-compose.binary.yml restart` — no image pull; confirm with `curl :8080/version`.
 
 ### Configuration (environment variables)
 
@@ -248,8 +304,10 @@ The listen address can also be set on the command line, which wins over `PIPEWRI
 | `PIPEWRIGHT_ARTIFACT_DIR` | Artifact store directory (real jar/dist bytes) | `<db dir>/artifacts` |
 | `PIPEWRIGHT_REPO_CACHE_DIR` | Local bare-mirror repo cache directory | `<db dir>/repos` |
 | `PIPEWRIGHT_NO_REPO_CACHE` | `1` disables the repo cache (every build clones over the network) | off |
-| `PIPEWRIGHT_CACHE_DIR` | Build dependency cache directory | `<db dir>/cache` |
+| `PIPEWRIGHT_CACHE_DIR` | Build dependency cache directory (script nodes that configure `cachePaths`; archives **workspace-relative** directories keyed by branch + lockfile) | `<db dir>/cache` |
 | `PIPEWRIGHT_NO_BUILD_CACHE` | `1` disables build dependency caching (always a cold build) | off |
+| `PIPEWRIGHT_PROJECT_CACHE_DIR` | Per-project dependency cache root: one fixed directory per project, bind-mounted into build containers (Maven/npm/Go/pip/Gradle homes) with zero pipeline configuration; in container form this path must exist at the same absolute location on the host | process form: `<db dir>/project-cache`; container form: `<TMPDIR>/pipewright-project-cache` |
+| `PIPEWRIGHT_NO_PROJECT_CACHE` | `1` disables the per-project dependency cache (dependencies re-downloaded every run) | off |
 | `PIPEWRIGHT_NO_IMAGE_GC` | `1` keeps built images instead of garbage-collecting them | off |
 | `PIPEWRIGHT_PAC_RUNTIME` | `1` forces pipeline-as-code on for **all** projects, ignoring the per-project toggle | off |
 | `PIPEWRIGHT_CHAIN_MAX_DEPTH` | Max pipeline-chaining depth (hard stop against runaway chains) | `5` |
@@ -415,6 +473,7 @@ single static binary (cmd/pipewright)
 │  ├── internal/runner        per-project remote build machine config
 │  ├── internal/repocache     local bare-mirror repo cache (incremental fetch)
 │  ├── internal/buildcache    build dependency cache (branch + lockfile keyed)
+│  ├── internal/projectcache  per-project dependency cache (fixed dir bind-mounted into build containers)
 │  ├── internal/artifactstore content-addressed artifact bytes
 │  ├── internal/testreport    JUnit + Cobertura parsing
 │  ├── internal/qualitygate   pure quality-gate evaluation

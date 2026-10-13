@@ -13,6 +13,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/notify"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/projectcache"
 	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/fuuhoo/pipewright/internal/vault"
 )
@@ -65,6 +66,10 @@ type Builder struct {
 	// 的 cachePaths/cacheKey 恢复/保存依赖目录(node_modules/.m2/.gradle 等),跨 run 持久化提速。
 	// nil 则不缓存(向后兼容)。由 main 注入(WithBuildCache)。缓存问题绝不让构建失败(best-effort)。
 	buildCache buildCacheStore
+	// projectCache 是「每项目固定依赖缓存目录」布局(全局缓存,流水线里零配置):非 nil 时本地执行
+	// 路径给构建容器追加缓存 bind 挂载 + 工具改道 env,容器销毁也不丢依赖。nil → 行为不变(旧:
+	// 依赖随 --rm 容器消失,每次重下)。由 main 注入(WithProjectCache)。
+	projectCache *projectcache.Layout
 	// artifactLister 列出本 run 已产出的产物(供跨阶段产物传递:下游阶段把上游归档的 jar/dist
 	// 真字节恢复到自身工作区)。nil 则不做跨阶段恢复(向后兼容)。由 main 注入 runSvc.ListArtifacts。
 	artifactLister func(ctx context.Context, runID string) ([]run.Artifact, error)
@@ -362,7 +367,7 @@ func (b *Builder) Run(ctx context.Context, r *run.Run, sink run.StepSink) error 
 		if err := sink.StepRunning(ctx, ordinal); err != nil {
 			return err
 		}
-		serr := b.runScriptStep(ctx, sink, ordinal, cs, workspace)
+		serr := b.runScriptStep(ctx, sink, ordinal, cs, workspace, proj.ID)
 		if serr != nil {
 			if errors.Is(serr, run.ErrCanceled) || errors.Is(ctx.Err(), context.Canceled) {
 				return b.cancelAt(ctx, sink, ordinal)
@@ -492,6 +497,7 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 			return "", nil, merr
 		}
 		res := pipeline.Resource{Mounts: mounts}
+		env = b.applyProjectCache(&res, env, proj.ID, onLine)
 		code, err := b.driver.RunToolchain(ctx, resolved.Image, workspace, "/src", "/src", env, buildCmd, res, onLine)
 		if err != nil && code < 0 {
 			return "", nil, fmt.Errorf("构建器无法启动")
