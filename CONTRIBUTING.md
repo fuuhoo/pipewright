@@ -165,6 +165,9 @@ docs(readme): clarify master key handling
 
 ## 发版 / Releasing(维护者)
 
+> 逐条命令 + 每步的验收判据在 **[docs/版本发布流程.md](docs/版本发布流程.md)**(含盯流水线、终检、失败补发)。
+> 本机这类「`github.com:443` 直连不通、只有 SSH 能推」的环境,按那份文档第 4 步用 SSH URL 推送,别改 `origin`。
+
 版本由 git tag 驱动,推送 `v*` tag 即触发 [`release` workflow](.github/workflows/release.yml):
 GoReleaser 跨平台构建二进制 + 校验和 + changelog 发到 GitHub Release,并推多架构镜像到 ghcr.io。
 
