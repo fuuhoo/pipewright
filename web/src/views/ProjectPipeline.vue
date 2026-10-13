@@ -556,79 +556,83 @@ async function togglePrStatus(next: boolean): Promise<void> {
     </nav>
 
     <!--
-      Source-of-truth bars (PaC + PR status) are pipeline-definition concerns,
+      Source-of-truth switches (PaC + PR status) are pipeline-definition concerns,
       so they belong to the 编排/canvas tab only — not above every tab body.
+      两个开关并成一条紧凑设置条:画布才是这个页面的主角。原先是两条整宽块(标题 + 各一行说明),
+      在宽屏上吃掉约 116px、窄屏 181px 纵向空间,画布被压到不足视口一半。
+      现在每项一行(开关 · 标题 · 说明单行省略,完整说明挂 title),整条 ~40px;
+      放不下时两项各自换行,不会挤掉文字。
     -->
     <template v-if="activeTab === 'canvas'">
-    <!-- ─── Pipeline-as-code (GitOps) toggle (FR-8-12) ─────────────────────── -->
-    <div class="pac-bar" :class="{ 'pac-bar--on': pacEnabled }">
-      <div class="pac-bar-text">
-        <span class="pac-bar-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
-          </svg>
-          {{ t('projectPipeline.pacTitle') }}
-          <code class="pac-bar-file">.pipewright.yml</code>
-        </span>
-        <span class="pac-bar-desc">
-          {{ pacEnabled ? t('projectPipeline.pacOnHint') : t('projectPipeline.pacOffHint') }}
-        </span>
-        <span v-if="pacError" class="pac-bar-err" role="alert">{{ pacError }}</span>
-      </div>
-      <div class="pac-bar-actions">
-        <button
-          v-if="pacHasRepo"
-          type="button"
-          class="pac-preview-btn"
-          @click="pacPreviewOpen = true"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
-          </svg>
-          {{ t('projectPipeline.pacPreviewBtn') }}
-        </button>
-        <button
-          type="button"
-          class="pac-switch"
-        :class="{ 'pac-switch--on': pacEnabled }"
-        role="switch"
-        :aria-checked="pacEnabled"
-        :aria-label="t('projectPipeline.pacTitle')"
-        :disabled="pacToggling || !project"
-          @click="togglePac(!pacEnabled)"
-        >
-          <span class="pac-switch-knob" aria-hidden="true"/>
-        </button>
-      </div>
-    </div>
+      <div class="source-bar">
+        <!-- ─── Pipeline-as-code (GitOps) 开关(FR-8-12)─────────────────────── -->
+        <div class="source-item" :class="{ 'source-item--on': pacEnabled }">
+          <button
+            type="button"
+            class="pac-switch"
+            :class="{ 'pac-switch--on': pacEnabled }"
+            role="switch"
+            :aria-checked="pacEnabled"
+            :aria-label="t('projectPipeline.pacTitle')"
+            :disabled="pacToggling || !project"
+            @click="togglePac(!pacEnabled)"
+          >
+            <span class="pac-switch-knob" aria-hidden="true"/>
+          </button>
+          <span class="source-item-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
+            </svg>
+            {{ t('projectPipeline.pacTitle') }}
+            <code class="source-item-file">.pipewright.yml</code>
+          </span>
+          <span
+            class="source-item-desc"
+            :class="{ 'source-item-desc--err': pacError }"
+            :title="pacError || (pacEnabled ? t('projectPipeline.pacOnHint') : t('projectPipeline.pacOffHint'))"
+            :role="pacError ? 'alert' : undefined"
+          >{{ pacError || (pacEnabled ? t('projectPipeline.pacOnHint') : t('projectPipeline.pacOffHint')) }}</span>
+          <button
+            v-if="pacHasRepo"
+            type="button"
+            class="pac-preview-btn"
+            @click="pacPreviewOpen = true"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+            {{ t('projectPipeline.pacPreviewBtn') }}
+          </button>
+        </div>
 
-    <!-- ─── PR status checks (commit status writeback · Story 8-9 / FR-8-9) ── -->
-    <div class="pac-bar" :class="{ 'pac-bar--on': prStatusEnabled }">
-      <div class="pac-bar-text">
-        <span class="pac-bar-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/>
-          </svg>
-          {{ t('projectPipeline.prStatusTitle') }}
-        </span>
-        <span class="pac-bar-desc">
-          {{ prStatusEnabled ? t('projectPipeline.prStatusOnHint') : t('projectPipeline.prStatusOffHint') }}
-        </span>
-        <span v-if="prStatusError" class="pac-bar-err" role="alert">{{ prStatusError }}</span>
+        <!-- ─── PR 状态回写开关(Story 8-9 / FR-8-9)──────────────────────────── -->
+        <div class="source-item" :class="{ 'source-item--on': prStatusEnabled }">
+          <button
+            type="button"
+            class="pac-switch"
+            :class="{ 'pac-switch--on': prStatusEnabled }"
+            role="switch"
+            :aria-checked="prStatusEnabled"
+            :aria-label="t('projectPipeline.prStatusTitle')"
+            :disabled="prStatusToggling || !project"
+            @click="togglePrStatus(!prStatusEnabled)"
+          >
+            <span class="pac-switch-knob" aria-hidden="true"/>
+          </button>
+          <span class="source-item-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/>
+            </svg>
+            {{ t('projectPipeline.prStatusTitle') }}
+          </span>
+          <span
+            class="source-item-desc"
+            :class="{ 'source-item-desc--err': prStatusError }"
+            :title="prStatusError || (prStatusEnabled ? t('projectPipeline.prStatusOnHint') : t('projectPipeline.prStatusOffHint'))"
+            :role="prStatusError ? 'alert' : undefined"
+          >{{ prStatusError || (prStatusEnabled ? t('projectPipeline.prStatusOnHint') : t('projectPipeline.prStatusOffHint')) }}</span>
+        </div>
       </div>
-      <button
-        type="button"
-        class="pac-switch"
-        :class="{ 'pac-switch--on': prStatusEnabled }"
-        role="switch"
-        :aria-checked="prStatusEnabled"
-        :aria-label="t('projectPipeline.prStatusTitle')"
-        :disabled="prStatusToggling || !project"
-        @click="togglePrStatus(!prStatusEnabled)"
-      >
-        <span class="pac-switch-knob" aria-hidden="true"/>
-      </button>
-    </div>
     </template>
 
     <!-- ─── Tab body: panels + optional validation side-drawer ─────────────── -->
@@ -827,7 +831,7 @@ async function togglePrStatus(next: boolean): Promise<void> {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 28px 12px;
+  padding: 9px 28px 8px;
   border-bottom: 1px solid var(--color-border);
   flex: none;
 }
@@ -1013,7 +1017,7 @@ async function togglePrStatus(next: boolean): Promise<void> {
 .tab-btn {
   font-size: 0.84rem;
   color: var(--color-faint);
-  padding: 12px 14px;
+  padding: 10px 14px;
   cursor: pointer;
   border: none;
   background: none;
@@ -1032,29 +1036,44 @@ async function togglePrStatus(next: boolean): Promise<void> {
   border-bottom-color: var(--color-primary);
 }
 
-/* ─── Pipeline-as-code (GitOps) toggle bar ───────────────────────────────── */
-.pac-bar {
+/* ─── Source-of-truth switches (PaC + PR status): one compact strip ───────── */
+/*
+ * 画布是这个页面的主角,这两项只是开关。原先两条整宽块(标题 + 各一行说明)在宽屏吃掉
+ * ~116px、窄屏 ~181px。这里压成一行一项、整条 ~40px:说明单行省略,完整文案挂 title,
+ * 出错时说明位直接换成红字。宽度不够时两项各自折行,文字不被挤掉。
+ */
+.source-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 28px;
+  gap: 2px 22px;
+  padding: 5px 28px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-2, var(--color-surface));
   flex: none;
 }
-.pac-bar--on { background: color-mix(in oklab, var(--color-primary) 8%, transparent); }
-.pac-bar-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pac-bar-title {
+
+.source-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+  flex: 1 1 360px;
+}
+
+.source-item-title {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 0.86rem;
+  gap: 6px;
+  flex: none;
+  font-size: 0.84rem;
   font-weight: 500;
   color: var(--color-text);
+  white-space: nowrap;
 }
-.pac-bar-title svg { color: var(--color-primary); flex: none; }
-.pac-bar-file {
+.source-item-title svg { color: var(--color-primary); flex: none; }
+.source-item-file {
   font-family: var(--font-mono, monospace);
   font-size: 0.76rem;
   padding: 1px 6px;
@@ -1062,23 +1081,28 @@ async function togglePrStatus(next: boolean): Promise<void> {
   background: var(--color-bg-soft, rgba(127,127,127,0.12));
   color: var(--color-dim);
 }
-.pac-bar-desc { font-size: 0.78rem; color: var(--color-faint); }
-.pac-bar-err { font-size: 0.78rem; color: var(--color-danger, #e5484d); }
+.source-item--on .source-item-title { color: var(--color-primary); }
 
-.pac-bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: none;
+.source-item-desc {
+  /* 宽屏:与开关、标题同排,说明占剩余宽度并省略。
+     窄屏:剩余空间不够(说明被压到几十字)时整段换到第二行,而不是挤成一截读不通的尾巴。 */
+  flex: 1 1 170px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.76rem;
+  color: var(--color-faint);
 }
+.source-item-desc--err { color: var(--color-danger, #e5484d); }
 
 .pac-preview-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
-  font-size: 0.8rem;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 0.76rem;
   font-weight: 500;
   font-family: var(--font-sans);
   color: var(--color-text);
@@ -1086,6 +1110,7 @@ async function togglePrStatus(next: boolean): Promise<void> {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--rounded);
   cursor: pointer;
+  flex: none;
   transition: border-color var(--duration-fast), background-color var(--duration-fast);
 }
 

@@ -35,6 +35,14 @@ const aiEnhanced = ref(false)
 const aiReason = ref('')
 const usage = ref<AITokenUsage | null>(null)
 
+// 默认折叠:这一带在画布下方,展开时吃掉 ~110px 纵向空间,而扫描是偶发动作。
+// 点标题行展开;主动扫描时自动展开,让用户看见进度与结果。
+const expanded = ref(false)
+
+function toggleExpanded(): void {
+  expanded.value = !expanded.value
+}
+
 const usageParts = computed(() => aiUsageParts(usage.value))
 
 const LEVEL_ORDER: Record<RiskLevel, number> = { high: 0, medium: 1, low: 2 }
@@ -65,6 +73,7 @@ function levelLabel(level: RiskLevel): string {
 
 async function runAnalysis(): Promise<void> {
   if (state.value === 'running') return
+  expanded.value = true
   state.value = 'running'
   errorMsg.value = ''
   try {
@@ -86,10 +95,16 @@ async function runAnalysis(): Promise<void> {
 </script>
 
 <template>
-  <section class="rap" :aria-label="t('pipelinePanels.rapAria')">
-    <!-- Header -->
+  <section class="rap" :class="{ 'rap--open': expanded }" :aria-label="t('pipelinePanels.rapAria')">
+    <!-- Header: the whole row is the expand/collapse toggle -->
     <div class="rap-head">
-      <div class="rap-head-left">
+      <button
+        type="button"
+        class="rap-head-btn"
+        :aria-expanded="expanded"
+        aria-controls="rap-body"
+        @click="toggleExpanded"
+      >
         <span class="rap-icon" aria-hidden="true">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -98,7 +113,12 @@ async function runAnalysis(): Promise<void> {
         </span>
         <span class="rap-title">{{ t('pipelinePanels.rapTitle') }}</span>
         <span class="rap-subtitle">{{ t('pipelinePanels.rapSubtitle') }}</span>
-      </div>
+        <span class="rap-caret" aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </span>
+      </button>
 
       <!-- Severity summary (only after a run) -->
       <div v-if="state === 'done' && hasFindings" class="rap-summary" aria-hidden="true">
@@ -109,7 +129,7 @@ async function runAnalysis(): Promise<void> {
     </div>
 
     <!-- Body -->
-    <div class="rap-body">
+    <div v-show="expanded" id="rap-body" class="rap-body">
       <!-- Idle / re-run control -->
       <div class="rap-actions">
         <AppButton variant="ai" :loading="state === 'running'" @click="runAnalysis">
@@ -168,31 +188,47 @@ async function runAnalysis(): Promise<void> {
 </template>
 
 <style scoped>
+/*
+ * 折叠式:默认只留一行标题条。画布是这个页面的主角,风险扫描是偶发动作,
+ * 展开态由用户掌握(主动扫描时自动展开)。展开后正文限高,避免把画布挤没。
+ */
 .rap {
   border-radius: var(--rounded-card);
   border: 1px solid var(--color-cyan-line);
   background: var(--color-card);
   overflow: hidden;
   box-shadow: var(--shadow);
-  margin-top: 18px;
+  margin-top: 8px;
+  flex: none;
 }
 
 .rap-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 16px;
   background: var(--color-cyan-soft);
-  border-bottom: 1px solid var(--color-cyan-line);
 }
 
-.rap-head-left {
+/* 折叠时头就是最后一行,再画一条分隔线看着像空壳 */
+.rap--open .rap-head { border-bottom: 1px solid var(--color-cyan-line); }
+
+.rap-head-btn {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: 1;
   min-width: 0;
+  margin: 0;
+  padding: 9px 16px;
+  font-family: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
+
+.rap-head-btn:focus-visible { outline: 2px solid var(--color-cyan); outline-offset: -3px; }
 
 .rap-icon {
   color: var(--color-cyan);
@@ -212,12 +248,33 @@ async function runAnalysis(): Promise<void> {
   font-size: 0.71rem;
   color: var(--color-faint);
   font-style: italic;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rap-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-cyan);
+  opacity: 0.7;
+  transition: transform var(--duration-fast);
+}
+
+.rap--open .rap-caret { transform: rotate(90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rap-caret { transition: none; }
 }
 
 .rap-summary {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  padding-right: 16px;
 }
 
 .rap-chip {
@@ -238,6 +295,9 @@ async function runAnalysis(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* 展开是用户主动动作,但不能把画布挤没:正文限高,长清单在带内滚动。 */
+  max-height: 42vh;
+  overflow-y: auto;
 }
 
 .rap-actions {
