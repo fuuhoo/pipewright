@@ -1,0 +1,21 @@
+# 本地 docker-compose 测试环境的覆盖层,与仓库根 docker-compose.yml 叠加使用:
+#
+#   docker compose -p pwtest -f docker-compose.yml -f docker-compose.devtest.yml up -d
+#   open http://localhost:8081        # 8080 留给裸二进制开发实例,两个可以并存
+#   docker compose -p pwtest -f docker-compose.yml -f docker-compose.devtest.yml down
+#
+# 这一层只做主文件里注释掉的那几件事:挂宿主 docker socket + 把工作区目录按**宿主与容器
+# 同路径**映射进去(容器内打包镜像的必要条件,原理见主文件 ②③ 段)。数据仍走具名卷。
+#
+# 必须是 -docker 档镜像(带 docker CLI):.env 里 PIPEWRIGHT_VERSION=0.6.0-docker。
+# 挂 socket = 容器拿到宿主 root 级权限,只在本机这种信任环境开,别把这份覆盖层抄上生产。
+services:
+  pipewright:
+    container_name: pipewright-composetest
+    # ports 是列表,compose 默认**追加**而不是替换 —— 不写 !override 会同时申请 8080 和 8081,
+    # 与裸实例抢端口直接起不来。
+    ports: !override
+      - "${PIPEWRIGHT_PORT:-8081}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PIPEWRIGHT_WORK_DIR:?测试环境需要在 .env 里设 PIPEWRIGHT_WORK_DIR}:${PIPEWRIGHT_WORK_DIR:?测试环境需要在 .env 里设 PIPEWRIGHT_WORK_DIR}
