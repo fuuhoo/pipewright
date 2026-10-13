@@ -438,7 +438,13 @@ func (s *Service) applyPlan(ctx context.Context, plan PlanItem) (*BuildEnv, stri
 	if !plan.Item.Enabled {
 		return out, strings.Join(notes, ";"), nil
 	}
+	return s.tryEnable(ctx, out, notes)
+}
 
+// tryEnable 按启用意图为刚落库的 disabled 行争取一次启用(导入与批量新增共用):
+// 三态门挡住时,「未检查」且装了 checker 就真检查一次再争取一轮,
+// 「不可用」或没有 checker 就保持禁用并把原因写进 notes。
+func (s *Service) tryEnable(ctx context.Context, out *BuildEnv, notes []string) (*BuildEnv, string, error) {
 	if setErr := s.SetEnabled(out.ID, true); setErr != nil {
 		var ve *ValidationError
 		if !errors.As(setErr, &ve) {

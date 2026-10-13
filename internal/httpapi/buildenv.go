@@ -12,6 +12,8 @@
 //	POST   /api/admin/build-envs/{id}/pull        → 手动 pull 镜像
 //	POST   /api/admin/build-envs/check-all        → 一键检查全部
 //	POST   /api/admin/build-envs/check-batch      → 检查所选(多选/全选)
+//	POST   /api/admin/build-envs/batch-create     → 批量新增(逐行结果)
+//	POST   /api/admin/build-envs/batch-delete     → 批量删除所选(逐行结果)
 //	GET    /api/admin/build-envs/export           → 整表导出(yaml/json,可含禁用)
 //	POST   /api/admin/build-envs/import           → 整表导入(skip/overwrite,dryRun 预览)
 //	GET    /api/build-envs                       → 已启用环境(普通用户可访问)
@@ -624,6 +626,130 @@ func makeCheckBatchBuildEnvsHandler(c *buildenv.Checker, aud audit.Recorder, ac 
 			"total":   len(results),
 			"skipped": len(results) - ok,
 		})
+	}
+}
+
+// buildEnvBatchCreateReq 是批量新增请求体:items 与单行新增同字段(含 credentialId)。
+//
+// 与导入的分工:导入搬的是「一整套目录」,文件里刻意不含凭据引用;批量新增是列表页
+// 上的多行录入,要能把同一个拉取凭据带到这一批私有镜像行上,所以走这个端点而不是导入。
+type buildEnvBatchCreateReq struct {
+	Items []buildEnvCreateReq `json:"items"`
+}
+
+// makeBatchCreateBuildEnvsHandler POST /api/admin/build-envs/batch-create。
+//
+// 逐行处理:某行校验不过或「语言+版本」已存在,只落在那一行的结果上,整单不回滚。
+// 每行仍过 P0 #4 三态门(先以 disabled 落库再争取启用),批量入口不是后门。
+func makeBatchCreateBuildEnvsHandler(
+	svc *buildenv.Service, aud audit.Recorder, ac auth.Authenticator,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "buildenv_unavailable", "构建环境服务未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var req buildEnvBatchCreateReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if len(req.Items) == 0 {
+			writeError(w, http.StatusBadRequest, "empty_selection", "请先填写要新增的构建环境")
+			return
+		}
+		if len(req.Items) > buildenv.MaxBatchRows {
+			writeError(w, http.StatusBadRequest, "too_many_items",
+				fmt.Sprintf("一次最多新增 %d 个(当前 %d 个)", buildenv.MaxBatchRows, len(req.Items)))
+			return
+		}
+		actor := actorFromRequest(r, ac)
+		if actor == "" || actor == auditActorFallback {
+			actor = ""
+		}
+		envs := make([]*buildenv.BuildEnv, 0, len(req.Items))
+		for _, item := range req.Items {
+			envs = append(envs, &buildenv.BuildEnv{
+				Language:     item.Language,
+				Version:      item.Version,
+				DisplayName:  item.DisplayName,
+				Description:  item.Description,
+				SourceType:   item.SourceType,
+				Image:        item.Image,
+				CredentialID: item.CredentialID,
+				SortOrder:    item.SortOrder,
+				Enabled:      item.Enabled,
+				CreatedBy:    actor,
+			})
+		}
+		report := svc.BatchCreate(r.Context(), envs)
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionBuildEnvCreate,
+			TargetType: audit.TargetBuildEnv,
+			TargetID:   "batch",
+			Detail: map[string]any{
+				"selected": report.Summary.Total,
+				"created":  report.Summary.Success,
+				"skipped":  report.Summary.Skipped,
+				"failed":   report.Summary.Failed,
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, report)
+	}
+}
+
+// makeBatchDeleteBuildEnvsHandler POST /api/admin/build-envs/batch-delete。
+// body {"ids":[...]}:删掉勾选的行(上限同批量检查;行已被别的会话删掉记 skipped,不算失败)。
+func makeBatchDeleteBuildEnvsHandler(
+	svc *buildenv.Service, aud audit.Recorder, ac auth.Authenticator,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "buildenv_unavailable", "构建环境服务未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			IDs []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		ids := make([]string, 0, len(req.IDs))
+		seen := map[string]bool{}
+		for _, id := range req.IDs {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			writeError(w, http.StatusBadRequest, "empty_selection", "请先勾选要删除的构建环境")
+			return
+		}
+		if len(ids) > buildenv.MaxBatchRows {
+			writeError(w, http.StatusBadRequest, "too_many_ids",
+				fmt.Sprintf("一次最多删除 %d 个(当前 %d 个)", buildenv.MaxBatchRows, len(ids)))
+			return
+		}
+		report := svc.BatchDelete(ids)
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionBuildEnvDelete,
+			TargetType: audit.TargetBuildEnv,
+			TargetID:   "batch",
+			Detail: map[string]any{
+				"selected": report.Summary.Total,
+				"deleted":  report.Summary.Success,
+				"skipped":  report.Summary.Skipped,
+				"failed":   report.Summary.Failed,
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, report)
 	}
 }
 
