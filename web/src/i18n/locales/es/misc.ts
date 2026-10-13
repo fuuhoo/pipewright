@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: 'Selecciona un idioma…',
+    other: 'Otros (sin idioma)',
+    custom: 'Añadir uno propio…',
+    customPlaceholder: 'Nuevo identificador de idioma, p. ej. dotnet',
+    customHint: 'Identificador en minúsculas; al guardar entra en la lista de idiomas añadidos',
+  },
+
   error: {
     defaultTitle: 'Error al cargar',
     retry: 'Reintentar',

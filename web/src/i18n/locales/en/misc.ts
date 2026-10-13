@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: 'Select a language…',
+    other: 'Other (no language)',
+    custom: 'Add a custom one…',
+    customPlaceholder: 'New language id, e.g. dotnet',
+    customHint: 'Lowercase id; it joins the added-language list after saving',
+  },
+
   error: {
     defaultTitle: 'Failed to load',
     retry: 'Retry',

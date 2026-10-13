@@ -83,6 +83,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: '选择语言…',
+    other: '其他(不绑定语言)',
+    custom: '自定义新增…',
+    customPlaceholder: '新语言标识,如 dotnet',
+    customHint: '小写标识,保存后会出现在已添加语言列表里',
+  },
+
   error: {
     defaultTitle: '加载失败',
     retry: '重试',

@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: 'Sprache auswählen…',
+    other: 'Sonstiges (ohne Sprache)',
+    custom: 'Eigene hinzufügen…',
+    customPlaceholder: 'Neue Sprachkennung, z. B. dotnet',
+    customHint: 'Kleingeschriebene Kennung; nach dem Speichern erscheint sie in der Liste',
+  },
+
   error: {
     defaultTitle: 'Laden fehlgeschlagen',
     retry: 'Erneut versuchen',

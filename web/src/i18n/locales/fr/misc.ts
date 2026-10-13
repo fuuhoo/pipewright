@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: 'Choisir un langage…',
+    other: 'Autre (sans langage)',
+    custom: 'Ajouter un choix libre…',
+    customPlaceholder: 'Nouvel identifiant de langage, par ex. dotnet',
+    customHint: 'Identifiant en minuscules ; il rejoint la liste des langages après enregistrement',
+  },
+
   error: {
     defaultTitle: 'Échec du chargement',
     retry: 'Réessayer',

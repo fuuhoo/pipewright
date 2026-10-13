@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: '選擇語言…',
+    other: '其他(不綁定語言)',
+    custom: '自訂新增…',
+    customPlaceholder: '新語言識別碼,如 dotnet',
+    customHint: '小寫識別碼,儲存後會出現在已新增語言清單裡',
+  },
+
   error: {
     defaultTitle: '載入失敗',
     retry: '重試',

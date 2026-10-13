@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: '언어 선택…',
+    other: '기타(언어 미지정)',
+    custom: '직접 추가…',
+    customPlaceholder: '새 언어 식별자, 예 dotnet',
+    customHint: '소문자 식별자. 저장하면 추가된 언어 목록에 표시됩니다',
+  },
+
   error: {
     defaultTitle: '불러오기 실패',
     retry: '다시 시도',

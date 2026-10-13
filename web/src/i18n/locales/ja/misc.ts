@@ -80,6 +80,15 @@ export default {
   },
 
   // ─── ErrorState ──────────────────────────────────────────────────────────
+  // ─── LanguageSelect ──────────────────────────────────────────────────────
+  languageSelect: {
+    pick: '言語を選択…',
+    other: 'その他(言語を紐づけない)',
+    custom: '自由に追加…',
+    customPlaceholder: '新しい言語識別子、例 dotnet',
+    customHint: '小文字の識別子。保存すると追加済み言語の一覧に入ります',
+  },
+
   error: {
     defaultTitle: '読み込みに失敗しました',
     retry: '再試行',
