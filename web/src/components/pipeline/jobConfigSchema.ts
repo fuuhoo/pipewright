@@ -51,6 +51,12 @@ export interface JobField {
   label: string
   kind: FieldKind
   placeholder?: string
+  /**
+   * 可直接点选填入的值(渲染成字段标题下的芯片)。只放「拿来就能用」的值:
+   * 路径 / 端口映射 / 探测命令 / 整份 YAML 骨架等。纯名字类占位(app、my-stack)不给,
+   * 那个值必须用户自己定。正文不进 i18n(见 fieldPresets.ts 文件头)。
+   */
+  presets?: string[]
   /** Helper text shown under the control */
   hint?: string
   /** Options for `select` */
@@ -354,6 +360,7 @@ const EXEC_OPTION_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '1',
+    presets: ['1', '0.5', '2'],
     get hint() { return t('pipelineJob.fieldCpuHint') },
   },
   {
@@ -362,6 +369,7 @@ const EXEC_OPTION_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '512m',
+    presets: ['512m', '1g', '2g'],
     get hint() { return t('pipelineJob.fieldMemoryHint') },
   },
 ]
@@ -393,6 +401,7 @@ const SCRIPT_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '.',
+    presets: ['.'],
     get hint() { return t('pipelineJob.fieldWorkDirHint') },
   },
   {
@@ -401,6 +410,7 @@ const SCRIPT_FIELDS: JobField[] = [
     kind: 'textarea',
     monospace: true,
     placeholder: 'frontend/dist\nbackend/target/app.jar',
+    presets: ['dist', 'frontend/dist', 'backend/target/app.jar', 'target/*.jar'],
     get hint() { return t('pipelineJob.fieldArtifactPathHint') },
   },
   ...EXEC_OPTION_FIELDS,
@@ -410,6 +420,7 @@ const SCRIPT_FIELDS: JobField[] = [
     kind: 'textarea',
     monospace: true,
     placeholder: 'node_modules\n.m2/repository',
+    presets: ['node_modules', '.m2/repository', '.gradle'],
     get hint() { return t('pipelineJob.fieldCachePathsHint') },
   },
   {
@@ -441,6 +452,7 @@ const DEPLOY_HEALTH_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: 'http://localhost:8080/healthz',
+    presets: ['http://localhost:8080/healthz', 'http://localhost:8080/actuator/health'],
     get hint() { return t('pipelineJob.fieldHealthUrlHint') },
     when: probeIs('http'),
   },
@@ -450,6 +462,7 @@ const DEPLOY_HEALTH_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: 'test -f /opt/app/current/OK',
+    presets: ['test -f /opt/app/current/OK', 'curl -fsS http://localhost:8080/health'],
     get hint() { return t('pipelineJob.fieldHealthCommandHint') },
     when: probeIs('command'),
   },
@@ -510,6 +523,7 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '/opt/app',
+    presets: ['/opt/app'],
     get hint() { return t('pipelineJob.fieldDeployPathHint') },
     when: (c) => c.artifactType !== 'image',
   },
@@ -528,6 +542,7 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '8080:80, 9000:9000',
+    presets: ['8080:80', '9000:9000'],
     get hint() { return t('pipelineJob.fieldPortsHint') },
     when: (c) => c.artifactType === 'image',
   },
@@ -537,6 +552,7 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '-e KEY=value --restart always',
+    presets: ['--restart always', '-e KEY=value'],
     get hint() { return t('pipelineJob.fieldRunArgsHint') },
     when: (c) => c.artifactType === 'image',
   },
@@ -567,6 +583,7 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     kind: 'textarea',
     monospace: true,
     placeholder: 'systemctl restart app\nnginx -s reload',
+    presets: ['systemctl restart app', 'nginx -s reload', 'docker restart app'],
     get hint() { return t('pipelineJob.fieldRestartCommandHint') },
     when: (c) => c.artifactType !== 'image',
   },
@@ -616,6 +633,7 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '8080:80, 9000:9000',
+    presets: ['8080:80', '9000:9000'],
     get hint() { return t('pipelineJob.fieldPortsHint') },
     when: dockerModeIs(DOCKER_MODE_RUN),
   },
@@ -625,6 +643,7 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: '-e KEY=value --restart always',
+    presets: ['--restart always', '-e KEY=value'],
     get hint() { return t('pipelineJob.fieldRunArgsHint') },
     when: dockerModeIs(DOCKER_MODE_RUN),
   },
@@ -675,6 +694,7 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: 'docker-compose.yml',
+    presets: ['docker-compose.yml', 'deploy/docker-compose.yml'],
     get hint() { return t('pipelineJob.fieldComposeFileHint') },
     when: (c) => dockerModeIs(DOCKER_MODE_COMPOSE)(c) && composeSourceIs(COMPOSE_SOURCE_REPO)(c),
     validate: (c) => composeFileError(c.composeFile ?? ''),
@@ -686,6 +706,7 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     monospace: true,
     rows: 14,
     placeholder: 'services:\n  web:\n    image: nginx:latest\n    ports:\n      - "8080:80"',
+    presets: ['services:\n  web:\n    image: nginx:latest\n    ports:\n      - "8080:80"'],
     get hint() { return t('pipelineJob.fieldComposeYamlHint') },
     when: (c) => dockerModeIs(DOCKER_MODE_COMPOSE)(c) && !composeSourceIs(COMPOSE_SOURCE_REPO)(c),
     validate: (c) => composeBodyError(c.composeYaml ?? ''),
@@ -757,6 +778,7 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: 'k8s/deployment.yaml',
+    presets: ['k8s/deployment.yaml', 'deploy/k8s/deployment.yaml'],
     get hint() { return t('pipelineJob.fieldManifestFileHint') },
     when: manifestSourceIs(MANIFEST_SOURCE_REPO),
     validate: (c) => repoYAMLPathError(c.manifestFile ?? '', t('pipelineJob.fieldManifestFileRequired')),
@@ -769,6 +791,10 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
     monospace: true,
     rows: 14,
     placeholder: 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: "{{IMAGE}}"',
+    presets: [
+      'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: "{{IMAGE}}"',
+      'apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: "{{IMAGE}}"',
+    ],
     get hint() { return t('pipelineJob.fieldManifestYamlHint') },
     when: manifestSourceIs(MANIFEST_SOURCE_PASTE),
     validate: (c) => {
@@ -799,6 +825,7 @@ const DEPLOY_K8S_FIELDS: JobField[] = [
     kind: 'text',
     monospace: true,
     placeholder: 'default',
+    presets: ['default', 'kube-system'],
     get hint() { return t('pipelineJob.fieldNamespaceHint') },
     // 有清单时命名空间以清单的 metadata.namespace 为准(清单没写则落到集群登记的默认命名空间),
     // 后端要求这格必须空着;与其给一个「填了就报错」的格子,不如不收(所以整项只在「只换镜像」时出现)。
@@ -886,6 +913,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: 'main',
+        presets: ['main', 'master'],
         get hint() { return t('pipelineJob.fieldBranchHint') },
       },
       {
@@ -936,6 +964,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: 'Dockerfile',
+        presets: ['Dockerfile'],
         when: (c) => tierIsImage(c) && modelIs('dockerfile')(c),
       },
       {
@@ -944,6 +973,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: '.',
+        presets: ['.'],
         get hint() { return t('pipelineJob.fieldContextHint') },
         when: (c) => tierIsImage(c) && modelIs('dockerfile')(c),
       },
@@ -968,6 +998,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: 'mvn -B -DskipTests package',
+        presets: ['mvn -B -DskipTests package', './gradlew --no-daemon build', 'go build -trimpath -o dist/app .'],
         get hint() { return t('pipelineJob.fieldBuildCommandHint') },
         when: imageNeedsBuildEnv,
       },
@@ -1031,6 +1062,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: 'Dockerfile',
+        presets: ['Dockerfile'],
         when: modelIs('dockerfile'),
       },
       {
@@ -1039,6 +1071,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: '.',
+        presets: ['.'],
         get hint() { return t('pipelineJob.fieldContextHint') },
         when: modelIs('dockerfile'),
       },
@@ -1055,6 +1088,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: 'npm run build',
+        presets: ['npm run build', 'pnpm install --frozen-lockfile && pnpm run build', 'pip install -r requirements.txt'],
         get hint() { return t('pipelineJob.fieldBuildCommandHint') },
         when: modelIs('toolchain'),
       },
@@ -1154,6 +1188,8 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         get label() { return t('pipelineJob.fieldTitleTemplateLabel') },
         kind: 'text',
         get placeholder() { return t('pipelineJob.fieldTitleTemplatePlaceholder') },
+        // 芯片正文跟着 placeholder 一起本地化:这两格是给人读的句子,不是 shell 片段。
+        get presets() { return [t('pipelineJob.fieldTitleTemplatePlaceholder')] },
         get hint() { return t('pipelineJob.fieldTitleTemplateHint') },
       },
       {
@@ -1161,6 +1197,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         get label() { return t('pipelineJob.fieldBodyTemplateLabel') },
         kind: 'textarea',
         get placeholder() { return t('pipelineJob.fieldBodyTemplatePlaceholder') },
+        get presets() { return [t('pipelineJob.fieldBodyTemplatePlaceholder')] },
         get hint() { return t('pipelineJob.fieldBodyTemplateHint') },
       },
     ],
@@ -1233,6 +1270,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'textarea',
         monospace: true,
         placeholder: 'dir=frontend\nbuildCmd=npm run build',
+        presets: ['dir=frontend', 'buildCmd=npm run build'],
         get hint() { return t('pipelineJob.fieldParamsHint') },
       },
       {
@@ -1247,6 +1285,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'textarea',
         monospace: true,
         placeholder: 'cd {{dir}}\nnpm install\n{{buildCmd}}',
+        presets: ['cd {{dir}}\nnpm install\n{{buildCmd}}'],
         get hint() { return t('pipelineJob.fieldCommandTemplateHint') },
       },
       {
@@ -1255,6 +1294,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'textarea',
         monospace: true,
         placeholder: '{{dir}}/dist',
+        presets: ['{{dir}}/dist'],
         get hint() { return t('pipelineJob.fieldTemplatedArtifactPathHint') },
       },
       {
@@ -1263,6 +1303,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'text',
         monospace: true,
         placeholder: '.',
+        presets: ['.'],
         get hint() { return t('pipelineJob.fieldTemplatedWorkDirHint') },
       },
       ...EXEC_OPTION_FIELDS,
@@ -1272,6 +1313,7 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         kind: 'textarea',
         monospace: true,
         placeholder: '{{dir}}/node_modules',
+        presets: ['{{dir}}/node_modules'],
         get hint() { return t('pipelineJob.fieldTemplatedCachePathsHint') },
       },
       {

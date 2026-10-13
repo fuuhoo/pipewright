@@ -18,13 +18,18 @@ import {
   nextStepId,
   parseSteps,
   compileSteps,
+  lineToStep,
 } from './stepCompile'
+import type { CommandTemplate } from './commandTemplates'
+import CommandTemplateChips from './CommandTemplateChips.vue'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   /** 当前节点的完整 config(用于初始反解析) */
   config: Record<string, string>
+  /** 所选构建环境的语言:命令模板芯片据此前置(父级知道,本组件不碰预置目录) */
+  language?: string
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +98,12 @@ function removeStep(id: string): void {
   flush()
 }
 
+/** 点语言模板 = 逐行追加成步骤(已有的步保留,空步骤编译时自然消失)。 */
+function appendTemplate(tpl: CommandTemplate): void {
+  steps.value = [...steps.value, ...tpl.commands.split('\n').map(lineToStep)]
+  flush()
+}
+
 function patchStep(id: string, patch: Partial<StepBlock>): void {
   steps.value = steps.value.map((s) => (s.id === id ? { ...s, ...patch } : s))
 }
@@ -147,6 +158,9 @@ const stepCount = computed(() => steps.value.length)
       <span class="sb-head-label">{{ t('pipelineJob.sbVisualSteps') }}</span>
       <span class="sb-count" :aria-label="t('pipelineJob.sbStepCount')">{{ stepCount }}</span>
     </div>
+
+    <!-- 常用语言模板:步骤视图才是构建节点的默认视图,芯片放这里才看得见 -->
+    <CommandTemplateChips :language="props.language" @pick="appendTemplate" />
 
     <ol class="sb-list">
       <li

@@ -27,6 +27,8 @@ import {
   type JobField,
 } from './jobConfigSchema'
 import { configUsesTemplate } from './stepCompile'
+import { mergeCommands, type CommandTemplate } from './commandTemplates'
+import { mergeIntoTextarea, presetChipLabel } from './fieldPresets'
 import { artifactSourceGroups, producesArtifact } from './artifactSources'
 import { artifactPathHints, containerWorkDir, WORKSPACE_ROOT } from './workspaceHints'
 import {
@@ -39,6 +41,7 @@ import {
 import { createCustomNode } from '../../api/customNodes'
 import JobTypeIcon from './JobTypeIcon.vue'
 import StepBuilder from './StepBuilder.vue'
+import CommandTemplateChips from './CommandTemplateChips.vue'
 import StudioInstanceParams from './StudioInstanceParams.vue'
 
 const props = defineProps<{
@@ -440,6 +443,41 @@ function onBuildEnvSelect(id: string): void {
   flush()
 }
 
+// ─── 「执行命令」的语言模板芯片 ───────────────────────────────────────────────
+
+/** 只有「执行命令」多行框挂芯片:模板给的是命令写法,别的 textarea(产物路径/缓存)不适用。 */
+function isCommandsField(field: JobField): boolean {
+  return field.kind === 'textarea' && field.key === 'commands'
+}
+
+/** 芯片顺序的判据:当前所选构建环境的语言(旧镜像反查出来的也算)前置。 */
+const commandTemplateLang = computed<string>(
+  () => presetById(buildEnvFieldValue())?.language ?? '',
+)
+
+/** 点芯片 = 只改命令文本,环境/产物路径/缓存等字段一概不动。 */
+function applyCommandTemplate(tpl: CommandTemplate): void {
+  updateLocal('commands', mergeCommands(typedConfig.value.commands ?? '', tpl.commands))
+  flush()
+}
+
+// ─── 字段示例值芯片(把 placeholder 里那个「能直接用的值」抬成可点选) ─────────────
+
+/** 该格有没有可点选填入的值。「执行命令」走上面那套语言模板,不重复挂。 */
+function fieldPresets(field: JobField): string[] {
+  if (isCommandsField(field)) return []
+  if (field.kind !== 'text' && field.kind !== 'textarea' && field.kind !== 'number') return []
+  return field.presets ?? []
+}
+
+/** 单行格是标量 → 换成该值;多行格永不覆盖 → 空框直填、有内容往末尾并、重复点不累积。 */
+function applyFieldPreset(field: JobField, preset: string): void {
+  const cur = typedConfig.value[field.key] ?? ''
+  const next = field.kind === 'textarea' ? mergeIntoTextarea(cur, preset) : preset
+  updateLocal(field.key, next)
+  flush()
+}
+
 /** 配置资源多选:逗号分隔 ID 存 configProfileIds。 */
 function selectedProfileIds(): string[] {
   return (typedConfig.value.configProfileIds ?? '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -781,6 +819,28 @@ async function confirmSave(): Promise<void> {
       >
         <div class="drawer-field-label">{{ field.label }}</div>
 
+        <!-- 常用语言模板:点一下把该语言的构建命令并进下面的框(悬停可预览正文)。
+             环境已选时该语言的模板排在最前,所以「选 Node 20 → 先看见 npm/pnpm/yarn」。 -->
+        <CommandTemplateChips
+          v-if="isCommandsField(field)"
+          :language="commandTemplateLang"
+          @pick="applyCommandTemplate"
+        />
+
+        <!-- 字段示例值:placeholder 里那个「拿来就能用」的值抬成芯片。单行格点一下就换值,
+             多行格只往末尾并(绝不覆盖已写的),重复点同一颗不累积。 -->
+        <div v-if="fieldPresets(field).length" class="tpl-chips">
+          <button
+            v-for="p in fieldPresets(field)"
+            :key="p"
+            type="button"
+            class="tpl-chip"
+            :title="p"
+            :aria-label="t('pipelineJob.presetChipTitle')"
+            @click="applyFieldPreset(field, p)"
+          >{{ presetChipLabel(p) }}</button>
+        </div>
+
         <!-- textarea -->
         <textarea
           v-if="field.kind === 'textarea'"
@@ -975,7 +1035,7 @@ async function confirmSave(): Promise<void> {
 
       <!-- 可视化步骤构建器(脚本类节点;编译进 commands/artifactPath,经 update 落库) -->
       <div v-if="canUseStepBuilder && viewMode === 'steps'" class="drawer-field step-builder-field">
-        <StepBuilder :config="typedConfig" @update="onStepsUpdate" />
+        <StepBuilder :config="typedConfig" :language="commandTemplateLang" @update="onStepsUpdate" />
         <p class="field-hint">
           {{ t('pipelineJob.stepBuilderHint') }}
         </p>
