@@ -1,0 +1,65 @@
+#!/bin/sh
+# vfox-switch — 在不激活 vfox hook 的前提下切换已装 SDK 版本。
+#
+# 为什么需要它:vfox 1.x 的 `use` 依赖交互式 hook,非交互 shell 里直接 rc=1
+# ("vfox requires hook support"),而流水线每次都是 `docker run … sh -c <脚本>` 的一次性容器。
+# 这里的做法与 vfox 自己的全局作用域等价:重指 $VFOX_HOME/sdks/<sdk> 软链 —— 镜像 entrypoint
+# 已经把该目录的 bin 铺进 PATH,并把 JAVA_HOME/GOROOT 指到它,所以重指之后同一脚本里的后续命令
+# 立刻用上新版本,不需要 eval、不需要 bash、不需要重启容器。
+#
+# 版本解析与镜像里 set-defaults.sh 同口径:在 cache 的 v-* 目录里按 semver 前缀取最高
+# (java@17 → 17.0.18-amzn,golang@1.24 → 1.24.13);写不中的版本一律显式报错退出,绝不静默降级。
+#
+# Usage: vfox-switch java@17 [nodejs@22 …]
+set -u
+
+VFOX_HOME="${VFOX_HOME:-$HOME/.vfox}"
+cache_root="$VFOX_HOME/cache"
+sdks_root="$VFOX_HOME/sdks"
+versions_file="$VFOX_HOME/.tool-versions"
+
+die() {
+	printf 'vfox-switch: %s\n' "$1" >&2
+	exit 1
+}
+
+[ $# -ge 1 ] || die "usage: vfox-switch <sdk>@<version> [...]"
+
+for spec in "$@"; do
+	case "$spec" in
+	*@*) ;;
+	*) die "expect <sdk>@<version>, got '$spec'" ;;
+	esac
+	sdk="${spec%%@*}"
+	want="${spec#*@}"
+	[ -n "$sdk" ] && [ -n "$want" ] || die "expect <sdk>@<version>, got '$spec'"
+
+	cache="$cache_root/$sdk"
+	if [ ! -d "$cache" ]; then
+		die "$sdk is not provided by this image (installed SDKs: $(ls "$cache_root" 2>/dev/null | tr '\n' ' '))"
+	fi
+
+	# want 里带发行版后缀(17.0.18-amzn)也当字面量用;不带后缀时按前缀取该档最高。
+	name=$(ls "$cache" 2>/dev/null | sed -n 's/^v-//p' | grep -E "^${want}([.+]|$)" | sort -V | tail -1)
+	if [ -z "$name" ]; then
+		die "$sdk@$want is not installed in this image (installed: $(ls "$cache" 2>/dev/null | sed -n 's/^v-//p' | tr '\n' ' '))"
+	fi
+
+	dir=$(find "$cache/v-$name" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
+	[ -n "$dir" ] || die "$sdk@$name has no unpacked SDK directory under $cache/v-$name"
+
+	mkdir -p "$sdks_root"
+	ln -sfn "${dir%/}" "$sdks_root/$sdk" || die "cannot relink $sdks_root/$sdk -> ${dir%/}"
+
+	# 同步版本文件:让 `vfox current` 与下次容器启动看到的选择不打架(尽力而为,失败不影响本次切换)。
+	if [ -f "$versions_file" ]; then
+		tmp="$versions_file.sw.$$"
+		if grep -v "^$sdk " "$versions_file" >"$tmp" 2>/dev/null; then
+			printf '%s %s\n' "$sdk" "$name" >>"$tmp" && mv "$tmp" "$versions_file" || rm -f "$tmp"
+		else
+			rm -f "$tmp"
+		fi
+	fi
+
+	printf 'Now using %s@%s\n' "$sdk" "$name"
+done

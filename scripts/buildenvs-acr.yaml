@@ -1,0 +1,170 @@
+version: 1
+buildEnvs:
+- language: node
+  version: '26'
+  displayName: Node.js 26
+  description: Node.js 26(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/node:26-alpine
+  enabled: true
+  sortOrder: 6
+- language: golang
+  version: '1.24'
+  displayName: Go 1.24 (golang 镜像)
+  description: Go 1.24 完整版(含 git/gcc,阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/golang:1.24
+  enabled: true
+  sortOrder: 41
+- language: node
+  version: '24'
+  displayName: Node.js 24
+  description: Node.js 24(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/node:24-alpine
+  enabled: true
+  sortOrder: 7
+- language: node
+  version: '22'
+  displayName: Node.js 22
+  description: Node.js 22 LTS
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/node:22-alpine
+  enabled: true
+  sortOrder: 8
+- language: node
+  version: '20'
+  displayName: Node.js 20
+  description: Node.js 20 LTS(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/node:20-alpine
+  enabled: true
+  sortOrder: 10
+- language: node
+  version: '18'
+  displayName: Node.js 18
+  description: Node.js 18 LTS
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/node:18-alpine
+  enabled: true
+  sortOrder: 11
+- language: node
+  version: '16'
+  displayName: Node.js 16
+  description: Node.js 16(已 EOL,仅存量项目)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/node:16-alpine
+  enabled: true
+  sortOrder: 12
+- language: python
+  version: '3.12'
+  displayName: Python 3.12
+  description: Python 3.12(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/python:3.12-alpine
+  enabled: true
+  sortOrder: 20
+- language: python
+  version: '3.11'
+  displayName: Python 3.11
+  description: Python 3.11
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/python:3.11-alpine
+  enabled: true
+  sortOrder: 21
+- language: java
+  version: '21'
+  displayName: Java 21
+  description: OpenJDK 21(eclipse-temurin)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/eclipse-temurin:21-jdk-alpine
+  enabled: true
+  sortOrder: 30
+- language: java
+  version: '17'
+  displayName: Java 17
+  description: OpenJDK 17 LTS
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/eclipse-temurin:17-jdk-alpine
+  enabled: true
+  sortOrder: 31
+- language: java
+  version: 21-maven
+  displayName: Java 21 + Maven 3.9
+  description: Maven 3.9(内置 JDK 21,可直接 mvn package)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/maven:3.9-eclipse-temurin-21
+  enabled: true
+  sortOrder: 32
+- language: java
+  version: '11'
+  displayName: Java 11
+  description: OpenJDK 11 LTS(eclipse-temurin)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/eclipse-temurin:11-jdk
+  enabled: true
+  sortOrder: 33
+- language: java
+  version: '8'
+  displayName: Java 8
+  description: OpenJDK 8(eclipse-temurin)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/eclipse-temurin:8-jdk
+  enabled: true
+  sortOrder: 34
+- language: go
+  version: '1.22'
+  displayName: Go 1.22
+  description: Go 1.22(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/golang:1.22-alpine
+  enabled: true
+  sortOrder: 40
+- language: ruby
+  version: '3.3'
+  displayName: Ruby 3.3
+  description: Ruby 3.3(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/ruby:3.3-alpine
+  enabled: true
+  sortOrder: 50
+- language: php
+  version: '8.3'
+  displayName: PHP 8.3
+  description: PHP 8.3 CLI(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/php:8.3-cli-alpine
+  enabled: true
+  sortOrder: 60
+- language: rust
+  version: '1.79'
+  displayName: Rust 1.79
+  description: Rust 1.79(阿里云 ACR 镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/rust:1.79-alpine
+  enabled: true
+  sortOrder: 70
+- language: vfox
+  version: '1.0.13'
+  displayName: vfox 全量工具链 + Maven
+  description: vfox 1.0.13:vfox use <sdk>@<版本> 免激活直接生效,内置 Maven 3.9(SDK 已烘进镜像)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.13
+  enabled: true
+  sortOrder: 89
+- language: vfox
+  version: '1.0.12'
+  displayName: vfox 全量工具链
+  description: vfox 1.0.12:一个容器内按需 vfox use 切 Node/Java/Go 等版本(需先 eval activate,无 Maven)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.12
+  enabled: true
+  sortOrder: 90
+- language: alpine
+  version: latest
+  displayName: Alpine (通用)
+  description: Alpine 通用 shell 环境(无语言工具链)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/alpine:latest
+  enabled: true
+  sortOrder: 100

@@ -1,0 +1,33 @@
+#!/bin/sh
+# vfox 包装层:只接管 `use`,其余子命令原样转给真二进制。
+#
+# 镜像里的真 vfox 被移到 /opt/vfox/bin/vfox;这个包装放在 /usr/local/bin/vfox(PATH 首位之后
+# 的常规位置),于是流水线脚本里的 `vfox use java@17` 在一次性容器里也能直接生效 —— 不再需要
+# `eval "$(vfox activate bash)"`,也不需要把整段包进 bash heredoc(平台的脚本步是 sh/dash)。
+#
+# -g / -s / 默认 三种作用域在这里语义相同:改的是本容器,容器随 step 结束销毁,不存在跨步污染。
+# 需要 vfox 自己语义的写法(-p/--project、--unlink、不带版本号)一律转给真二进制,不猜。
+set -u
+
+real=/opt/vfox/bin/vfox
+switch=/usr/local/bin/vfox-switch
+
+if [ "${1:-}" != "use" ]; then
+	exec "$real" "$@"
+fi
+shift
+
+specs=''
+for arg in "$@"; do
+	case "$arg" in
+	-g | --global | -s | --session) ;;
+	-*) exec "$real" use "$@" ;;
+	*) specs="$specs $arg" ;;
+	esac
+done
+
+if [ -z "${specs# }" ]; then
+	exec "$real" use "$@"
+fi
+# shellcheck disable=SC2086
+exec "$switch" $specs
