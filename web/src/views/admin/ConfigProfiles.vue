@@ -6,9 +6,10 @@
  *   - CRUD;内置行(is_builtin)仅可改 description/enabled → 403 builtin_readonly
  *   - multipart 上传(扩展名白名单 + 大小上限,后端 PIPEWRIGHT_CONFIG_UPLOAD_MAX_SIZE)
  *   - 编辑时读详情看文件正文(正文以磁盘权威副本为准),并可重新上传覆盖同一行
+ *   - 语言字段是下拉:已添加的语言 / 自定义新增 / 其他(不绑定语言),不给自由输入
  *   - 磁盘权威副本在 DATA_DIR/config_profiles/<id>/,DB content 为冗余快照
  */
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   listConfigProfiles,
@@ -23,6 +24,9 @@ import {
 } from '../../api/configProfiles'
 import type { ConfigProfile, ConfigProfileInput } from '../../api/configProfiles'
 import { exceedsUploadLimit, submitMode } from '../../lib/configProfileFile'
+import { listBuildEnvLanguages } from '../../api/buildEnvs'
+import { languagesFrom, mergeLanguageLists } from '../../lib/languageOptions'
+import LanguageSelect from '../../components/ui/LanguageSelect.vue'
 import { HttpError } from '../../api/http'
 
 const { t } = useI18n()
@@ -35,6 +39,14 @@ const maxText = '1 MB'
 const loadState = ref<'idle' | 'loading' | 'error'>('idle')
 const loadError = ref('')
 const profiles = ref<ConfigProfile[]>([])
+
+// 构建环境目录里的语言:配置资源要和构建环境按 language 精确配对才生效,下拉并上这一份才好用。
+// 取不到不算故障(本页记录的语言仍在候选里),所以只在 load 里静默兜住。
+const envLanguages = ref<string[]>([])
+
+const knownLanguages = computed(() =>
+  mergeLanguageLists(languagesFrom(profiles.value), envLanguages.value),
+)
 
 // ─── form modal ─────────────────────────────────────────────────────────────
 
@@ -143,6 +155,11 @@ async function load(): Promise<void> {
   } catch (err) {
     loadError.value = msg(err, 'configProfiles.errLoad')
     loadState.value = 'error'
+  }
+  try {
+    envLanguages.value = await listBuildEnvLanguages()
+  } catch {
+    // 构建环境不可用只让下拉少几项,不影响本页读写。
   }
 }
 
@@ -293,7 +310,11 @@ async function confirmDelete(): Promise<void> {
         <div class="form-grid">
           <label class="field">
             <span>{{ t('configProfiles.fieldLanguage') }}</span>
-            <input v-model="form.language" type="text" :disabled="editingBuiltin" placeholder="java" />
+            <LanguageSelect
+              v-model="form.language"
+              :known="knownLanguages"
+              :disabled="editingBuiltin"
+            />
           </label>
           <label class="field">
             <span>{{ t('configProfiles.fieldConfigType') }}</span>

@@ -12,6 +12,8 @@
  *   POST   /api/admin/build-envs/:id/pull   → 202 { status: 'checking', error, output }
  *   POST   /api/admin/build-envs/check-all  → { ok, total }
  *   POST   /api/admin/build-envs/check-batch → { items, ok, total, skipped }
+ *   POST   /api/admin/build-envs/batch-create → { summary, results }
+ *   POST   /api/admin/build-envs/batch-delete → { summary, results }
  *   GET    /api/admin/build-envs/export      → 文本(yaml/json;附件下载)
  *   POST   /api/admin/build-envs/import      → ImportReport(dryRun 可预览)
  *
@@ -254,4 +256,50 @@ export async function importBuildEnvs(input: {
 /** 批量检查所选(前端多选/全选)。同步等全部检查结束,耗时与「一键检查」同量级。 */
 export async function checkBuildEnvsBatch(ids: string[]): Promise<BatchCheckResult> {
   return http.post<BatchCheckResult>('/api/admin/build-envs/check-batch', { ids })
+}
+
+/** 批量写的单行动作;deleted 只在批量删除里出现,其余与导入同一套词。 */
+export type BatchRowAction = 'created' | 'skipped' | 'failed' | 'deleted'
+
+/**
+ * 批量写的逐行结果:形状与导入一致,所以前端复用同一套标签、色块和表格。
+ * deleted 之后行已不在列表里,language/version 只是「刚删掉的是哪个」。
+ */
+export interface BatchRowResult {
+  index: number
+  language: string
+  version: string
+  action: BatchRowAction
+  enabled: boolean
+  /** created=新行 id;skipped=现有行 id;deleted=刚删掉的行 id。 */
+  id?: string
+  reason?: string
+}
+
+export interface BatchSummary {
+  total: number
+  /** 新增=实际建行数,删除=实际删行数。 */
+  success: number
+  /** 新增=「已存在所以没动」,删除=「已经不在了」。 */
+  skipped: number
+  failed: number
+}
+
+export interface BatchReport {
+  summary: BatchSummary
+  results: BatchRowResult[]
+}
+
+/**
+ * 批量新增:一次录一批「语言 + 版本 + 镜像」。
+ * 逐行处理 —— 某行校验不过或与现有行同键,只落在那一行的结果上,其余照常建。
+ * enabled 只表达意图:新行仍要过三态门,没检查过就保持禁用并在 reason 里说明。
+ */
+export async function batchCreateBuildEnvs(items: BuildEnvInput[]): Promise<BatchReport> {
+  return http.post<BatchReport>('/api/admin/build-envs/batch-create', { items })
+}
+
+/** 批量删除所选(复用列表页的多选/全选)。后端按行标识删,不看启用状态。 */
+export async function deleteBuildEnvsBatch(ids: string[]): Promise<BatchReport> {
+  return http.post<BatchReport>('/api/admin/build-envs/batch-delete', { ids })
 }

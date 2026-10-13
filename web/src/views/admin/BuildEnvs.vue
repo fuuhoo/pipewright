@@ -4,9 +4,12 @@
  *
  * 覆盖 §3.1 / §3.2:
  *   - CRUD(language/version/display_name/description/image/credential/sort_order)
+ *   - 语言只给下拉:已添加的语言 + 自定义新增 + 其他(不绑定语言)
  *   - 镜像来源 official(官方短名)/ custom(任意地址,系统不拼接 — R8)
  *   - P0 #4 三态:unchecked 拒启用、unavailable 强制禁用、available 放行
  *   - 手动检查 / 手动拉取 / 一键检查 / 多选或全选批量检查
+ *   - 批量新增(共用字段 × 版本清单展开成多行)/ 批量删除所选(逐行结果,坏行不挡好行)
+ *   - 列表排序:默认(排序值)/ 名称 / 创建时间三档,后两档可翻方向,选择留本地
  *   - 整表导出(可选格式与是否含禁用)+ 导入(先预览,跳过/覆盖两种冲突策略)
  *
  * 权限:路由 meta.adminOnly + AppShell 菜单 role 隔离双保险。
@@ -23,10 +26,13 @@ import {
   pullBuildEnv,
   checkAllBuildEnvs,
   checkBuildEnvsBatch,
+  batchCreateBuildEnvs,
+  deleteBuildEnvsBatch,
   exportBuildEnvText,
   importBuildEnvs,
 } from '../../api/buildEnvs'
 import type {
+  BatchReport,
   BuildEnv,
   BuildEnvInput,
   ImageCheckStatus,
@@ -34,6 +40,18 @@ import type {
   ImportReport,
   TransferFormat,
 } from '../../api/buildEnvs'
+import {
+  batchActionLabel,
+  batchRowLabel,
+  emptyBatchAddForm,
+  expandBatchForm,
+  batchAddIssues,
+  formatBatchSummary,
+  DEFAULT_NAME_TEMPLATE,
+  EXAMPLE_IMAGE_TEMPLATE,
+  MAX_BATCH_ROWS,
+  type BatchAddForm,
+} from '../../lib/buildEnvBatch'
 import {
   batchCheckLabel,
   buildEnvExportFilename,
@@ -43,6 +61,17 @@ import {
   importActionLabel,
   importModeLabel,
 } from '../../lib/buildEnvTransfer'
+import {
+  dirEnabled,
+  loadSort,
+  nextSort,
+  saveSort,
+  sortBuildEnvs,
+  type BuildEnvSort,
+  type BuildEnvSortKey,
+} from '../../lib/buildEnvSort'
+import { languagesFrom } from '../../lib/languageOptions'
+import LanguageSelect from '../../components/ui/LanguageSelect.vue'
 import { listCredentials, usableCredentials } from '../../api/credentials'
 import type { Credential } from '../../api/credentials'
 import { HttpError } from '../../api/http'
@@ -193,6 +222,29 @@ const statusLabel = (s: ImageCheckStatus): string => t(`buildEnvs.status${cap(s)
 
 function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+// ─── 排序 ───────────────────────────────────────────────────────────────────
+// 表格里渲染的是这份派生视图;envs 始终保持后端权威顺序(批量检查、导出计数都读它)。
+
+const sort = ref<BuildEnvSort>(loadSort())
+const sortedEnvs = computed(() => sortBuildEnvs(envs.value, sort.value))
+
+// 语言下拉的候选:主列表(内置 + 手工添加,含禁用行)里出现过的语言。
+const knownLanguages = computed(() => languagesFrom(envs.value))
+
+const SORT_KEYS: BuildEnvSortKey[] = ['order', 'name', 'created']
+const sortLabel = (k: BuildEnvSortKey): string => t(`buildEnvs.sort${cap(k)}`)
+
+function pickSort(key: BuildEnvSortKey): void {
+  sort.value = nextSort(sort.value, key)
+  saveSort(sort.value)
+}
+
+function flipSortDir(): void {
+  if (!dirEnabled(sort.value)) return
+  sort.value = { ...sort.value, dir: sort.value.dir === 'asc' ? 'desc' : 'asc' }
+  saveSort(sort.value)
 }
 
 // ─── data loading ───────────────────────────────────────────────────────────
@@ -399,6 +451,95 @@ async function onCheckSelected(): Promise<void> {
   }
 }
 
+// ─── 批量删除(复用上面的多选/全选) ────────────────────────────────────────
+
+const batchDeleteOpen = ref(false)
+const batchDeleting = ref(false)
+const batchDeleteBanner = ref('')
+const batchDeleteReport = ref<BatchReport | null>(null)
+
+/** 勾选到的行(按列表权威顺序),确认弹窗要照着名字让人过一遍。 */
+const selectedEnvs = computed(() => envs.value.filter((e) => selectedIds.value.includes(e.id)))
+
+function openBatchDelete(): void {
+  if (selectedIds.value.length === 0) return
+  batchDeleteReport.value = null
+  batchDeleteBanner.value = ''
+  batchDeleteOpen.value = true
+}
+
+async function confirmBatchDelete(): Promise<void> {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  batchDeleting.value = true
+  batchDeleteBanner.value = ''
+  try {
+    const report = await deleteBuildEnvsBatch(ids)
+    batchDeleteReport.value = report
+    await load()
+    if (report.summary.failed === 0) {
+      // 全批落定:收弹窗、清勾选,汇总回到页头横幅。
+      batchDeleteOpen.value = false
+      selectedIds.value = []
+      rowBanner.value = formatBatchSummary('delete', report.summary)
+    } else {
+      // 有行没删掉:留着弹窗逐行看原因,勾选取当前列表再收一遍。
+      batchDeleteBanner.value = formatBatchSummary('delete', report.summary)
+    }
+  } catch (err) {
+    batchDeleteBanner.value = errMsg(err, 'buildEnvs.errBatchDelete')
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+// ─── 批量新增(一份共享字段 × 一串版本 = 若干行) ──────────────────────────
+
+const batchAddOpen = ref(false)
+const batchAddBusy = ref(false)
+const batchAddBanner = ref('')
+const batchAddReport = ref<BatchReport | null>(null)
+const batchForm = ref<BatchAddForm>(emptyBatchAddForm())
+
+/** 用户还没碰过表单时不铺一堆红色提示。 */
+const batchAddTouched = computed(
+  () => batchForm.value.language.trim() !== '' || batchForm.value.versions.trim() !== '',
+)
+const batchAddRows = computed(() => expandBatchForm(batchForm.value))
+const batchAddBlockers = computed(() =>
+  batchAddTouched.value ? batchAddIssues(batchForm.value) : [],
+)
+
+const batchIssueText = (k: string): string =>
+  t(`buildEnvs.batchIssue${cap(k)}`, { max: MAX_BATCH_ROWS })
+
+function openBatchAdd(): void {
+  batchForm.value = emptyBatchAddForm()
+  batchAddReport.value = null
+  batchAddBanner.value = ''
+  batchAddOpen.value = true
+}
+
+async function submitBatchAdd(): Promise<void> {
+  const issues = batchAddIssues(batchForm.value)
+  if (issues.length > 0) {
+    batchAddBanner.value = issues.map(batchIssueText).join('；')
+    return
+  }
+  batchAddBusy.value = true
+  batchAddBanner.value = ''
+  try {
+    batchAddReport.value = await batchCreateBuildEnvs(batchAddRows.value)
+    await load()
+    batchAddBanner.value = formatBatchSummary('create', batchAddReport.value.summary)
+  } catch (err) {
+    batchAddBanner.value = errMsg(err, 'buildEnvs.errBatchCreate')
+    batchAddReport.value = null
+  } finally {
+    batchAddBusy.value = false
+  }
+}
+
 // ─── 导出 ───────────────────────────────────────────────────────────────────
 
 const exportFormat = ref<TransferFormat>('yaml')
@@ -528,25 +669,60 @@ async function runImport(dryRun: boolean): Promise<void> {
           </button>
         </div>
         <button class="btn" @click="openImport">{{ t('buildEnvs.import') }}</button>
-        <button
-          class="btn"
-          :disabled="checkingSelected || selectedIds.length === 0"
-          @click="onCheckSelected"
-        >
-          {{
-            checkingSelected
-              ? t('buildEnvs.checking')
-              : t('buildEnvs.checkSelected', { n: selectedIds.length })
-          }}
-        </button>
+        <!-- 勾选后才会做的事成组放:与导出组同款边框,表示这两颗按钮共用同一批行 -->
+        <div class="opt-group">
+          <button
+            class="btn"
+            :disabled="checkingSelected || selectedIds.length === 0"
+            @click="onCheckSelected"
+          >
+            {{
+              checkingSelected
+                ? t('buildEnvs.checking')
+                : t('buildEnvs.checkSelected', { n: selectedIds.length })
+            }}
+          </button>
+          <button
+            class="btn btn--danger"
+            :disabled="batchDeleting || selectedIds.length === 0"
+            @click="openBatchDelete"
+          >
+            {{ t('buildEnvs.deleteSelected', { n: selectedIds.length }) }}
+          </button>
+        </div>
         <button class="btn" :disabled="checkingAll" @click="onCheckAll">
           {{ checkingAll ? t('buildEnvs.checking') : t('buildEnvs.checkAll') }}
         </button>
+        <button class="btn" @click="openBatchAdd">{{ t('buildEnvs.batchAdd') }}</button>
         <button class="btn btn--primary" @click="openAdd">+ {{ t('buildEnvs.add') }}</button>
       </div>
     </header>
 
     <p v-if="rowBanner" class="banner" role="status">{{ rowBanner }}</p>
+
+    <!-- 排序档单独占一行:放进页头会把标题挤成竖排字(629px 窄窗口实测) -->
+    <div v-if="envs.length > 0" class="sort-bar">
+      <div class="seg" role="group" :aria-label="t('buildEnvs.sortAria')">
+        <button
+          v-for="k in SORT_KEYS"
+          :key="k"
+          class="seg__btn"
+          :class="{ 'seg__btn--on': sort.key === k }"
+          :aria-pressed="sort.key === k"
+          @click="pickSort(k)"
+        >
+          {{ sortLabel(k) }}
+        </button>
+      </div>
+      <button
+        class="btn btn--sm"
+        :disabled="!dirEnabled(sort)"
+        :title="t('buildEnvs.sortDirHint')"
+        @click="flipSortDir"
+      >
+        {{ sort.dir === 'asc' ? t('buildEnvs.sortDirAsc') : t('buildEnvs.sortDirDesc') }}
+      </button>
+    </div>
 
     <!-- loading / error / empty -->
     <p v-if="loadState === 'loading'" class="state">{{ t('common.refresh') }}…</p>
@@ -571,11 +747,12 @@ async function runImport(dryRun: boolean): Promise<void> {
           <th>{{ t('buildEnvs.colImage') }}</th>
           <th>{{ t('buildEnvs.colStatus') }}</th>
           <th>{{ t('buildEnvs.colEnabled') }}</th>
+          <th>{{ t('buildEnvs.colCreated') }}</th>
           <th>{{ t('buildEnvs.colActions') }}</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="e in envs" :key="e.id">
+        <tr v-for="e in sortedEnvs" :key="e.id">
           <td class="col-check">
             <input
               type="checkbox"
@@ -619,6 +796,7 @@ async function runImport(dryRun: boolean): Promise<void> {
               <span>{{ e.enabled ? t('buildEnvs.enable') : t('buildEnvs.disable') }}</span>
             </label>
           </td>
+          <td class="cell-dim nowrap">{{ fmtTime(e.createdAt) }}</td>
           <td>
             <div class="actions">
               <button
@@ -655,7 +833,7 @@ async function runImport(dryRun: boolean): Promise<void> {
         <div class="form-grid">
           <label class="field">
             <span>{{ t('buildEnvs.fieldLanguage') }}</span>
-            <input v-model="form.language" type="text" placeholder="node" />
+            <LanguageSelect v-model="form.language" :known="knownLanguages" />
           </label>
           <label class="field">
             <span>{{ t('buildEnvs.fieldVersion') }}</span>
@@ -731,6 +909,224 @@ async function runImport(dryRun: boolean): Promise<void> {
             @click="confirmDelete"
           >
             {{ t('buildEnvs.delete') }}
+          </button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ── batch add ── -->
+    <div v-if="batchAddOpen" class="modal-mask" @click.self="batchAddOpen = false">
+      <div class="modal" role="dialog" :aria-label="t('buildEnvs.batchAddTitle')">
+        <h2 class="modal-title">{{ t('buildEnvs.batchAddTitle') }}</h2>
+        <p class="modal-body">{{ t('buildEnvs.batchAddDesc') }}</p>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>{{ t('buildEnvs.fieldLanguage') }}</span>
+            <LanguageSelect v-model="batchForm.language" :known="knownLanguages" />
+          </label>
+          <label class="field">
+            <span>{{ t('buildEnvs.fieldSourceType') }}</span>
+            <select v-model="batchForm.sourceType">
+              <option value="official">{{ t('buildEnvs.sourceOfficial') }}</option>
+              <option value="custom">{{ t('buildEnvs.sourceCustom') }}</option>
+            </select>
+          </label>
+
+          <label class="field field--wide">
+            <span>{{ t('buildEnvs.versions') }}</span>
+            <textarea
+              v-model="batchForm.versions"
+              class="mono-area"
+              rows="5"
+              spellcheck="false"
+              :placeholder="t('buildEnvs.versionsPlaceholder')"
+            ></textarea>
+            <small>{{ t('buildEnvs.versionsHint', { max: MAX_BATCH_ROWS }) }}</small>
+          </label>
+
+          <label class="field field--wide">
+            <span>{{ t('buildEnvs.nameTemplate') }}</span>
+            <input
+              v-model="batchForm.displayNameTemplate"
+              type="text"
+              :placeholder="DEFAULT_NAME_TEMPLATE"
+            />
+            <!-- 占位符原样展示走代码常量:文案里的花括号会被 vue-i18n 当插值吃掉 -->
+            <small>{{ t('buildEnvs.nameTemplateHint') }} <code class="mono">{{ DEFAULT_NAME_TEMPLATE }}</code></small>
+          </label>
+
+          <label class="field field--wide">
+            <span>{{ t('buildEnvs.imageTemplate') }}</span>
+            <input
+              v-model="batchForm.imageTemplate"
+              type="text"
+              :placeholder="EXAMPLE_IMAGE_TEMPLATE"
+            />
+            <small>{{ t('buildEnvs.imageTemplateHint') }} <code class="mono">{{ DEFAULT_NAME_TEMPLATE }}</code></small>
+          </label>
+
+          <label class="field field--wide">
+            <span>{{ t('buildEnvs.fieldDescription') }}</span>
+            <input v-model="batchForm.description" type="text" />
+          </label>
+
+          <label class="field">
+            <span>{{ t('buildEnvs.fieldCredential') }}</span>
+            <select v-model="batchForm.credentialId">
+              <option value="">{{ t('buildEnvs.noCredential') }}</option>
+              <option v-for="c in registryCredentials" :key="c.id" :value="c.id">
+                {{ c.name }}
+              </option>
+            </select>
+          </label>
+          <label class="field">
+            <span>{{ t('buildEnvs.sortOrderStart') }}</span>
+            <input v-model.number="batchForm.sortOrder" type="number" />
+            <small>{{ t('buildEnvs.sortOrderStartHint') }}</small>
+          </label>
+
+          <div class="field field--wide">
+            <label class="opt">
+              <input v-model="batchForm.enabled" type="checkbox" />
+              <span>{{ t('buildEnvs.batchAddEnable') }}</span>
+            </label>
+            <small>{{ t('buildEnvs.batchAddEnableHint') }}</small>
+          </div>
+        </div>
+
+        <p v-if="batchAddBlockers.length > 0" class="note note--warn">
+          {{ batchAddBlockers.map(batchIssueText).join('；') }}
+        </p>
+        <p v-if="batchAddBanner" class="banner banner--err">{{ batchAddBanner }}</p>
+
+        <div v-if="batchAddRows.length > 0" class="import-result">
+          <p class="import-summary">{{ t('buildEnvs.batchPreview', { n: batchAddRows.length }) }}</p>
+          <table class="grid grid--sm">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>{{ t('buildEnvs.colEnv') }}</th>
+                <th>{{ t('buildEnvs.fieldDisplayName') }}</th>
+                <th>{{ t('buildEnvs.colImage') }}</th>
+                <th>{{ t('buildEnvs.colSort') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(r, i) in batchAddRows" :key="`${r.language}/${r.version}`">
+                <td>{{ i + 1 }}</td>
+                <td class="mono">{{ r.language }} / {{ r.version }}</td>
+                <td>{{ r.displayName }}</td>
+                <td class="mono cell--wrap">{{ r.image || '—' }}</td>
+                <td>{{ r.sortOrder }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="batchAddReport" class="import-result">
+          <p class="import-summary">
+            {{ formatBatchSummary('create', batchAddReport.summary) }}
+          </p>
+          <table class="grid grid--sm">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>{{ t('buildEnvs.colEnv') }}</th>
+                <th>{{ t('buildEnvs.colAction') }}</th>
+                <th>{{ t('buildEnvs.colEnabled') }}</th>
+                <th>{{ t('buildEnvs.colReason') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in batchAddReport.results" :key="r.index">
+                <td>{{ r.index + 1 }}</td>
+                <td class="mono">{{ r.language }} / {{ r.version }}</td>
+                <td>
+                  <span class="pill" :class="`pill--${r.action}`">
+                    {{ batchActionLabel(r.action) }}
+                  </span>
+                </td>
+                <td>{{ r.enabled ? t('buildEnvs.enabledShort') : t('buildEnvs.disabledShort') }}</td>
+                <td class="cell-dim cell--wrap">{{ r.reason || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <footer class="modal-actions">
+          <button class="btn" @click="batchAddOpen = false">{{ t('buildEnvs.cancel') }}</button>
+          <button
+            class="btn btn--primary"
+            :disabled="batchAddBusy || batchAddRows.length === 0"
+            @click="submitBatchAdd"
+          >
+            {{
+              batchAddBusy
+                ? t('buildEnvs.batchWorking')
+                : t('buildEnvs.batchAddConfirm', { n: batchAddRows.length })
+            }}
+          </button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ── batch delete confirm ── -->
+    <div v-if="batchDeleteOpen" class="modal-mask" @click.self="batchDeleteOpen = false">
+      <div class="modal modal--sm" role="dialog" :aria-label="t('buildEnvs.batchDeleteTitle')">
+        <h2 class="modal-title">{{ t('buildEnvs.batchDeleteTitle') }}</h2>
+        <p class="modal-body">{{ t('buildEnvs.batchDeleteCount', { n: selectedEnvs.length }) }}</p>
+
+        <ul class="del-list">
+          <li v-for="e in selectedEnvs" :key="e.id">
+            <span class="cell-strong">{{ e.displayName }}</span>
+            <span class="cell-dim mono">{{ batchRowLabel(e.language, e.version) }}</span>
+            <span v-if="e.enabled" class="cell-dim">{{ t('buildEnvs.enabledShort') }}</span>
+          </li>
+        </ul>
+
+        <p class="note note--warn">{{ t('buildEnvs.batchDeleteWarn') }}</p>
+
+        <p v-if="batchDeleteBanner" class="banner banner--err">{{ batchDeleteBanner }}</p>
+
+        <div v-if="batchDeleteReport" class="import-result">
+          <p class="import-summary">
+            {{ formatBatchSummary('delete', batchDeleteReport.summary) }}
+          </p>
+          <table class="grid grid--sm">
+            <thead>
+              <tr>
+                <th>{{ t('buildEnvs.colEnv') }}</th>
+                <th>{{ t('buildEnvs.colAction') }}</th>
+                <th>{{ t('buildEnvs.colReason') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in batchDeleteReport.results" :key="r.index">
+                <td class="mono">{{ r.language }} / {{ r.version }}</td>
+                <td>
+                  <span class="pill" :class="`pill--${r.action}`">
+                    {{ batchActionLabel(r.action) }}
+                  </span>
+                </td>
+                <td class="cell-dim cell--wrap">{{ r.reason || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <footer class="modal-actions">
+          <button class="btn" @click="batchDeleteOpen = false">{{ t('buildEnvs.cancel') }}</button>
+          <button
+            class="btn btn--danger"
+            :disabled="batchDeleting || selectedEnvs.length === 0"
+            @click="confirmBatchDelete"
+          >
+            {{
+              batchDeleting
+                ? t('buildEnvs.batchWorking')
+                : t('buildEnvs.batchDeleteConfirm', { n: selectedEnvs.length })
+            }}
           </button>
         </footer>
       </div>
@@ -847,6 +1243,9 @@ async function runImport(dryRun: boolean): Promise<void> {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  /* 窄窗口(629px 实测)下让按钮整组换到标题下面:不换行时按钮组按 max-content 撑开,
+     会把标题挤成 1 字 1 行的竖排,并把最右边的按钮裁出视口。 */
+  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 .view-title {
@@ -866,7 +1265,10 @@ async function runImport(dryRun: boolean): Promise<void> {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
-  flex-shrink: 0;
+  /* 必须允许收缩:flex-shrink:0 时整组按 max-content(6 个控件 ≈ 819px)撑开,
+     629px 窄窗口下右侧三颗按钮会被裁出视口且页面不横向滚动,等于点不到。 */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* 导出的一组选项:格式 + 是否含禁用 + 按钮,靠得近一点表示"这三样是一件事" */
 .opt-group {
@@ -876,6 +1278,45 @@ async function runImport(dryRun: boolean): Promise<void> {
   padding: 4px 8px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
+}
+/* 排序档:与代理总览同款分段控件,order 档是后端权威顺序,另两档才是前端排 */
+.sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--rounded-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-inset);
+}
+.seg__btn {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--rounded-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-faint);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast, 150ms) ease,
+    background var(--duration-fast, 150ms) ease;
+}
+.seg__btn:hover {
+  color: var(--color-dim);
+}
+.seg__btn--on {
+  color: var(--color-text);
+  background: var(--color-card);
+  box-shadow: var(--shadow);
+}
+.nowrap {
+  white-space: nowrap;
 }
 .opt {
   display: inline-flex;
@@ -1189,5 +1630,30 @@ async function runImport(dryRun: boolean): Promise<void> {
 .pill--failed {
   background: rgba(220, 38, 38, 0.15);
   color: #dc2626;
+}
+.pill--deleted {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+}
+
+/* 批量删除确认:勾选的行要逐条看得见,但列表本身不是主角,限高滚动即可。 */
+.del-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  max-height: 200px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.del-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--text-label);
 }
 </style>
