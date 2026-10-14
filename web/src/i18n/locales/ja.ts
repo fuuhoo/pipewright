@@ -79,6 +79,36 @@ const ja: typeof zhCN = {
     errNetwork: 'サーバーに接続できません。バックエンドが稼働しているか確認して再試行してください',
     errGeneric: 'ログインに失敗しました({status})',
     errUnknown: '不明なエラーです。再試行してください',
+    oauthDivider: 'または Git プラットフォームのアカウントでログイン',
+    oauthGroupAria: 'Git プラットフォームのアカウントでログイン',
+    oauthLoginWith: '{provider} でログイン',
+  },
+
+  // OAuth コールバックは機械コードだけを返します(/login?oauth_error=name_taken)。
+  // キーは web/src/lib/oauthReason.ts の列挙と一字一句一致させること。抜けるとページにキー名が出ます。
+  oauthErr: {
+    generic: 'ログインを完了できませんでした({code})',
+    invalidState: 'ログインの検証に失敗しました。ログイン画面からやり直してください。',
+    missingCode: 'プラットフォームから認可コードが返されませんでした。もう一度やり直してください。',
+    providerDenied: 'プラットフォーム側で認可を取り消しました。',
+    appNotConfigured: 'このプラットフォームのログイン設定が完了していません。管理者にお問い合わせください。',
+    invalidProvider: '認識できないログインプロバイダーです。',
+    vaultUnavailable: 'サーバーがログイン設定を復号できませんでした。管理者にお問い合わせください。',
+    authorizeFailed: 'プラットフォームに接続できませんでした。時間をおいて再試行してください。',
+    exchangeFailed: '認可コードの交換に失敗しました。もう一度やり直してください。',
+    identityUnavailable: 'プラットフォーム上のアカウント情報を読み取れませんでした。もう一度やり直してください。',
+    domainNotAllowed: 'このメールドメインでのログインは、このインスタンスで許可されていません。',
+    nameTaken: 'このユーザー名はすでに使用中です。管理者にアカウントの紐付けを依頼してください。',
+    accountUnavailable: '紐付けられたアカウントは利用できません。管理者にお問い合わせください。',
+    roleUnavailable: '新規アカウントのデフォルトロールが設定されていません。管理者にお問い合わせください。',
+    loginDisabled: 'このプラットフォームからのログインは無効化されています。',
+    alreadyBound: 'このプラットフォームアカウントは他のユーザーとすでに紐付いています。',
+    providerBound: 'このアカウントはすでにこのプラットフォームと紐付いています。変更するにはまず解除してください。',
+    sessionUnavailable: 'セッションを作成できませんでした。もう一度お試しください。',
+    loginUnavailable: 'このインスタンスではプラットフォームログインが有効になっていません。管理者にお問い合わせください。',
+    loginFailed: 'ログインを完了できませんでした。再試行するか、ユーザー名とパスワードをご利用ください。',
+    oauthUnavailable: 'このインスタンスには OAuth が設定されていません。管理者にお問い合わせください。',
+    sessionUnbound: 'セッションが無効になりました。再度ログインしてから紐付けてください。',
   },
 
   dashboard: {

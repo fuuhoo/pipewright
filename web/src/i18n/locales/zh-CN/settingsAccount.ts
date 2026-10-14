@@ -46,4 +46,26 @@ export default {
   onboardingBtn: '重新引导',
   toastOnboardingReset: '已重置引导',
   toastOnboardingResetDetail: '正在打开首次使用引导',
+
+  // ─── 外部 git 账号绑定(用平台账号登录本实例)───────────────────────────────
+  // 绑定只是「(平台, 平台稳定 ID) ↔ 本账号」的映射:不改角色,解绑不撤销当前会话。
+  identitiesTitle: '已绑定的 git 账号',
+  identitiesSub: '绑定只决定「哪个平台账号能登进这个实例」,不改角色;解绑也不会把当前会话踢下线。',
+  identitiesEmpty: '还没有绑定任何 git 平台账号',
+  identitiesEmptyDesc: '绑定后即可用该平台账号直接登录本实例,不必再输密码。',
+  errLoadIdentities: '无法加载绑定列表',
+  identityMeta: '邮箱 {email} · 平台 ID {externalId}',
+  identityNoEmail: '未提供',
+  unbindBtn: '解绑',
+  unbindTitle: '解绑该账号?',
+  unbindBody: '解绑后 {provider} 的 {login} 就再也不能用来登录这个实例。当前会话不受影响。',
+  unbindConfirm: '解绑',
+  toastUnbound: '已解绑',
+  toastAlreadyUnbound: '这条绑定已不存在,列表已刷新',
+  toastUnbindFailed: '解绑失败',
+  bindHint: '绑定新的 git 平台账号',
+  bindBtn: '用 {provider} 绑定',
+  toastBound: '已绑定 {provider}',
+  toastBindFailed: '{provider} 绑定未完成',
+  providerCustom: '自建',
 }

@@ -79,6 +79,36 @@ export default {
     errNetwork: '无法连接到服务器,请检查后端是否运行后重试',
     errGeneric: '登录失败({status})',
     errUnknown: '未知错误,请重试',
+    oauthDivider: '或用 git 平台账号登录',
+    oauthGroupAria: '用 git 平台账号登录',
+    oauthLoginWith: '使用 {provider} 登录',
+  },
+
+  // OAuth 回调回跳时只带机器码(/login?oauth_error=name_taken),这里翻成人读原因。
+  // 键名与 web/src/lib/oauthReason.ts 的枚举逐字对应:漏一个,页面上就会出现一行键名或兜底文案。
+  oauthErr: {
+    generic: '登录未完成({code})',
+    invalidState: '登录校验未通过,请回到登录页重新发起。',
+    missingCode: '平台没有回传授权码,请重新发起登录。',
+    providerDenied: '你在平台侧取消了授权。',
+    appNotConfigured: '这个平台的登录入口还没配置完整,请联系管理员。',
+    invalidProvider: '无法识别这个登录平台。',
+    vaultUnavailable: '服务器无法解密登录配置,请联系管理员。',
+    authorizeFailed: '无法连接到该平台,请稍后重试。',
+    exchangeFailed: '授权码换取令牌失败,请重新发起登录。',
+    identityUnavailable: '读不到该平台上的账号信息,请重新发起登录。',
+    domainNotAllowed: '这个邮箱域名不在实例允许的登录范围内。',
+    nameTaken: '该平台用户名在本实例已被占用,请让管理员把你的账号和它做绑定。',
+    accountUnavailable: '绑定的账号已不可用,请联系管理员。',
+    roleUnavailable: '实例还没配置新账号的默认角色,请联系管理员。',
+    loginDisabled: '这个平台的登录入口已被关闭。',
+    alreadyBound: '这个平台账号已经绑定到其他用户。',
+    providerBound: '当前账号已经绑定过这个平台,要先解绑才能换。',
+    sessionUnavailable: '登录会话创建失败,请稍后重试。',
+    loginUnavailable: '实例未启用平台登录,请联系管理员。',
+    loginFailed: '登录未完成,请重试或改用账号口令登录。',
+    oauthUnavailable: '实例未配置 OAuth,请联系管理员。',
+    sessionUnbound: '当前会话已失效,请重新登录后再绑定。',
   },
 
   dashboard: {

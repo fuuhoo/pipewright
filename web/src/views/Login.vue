@@ -4,9 +4,16 @@ import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
 import { login } from '../api/auth'
 import { HttpError } from '../api/http'
+import {
+  getPublicOAuthProviders,
+  loginAuthorizeUrl,
+  type OAuthProvider,
+  type PublicOAuthProvider,
+} from '../api/oauth'
 import { listProjects } from '../api/projects'
 import { isOnboardingDismissed } from '../composables/useOnboarding'
 import { useSessionStore } from '../stores/session'
+import { oauthErrorKey, oauthErrorShowsRawCode } from '../lib/oauthReason'
 
 const router = useRouter()
 const route = useRoute()
@@ -110,6 +117,52 @@ async function handleSubmit(): Promise<void> {
 }
 
 const canSubmit = computed(() => !loading.value && !isLockedOut.value)
+
+// ─── 「用 git 平台账号登录」入口 ─────────────────────────────────────────────
+// 清单来自公开端点,只列「已配全且已启用」的登录应用;拉不到就当作没配 —— 登录页不能因为
+// 领域故障白屏,那样连口令都登不进去了。
+const oauthProviders = ref<PublicOAuthProvider[]>([])
+// 已点开的平台:从点击到浏览器离开本页之间有空档,用它锁住其余按钮避免重复发起。
+const oauthDiverting = ref('')
+
+/**
+ * 登录成功后的站内落地路径,与口令登录同一套校验:'/' 开头且不是 '//'
+ * (协议相对是开放重定向)。不合法就不带 redirect,让后端回默认页。
+ */
+const safeRedirect = computed(() => {
+  const raw = route.query.redirect
+  if (typeof raw !== 'string') return ''
+  return raw.startsWith('/') && !raw.startsWith('//') ? raw : ''
+})
+
+function startOAuthLogin(provider: OAuthProvider): void {
+  if (oauthDiverting.value) return
+  oauthDiverting.value = provider
+  // 整页导航而非 fetch:后端要 302 到平台授权页,并在同一响应里种一次性浏览器 nonce,
+  // fetch 会把这两步都打断。
+  window.location.href = loginAuthorizeUrl(provider, safeRedirect.value || undefined)
+}
+
+/** 回调失败时后端只回机器码(/login?oauth_error=name_taken):翻成人读文案,然后把参数抹掉。 */
+function readOAuthErrorFromQuery(): void {
+  const raw = route.query.oauth_error
+  if (typeof raw !== 'string' || raw === '') return
+  bannerError.value = oauthErrorShowsRawCode(raw)
+    ? t(oauthErrorKey(raw), { code: raw })
+    : t(oauthErrorKey(raw))
+  const next: Record<string, string> = {}
+  if (safeRedirect.value) next.redirect = safeRedirect.value
+  void router.replace({ path: route.path, query: next })
+}
+
+onMounted(async () => {
+  readOAuthErrorFromQuery()
+  try {
+    oauthProviders.value = await getPublicOAuthProviders()
+  } catch {
+    oauthProviders.value = []
+  }
+})
 
 // ─── 沉浸式氛围:浮动粒子 + 指针视差(纯装饰,尊重 prefers-reduced-motion) ───────
 // 全部自包含、无外部资源(self-hosted「数据不出网」铁律):字体用项目 token,粒子用 canvas。
@@ -354,6 +407,42 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </form>
+
+          <!-- OAuth 登录入口:清单来自公开端点,只有「已配全且启用」的平台才会出现在这里。 -->
+          <div v-if="oauthProviders.length" class="oauth">
+            <div class="oauth__split" aria-hidden="true">
+              <span>{{ t('login.oauthDivider') }}</span>
+            </div>
+            <div class="oauth__list" role="group" :aria-label="t('login.oauthGroupAria')">
+              <button
+                v-for="p in oauthProviders"
+                :key="p.provider"
+                type="button"
+                class="oauth__btn"
+                :disabled="!!oauthDiverting"
+                :aria-busy="oauthDiverting === p.provider"
+                @click="startOAuthLogin(p.provider)"
+              >
+                <span v-if="oauthDiverting === p.provider" class="spinner" aria-hidden="true" />
+                <svg
+                  v-else
+                  class="oauth__ic"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v4" />
+                  <path d="M10 14 21 3" />
+                  <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
+                </svg>
+                <span>{{ t('login.oauthLoginWith', { provider: p.label }) }}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -923,6 +1012,73 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   flex-shrink: 0;
+}
+
+/* ——— OAuth 登录入口 ——— */
+.oauth {
+  position: relative;
+  z-index: 4;
+  margin-top: 22px;
+}
+.oauth__split {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  letter-spacing: 0.07em;
+  color: var(--lp-faint);
+}
+.oauth__split::before,
+.oauth__split::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--lp-brd);
+}
+.oauth__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.oauth__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 13px;
+  border: 1px solid var(--lp-brd);
+  background: var(--lp-glass);
+  color: var(--lp-text);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.15s;
+}
+.oauth__btn:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.6);
+  background: rgba(59, 130, 246, 0.12);
+  transform: translateY(-1px);
+}
+.oauth__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.oauth__ic {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--lp-sky);
+}
+.oauth__btn .spinner {
+  border-color: rgba(255, 255, 255, 0.25);
+  border-top-color: var(--lp-sky);
 }
 
 /* ——— trust bar ——— */

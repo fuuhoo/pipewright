@@ -79,6 +79,36 @@ const es: typeof zhCN = {
     errNetwork: 'No se puede conectar con el servidor. Comprueba que el backend esté en marcha e inténtalo de nuevo.',
     errGeneric: 'Error de inicio de sesión ({status})',
     errUnknown: 'Error desconocido, inténtalo de nuevo',
+    oauthDivider: 'O inicia sesión con una cuenta de git',
+    oauthGroupAria: 'Iniciar sesión con una cuenta de git',
+    oauthLoginWith: 'Continuar con {provider}',
+  },
+
+  // El callback de OAuth vuelve solo con un código de máquina (/login?oauth_error=name_taken);
+  // estas claves deben coincidir literalmente con la enumeración de web/src/lib/oauthReason.ts.
+  oauthErr: {
+    generic: 'Inicio de sesión incompleto ({code})',
+    invalidState: 'No se pudo validar el inicio de sesión. Vuelve a la pantalla de acceso e inténtalo otra vez.',
+    missingCode: 'La plataforma no devolvió el código de autorización. Inténtalo otra vez.',
+    providerDenied: 'Cancelaste la autorización en la plataforma.',
+    appNotConfigured: 'El acceso por esta plataforma no está configurado del todo. Contacta con un administrador.',
+    invalidProvider: 'Proveedor de inicio de sesión desconocido.',
+    vaultUnavailable: 'El servidor no pudo descifrar la configuración de acceso. Contacta con un administrador.',
+    authorizeFailed: 'No se pudo contactar con esa plataforma. Inténtalo más tarde.',
+    exchangeFailed: 'Falló el canje del código de autorización. Inténtalo otra vez.',
+    identityUnavailable: 'No se pudo leer tu cuenta en esa plataforma. Inténtalo otra vez.',
+    domainNotAllowed: 'Ese dominio de correo no tiene permiso para iniciar sesión en esta instancia.',
+    nameTaken: 'Ese nombre de usuario ya existe en esta instancia. Pide a un administrador que vincule las cuentas.',
+    accountUnavailable: 'La cuenta vinculada ya no está disponible. Contacta con un administrador.',
+    roleUnavailable: 'La instancia no tiene un rol predeterminado para cuentas nuevas. Contacta con un administrador.',
+    loginDisabled: 'El acceso por esta plataforma está desactivado.',
+    alreadyBound: 'Esa cuenta de plataforma ya está vinculada a otro usuario.',
+    providerBound: 'Esta cuenta ya está vinculada a esa plataforma. Desvincúlala primero para cambiar.',
+    sessionUnavailable: 'No se pudo crear la sesión. Inténtalo de nuevo.',
+    loginUnavailable: 'El inicio de sesión por plataforma no está activo en esta instancia. Contacta con un administrador.',
+    loginFailed: 'Inicio de sesión incompleto. Inténtalo de nuevo o usa usuario y contraseña.',
+    oauthUnavailable: 'OAuth no está configurado en esta instancia. Contacta con un administrador.',
+    sessionUnbound: 'La sesión ha caducado. Inicia sesión otra vez para vincular la cuenta.',
   },
 
   dashboard: {

@@ -46,4 +46,27 @@ export default {
   onboardingBtn: 'Reiniciar la guía',
   toastOnboardingReset: 'Guía reiniciada',
   toastOnboardingResetDetail: 'Abriendo la guía de primer uso',
+
+  // ─── cuentas git vinculadas (entrar con la cuenta de la plataforma) ───
+  // Un vínculo es solo la correspondencia «(plataforma, ID estable) ↔ esta cuenta»:
+  // no cambia el rol y desvincular nunca cierra la sesión actual.
+  identitiesTitle: 'Cuentas git vinculadas',
+  identitiesSub: 'El vínculo solo decide qué cuenta de la plataforma puede entrar en esta instancia; no cambia tu rol, y desvincular no cierra esta sesión.',
+  identitiesEmpty: 'Aún no hay ninguna cuenta de plataforma git vinculada',
+  identitiesEmptyDesc: 'Al vincularla puedes entrar en esta instancia con esa cuenta de plataforma en lugar de una contraseña.',
+  errLoadIdentities: 'No se pudo cargar la lista de vínculos',
+  identityMeta: 'Correo {email} · ID de plataforma {externalId}',
+  identityNoEmail: 'sin proporcionar',
+  unbindBtn: 'Desvincular',
+  unbindTitle: '¿Desvincular esta cuenta?',
+  unbindBody: '{login} en {provider} ya no podrá entrar en esta instancia. Tu sesión actual no se ve afectada.',
+  unbindConfirm: 'Desvincular',
+  toastUnbound: 'Cuenta desvinculada',
+  toastAlreadyUnbound: 'Ese vínculo ya no existe; la lista se ha actualizado',
+  toastUnbindFailed: 'No se pudo desvincular',
+  bindHint: 'Vincular otra cuenta de plataforma git',
+  bindBtn: 'Vincular con {provider}',
+  toastBound: 'Vinculado con {provider}',
+  toastBindFailed: 'La vinculación con {provider} no se completó',
+  providerCustom: 'Autoalojado',
 }

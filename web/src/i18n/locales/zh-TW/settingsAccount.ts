@@ -46,4 +46,26 @@ export default {
   onboardingBtn: '重新引導',
   toastOnboardingReset: '已重設引導',
   toastOnboardingResetDetail: '正在開啟首次使用引導',
+
+  // ─── 外部 git 帳號綁定(用平台帳號登入本實例)───────────────────────────────
+  // 綁定只是「(平台, 平台穩定 ID) ↔ 本帳號」的對應:不改角色,解綁也不撤銷目前工作階段。
+  identitiesTitle: '已綁定的 git 帳號',
+  identitiesSub: '綁定只決定「哪個平台帳號能登進這個實例」,不改角色;解綁也不會把目前的工作階段踢下線。',
+  identitiesEmpty: '尚未綁定任何 git 平台帳號',
+  identitiesEmptyDesc: '綁定後即可用該平台帳號直接登入本實例,不必再輸密碼。',
+  errLoadIdentities: '無法載入綁定清單',
+  identityMeta: 'Email {email} · 平台 ID {externalId}',
+  identityNoEmail: '未提供',
+  unbindBtn: '解綁',
+  unbindTitle: '解綁該帳號?',
+  unbindBody: '解綁後 {provider} 的 {login} 就再也不能用來登入這個實例。目前的工作階段不受影響。',
+  unbindConfirm: '解綁',
+  toastUnbound: '已解綁',
+  toastAlreadyUnbound: '這條綁定已不存在,清單已重新整理',
+  toastUnbindFailed: '解綁失敗',
+  bindHint: '綁定新的 git 平台帳號',
+  bindBtn: '用 {provider} 綁定',
+  toastBound: '已綁定 {provider}',
+  toastBindFailed: '{provider} 綁定未完成',
+  providerCustom: '自建',
 }

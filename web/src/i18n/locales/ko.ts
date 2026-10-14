@@ -79,6 +79,36 @@ const ko: typeof zhCN = {
     errNetwork: '서버에 연결할 수 없습니다. 백엔드 실행 여부를 확인하고 다시 시도하세요',
     errGeneric: '로그인 실패 ({status})',
     errUnknown: '알 수 없는 오류입니다. 다시 시도하세요',
+    oauthDivider: '또는 Git 플랫폼 계정으로 로그인',
+    oauthGroupAria: 'Git 플랫폼 계정으로 로그인',
+    oauthLoginWith: '{provider} 계정으로 로그인',
+  },
+
+  // OAuth 콜백은 기계 코드만 돌려보냅니다(/login?oauth_error=name_taken).
+  // 키는 web/src/lib/oauthReason.ts 의 열거값과 글자 그대로 일치해야 합니다. 빠지면 페이지에 키명이 노출됩니다.
+  oauthErr: {
+    generic: '로그인을 완료하지 못했습니다({code})',
+    invalidState: '로그인 검증에 실패했습니다. 로그인 페이지에서 다시 시도해 주세요.',
+    missingCode: '플랫폼이 인증 코드를 반환하지 않았습니다. 다시 시도해 주세요.',
+    providerDenied: '플랫폼 쪽에서 권한 부여를 취소했습니다.',
+    appNotConfigured: '이 플랫폼의 로그인 설정이 완성되지 않았습니다. 관리자에게 문의하세요.',
+    invalidProvider: '알 수 없는 로그인 제공자입니다.',
+    vaultUnavailable: '서버가 로그인 설정을 복호화하지 못했습니다. 관리자에게 문의하세요.',
+    authorizeFailed: '해당 플랫폼에 연결할 수 없습니다. 잠시 후 다시 시도하세요.',
+    exchangeFailed: '인증 코드 교환에 실패했습니다. 다시 시도해 주세요.',
+    identityUnavailable: '해당 플랫폼의 계정 정보를 읽을 수 없습니다. 다시 시도해 주세요.',
+    domainNotAllowed: '이 메일 도메인은 이 인스턴스의 로그인 허용 범위에 없습니다.',
+    nameTaken: '이 사용자 이름은 이미 사용 중입니다. 관리자에게 계정 연동을 요청하세요.',
+    accountUnavailable: '연동된 계정을 더 이상 사용할 수 없습니다. 관리자에게 문의하세요.',
+    roleUnavailable: '이 인스턴스에 새 계정의 기본 역할이 설정되지 않았습니다. 관리자에게 문의하세요.',
+    loginDisabled: '이 플랫폼을 통한 로그인이 비활성화되었습니다.',
+    alreadyBound: '이 플랫폼 계정은 이미 다른 사용자와 연동되어 있습니다.',
+    providerBound: '현재 계정은 이미 이 플랫폼과 연동되어 있습니다. 변경하려면 먼저 연동을 해제하세요.',
+    sessionUnavailable: '세션을 생성하지 못했습니다. 잠시 후 다시 시도하세요.',
+    loginUnavailable: '이 인스턴스는 플랫폼 로그인이 활성화되어 있지 않습니다. 관리자에게 문의하세요.',
+    loginFailed: '로그인을 완료하지 못했습니다. 다시 시도하거나 사용자 이름과 비밀번호를 사용하세요.',
+    oauthUnavailable: '이 인스턴스에 OAuth가 설정되어 있지 않습니다. 관리자에게 문의하세요.',
+    sessionUnbound: '세션이 만료되었습니다. 다시 로그인한 뒤 연동하세요.',
   },
 
   dashboard: {

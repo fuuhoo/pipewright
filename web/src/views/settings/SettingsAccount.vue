@@ -5,12 +5,17 @@
  *   - identity display (admin username, read-only this version)
  *   - change-password form (current / new / confirm) — 422 weak / 401 wrong-current mapped inline
  *   - active session list (current marked) + revoke (ConfirmDialog second-confirm)
+ *   - 外部 git 账号绑定:列出这条账号绑过哪些平台身份、解绑,以及「去绑定」入口
  *   - "重新引导" button — clears localStorage(onboarding_dismissed)
+ *
+ * 绑定走的是「仓库凭据」那套 OAuth 应用与 /api/oauth/{p}/callback(state 里记的意图不同),
+ * 所以可绑定的平台来自 getOAuthApps,不是登录应用那张表。
+ * 绑定只写映射:不改角色,解绑也不撤销当前会话 —— 掉线不该是解绑的副作用。
  *
  * Reuses 1-6 components: FormField / AppButton / ConfirmDialog / EmptyState / StatusBadge-free.
  */
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import FormField from '../../components/ui/FormField.vue'
 import AppButton from '../../components/ui/AppButton.vue'
@@ -23,15 +28,21 @@ import { useSessionStore } from '../../stores/session'
 import { HttpError } from '../../api/http'
 import {
   changePassword,
+  listIdentities,
   listSessions,
   revokeSession,
+  unbindIdentity,
+  type IdentityBinding,
   type Session,
 } from '../../api/account'
+import { bindStartUrl, getOAuthApps, type OAuthApp, type OAuthProvider } from '../../api/oauth'
+import { oauthErrorKey, oauthErrorShowsRawCode } from '../../lib/oauthReason'
 
 const { t } = useI18n()
 const toast = useToast()
 const confirm = useConfirm()
 const router = useRouter()
+const route = useRoute()
 const sessionStore = useSessionStore()
 
 const username = computed(() => sessionStore.user?.username ?? 'admin')
@@ -160,6 +171,114 @@ function formatTime(iso: string): string {
   })
 }
 
+// ——— 外部 git 账号绑定 ———
+const identities = ref<IdentityBinding[]>([])
+const identitiesLoading = ref(true)
+const identitiesError = ref('')
+/** 可绑定的平台来自「仓库凭据」那套应用:绑定复用的就是它的 client_id 与回调地址。 */
+const bindableApps = ref<OAuthApp[]>([])
+
+const PROVIDER_LABELS = computed<Record<OAuthProvider, string>>(() => ({
+  gitee: 'Gitee',
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  custom: t('settingsAccount.providerCustom'),
+}))
+
+function providerLabel(provider: string): string {
+  return PROVIDER_LABELS.value[provider as OAuthProvider] ?? provider
+}
+
+async function loadIdentities(): Promise<void> {
+  identitiesLoading.value = true
+  identitiesError.value = ''
+  try {
+    identities.value = await listIdentities()
+  } catch (err) {
+    identitiesError.value =
+      err instanceof Error ? err.message : t('settingsAccount.errLoadIdentities')
+  } finally {
+    identitiesLoading.value = false
+  }
+}
+
+async function loadBindableApps(): Promise<void> {
+  try {
+    bindableApps.value = (await getOAuthApps()).filter((a) => a.enabled && a.configured)
+  } catch {
+    // 非致命:拉不到就只是没有「去绑定」按钮,已有的绑定照样列得出来。
+    bindableApps.value = []
+  }
+}
+
+/** 发起授权用整页导航:后端 302 到平台授权页,fetch 会把重定向链吞在原地。 */
+const diverting = ref('')
+function startBind(provider: OAuthProvider): void {
+  if (diverting.value) return
+  diverting.value = provider
+  window.location.href = bindStartUrl(provider)
+}
+
+async function onUnbind(b: IdentityBinding): Promise<void> {
+  const ok = await confirm.open({
+    title: t('settingsAccount.unbindTitle'),
+    body: t('settingsAccount.unbindBody', {
+      provider: providerLabel(b.provider),
+      login: b.username || b.externalId,
+    }),
+    confirmLabel: t('settingsAccount.unbindConfirm'),
+    variant: 'danger',
+  })
+  if (!ok) return
+  try {
+    await unbindIdentity(b.id)
+    toast.success(t('settingsAccount.toastUnbound'))
+    await loadIdentities()
+  } catch (err) {
+    // 404 多半是另一个标签页已经解过:列表刷新一下就好,不用把「绑定不存在」当失败。
+    if (err instanceof HttpError && err.status === 404) {
+      toast.info(t('settingsAccount.toastAlreadyUnbound'))
+      await loadIdentities()
+      return
+    }
+    toast.error(t('settingsAccount.toastUnbindFailed'), {
+      detail: err instanceof Error ? err.message : t('settingsAccount.unknownError'),
+    })
+  }
+}
+
+/**
+ * 回跳结果:?bound={provider} 成功、?oauth_error={reason}&provider={p} 失败。
+ * 读完就抹掉 query —— 否则刷新一次就把同一条提示再弹一遍。
+ */
+function readBindResult(): boolean {
+  const bound = route.query.bound
+  const reason = route.query.oauth_error
+  if (typeof bound === 'string' && bound) {
+    toast.success(t('settingsAccount.toastBound', { provider: providerLabel(bound) }))
+    return true
+  }
+  if (typeof reason === 'string' && reason) {
+    const provider = typeof route.query.provider === 'string' ? route.query.provider : ''
+    const detail = oauthErrorShowsRawCode(reason)
+      ? t(oauthErrorKey(reason), { code: reason })
+      : t(oauthErrorKey(reason))
+    toast.error(t('settingsAccount.toastBindFailed', { provider: providerLabel(provider) }), {
+      detail,
+    })
+    return true
+  }
+  return false
+}
+
+function clearBindQuery(): void {
+  const query = { ...route.query }
+  delete query.bound
+  delete query.oauth_error
+  delete query.provider
+  void router.replace({ query })
+}
+
 // ——— re-run onboarding ———
 function onReopenOnboarding(): void {
   resetOnboarding()
@@ -167,7 +286,12 @@ function onReopenOnboarding(): void {
   router.push('/onboarding')
 }
 
-onMounted(loadSessions)
+onMounted(async () => {
+  void loadSessions()
+  void loadIdentities()
+  void loadBindableApps()
+  if (readBindResult()) clearBindQuery()
+})
 </script>
 
 <template>
@@ -298,6 +422,74 @@ onMounted(loadSessions)
           </div>
         </li>
       </ul>
+    </section>
+
+    <!-- Bound git identities -->
+    <section class="acct-card" aria-labelledby="acct-ids-h">
+      <header class="acct-card__h">
+        <h2 id="acct-ids-h" class="acct-card__title">{{ t('settingsAccount.identitiesTitle') }}</h2>
+        <p class="acct-card__sub">{{ t('settingsAccount.identitiesSub') }}</p>
+      </header>
+
+      <div v-if="identitiesLoading" class="acct-sessions__loading" aria-busy="true">
+        <SkeletonBlock :height="52" />
+      </div>
+
+      <p v-else-if="identitiesError" class="acct-sessions__error" role="alert">
+        {{ identitiesError }}
+        <button type="button" class="acct-link" @click="loadIdentities">{{ t('settingsAccount.retry') }}</button>
+      </p>
+
+      <EmptyState
+        v-else-if="identities.length === 0"
+        :title="t('settingsAccount.identitiesEmpty')"
+        :description="t('settingsAccount.identitiesEmptyDesc')"
+      />
+
+      <ul v-else class="acct-sessions">
+        <li v-for="b in identities" :key="b.id" class="acct-session">
+          <div class="acct-session__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+              <path d="M3 21v-1a5 5 0 0 1 5-5h2M14 15l3 3 4-5" />
+            </svg>
+          </div>
+          <div class="acct-session__bd">
+            <div class="acct-session__top">
+              <span class="acct-session__id">{{ providerLabel(b.provider) }}</span>
+              <span class="acct-id__login mono">{{ b.username || '—' }}</span>
+            </div>
+            <div class="acct-session__meta">
+              {{
+                t('settingsAccount.identityMeta', {
+                  email: b.email || t('settingsAccount.identityNoEmail'),
+                  externalId: b.externalId,
+                })
+              }}
+            </div>
+          </div>
+          <div class="acct-session__act">
+            <AppButton variant="danger" @click="onUnbind(b)">{{ t('settingsAccount.unbindBtn') }}</AppButton>
+          </div>
+        </li>
+      </ul>
+
+      <!-- 去绑定:只有「仓库凭据」里已启用且配好的平台才发得起授权 -->
+      <div v-if="bindableApps.length" class="acct-bind">
+        <span class="acct-bind__label">{{ t('settingsAccount.bindHint') }}</span>
+        <div class="acct-bind__row">
+          <AppButton
+            v-for="app in bindableApps"
+            :key="app.provider"
+            variant="default"
+            :loading="diverting === app.provider"
+            :disabled="!!diverting && diverting !== app.provider"
+            @click="startBind(app.provider)"
+          >
+            {{ t('settingsAccount.bindBtn', { provider: providerLabel(app.provider) }) }}
+          </AppButton>
+        </div>
+      </div>
     </section>
 
     <!-- Re-run onboarding -->
@@ -493,5 +685,27 @@ onMounted(loadSessions)
   text-underline-offset: 2px;
   padding: 0;
   margin-left: 6px;
+}
+
+/* bound identities */
+.acct-id__login {
+  font-size: 0.78rem;
+  color: var(--color-dim);
+}
+.acct-bind {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border);
+}
+.acct-bind__label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--color-faint);
+  margin-bottom: 9px;
+}
+.acct-bind__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
 }
 </style>

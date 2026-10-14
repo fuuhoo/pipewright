@@ -1,7 +1,8 @@
 export default {
   title: 'OAuth Apps',
   sectionDesc:
-    'Register an OAuth app (Client ID / Secret) for each git platform so users can one-click "Connect" their account from the Credential Vault to automatically obtain a token, without manually pasting a PAT. The secret is masked on storage and cannot be read back after it is written.',
+    'Register an OAuth app (Client ID / Secret) for each git platform so users can one-click "Connect" their account from the Credential Vault to automatically obtain a token, without manually pasting a PAT. The secret is masked on storage and cannot be read back after it is written. The same platform can also be registered for a second purpose: letting visitors sign into this instance with their platform account.',
+  tabsAria: 'OAuth provider tabs',
   retry: 'Retry',
 
   providerCustomLabel: 'Self-hosted',
@@ -45,4 +46,28 @@ export default {
   minutesAgo: '{n} minutes ago',
   hoursAgo: '{n} hours ago',
   daysAgo: '{n} days ago',
+
+  // ─── purpose switch: two configs per platform (repo credentials / platform sign-in) ───
+  // Two configs, two callback URLs: an OAuth app normally registers only one
+  // callback, so sharing one between the purposes would block the other.
+  purposeSwitchAria: 'OAuth purpose',
+  purposeVault: 'Repository credentials',
+  purposeVaultHint: 'Signed-in users authorize once and the git token is stored in the vault',
+  purposeLogin: 'Platform sign-in',
+  purposeLoginHint: 'Visitors sign into this instance with their platform account; auto-created accounts get the least role',
+  purposeVaultNote:
+    'This config only drives the "Connect git account" button. What you register on the platform side is the Callback URL below — change it and update that app too.',
+  purposeLoginNote:
+    'Once enabled, this provider appears on the sign-in page. Each purpose needs its own OAuth app — one app accepts only one callback URL.',
+  callbackHint: 'Paste this into the "callback / Redirect URI" field of the OAuth app on your git platform',
+  callbackCopy: 'Click to select all, then copy it to the platform side',
+  domainsLabel: 'Email domain allowlist',
+  domainsOptional: '(blank = any domain)',
+  domainsPlaceholder: 'corp.example.com, hr.example.com',
+  domainsHint:
+    'Only accounts whose email sits in one of these domains may sign in. With an empty allowlist any email gets an auto-created account (still with the least role).',
+  errDomainsInvalid:
+    'The email allowlist contains an invalid entry: give the domain alone (e.g. corp.example.com), without scheme, path or spaces',
+  toggleTitleLogin: 'Enable sign-in',
+  toggleDescLogin: 'Once enabled, the sign-in page shows a "sign in with this platform" button',
 }

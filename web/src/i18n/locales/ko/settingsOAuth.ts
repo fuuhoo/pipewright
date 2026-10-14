@@ -1,7 +1,8 @@
 export default {
   title: 'OAuth 앱',
   sectionDesc:
-    '각 git 플랫폼에 OAuth 앱(Client ID / Secret)을 등록하면 사용자는 자격 증명 보관소에서 원클릭으로 계정을 "연결"하여 PAT를 수동으로 붙여넣지 않고도 토큰을 자동으로 발급받을 수 있습니다. Secret은 저장 시 마스킹되며 작성 후에는 다시 읽을 수 없습니다.',
+    '각 git 플랫폼에 OAuth 앱(Client ID / Secret)을 등록하면 사용자는 자격 증명 보관소에서 원클릭으로 계정을 "연결"하여 PAT를 수동으로 붙여넣지 않고도 토큰을 자동으로 발급받을 수 있습니다. Secret은 저장 시 마스킹되며 작성 후에는 다시 읽을 수 없습니다. 같은 플랫폼은 두 번째 용도로도 등록할 수 있습니다. 방문자가 플랫폼 계정으로 이 인스턴스에 로그인하게 하는 것입니다.',
+  tabsAria: 'OAuth 제공자',
   retry: '다시 시도',
 
   providerCustomLabel: '자체 호스팅',
@@ -45,4 +46,28 @@ export default {
   minutesAgo: '{n}분 전',
   hoursAgo: '{n}시간 전',
   daysAgo: '{n}일 전',
+
+  // ─── 용도 전환: 한 플랫폼에 두 벌의 설정(저장소 자격 증명 / 플랫폼 로그인)───
+  // 설정도 callback URL도 별개입니다. OAuth 앱에는 보통 callback 하나만 등록할 수 있어,
+  // 두 용도가 하나를 공유하면 서로 막힙니다.
+  purposeSwitchAria: 'OAuth 용도',
+  purposeVault: '저장소 자격 증명',
+  purposeVaultHint: '로그인한 사용자가 인증하면 git 토큰이 보관소에 저장됩니다',
+  purposeLogin: '플랫폼 로그인',
+  purposeLoginHint: '로그인하지 않은 방문자가 플랫폼 계정으로 이 인스턴스에 로그인합니다. 자동 생성 계정은 최소 권한만 받습니다',
+  purposeVaultNote:
+    '이 설정은 "git 계정 연결" 버튼만 제어합니다. 플랫폼 쪽에 등록할 대상은 아래 Callback URL입니다. 바꾸면 그 앱도 함께 수정하세요.',
+  purposeLoginNote:
+    '활성화하면 이 제공자가 로그인 화면에 나타납니다. 용도별로 OAuth 앱을 따로 만드세요. 앱 하나에는 callback URL 한 개만 등록할 수 있습니다.',
+  callbackHint: 'git 플랫폼의 OAuth 앱에서 이 URL을 "callback / Redirect URI"에 붙여넣으세요',
+  callbackCopy: '클릭하면 전체 선택, 복사 후 플랫폼 쪽에 등록하세요',
+  domainsLabel: '이메일 도메인 허용 목록',
+  domainsOptional: '(비우면 도메인 제한 없음)',
+  domainsPlaceholder: 'corp.example.com, hr.example.com',
+  domainsHint:
+    '이 도메인에 속한 이메일을 가진 계정만 로그인할 수 있습니다. 목록을 비우면 어떤 이메일로도 계정이 자동 생성됩니다(역시 최소 권한만 부여).',
+  errDomainsInvalid:
+    '허용 목록에 잘못된 항목이 있습니다. 도메인만 입력하세요(예: corp.example.com). 프로토콜·경로·공백은 넣지 마세요',
+  toggleTitleLogin: '로그인 활성화',
+  toggleDescLogin: '활성화하면 로그인 화면에 "이 플랫폼 계정으로 로그인" 단추가 나타납니다',
 }

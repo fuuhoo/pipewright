@@ -46,4 +46,27 @@ export default {
   onboardingBtn: 'Onboarding neu starten',
   toastOnboardingReset: 'Onboarding zurückgesetzt',
   toastOnboardingResetDetail: 'Erstnutzungs-Leitfaden wird geöffnet',
+
+  // ─── Verknüpfte git-Konten (Anmeldung mit Plattform-Konto) ───
+  // Eine Verknüpfung ist nur die Zuordnung „(Plattform, stabile Plattform-ID) ↔ dieses
+  // Konto“: Sie ändert keine Rolle, und das Lösen meldet die aktuelle Sitzung nicht ab.
+  identitiesTitle: 'Verknüpfte git-Konten',
+  identitiesSub: 'Die Verknüpfung entscheidet nur, welches Plattform-Konto sich bei dieser Instanz anmelden darf; sie ändert keine Rolle, und das Lösen meldet diese Sitzung nicht ab.',
+  identitiesEmpty: 'Noch kein git-Plattform-Konto verknüpft',
+  identitiesEmptyDesc: 'Nach der Verknüpfung meldest du dich bei dieser Instanz mit dem Plattform-Konto statt mit einem Passwort an.',
+  errLoadIdentities: 'Verknüpfungsliste konnte nicht geladen werden',
+  identityMeta: 'E-Mail {email} · Plattform-ID {externalId}',
+  identityNoEmail: 'nicht angegeben',
+  unbindBtn: 'Lösen',
+  unbindTitle: 'Diese Verknüpfung lösen?',
+  unbindBody: '{login} bei {provider} kann sich dann nicht mehr bei dieser Instanz anmelden. Deine aktuelle Sitzung bleibt erhalten.',
+  unbindConfirm: 'Lösen',
+  toastUnbound: 'Verknüpfung gelöst',
+  toastAlreadyUnbound: 'Diese Verknüpfung existiert nicht mehr; die Liste wurde neu geladen',
+  toastUnbindFailed: 'Lösen fehlgeschlagen',
+  bindHint: 'Weiteres git-Plattform-Konto verknüpfen',
+  bindBtn: 'Mit {provider} verknüpfen',
+  toastBound: 'Mit {provider} verknüpft',
+  toastBindFailed: 'Die Verknüpfung mit {provider} wurde nicht abgeschlossen',
+  providerCustom: 'Selbst gehostet',
 }

@@ -46,4 +46,27 @@ export default {
   onboardingBtn: 'オンボーディングを再開',
   toastOnboardingReset: 'オンボーディングをリセットしました',
   toastOnboardingResetDetail: '初回ガイドを開いています',
+
+  // ─── 外部 git アカウントの紐付け(プラットフォームアカウントでログイン)───
+  // 紐付けは「(プラットフォーム, 安定 ID) ↔ このアカウント」の対応だけです。
+  // 権限は変わらず、解除しても現在のセッションはログアウトしません。
+  identitiesTitle: '紐付けた git アカウント',
+  identitiesSub: '紐付けは「どのプラットフォームアカウントで本インスタンスにログインできるか」だけを決定します。権限は変わらず、解除しても現在のセッションは残ります。',
+  identitiesEmpty: '紐付けた git プラットフォームアカウントはありません',
+  identitiesEmptyDesc: '紐付けると、パスワードの代わりにそのプラットフォームのアカウントでログインできます。',
+  errLoadIdentities: '紐付け一覧を取得できません',
+  identityMeta: 'メール {email} · プラットフォーム ID {externalId}',
+  identityNoEmail: '未取得',
+  unbindBtn: '解除',
+  unbindTitle: 'この紐付けを解除しますか?',
+  unbindBody: '解除すると {provider} の {login} は本インスタンスにログインできません。現在のセッションは影響を受けません。',
+  unbindConfirm: '解除',
+  toastUnbound: '紐付けを解除しました',
+  toastAlreadyUnbound: 'この紐付けは既に存在しないため、一覧を更新しました',
+  toastUnbindFailed: '解除に失敗しました',
+  bindHint: '別の git プラットフォームアカウントを紐付ける',
+  bindBtn: '{provider} で紐付け',
+  toastBound: '{provider} と紐付けました',
+  toastBindFailed: '{provider} の紐付けは完了しませんでした',
+  providerCustom: 'セルフホスト',
 }

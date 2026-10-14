@@ -79,6 +79,36 @@ const zhTW: typeof zhCN = {
     errNetwork: '無法連線至伺服器,請確認後端是否執行後再試',
     errGeneric: '登入失敗({status})',
     errUnknown: '未知錯誤,請重試',
+    oauthDivider: '或以 git 平台帳號登入',
+    oauthGroupAria: '以 git 平台帳號登入',
+    oauthLoginWith: '使用 {provider} 登入',
+  },
+
+  // OAuth 回呼回跳時只帶機器碼(/login?oauth_error=name_taken),這裡翻成人讀原因。
+  // 鍵名與 web/src/lib/oauthReason.ts 的列舉逐字對應:漏一個,頁面上就會出現一行鍵名或兜底文案。
+  oauthErr: {
+    generic: '登入未完成({code})',
+    invalidState: '登入校驗未通過,請回到登入頁重新發起。',
+    missingCode: '平台沒有回傳授權碼,請重新發起登入。',
+    providerDenied: '你在平台側取消了授權。',
+    appNotConfigured: '這個平台的登入入口還沒配置完整,請聯絡管理員。',
+    invalidProvider: '無法辨識這個登入平台。',
+    vaultUnavailable: '伺服器無法解密登入配置,請聯絡管理員。',
+    authorizeFailed: '無法連接到該平台,請稍後重試。',
+    exchangeFailed: '授權碼換取憑證失敗,請重新發起登入。',
+    identityUnavailable: '讀不到該平台上的帳號資訊,請重新發起登入。',
+    domainNotAllowed: '這個郵件網域不在實例允許的登入範圍內。',
+    nameTaken: '該平台使用者名稱在本實例已被佔用,請讓管理員把你的帳號和它做綁定。',
+    accountUnavailable: '綁定的帳號已不可用,請聯絡管理員。',
+    roleUnavailable: '實例還沒配置新帳號的預設角色,請聯絡管理員。',
+    loginDisabled: '這個平台的登入入口已被關閉。',
+    alreadyBound: '這個平台帳號已經綁定到其他使用者。',
+    providerBound: '目前帳號已經綁定過這個平台,要先解綁才能換。',
+    sessionUnavailable: '登入工作階段建立失敗,請稍後重試。',
+    loginUnavailable: '實例未啟用平台登入,請聯絡管理員。',
+    loginFailed: '登入未完成,請重試或改用帳號密碼登入。',
+    oauthUnavailable: '實例未配置 OAuth,請聯絡管理員。',
+    sessionUnbound: '目前工作階段已失效,請重新登入後再綁定。',
   },
 
   dashboard: {

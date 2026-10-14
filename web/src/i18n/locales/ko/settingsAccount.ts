@@ -46,4 +46,27 @@ export default {
   onboardingBtn: '안내 다시 시작',
   toastOnboardingReset: '안내를 초기화했습니다',
   toastOnboardingResetDetail: '첫 사용 가이드를 여는 중',
+
+  // ─── 외부 git 계정 연결(플랫폼 계정으로 로그인)───
+  // 연결은 "(플랫폼, 플랫폼 안정 ID) ↔ 이 계정" 대응일 뿐입니다. 권한은 바뀌지 않고,
+  // 연결을 해제해도 현재 세션은 로그아웃되지 않습니다.
+  identitiesTitle: '연결한 git 계정',
+  identitiesSub: '연결은 "어느 플랫폼 계정으로 이 인스턴스에 로그인할 수 있는가"만 결정합니다. 권한은 바뀌지 않고, 해체해도 현재 세션은 유지됩니다.',
+  identitiesEmpty: '연결한 git 플랫폼 계정이 없습니다',
+  identitiesEmptyDesc: '연결하면 비밀번호 대신 그 플랫폼 계정으로 이 인스턴스에 로그인할 수 있습니다.',
+  errLoadIdentities: '연결 목록을 불러올 수 없습니다',
+  identityMeta: '이메일 {email} · 플랫폼 ID {externalId}',
+  identityNoEmail: '미제공',
+  unbindBtn: '해제',
+  unbindTitle: '이 연결을 해제할까요?',
+  unbindBody: '해제하면 {provider}의 {login}은 이 인스턴스에 로그인할 수 없습니다. 현재 세션은 영향을 받지 않습니다.',
+  unbindConfirm: '해제',
+  toastUnbound: '연결이 해제되었습니다',
+  toastAlreadyUnbound: '해당 연결이 이미 없어 목록을 새로고침했습니다',
+  toastUnbindFailed: '해제에 실패했습니다',
+  bindHint: '다른 git 플랫폼 계정 연결',
+  bindBtn: '{provider}로 연결',
+  toastBound: '{provider}와 연결했습니다',
+  toastBindFailed: '{provider} 연결이 완료되지 않았습니다',
+  providerCustom: '자체 호스팅',
 }

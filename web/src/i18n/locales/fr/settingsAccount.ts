@@ -46,4 +46,27 @@ export default {
   onboardingBtn: 'Relancer le guide',
   toastOnboardingReset: 'Guide réinitialisé',
   toastOnboardingResetDetail: 'Ouverture du guide de première utilisation',
+
+  // ─── comptes git reliés (connexion avec le compte de la plateforme) ───
+  // Un lien n’est que l’association « (plateforme, ID stable) ↔ ce compte » :
+  // il ne change pas le rôle, et rompre le lien ne déconnecte pas la session en cours.
+  identitiesTitle: 'Comptes git reliés',
+  identitiesSub: 'Le lien décide seulement quel compte de la plateforme peut se connecter à cette instance ; il ne change pas votre rôle, et le rompre ne déconnecte pas cette session.',
+  identitiesEmpty: 'Aucun compte de plateforme git relié',
+  identitiesEmptyDesc: 'Une fois relié, vous pouvez vous connecter à cette instance avec ce compte de plateforme au lieu d’un mot de passe.',
+  errLoadIdentities: 'Impossible de charger la liste des liens',
+  identityMeta: 'E-mail {email} · ID plateforme {externalId}',
+  identityNoEmail: 'non fourni',
+  unbindBtn: 'Rompre',
+  unbindTitle: 'Rompre ce lien ?',
+  unbindBody: '{login} sur {provider} ne pourra plus se connecter à cette instance. Votre session en cours reste ouverte.',
+  unbindConfirm: 'Rompre le lien',
+  toastUnbound: 'Lien rompu',
+  toastAlreadyUnbound: 'Ce lien n’existe plus ; la liste a été rechargée',
+  toastUnbindFailed: 'Échec de la rupture du lien',
+  bindHint: 'Relier un autre compte de plateforme git',
+  bindBtn: 'Relier avec {provider}',
+  toastBound: 'Relié avec {provider}',
+  toastBindFailed: 'La liaison avec {provider} n’a pas abouti',
+  providerCustom: 'Auto-hébergé',
 }

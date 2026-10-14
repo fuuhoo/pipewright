@@ -46,4 +46,27 @@ export default {
   onboardingBtn: 'Restart onboarding',
   toastOnboardingReset: 'Onboarding reset',
   toastOnboardingResetDetail: 'Opening the first-run guide',
+
+  // ─── linked git identities (sign in with a platform account) ───
+  // A link is only a "(provider, stable platform ID) ↔ this account" mapping:
+  // it never changes your role, and unlinking does not revoke the current session.
+  identitiesTitle: 'Linked git accounts',
+  identitiesSub: 'A link only decides which platform account may sign into this instance; it does not change your role, and unlinking never signs this session out.',
+  identitiesEmpty: 'No git platform account linked yet',
+  identitiesEmptyDesc: 'Once linked, you can sign into this instance with that platform account instead of a password.',
+  errLoadIdentities: 'Unable to load the link list',
+  identityMeta: 'Email {email} · Platform ID {externalId}',
+  identityNoEmail: 'not provided',
+  unbindBtn: 'Unlink',
+  unbindTitle: 'Unlink this account?',
+  unbindBody: '{login} on {provider} will no longer be able to sign into this instance. Your current session stays signed in.',
+  unbindConfirm: 'Unlink',
+  toastUnbound: 'Account unlinked',
+  toastAlreadyUnbound: 'That link no longer exists; the list has been refreshed',
+  toastUnbindFailed: 'Failed to unlink',
+  bindHint: 'Link another git platform account',
+  bindBtn: 'Link with {provider}',
+  toastBound: 'Linked with {provider}',
+  toastBindFailed: 'The {provider} link did not complete',
+  providerCustom: 'Self-hosted',
 }

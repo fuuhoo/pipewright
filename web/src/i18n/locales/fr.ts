@@ -79,6 +79,36 @@ const fr: typeof zhCN = {
     errNetwork: 'Impossible de joindre le serveur. Vérifiez que le backend est lancé et réessayez.',
     errGeneric: 'Échec de la connexion ({status})',
     errUnknown: 'Erreur inconnue, veuillez réessayer',
+    oauthDivider: 'Ou connexion avec un compte de plateforme Git',
+    oauthGroupAria: 'Se connecter avec un compte de plateforme Git',
+    oauthLoginWith: 'Continuer avec {provider}',
+  },
+
+  // Le callback OAuth ne rapporte qu'un code machine (/login?oauth_error=name_taken) ;
+  // ces clés doivent correspondre littéralement à l'énumération de web/src/lib/oauthReason.ts.
+  oauthErr: {
+    generic: 'Connexion interrompue ({code})',
+    invalidState: "Le contrôle de connexion a échoué. Revenez à la page de connexion et recommencez.",
+    missingCode: "La plateforme n'a renvoyé aucun code d'autorisation. Veuillez recommencer.",
+    providerDenied: "Vous avez annulé l'autorisation sur la plateforme.",
+    appNotConfigured: "La connexion via cette plateforme n'est pas entièrement configurée. Contactez un administrateur.",
+    invalidProvider: "Fournisseur de connexion inconnu.",
+    vaultUnavailable: "Le serveur n'a pas pu déchiffrer la configuration de connexion. Contactez un administrateur.",
+    authorizeFailed: 'Impossible de joindre cette plateforme. Réessayez plus tard.',
+    exchangeFailed: "L'échange du code d'autorisation a échoué. Veuillez recommencer.",
+    identityUnavailable: "Impossible de lire votre compte sur cette plateforme. Veuillez recommencer.",
+    domainNotAllowed: "Ce domaine d'e-mail n'est pas autorisé à se connecter sur cette instance.",
+    nameTaken: "Ce nom d'utilisateur est déjà pris dans cette instance. Demandez à un administrateur de lier les comptes.",
+    accountUnavailable: "Le compte lié n'est plus disponible. Contactez un administrateur.",
+    roleUnavailable: "L'instance n'a pas de rôle par défaut pour les nouveaux comptes. Contactez un administrateur.",
+    loginDisabled: 'La connexion via cette plateforme est désactivée.',
+    alreadyBound: 'Ce compte de plateforme est déjà lié à un autre utilisateur.',
+    providerBound: 'Ce compte est déjà lié à cette plateforme. Déliez-le d’abord pour en changer.',
+    sessionUnavailable: 'Impossible de créer la session. Veuillez réessayer.',
+    loginUnavailable: "La connexion par plateforme n'est pas activée sur cette instance. Contactez un administrateur.",
+    loginFailed: "Connexion interrompue. Réessayez ou utilisez un nom d'utilisateur et un mot de passe.",
+    oauthUnavailable: "OAuth n'est pas configuré sur cette instance. Contactez un administrateur.",
+    sessionUnbound: 'La session a expiré. Reconnectez-vous avant de lier le compte.',
   },
 
   dashboard: {

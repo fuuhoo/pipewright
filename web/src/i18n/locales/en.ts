@@ -79,6 +79,37 @@ const en: typeof zhCN = {
     errNetwork: 'Cannot reach the server. Check that the backend is running and retry.',
     errGeneric: 'Login failed ({status})',
     errUnknown: 'Unknown error, please retry',
+    oauthDivider: 'Or sign in with a git platform account',
+    oauthGroupAria: 'Sign in with a git platform account',
+    oauthLoginWith: 'Continue with {provider}',
+  },
+
+  // The OAuth callback redirects back with a machine code only (/login?oauth_error=name_taken);
+  // this namespace turns those codes into readable reasons. Keys must match the enumeration in
+  // web/src/lib/oauthReason.ts verbatim — a missing key surfaces as a raw key or the fallback.
+  oauthErr: {
+    generic: 'Sign-in did not complete ({code})',
+    invalidState: 'The sign-in check failed. Return to the login page and start again.',
+    missingCode: 'The platform returned no authorization code. Please start again.',
+    providerDenied: 'You cancelled the authorization on the platform.',
+    appNotConfigured: "Sign-in through this platform isn't fully configured. Contact an administrator.",
+    invalidProvider: 'Unrecognized sign-in provider.',
+    vaultUnavailable: 'The server could not decrypt the sign-in configuration. Contact an administrator.',
+    authorizeFailed: 'Could not reach that platform. Please try again later.',
+    exchangeFailed: 'Exchanging the authorization code failed. Please start again.',
+    identityUnavailable: "Couldn't read your account on that platform. Please start again.",
+    domainNotAllowed: 'That email domain is not allowed to sign in on this instance.',
+    nameTaken: 'That username is already taken here. Ask an administrator to bind the accounts instead.',
+    accountUnavailable: 'The bound account is no longer available. Contact an administrator.',
+    roleUnavailable: 'The instance has no default role for new accounts. Contact an administrator.',
+    loginDisabled: 'Sign-in through this platform has been switched off.',
+    alreadyBound: 'That platform account is already bound to another user.',
+    providerBound: 'This account is already bound to that platform. Unbind it first to switch.',
+    sessionUnavailable: 'Could not create a session. Please try again.',
+    loginUnavailable: 'Platform sign-in is not enabled on this instance. Contact an administrator.',
+    loginFailed: 'Sign-in did not complete. Try again, or use your username and password.',
+    oauthUnavailable: 'OAuth is not configured on this instance. Contact an administrator.',
+    sessionUnbound: 'Your session is no longer valid. Sign in again before binding.',
   },
 
   dashboard: {

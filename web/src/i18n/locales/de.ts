@@ -79,6 +79,36 @@ const de: typeof zhCN = {
     errNetwork: 'Server nicht erreichbar. Prüfen Sie, ob das Backend läuft, und versuchen Sie es erneut.',
     errGeneric: 'Anmeldung fehlgeschlagen ({status})',
     errUnknown: 'Unbekannter Fehler, bitte erneut versuchen',
+    oauthDivider: 'Oder mit einem Git-Plattform-Konto anmelden',
+    oauthGroupAria: 'Mit einem Git-Plattform-Konto anmelden',
+    oauthLoginWith: 'Weiter mit {provider}',
+  },
+
+  // Der OAuth-Callback springt nur mit einem Maschinencode zurück (/login?oauth_error=name_taken);
+  // diese Schlüssel müssen wörtlich zur Aufzählung in web/src/lib/oauthReason.ts passen.
+  oauthErr: {
+    generic: 'Anmeldung nicht abgeschlossen ({code})',
+    invalidState: 'Die Überprüfung der Anmeldung ist fehlgeschlagen. Zurück zur Login-Seite und neu starten.',
+    missingCode: 'Die Plattform hat keinen Autorisierungscode zurückgegeben. Bitte neu starten.',
+    providerDenied: 'Du hast die Autorisierung auf der Plattform abgebrochen.',
+    appNotConfigured: 'Der Login über diese Plattform ist nicht vollständig konfiguriert. Bitte einen Administrator kontaktieren.',
+    invalidProvider: 'Unbekannter Login-Anbieter.',
+    vaultUnavailable: 'Der Server konnte die Login-Konfiguration nicht entschlüsseln. Bitte einen Administrator kontaktieren.',
+    authorizeFailed: 'Die Plattform ist nicht erreichbar. Bitte später erneut versuchen.',
+    exchangeFailed: 'Der Autorisierungscode konnte nicht getauscht werden. Bitte neu starten.',
+    identityUnavailable: 'Dein Konto auf der Plattform konnte nicht gelesen werden. Bitte neu starten.',
+    domainNotAllowed: 'Diese E-Mail-Domain darf auf dieser Instanz nicht angemeldet werden.',
+    nameTaken: 'Dieser Benutzername ist in dieser Instanz bereits vergeben. Bitte einen Administrator, die Konten zu verknüpfen.',
+    accountUnavailable: 'Das verknüpfte Konto ist nicht mehr verfügbar. Bitte einen Administrator kontaktieren.',
+    roleUnavailable: 'Die Instanz hat keine Standardrolle für neue Konten. Bitte einen Administrator kontaktieren.',
+    loginDisabled: 'Der Login über diese Plattform ist deaktiviert.',
+    alreadyBound: 'Dieses Plattform-Konto ist bereits mit einem anderen Benutzer verknüpft.',
+    providerBound: 'Dieses Konto ist bereits mit dieser Plattform verknüpft. Zum Wechseln zuerst die Verknüpfung lösen.',
+    sessionUnavailable: 'Die Sitzung konnte nicht erstellt werden. Bitte erneut versuchen.',
+    loginUnavailable: 'Plattform-Login ist auf dieser Instanz nicht aktiv. Bitte einen Administrator kontaktieren.',
+    loginFailed: 'Anmeldung nicht abgeschlossen. Erneut versuchen oder Benutzername und Passwort verwenden.',
+    oauthUnavailable: 'OAuth ist auf dieser Instanz nicht konfiguriert. Bitte einen Administrator kontaktieren.',
+    sessionUnbound: 'Die Sitzung ist abgelaufen. Bitte erneut anmelden und dann verknüpfen.',
   },
 
   dashboard: {

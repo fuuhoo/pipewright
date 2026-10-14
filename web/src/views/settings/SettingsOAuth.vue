@@ -2,7 +2,10 @@
 /**
  * SettingsOAuth — OAuth application configuration for git providers.
  *
- * One config card per provider (Gitee / GitHub / GitLab / 自建):
+ * 四个平台(Gitee / GitHub / GitLab / 自建)是**并列的同构配置**,不是要对比着看的东西,
+ * 所以走 tab 一次只摊开一个:四张卡片竖排时,页面要滚近两屏才能填完一个平台,
+ * 而「哪个平台启用了」这件事在 tab 的状态点上比在四张卡头上更集中。
+ *
  *   - clientId text input
  *   - clientSecret password input — WRITE-ONLY, never echoed; placeholder
  *     hints "留空保留已存" when a secret is already configured
@@ -10,13 +13,21 @@
  *   - enabled toggle
  *   - Save (PUT) → toast "OAuth 应用已保存" + masked secret echo (mirrors SettingsAI)
  *
+ * tab 是页内切换而非子路由:四档没有各自的门禁,而且切走再切回要保住没保存的草稿。
+ *
+ * tab 之上还有一层「用途」切换:同一个 git 平台在本实例里有两种用法 ——
+ *   - 仓库凭据:已登录用户授权后换回 access_token,存进保险库给 git 操作用;
+ *   - 平台登录:匿名访客用平台账号登进本平台(自动建号只给最小角色)。
+ * 两套配置、两个回调地址,因为一个 OAuth 应用通常只允许登记一个回调 —— 所以面板顶部把
+ * 该登记的 Callback URL 只读摊出来,不用配的人去猜路径长什么样。
+ *
  * Once a provider is enabled, users connect a git account from the vault page
  * (SettingsVault) where the "连接" buttons live and the callback is handled.
  *
  * Reuses: AppButton tokens + vault/AI patterns. No new UI libraries.
  * Animation: transform/opacity + prefers-reduced-motion.
  */
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppButton from '../../components/ui/AppButton.vue'
 import { useToast } from '../../composables/useToast'
@@ -24,14 +35,27 @@ import { HttpError } from '../../api/http'
 import {
   getOAuthApps,
   saveOAuthApp,
+  getOAuthLoginApps,
+  saveOAuthLoginApp,
   type OAuthApp,
+  type OAuthLoginApp,
   type OAuthProvider,
   type SaveOAuthAppInput,
+  type SaveOAuthLoginAppInput,
 } from '../../api/oauth'
+import { invalidOAuthDomains, joinOAuthDomains, parseOAuthDomains } from '../../lib/oauthDomains'
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
 type LoadState = 'loading' | 'ready' | 'error'
+
+/**
+ * 同一个 git 平台的两种用途:
+ *   vault —— 已登录用户授权后换回 access_token,存进保险库给 git 操作用;
+ *   login —— 匿名访客用平台账号登进本平台(自动建号只给最小角色)。
+ * 两套配置、两个回调地址,因为一个 OAuth 应用通常只能登记一个回调。
+ */
+type Purpose = 'vault' | 'login'
 
 interface ProviderMeta {
   id: OAuthProvider
@@ -43,15 +67,19 @@ interface ProviderMeta {
   hasBaseUrl: boolean
 }
 
-/** Per-provider editable form + saved snapshot. */
+/** Per-provider editable form + saved snapshot(两种用途共用同一张表单壳)。 */
 interface CardState {
   meta: ProviderMeta
-  saved: OAuthApp | null
+  saved: OAuthApp | OAuthLoginApp | null
   clientId: string
   clientSecret: string // write-only: blank = keep existing
   baseUrl: string
+  /** login 用途:邮箱域名白名单,逗号/空格分隔的原始输入。vault 用途不用。 */
+  allowedDomains: string
+  /** login 用途:要在平台侧登记的回调地址(服务端按当前 origin 现算,只读回显)。 */
+  callbackUrl: string
   enabled: boolean
-  errors: { clientId: string; baseUrl: string }
+  errors: { clientId: string; baseUrl: string; allowedDomains: string }
   saving: boolean
 }
 
@@ -117,25 +145,127 @@ const loadError = ref('')
 
 // ─── per-provider card state ──────────────────────────────────────────────────
 
-const cards = reactive<Record<OAuthProvider, CardState>>(
-  Object.fromEntries(
-    PROVIDERS.map((meta) => [
-      meta.id,
-      {
-        meta,
-        saved: null,
-        clientId: '',
-        clientSecret: '',
-        baseUrl: '',
-        enabled: false,
-        errors: { clientId: '', baseUrl: '' },
-        saving: false,
-      } satisfies CardState,
-    ]),
-  ) as Record<OAuthProvider, CardState>,
-)
+function newCard(meta: ProviderMeta): CardState {
+  return {
+    meta,
+    saved: null,
+    clientId: '',
+    clientSecret: '',
+    baseUrl: '',
+    allowedDomains: '',
+    callbackUrl: '',
+    enabled: false,
+    errors: { clientId: '', baseUrl: '', allowedDomains: '' },
+    saving: false,
+  }
+}
+
+function newCardSet(): Record<OAuthProvider, CardState> {
+  return Object.fromEntries(PROVIDERS.map((meta) => [meta.id, newCard(meta)])) as Record<
+    OAuthProvider,
+    CardState
+  >
+}
+
+const cards = reactive<CardSet>(newCardSet())
+const loginCards = reactive<CardSet>(newCardSet())
+
+type CardSet = Record<OAuthProvider, CardState>
+
+/** 当前用途对应的那套卡片:tab 共用,面板与状态点跟着用途走。 */
+const forms = computed<CardSet>(() => (purpose.value === 'login' ? loginCards : cards))
+const form = computed<CardState>(() => forms.value[active.value])
 
 const cardList = PROVIDERS.map((m) => m.id)
+
+/**
+ * 「仓库凭据」的回调地址:后端契约里没有,但管理员要在平台侧登记它 ——
+ * 路径是固定的,按当前 origin 现算即可(换域名部署也不用改这里)。
+ */
+const vaultCallbackUrl = computed<string>(
+  () => `${window.location.origin}/api/oauth/${active.value}/callback`,
+)
+
+/**
+ * 面板回显的回调地址:登录用途优先用服务端按 origin 现算的那条。
+ * 库里还没这个应用时服务端给不出值,而管理员恰恰在这时候要把它抄去平台侧登记 ——
+ * 路径本就是固定推导,所以按当前 origin 兜底,别留一个空白只读框。
+ */
+const currentCallbackUrl = computed<string>(() => {
+  if (purpose.value === 'vault') return vaultCallbackUrl.value
+  return (
+    form.value.callbackUrl ||
+    `${window.location.origin}/api/auth/oauth/${active.value}/callback`
+  )
+})
+
+/** 只读框点一下就全选:管理员要的是复制到平台侧的应用里登记。 */
+function selectCallback(event: Event): void {
+  ;(event.target as HTMLInputElement).select()
+}
+
+// ─── purpose + tabs ───────────────────────────────────────────────────────────
+
+/** 当前编辑的用途。默认「仓库凭据」——它是这个页面原本唯一的用途。 */
+const purpose = ref<Purpose>('vault')
+
+/** 换用途时清掉两边的字段错误:留着会让另一档的面板显示上一条错误的红字。 */
+function setPurpose(p: Purpose): void {
+  if (purpose.value === p) return
+  purpose.value = p
+  for (const id of cardList) {
+    cards[id].errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+    loginCards[id].errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+  }
+}
+
+function purposeTitle(p: Purpose): string {
+  return p === 'login' ? t('settingsOAuth.purposeLogin') : t('settingsOAuth.purposeVault')
+}
+
+function purposeHint(p: Purpose): string {
+  return p === 'login' ? t('settingsOAuth.purposeLoginHint') : t('settingsOAuth.purposeVaultHint')
+}
+
+/** 当前摊开的平台。默认第一个,不做「跳到已配置的那个」——那会让每次进来位置都不一样。 */
+const active = ref<OAuthProvider>(cardList[0])
+
+type ProviderStatus = 'on' | 'idle' | 'off'
+
+function statusOf(pid: OAuthProvider): ProviderStatus {
+  const card = forms.value[pid]
+  if (!card.saved?.configured) return 'off'
+  return card.enabled ? 'on' : 'idle'
+}
+
+function statusLabel(pid: OAuthProvider): string {
+  const s = statusOf(pid)
+  if (s === 'on') return t('settingsOAuth.statusEnabled')
+  if (s === 'idle') return t('settingsOAuth.statusConfiguredIdle')
+  return t('settingsOAuth.statusUnconfigured')
+}
+
+/**
+ * tablist 的键盘约定:左右箭头换档、Home/End 跳两端(自动选中 —— 焦点即选中,
+ * 与 aria-selected 始终一致,不会出现「焦点在暗的 tab 上但面板还是上一个」)。
+ */
+function onTabKeydown(event: KeyboardEvent): void {
+  const tabs = Array.from(
+    (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  )
+  if (!tabs.length) return
+  const at = Math.max(0, tabs.findIndex((el) => el.dataset.provider === active.value))
+  let next = -1
+  if (event.key === 'ArrowRight') next = (at + 1) % tabs.length
+  else if (event.key === 'ArrowLeft') next = (at - 1 + tabs.length) % tabs.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = tabs.length - 1
+  if (next < 0) return
+  event.preventDefault()
+  const pid = tabs[next].dataset.provider as OAuthProvider
+  active.value = pid
+  tabs[next].focus()
+}
 
 // ─── load ─────────────────────────────────────────────────────────────────────
 
@@ -143,10 +273,16 @@ async function loadApps(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    const apps = await getOAuthApps()
+    // 两种用途一起拉:拉不到就不能进 ready —— 面板里的白名单框会显示成空的,
+    // 管理员照着「空」保存一次,已配的域名白名单就被真清空了。
+    const [apps, logins] = await Promise.all([getOAuthApps(), getOAuthLoginApps()])
     for (const app of apps) {
       const card = cards[app.provider]
       if (card) applyApp(card, app)
+    }
+    for (const app of logins) {
+      const card = loginCards[app.provider]
+      if (card) applyLoginApp(card, app)
     }
     loadState.value = 'ready'
   } catch (err) {
@@ -171,7 +307,18 @@ function applyApp(card: CardState, app: OAuthApp): void {
   card.clientSecret = '' // never pre-fill the secret
   card.baseUrl = app.baseUrl
   card.enabled = app.enabled
-  card.errors = { clientId: '', baseUrl: '' }
+  card.errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+}
+
+function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
+  card.saved = app
+  card.clientId = app.clientId
+  card.clientSecret = ''
+  card.baseUrl = app.baseUrl
+  card.allowedDomains = joinOAuthDomains(app.allowedDomains ?? [])
+  card.callbackUrl = app.callbackUrl
+  card.enabled = app.enabled
+  card.errors = { clientId: '', baseUrl: '', allowedDomains: '' }
 }
 
 onMounted(loadApps)
@@ -179,13 +326,15 @@ onMounted(loadApps)
 // ─── save ─────────────────────────────────────────────────────────────────────
 
 async function handleSave(provider: OAuthProvider): Promise<void> {
-  const card = cards[provider]
-  card.errors = { clientId: '', baseUrl: '' }
+  const isLogin = purpose.value === 'login'
+  const card = forms.value[provider]
+  card.errors = { clientId: '', baseUrl: '', allowedDomains: '' }
 
   // Client-side validation: an enabled provider must have a clientId, and a
   // secret must exist (either already configured or freshly entered).
   const clientId = card.clientId.trim()
   const baseUrl = card.baseUrl.trim()
+  const domains = parseOAuthDomains(card.allowedDomains)
   const hasExistingSecret = !!card.saved?.maskedSecret
 
   if (card.enabled && !clientId) {
@@ -201,17 +350,33 @@ async function handleSave(provider: OAuthProvider): Promise<void> {
     card.errors.baseUrl = t('settingsOAuth.errBaseUrlRequiredCustom')
     return
   }
+  // 白名单只要写了就得逐项合法 —— 与开关无关:后端对提交的白名单一律校验,静默清洗等于
+  // 白名单没生效。这里先拦一次,把「哪一项写错了」当场指出来。
+  if (isLogin && invalidOAuthDomains(card.allowedDomains).length) {
+    card.errors.allowedDomains = t('settingsOAuth.errDomainsInvalid')
+    return
+  }
 
   card.saving = true
   try {
-    const payload: SaveOAuthAppInput = {
-      clientId,
-      ...(card.clientSecret ? { clientSecret: card.clientSecret } : {}),
-      ...(card.meta.hasBaseUrl ? { baseUrl } : {}),
-      enabled: card.enabled,
+    if (isLogin) {
+      const payload: SaveOAuthLoginAppInput = {
+        clientId,
+        ...(card.clientSecret ? { clientSecret: card.clientSecret } : {}),
+        ...(card.meta.hasBaseUrl ? { baseUrl } : {}),
+        allowedDomains: domains,
+        enabled: card.enabled,
+      }
+      applyLoginApp(card, await saveOAuthLoginApp(provider, payload))
+    } else {
+      const payload: SaveOAuthAppInput = {
+        clientId,
+        ...(card.clientSecret ? { clientSecret: card.clientSecret } : {}),
+        ...(card.meta.hasBaseUrl ? { baseUrl } : {}),
+        enabled: card.enabled,
+      }
+      applyApp(card, await saveOAuthApp(provider, payload))
     }
-    const updated = await saveOAuthApp(provider, payload)
-    applyApp(card, updated)
     toast.success(t('settingsOAuth.toastSaved'), { detail: labelFor(provider) })
   } catch (err) {
     if (err instanceof HttpError) {
@@ -221,6 +386,8 @@ async function handleSave(provider: OAuthProvider): Promise<void> {
           card.errors.clientId = t('settingsOAuth.errClientIdRequired')
         } else if (code === 'base_url_required') {
           card.errors.baseUrl = t('settingsOAuth.errBaseUrlRequired')
+        } else if (code === 'invalid_domain') {
+          card.errors.allowedDomains = t('settingsOAuth.errDomainsInvalid')
         } else {
           toast.error(t('settingsOAuth.toastSaveFailed'), { detail: err.apiError.message })
         }
@@ -277,9 +444,12 @@ function relativeTime(iso: string | null): string {
 
     <!-- ─── loading skeleton ────────────────────────────────────────────────── -->
     <template v-if="loadState === 'loading'">
-      <div v-for="i in 4" :key="i" class="panel panel--anim">
+      <div class="oauth-tabs" aria-hidden="true">
+        <span v-for="i in 4" :key="i" class="skel skel--tab" />
+      </div>
+      <div class="panel">
         <div class="panel-head">
-          <span class="skel skel--text" style="width:120px" aria-hidden="true" />
+          <span class="skel skel--text" style="width:120px" />
         </div>
         <div class="panel-body">
           <div class="skel skel--field" style="height:38px" aria-hidden="true" />
@@ -288,102 +458,183 @@ function relativeTime(iso: string | null): string {
       </div>
     </template>
 
-    <!-- ─── provider cards ──────────────────────────────────────────────────── -->
+    <!-- ─── one tab per provider, one panel at a time ───────────────────────── -->
     <template v-else-if="loadState === 'ready'">
+      <!-- 用途切换:同一个平台的两套配置(仓库凭据 / 平台登录),各自的回调地址 -->
+      <div class="purpose-switch" role="group" :aria-label="t('settingsOAuth.purposeSwitchAria')">
+        <button
+          v-for="p in (['vault', 'login'] as Purpose[])"
+          :key="p"
+          type="button"
+          class="purpose-btn"
+          :class="{ 'purpose-btn--active': purpose === p }"
+          :aria-pressed="purpose === p"
+          :data-purpose="p"
+          @click="setPurpose(p)"
+        >
+          <span class="purpose-title">{{ purposeTitle(p) }}</span>
+          <span class="purpose-hint">{{ purposeHint(p) }}</span>
+        </button>
+      </div>
+      <p class="purpose-note">{{ purpose === 'login' ? t('settingsOAuth.purposeLoginNote') : t('settingsOAuth.purposeVaultNote') }}</p>
+
       <div
-        v-for="pid in cardList"
-        :key="pid"
+        class="oauth-tabs"
+        role="tablist"
+        :aria-label="t('settingsOAuth.tabsAria')"
+        @keydown="onTabKeydown"
+      >
+        <button
+          v-for="pid in cardList"
+          :key="pid"
+          :id="`oauth-tab-${pid}`"
+          :data-provider="pid"
+          type="button"
+          role="tab"
+          class="oauth-tab"
+          :class="{ 'oauth-tab--active': active === pid }"
+          :aria-selected="active === pid"
+          :aria-controls="`oauth-panel-${pid}`"
+          :tabindex="active === pid ? 0 : -1"
+          @click="active = pid"
+        >
+          <span class="tab-logo" :style="cards[pid].meta.logoStyle" aria-hidden="true">
+            {{ cards[pid].meta.logoText }}
+          </span>
+          <span class="tab-label">{{ labelFor(pid) }}</span>
+          <span class="tab-dot" :class="`tab-dot--${statusOf(pid)}`">
+            <span class="sr-only">{{ statusLabel(pid) }}</span>
+          </span>
+        </button>
+      </div>
+
+      <!-- :key=用途+平台:换档时重建面板,入场动画重放一次(否则 Vue 原地打补丁,看不见切换) -->
+      <div
+        :id="`oauth-panel-${active}`"
+        :key="`${purpose}-${active}`"
         class="panel panel--anim"
-        :data-provider="pid"
+        :data-panel="active"
+        role="tabpanel"
+        :aria-labelledby="`oauth-tab-${active}`"
       >
         <div class="panel-head">
-          <div class="ph-logo" :style="cards[pid].meta.logoStyle" aria-hidden="true">
-            {{ cards[pid].meta.logoText }}
-          </div>
-          <span class="ph-label">{{ labelFor(pid) }}</span>
-          <span class="ph-desc">{{ descFor(pid) }}</span>
-
+          <span class="ph-label">{{ labelFor(active) }}</span>
+          <span class="ph-desc">{{ descFor(active) }}</span>
           <span
-            v-if="cards[pid].saved?.configured"
             class="status-chip"
-            :class="cards[pid].enabled ? 'status-chip--ok' : 'status-chip--idle'"
+            :class="statusOf(active) === 'on' ? 'status-chip--ok' : 'status-chip--idle'"
           >
             <span
               class="status-dot"
-              :class="{ 'status-dot--ok': cards[pid].enabled }"
+              :class="{ 'status-dot--ok': statusOf(active) === 'on' }"
               aria-hidden="true"
             />
-            {{ cards[pid].enabled ? t('settingsOAuth.statusEnabled') : t('settingsOAuth.statusConfiguredIdle') }}
-          </span>
-          <span v-else class="status-chip status-chip--idle">
-            <span class="status-dot" aria-hidden="true" />
-            {{ t('settingsOAuth.statusUnconfigured') }}
+            {{ statusLabel(active) }}
           </span>
         </div>
 
         <div class="panel-body">
-          <form class="config-form" novalidate @submit.prevent="handleSave(pid)">
+          <form class="config-form" novalidate @submit.prevent="handleSave(active)">
+            <!-- Callback URL — 固定路径,只读:要在平台侧登记的就是这一串 -->
+            <div class="field">
+              <label class="field-label" :for="`oauth-callback-${active}`">Callback URL</label>
+              <input
+                :id="`oauth-callback-${active}`"
+                class="field-input field-input--mono"
+                :value="currentCallbackUrl"
+                type="text"
+                readonly
+                :title="t('settingsOAuth.callbackCopy')"
+                @click="selectCallback"
+              />
+              <span class="field-hint">{{ t('settingsOAuth.callbackHint') }}</span>
+            </div>
+
             <!-- Client ID -->
             <div class="field">
-              <label class="field-label" :for="`oauth-clientid-${pid}`">Client ID</label>
+              <label class="field-label" :for="`oauth-clientid-${active}`">Client ID</label>
               <input
-                :id="`oauth-clientid-${pid}`"
-                v-model="cards[pid].clientId"
+                :id="`oauth-clientid-${active}`"
+                v-model="form.clientId"
                 type="text"
                 class="field-input field-input--mono"
-                :class="{ 'field-input--error': cards[pid].errors.clientId }"
+                :class="{ 'field-input--error': form.errors.clientId }"
                 :placeholder="t('settingsOAuth.clientIdPlaceholder')"
                 autocomplete="off"
-                :aria-invalid="!!cards[pid].errors.clientId || undefined"
-                :disabled="cards[pid].saving"
-                @input="cards[pid].errors.clientId = ''"
+                :aria-invalid="!!form.errors.clientId || undefined"
+                :disabled="form.saving"
+                @input="form.errors.clientId = ''"
               />
-              <span v-if="cards[pid].errors.clientId" class="field-error" role="alert">
-                {{ cards[pid].errors.clientId }}
+              <span v-if="form.errors.clientId" class="field-error" role="alert">
+                {{ form.errors.clientId }}
               </span>
             </div>
 
             <!-- Client Secret — write-only -->
             <div class="field">
-              <label class="field-label" :for="`oauth-secret-${pid}`">
+              <label class="field-label" :for="`oauth-secret-${active}`">
                 Client Secret
                 <span class="field-optional">{{ t('settingsOAuth.secretOptional') }}</span>
               </label>
               <input
-                :id="`oauth-secret-${pid}`"
-                v-model="cards[pid].clientSecret"
+                :id="`oauth-secret-${active}`"
+                v-model="form.clientSecret"
                 type="password"
                 class="field-input field-input--mono"
-                :placeholder="cards[pid].saved?.maskedSecret
+                :placeholder="form.saved?.maskedSecret
                   ? t('settingsOAuth.secretPlaceholderKeep')
                   : t('settingsOAuth.secretPlaceholderNew')"
                 autocomplete="new-password"
-                :disabled="cards[pid].saving"
+                :disabled="form.saving"
               />
               <span
-                v-if="cards[pid].saved?.maskedSecret && !cards[pid].clientSecret"
+                v-if="form.saved?.maskedSecret && !form.clientSecret"
                 class="field-hint mono"
-              >{{ t('settingsOAuth.secretStored', { masked: cards[pid].saved?.maskedSecret }) }}</span>
+              >{{ t('settingsOAuth.secretStored', { masked: form.saved?.maskedSecret }) }}</span>
             </div>
 
             <!-- Base URL — self-hosted only -->
-            <div v-if="cards[pid].meta.hasBaseUrl" class="field">
-              <label class="field-label" :for="`oauth-baseurl-${pid}`">Base URL</label>
+            <div v-if="form.meta.hasBaseUrl" class="field">
+              <label class="field-label" :for="`oauth-baseurl-${active}`">Base URL</label>
               <input
-                :id="`oauth-baseurl-${pid}`"
-                v-model="cards[pid].baseUrl"
+                :id="`oauth-baseurl-${active}`"
+                v-model="form.baseUrl"
                 type="url"
                 class="field-input field-input--mono"
-                :class="{ 'field-input--error': cards[pid].errors.baseUrl }"
+                :class="{ 'field-input--error': form.errors.baseUrl }"
                 placeholder="https://git.example.com"
                 autocomplete="off"
-                :aria-invalid="!!cards[pid].errors.baseUrl || undefined"
-                :disabled="cards[pid].saving"
-                @input="cards[pid].errors.baseUrl = ''"
+                :aria-invalid="!!form.errors.baseUrl || undefined"
+                :disabled="form.saving"
+                @input="form.errors.baseUrl = ''"
               />
-              <span v-if="cards[pid].errors.baseUrl" class="field-error" role="alert">
-                {{ cards[pid].errors.baseUrl }}
+              <span v-if="form.errors.baseUrl" class="field-error" role="alert">
+                {{ form.errors.baseUrl }}
               </span>
+            </div>
+
+            <!-- 邮箱域名白名单 — 仅「平台登录」用途 -->
+            <div v-if="purpose === 'login'" class="field">
+              <label class="field-label" :for="`oauth-domains-${active}`">
+                {{ t('settingsOAuth.domainsLabel') }}
+                <span class="field-optional">{{ t('settingsOAuth.domainsOptional') }}</span>
+              </label>
+              <input
+                :id="`oauth-domains-${active}`"
+                v-model="form.allowedDomains"
+                type="text"
+                class="field-input field-input--mono"
+                :class="{ 'field-input--error': form.errors.allowedDomains }"
+                :placeholder="t('settingsOAuth.domainsPlaceholder')"
+                autocomplete="off"
+                :aria-invalid="!!form.errors.allowedDomains || undefined"
+                :disabled="form.saving"
+                @input="form.errors.allowedDomains = ''"
+              />
+              <span v-if="form.errors.allowedDomains" class="field-error" role="alert">
+                {{ form.errors.allowedDomains }}
+              </span>
+              <span v-else class="field-hint">{{ t('settingsOAuth.domainsHint') }}</span>
             </div>
 
             <!-- Enabled toggle + save -->
@@ -392,29 +643,29 @@ function relativeTime(iso: string | null): string {
                 <button
                   type="button"
                   class="toggle-track"
-                  :class="{ 'toggle-track--on': cards[pid].enabled }"
+                  :class="{ 'toggle-track--on': form.enabled }"
                   role="switch"
-                  :aria-checked="cards[pid].enabled"
-                  :aria-label="t('settingsOAuth.toggleAria', { provider: labelFor(pid) })"
-                  :disabled="cards[pid].saving"
-                  @click="cards[pid].enabled = !cards[pid].enabled"
+                  :aria-checked="form.enabled"
+                  :aria-label="t('settingsOAuth.toggleAria', { provider: labelFor(active) })"
+                  :disabled="form.saving"
+                  @click="form.enabled = !form.enabled"
                 >
                   <span class="toggle-thumb" />
                 </button>
                 <div class="toggle-label">
-                  <strong>{{ t('settingsOAuth.toggleTitle') }}</strong>
-                  <span>{{ t('settingsOAuth.toggleDesc') }}</span>
+                  <strong>{{ purpose === 'login' ? t('settingsOAuth.toggleTitleLogin') : t('settingsOAuth.toggleTitle') }}</strong>
+                  <span>{{ purpose === 'login' ? t('settingsOAuth.toggleDescLogin') : t('settingsOAuth.toggleDesc') }}</span>
                 </div>
               </div>
 
               <div class="card-actions">
-                <span v-if="cards[pid].saved?.updatedAt" class="updated-note">
-                  {{ t('settingsOAuth.lastSaved', { time: relativeTime(cards[pid].saved?.updatedAt ?? null) }) }}
+                <span v-if="form.saved?.updatedAt" class="updated-note">
+                  {{ t('settingsOAuth.lastSaved', { time: relativeTime(form.saved?.updatedAt ?? null) }) }}
                 </span>
                 <AppButton
                   variant="primary"
                   type="submit"
-                  :loading="cards[pid].saving"
+                  :loading="form.saving"
                 >
                   {{ t('settingsOAuth.saveBtn') }}
                 </AppButton>
@@ -459,6 +710,147 @@ function relativeTime(iso: string | null): string {
   margin-top: 4px;
   max-width: 70ch;
   line-height: 1.55;
+}
+
+/* ─── purpose switch ──────────────────────────────────────────────────────── */
+/* 用途切换在平台 tab 之上:两档各自决定「这一套配置给谁用」和回调地址。
+   走成分段控件而不是第二个 tablist —— 它只有两档、且换档会改变整张面板的字段。 */
+.purpose-switch {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.purpose-btn {
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 14px;
+  text-align: left;
+  font-family: inherit;
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.purpose-btn:hover {
+  border-color: var(--color-border-strong);
+}
+
+.purpose-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.purpose-btn--active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.purpose-title {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.purpose-hint {
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--color-faint);
+}
+
+/* 当前用途的一句话:说明这套配置和回调地址是给谁的 */
+.purpose-note {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: var(--color-faint);
+  max-width: 80ch;
+}
+
+/* ─── provider tabs ───────────────────────────────────────────────────────── */
+.oauth-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.oauth-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--color-faint);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    border-color var(--duration-fast);
+}
+
+.oauth-tab:hover {
+  color: var(--color-dim);
+}
+
+.oauth-tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  border-radius: var(--rounded-sm);
+}
+
+.oauth-tab--active {
+  color: var(--color-text);
+  font-weight: 600;
+  border-bottom-color: var(--color-primary);
+}
+
+.tab-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--rounded-sm);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.68rem;
+  flex-shrink: 0;
+}
+
+.tab-label {
+  white-space: nowrap;
+}
+
+/* 状态点:一眼看出哪档已启用/哪档还是空的,不用逐个点开 */
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--rounded-full);
+  flex-shrink: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+
+.tab-dot--idle {
+  background: var(--color-faint);
+  box-shadow: none;
+}
+
+.tab-dot--on {
+  background: var(--color-green);
+  box-shadow: none;
 }
 
 /* ─── status chip ─────────────────────────────────────────────────────────── */
@@ -560,18 +952,6 @@ function relativeTime(iso: string | null): string {
   border-bottom: 1px solid var(--color-border);
 }
 
-.ph-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--rounded-md);
-  display: grid;
-  place-items: center;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 0.86rem;
-  flex-shrink: 0;
-}
-
 .ph-label {
   font-size: 0.9rem;
   font-weight: 600;
@@ -603,6 +983,7 @@ function relativeTime(iso: string | null): string {
 
 .skel--text { height: 14px; }
 .skel--field { width: 100%; }
+.skel--tab { width: 108px; height: 20px; margin: 10px 16px; }
 
 @keyframes shimmer {
   0%   { background-position: 200% center; }

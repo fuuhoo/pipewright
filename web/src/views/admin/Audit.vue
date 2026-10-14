@@ -51,6 +51,9 @@ const ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'server_command', label: 'server_command' },
   { value: 'server_fs', label: 'server_fs' },
   { value: 'user_login', label: 'user_login' },
+  { value: 'oauth_login', label: 'oauth_login' },
+  { value: 'identity_bind', label: 'identity_bind' },
+  { value: 'identity_unbind', label: 'identity_unbind' },
   { value: 'password_change', label: 'password_change' },
   { value: 'session_revoke', label: 'session_revoke' },
 ]
