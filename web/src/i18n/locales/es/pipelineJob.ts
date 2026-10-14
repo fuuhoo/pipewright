@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: 'El tamaño del primer lote debe ser menor que el número de hosts, o no quedará nada que lotificar',
   fieldRestartCommandLabel: 'Comando de reinicio / cambio',
   fieldRestartCommandHint:
-    'Opcional, multilínea (set -e, línea por línea); se ejecuta en el directorio current del destino tras el despliegue, para reiniciar/recargar; revierte automáticamente si falla',
+    'Opcional, multilínea (set -e, línea por línea); se ejecuta en el directorio de despliegue una vez colocado el artefacto, para reiniciar/recargar; si falla, ese host queda como fallido (los artefactos de archivo no tienen una versión anterior a la que retroceder)',
+  fieldPreDeployCommandLabel: 'Comando previo al despliegue',
+  fieldPreDeployCommandHint:
+    'Opcional, multilínea (set -e, línea por línea); se ejecuta en el destino antes de colocar el artefacto en el directorio de despliegue: copia de seguridad de los archivos, detener el servicio o limpiar caché. Si falla, ese host queda como fallido sin sobrescribir los archivos anteriores; admite {\'{{param}}\'}',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Obtener código fuente',

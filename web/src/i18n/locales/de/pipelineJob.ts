@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: 'Die Größe der ersten Gruppe muss kleiner als die Host-Anzahl sein, sonst bleibt nichts zu staffeln',
   fieldRestartCommandLabel: 'Neustart-/Umschaltbefehl',
   fieldRestartCommandHint:
-    'Optional, mehrzeilig (set -e, Zeile für Zeile); nach der Bereitstellung im current-Verzeichnis des Ziels ausgeführt, für Neustart/Reload; bei Fehler automatisches Rollback',
+    'Optional, mehrzeilig (set -e, Zeile für Zeile); wird nach der Ablage des Artefakts in diesem Deploy-Verzeichnis ausgeführt, für Neustart/Reload; ein Fehler markiert den Host als fehlgeschlagen (Datei-Artefakte haben keine frühere Version zum Zurückrollen)',
+  fieldPreDeployCommandLabel: 'Befehl vor der Bereitstellung',
+  fieldPreDeployCommandHint:
+    'Optional, mehrzeilig (set -e, Zeile für Zeile); wird auf dem Ziel ausgeführt, bevor das Artefakt im Deploy-Verzeichnis landet — vorher alte Dateien sichern, Dienst stoppen oder Cache leeren. Bei einem Fehler gilt dieser Host als fehlgeschlagen, ohne alte Dateien zu überschreiben; unterstützt {\'{{param}}\'}',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Quellcode abrufen',

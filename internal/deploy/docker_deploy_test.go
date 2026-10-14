@@ -76,6 +76,47 @@ func TestComposeDeployUploadsFileAndUp(t *testing.T) {
 	}
 }
 
+// TestComposeDeployRunsPreCommandFirst:compose 档的部署前指令在受管目录里、compose 正文被覆盖
+// **之前**跑 —— 备份旧正文/停写只有在这一步之前才还来得及。
+func TestComposeDeployRunsPreCommandFirst(t *testing.T) {
+	db := testDB(t)
+	rsvc := run.New(db)
+	tgt := &stubTarget{}
+	srv := seedServer(t, tgt, "web-1")
+	runID, _ := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactImage, "registry/shop:1.0")
+	cfg := composeCfg("shop-web", "services:\n  web:\n    image: nginx:latest\n")
+	cfg[CfgKeyPreDeployCommand] = "cp -a docker-compose.yml docker-compose.yml.bak"
+
+	svc := New(tgt, rsvc)
+	res, err := svc.DeployForStage(context.Background(), runID, []string{srv.ID}, cfg, "")
+	if err != nil {
+		t.Fatalf("DeployForStage: %v", err)
+	}
+	if len(res) != 1 || res[0].Status != run.TargetSuccess {
+		t.Fatalf("want 1 success, got %+v", res)
+	}
+	dir := stackBaseDir + "/shop-web"
+	pre := findCmd(tgt.calls, "sh")
+	if pre == nil || len(pre) != 4 || pre[3] != dir || !strings.Contains(pre[2], "cp -a docker-compose.yml") {
+		t.Fatalf("部署前指令应在受管目录 %s 内跑:%v", dir, tgt.calls)
+	}
+	mkdirIdx, preIdx, upIdx := -1, -1, -1
+	for i, c := range tgt.calls {
+		if len(c) > 0 && c[0] == "mkdir" && mkdirIdx < 0 {
+			mkdirIdx = i
+		}
+		if len(c) > 0 && c[0] == "sh" && preIdx < 0 {
+			preIdx = i
+		}
+		if len(c) > 2 && c[0] == "docker" && c[1] == "compose" {
+			upIdx = i
+		}
+	}
+	if !(mkdirIdx >= 0 && mkdirIdx < preIdx && preIdx < upIdx) {
+		t.Fatalf("顺序应为 建目录 → 部署前指令 → up:m=%d p=%d u=%d (%v)", mkdirIdx, preIdx, upIdx, tgt.calls)
+	}
+}
+
 // TestComposeDeployFallsBackToV1 目标机只有 v1 独立命令时,用 docker-compose 而不是 v2 插件。
 func TestComposeDeployFallsBackToV1(t *testing.T) {
 	db := testDB(t)

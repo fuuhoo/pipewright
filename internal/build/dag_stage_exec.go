@@ -622,10 +622,13 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		hostsLabel = "集群 " + clusterID
 	}
 	cfg := map[string]string{}
-	// deployPath / restartCommand 支持 {{param}} 占位:用本次运行参数渲染(命令型部署据此让
-	// 「本地端口 / 穿透端口」等随运行参数变化;非配置类部署不写占位 → renderTemplate 零开销直返)。
+	// deployPath / preDeployCommand / restartCommand 支持 {{param}} 占位:用本次运行参数渲染
+	// (命令型部署据此让「本地端口 / 穿透端口」等随运行参数变化;非配置类部署不写占位 → renderTemplate 零开销直返)。
 	if dp := renderTemplate(cfgString(jb.Config, "deployPath"), params); dp != "" {
 		cfg["deployPath"] = dp
+	}
+	if pre := renderTemplate(cfgString(jb.Config, deploy.CfgKeyPreDeployCommand), params); pre != "" {
+		cfg[deploy.CfgKeyPreDeployCommand] = pre
 	}
 	if rc := renderTemplate(cfgString(jb.Config, "restartCommand"), params); rc != "" {
 		cfg["restartCommand"] = rc

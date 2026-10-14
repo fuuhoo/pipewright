@@ -156,10 +156,9 @@ func TestFileDeployRestartRunsInDeployPath(t *testing.T) {
 	}
 	assertNoReleaseLayout(t, tgt.calls)
 
-	// jar 的 java 探测指向部署路径下的产物本身。
-	if java := findCmd(tgt.calls, "java"); java == nil || java[1] != "-jar" ||
-		java[2] != "/home/fhb/cicdtest/server/shop.jar" {
-		t.Fatalf("java 探测命令应指向部署路径下的产物: %v", java)
+	// jar 不再被平台私自探测(曾经的 `java -jar <产物> --version`):目标机上跑的每条命令都得是用户写的。
+	if java := findCmd(tgt.calls, "java"); java != nil {
+		t.Fatalf("部署不该在目标机执行 java 探测命令: %v", java)
 	}
 	// 重启:sh -c 'cd "$0" && set -e …' <部署路径> —— 目录作位置参数,不内联进脚本体(AC-SEC-02)。
 	var restart []string
@@ -173,6 +172,104 @@ func TestFileDeployRestartRunsInDeployPath(t *testing.T) {
 	}
 	if restart[3] != "/home/fhb/cicdtest/server" || !strings.Contains(restart[2], "./server-ny &") {
 		t.Fatalf("重启命令异常: %v", restart)
+	}
+}
+
+// TestPreDeployCmdsShape:部署前指令的组装形态 —— 没配 = 整步不存在(目标机上不会凭空多出命令);
+// 配了 = 与 restartCommand 同形(目录作位置参数,用户命令体绝不拼进脚本;AC-SEC-02)。
+func TestPreDeployCmdsShape(t *testing.T) {
+	if got := preDeployCmds(map[string]string{}, "/srv/a"); got != nil {
+		t.Fatalf("未配置不该产出命令:%v", got)
+	}
+	if got := preDeployCmds(map[string]string{CfgKeyPreDeployCommand: "  \n "}, "/srv/a"); got != nil {
+		t.Fatalf("空白配置不该产出命令:%v", got)
+	}
+	got := preDeployCmds(map[string]string{CfgKeyPreDeployCommand: "tar czf old.tgz ."}, "/srv/a")
+	if len(got) != 1 || len(got[0]) != 4 || got[0][0] != "sh" || got[0][1] != "-c" {
+		t.Fatalf("应组装成单条 sh -c:%v", got)
+	}
+	if got[0][2] != "cd \"$0\" && set -e\ntar czf old.tgz ." {
+		t.Fatalf("脚本体不该内联部署路径:%q", got[0][2])
+	}
+	if got[0][3] != "/srv/a" {
+		t.Fatalf("部署路径应作位置参数传入:%v", got[0])
+	}
+}
+
+// TestFileDeployPreCommandRunsBeforePlacement:部署前指令排在 mkdir 之后、产物放置之前。
+func TestFileDeployPreCommandRunsBeforePlacement(t *testing.T) {
+	db := testDB(t)
+	rsvc := run.New(db)
+	tgt := &stubTarget{}
+	srv := seedServer(t, tgt, "app-1")
+	runID, artID := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactJar, "build/shop.jar")
+
+	svc := New(tgt, rsvc)
+	res, err := svc.Deploy(context.Background(), DeployInput{
+		RunID: runID, ArtifactID: artID, ServerIDs: []string{srv.ID},
+		Config: map[string]string{"deployPath": "/srv/shop", "preDeployCommand": "cp -a shop.jar shop.jar.bak"},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if res[0].Status != run.TargetSuccess {
+		t.Fatalf("want success, got %+v", res[0])
+	}
+	mkdirIdx, preIdx, placeIdx := -1, -1, -1
+	for i, c := range tgt.calls {
+		if len(c) > 0 && c[0] == "mkdir" && mkdirIdx < 0 {
+			mkdirIdx = i
+		}
+		if len(c) >= 4 && c[0] == "sh" && c[1] == "-c" && strings.Contains(c[2], "cp -a shop.jar") {
+			preIdx = i
+			if c[3] != "/srv/shop" {
+				t.Fatalf("部署前指令应在部署目录内跑(位置参数 = %v)", c)
+			}
+		}
+		if len(c) >= 3 && c[0] == "sh" && strings.Contains(c[2], "base64 -d") && placeIdx < 0 {
+			placeIdx = i
+		}
+	}
+	if mkdirIdx < 0 || preIdx < 0 || placeIdx < 0 {
+		t.Fatalf("应依次出现 mkdir / 部署前指令 / 放置产物:%v", tgt.calls)
+	}
+	if !(mkdirIdx < preIdx && preIdx < placeIdx) {
+		t.Fatalf("部署前指令必须排在建目录之后、铺产物之前:m=%d p=%d l=%d", mkdirIdx, preIdx, placeIdx)
+	}
+}
+
+// TestFileDeployPreCommandFailureBlocksPlacement:部署前指令非零 → 该机 failed,
+// 而且**一个字节都不铺**(旧文件还是旧的,这正是「先备份再发」要的语义)。
+func TestFileDeployPreCommandFailureBlocksPlacement(t *testing.T) {
+	db := testDB(t)
+	rsvc := run.New(db)
+	tgt := &stubTarget{execFn: func(_ string, cmd []string) (*target.ExecResult, error) {
+		if len(cmd) >= 3 && cmd[0] == "sh" && strings.Contains(cmd[2], "cp -a") {
+			return &target.ExecResult{ExitCode: 1, Stderr: "no space left on device"}, nil
+		}
+		return &target.ExecResult{ExitCode: 0}, nil
+	}}
+	srv := seedServer(t, tgt, "app-1")
+	runID, artID := seedSuccessRunWithArtifact(t, db, rsvc, run.ArtifactJar, "build/shop.jar")
+
+	svc := New(tgt, rsvc)
+	res, err := svc.Deploy(context.Background(), DeployInput{
+		RunID: runID, ArtifactID: artID, ServerIDs: []string{srv.ID},
+		Config: map[string]string{"deployPath": "/srv/shop", "preDeployCommand": "cp -a shop.jar shop.jar.bak"},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if res[0].Status != run.TargetFailed {
+		t.Fatalf("部署前指令失败应该机 failed, got %+v", res[0])
+	}
+	if !strings.Contains(res[0].Message, "部署前指令失败") {
+		t.Fatalf("message 应说是部署前指令(不是重启/放置):%q", res[0].Message)
+	}
+	for _, c := range tgt.calls {
+		if len(c) >= 3 && c[0] == "sh" && strings.Contains(c[2], "base64 -d") {
+			t.Fatalf("前置指令失败后不该再铺产物:%v", c)
+		}
 	}
 }
 

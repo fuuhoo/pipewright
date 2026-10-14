@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: 'First batch size must stay below the host count, otherwise there is nothing left to batch',
   fieldRestartCommandLabel: 'Restart / switch command',
   fieldRestartCommandHint:
-    'Optional, multi-line (set -e, line by line); run in the target’s current directory after deploy, for restart/reload; auto-rolls-back on failure',
+    'Optional, multi-line (set -e, line by line); runs in the deploy directory after the artifact lands there, for restart/reload; a failure marks that host as failed (file artifacts have no previous release to roll back to)',
+  fieldPreDeployCommandLabel: 'Pre-deploy command',
+  fieldPreDeployCommandHint:
+    'Optional, multi-line (set -e, line by line); runs on the host before the artifact lands in the deploy directory — back up the old files, stop the service or clear caches first. A non-zero exit fails that host without overwriting anything; supports {\'{{param}}\'}',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Pull source',

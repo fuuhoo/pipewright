@@ -578,6 +578,18 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     validate: canaryCountFieldError,
   },
   {
+    key: 'preDeployCommand',
+    get label() { return t('pipelineJob.fieldPreDeployCommandLabel') },
+    kind: 'textarea',
+    monospace: true,
+    placeholder: 'mkdir -p backups\ncp -a app.jar backups/app.jar.bak',
+    presets: ['mkdir -p backups\ncp -a app.jar backups/app.jar.bak', 'systemctl stop app'],
+    get hint() { return t('pipelineJob.fieldPreDeployCommandHint') },
+    // 与产物落位同一条链路:镜像档不起文件部署、命令档整条 stageFileOne 都不走,填了没人读 → 隐藏。
+    when: (c) => c.artifactType !== 'image' && c.artifactType !== 'command',
+    dropWhenHidden: true,
+  },
+  {
     key: 'restartCommand',
     get label() { return t('pipelineJob.fieldRestartCommandLabel') },
     kind: 'textarea',
@@ -710,6 +722,18 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     get hint() { return t('pipelineJob.fieldComposeYamlHint') },
     when: (c) => dockerModeIs(DOCKER_MODE_COMPOSE)(c) && !composeSourceIs(COMPOSE_SOURCE_REPO)(c),
     validate: (c) => composeBodyError(c.composeYaml ?? ''),
+  },
+  {
+    key: 'preDeployCommand',
+    get label() { return t('pipelineJob.fieldPreDeployCommandLabel') },
+    kind: 'textarea',
+    monospace: true,
+    placeholder: 'mkdir -p backups\ncp -a docker-compose.yml backups/docker-compose.yml.bak',
+    presets: ['mkdir -p backups\ncp -a docker-compose.yml backups/docker-compose.yml.bak'],
+    get hint() { return t('pipelineJob.fieldPreDeployCommandHint') },
+    // 只有 compose 档会建受管目录并覆盖正文;单容器档走镜像停旧起新,这条指令没有落点。
+    when: dockerModeIs(DOCKER_MODE_COMPOSE),
+    dropWhenHidden: true,
   },
   ...DEPLOY_HEALTH_FIELDS,
 ]

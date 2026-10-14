@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: '首批台数要小于主机总数,否则后面没有可分批的主机',
   fieldRestartCommandLabel: '重启 / 切换命令',
   fieldRestartCommandHint:
-    '可选,多行(set -e 逐行执行);部署后在目标机 current 目录下执行,用于重启/重载;失败自动回滚',
+    '可选,多行(set -e 逐行执行);产物铺进部署目录后在该目录执行,用于重启/重载;失败该机记为失败(文件产物没有上一版本可回滚)',
+  fieldPreDeployCommandLabel: '部署前指令',
+  fieldPreDeployCommandHint:
+    '可选,多行(set -e 逐行执行);在产物铺进部署目录之前于该机执行,用来先备份旧文件、停服务或清缓存。失败该机即判失败,旧文件不会被覆盖;支持 {\'{{param}}\'} 占位',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '拉取源码',

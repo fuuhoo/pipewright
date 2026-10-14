@@ -112,6 +112,8 @@ func (s *service) deployComposeStack(ctx context.Context, runID string, serverID
 		origin = "正文来自仓库文件 " + f
 	}
 	lg(cmdStreamStdout, fmt.Sprintf("· Compose 部署:项目「%s」→ 目标机 %s(%s)", project, composePath, origin))
+	// 部署前指令在受管目录里跑,且**早于** compose 文件被覆盖 —— 备份旧正文/停写就还有机会。
+	pre := preDeployCmds(cfg, dir)
 
 	results := make([]TargetResult, 0, len(serverIDs))
 	for _, sid := range serverIDs {
@@ -123,7 +125,7 @@ func (s *service) deployComposeStack(ctx context.Context, runID string, serverID
 			return nil, gerr
 		}
 		started := time.Now().UTC()
-		msg, ok := s.composeOne(ctx, sid, project, compose, dir, composePath)
+		msg, ok := s.composeOne(ctx, sid, project, compose, dir, composePath, pre)
 		fin := time.Now().UTC()
 		tr := TargetResult{ServerID: sid, ServerName: srv.Name, StartedAt: started, FinishedAt: &fin}
 		switch {
@@ -152,10 +154,10 @@ func (s *service) deployComposeStack(ctx context.Context, runID string, serverID
 	return results, nil
 }
 
-// composeOne 在一台机上完成:建目录 → 上传 compose → 探测 compose CLI → up -d。
+// composeOne 在一台机上完成:建目录 → 部署前指令(配了才跑)→ 上传 compose → 探测 compose CLI → up -d。
 // 整条链路共用 composeUpTimeout(逐命令的 60s 预算养不起一次拉镜像的 up)。
 // 返回 (人读 message, 是否成功);失败 message 不带栈内容,只带目标机给出的原因。
-func (s *service) composeOne(ctx context.Context, serverID, project, compose, dir, composePath string) (string, bool) {
+func (s *service) composeOne(ctx context.Context, serverID, project, compose, dir, composePath string, pre [][]string) (string, bool) {
 	ctx, release, gerr := s.holdServer(ctx, serverID)
 	if gerr != nil {
 		return "等待目标机空闲时部署被中断:" + humanExecError(gerr), false
@@ -167,6 +169,11 @@ func (s *service) composeOne(ctx context.Context, serverID, project, compose, di
 
 	if msg, ok := s.runStep(ctx, serverID, [][]string{{"mkdir", "-p", dir}}); !ok {
 		return "创建受管目录失败:" + msg, false
+	}
+	if len(pre) > 0 {
+		if msg, ok := s.runStep(ctx, serverID, pre); !ok {
+			return "部署前指令失败:" + msg, false
+		}
 	}
 	// 上传走 SFTP 字节流,不经回显:compose 正文因此绝无成为 shell 注入面的可能。
 	if err := s.upload(ctx, serverID, strings.NewReader(compose), composePath); err != nil {

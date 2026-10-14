@@ -787,6 +787,29 @@ func TestRunDeployJobPassesDockerParams(t *testing.T) {
 	}
 }
 
+// TestRunDeployJobPassesPreDeployCommand 证部署节点的「部署前指令」透传给 DeployForStage,
+// 且与 restartCommand 同一条腿支持 {{param}} 渲染(备份路径常随版本参数变)。
+// 键名差一个字 = 用户在节点里填了指令但 deploy 层读不到,产物直接覆盖旧文件,无声无息。
+func TestRunDeployJobPassesPreDeployCommand(t *testing.T) {
+	dep := &stubStageDeployer{}
+	b := &Builder{deployer: dep}
+	rep := &fakeReporter{}
+	jb := pipeline.Job{ID: "d", Name: "部署", Type: "deploy_ssh", Config: map[string]any{
+		"serverId":         "srv-1",
+		"preDeployCommand": "cp -a app.jar backups/app-{{ver}}.jar",
+	}}
+	if err := b.runDeployJob(context.Background(), rep, jb, &run.Run{ID: "run-1", Trigger: run.Trigger{Params: map[string]string{"ver": "1.2"}}}, nil, nil); err != nil {
+		t.Fatalf("runDeployJob err: %v", err)
+	}
+	if got := dep.gotCfg[deploy.CfgKeyPreDeployCommand]; got != "cp -a app.jar backups/app-1.2.jar" {
+		t.Errorf("preDeployCommand = %q,want 按运行参数渲染后的命令(完整 cfg=%+v)", got, dep.gotCfg)
+	}
+	// 未配置 = 键根本不出现,deploy 层据此整步跳过。
+	if _, ok := dep.gotCfg["restartCommand"]; ok {
+		t.Errorf("空 restartCommand 不应入 cfg:%+v", dep.gotCfg)
+	}
+}
+
 // TestRunDeployJobPassesHealthProbe 证部署节点的健康探测键透传给 DeployForStage
 // (探测能力从撤销的 health_check 节点迁到了部署任务本身)。
 func TestRunDeployJobPassesHealthProbe(t *testing.T) {

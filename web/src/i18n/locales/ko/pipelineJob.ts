@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: '首批 대수는 호스트 총수보다 작아야 합니다(나눠 배포할 대상이 남지 않음)',
   fieldRestartCommandLabel: '재시작 / 전환 명령',
   fieldRestartCommandHint:
-    '선택, 여러 줄(set -e, 한 줄씩 실행). 배포 후 대상 머신의 current 디렉터리에서 실행하여 재시작/리로드에 사용. 실패 시 자동 롤백',
+    '선택, 여러 줄(set -e, 한 줄씩 실행). 산출물을 배포 디렉터리에 배치한 뒤 그 디렉터리에서 실행하여 재시작/리로드에 사용합니다. 실패하면 해당 호스트가 실패로 기록됩니다(파일 산출물은 롤백할 이전 버전이 없습니다)',
+  fieldPreDeployCommandLabel: '배포 전 명령',
+  fieldPreDeployCommandHint:
+    '선택, 여러 줄(set -e, 한 줄씩 실행). 산출물을 배포 디렉터리에 놓기 전에 대상 머신에서 실행해 기존 파일 백업·서비스 정지·캐시 삭제 등을 합니다. 실패하면 해당 호스트가 실패로 판정되며 기존 파일은 덮어쓰지 않습니다. {\'{{param}}\'} 지원',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '소스 가져오기',

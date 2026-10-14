@@ -71,6 +71,10 @@ func TestDeployStoredJarUploadsRealBytes(t *testing.T) {
 			t.Fatalf("制品库产物不应再用 base64 占位写入:%v", c)
 		}
 	}
+	// 落位即结束:平台不替用户在目标机上跑 `java -jar … --version` 之类的探测。
+	if c := findCmd(tgt.calls, "java"); c != nil {
+		t.Fatalf("部署不该在目标机执行 java 探测命令:%v", c)
+	}
 }
 
 // stagingUpload 取部署目录内那次临时名上传,返回 (临时路径, 字节)。恰好一条,否则判失败。

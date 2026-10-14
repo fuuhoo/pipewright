@@ -12,7 +12,7 @@ package deploy
 // image 类型不在此列(走容器编排 image_release.go,仍保留停旧起新 + 回滚上一镜像)。
 //
 // 流程(deployFileOne = stageFileOne 紧接 activateFileOne;蓝绿策略跨机分这两阶段):
-//  1. 预备:mkdir -p <部署路径> → 把产物字节铺进去(**不重启、不探测**)。
+//  1. 预备:mkdir -p <部署路径> → 部署前指令(配了才跑)→ 把产物字节铺进去(**不重启、不探测**)。
 //  2. 激活:在部署目录跑 restartCommand(配了才跑)→ 健康门控 → success / failed。
 //
 // 单文件产物先落到部署目录内的临时名再 mv 到位:上传经 SSH 通道直写目标路径时,超时或断流
@@ -107,6 +107,13 @@ func (s *service) stageFileOne(ctx context.Context, srv *target.Server, a run.Ar
 	if failMsg, ok := s.runStep(execCtx, srv.ID, [][]string{{"mkdir", "-p", st.dir}}); !ok {
 		return st, failMsg, false
 	}
+	// 部署前指令:在产物落位**之前**于部署目录执行(备份旧文件、停写、清缓存等)。
+	// 未配置 = 这一步根本不存在,目标机上不会凭空多出命令。
+	if pre := preDeployCmds(cfg, st.dir); pre != nil {
+		if failMsg, ok := s.runStagedCmd(ctx, srv, pre); !ok {
+			return st, "部署前指令失败:" + failMsg, false
+		}
+	}
 
 	// 制品库支撑的产物走「上传真字节」(上传自己按体积计时,不共用上面那条命令的 60s);
 	// 否则历史占位路径(把 reference 串当内容写入)。
@@ -117,17 +124,32 @@ func (s *service) stageFileOne(ctx context.Context, srv *target.Server, a run.Ar
 
 	file := path.Join(st.dir, deployFileName(a))
 	payload := base64.StdEncoding.EncodeToString([]byte(a.Reference + "\n"))
-	placeCmds := [][]string{
+	// 只放产物,**不替用户跑任何东西**(包括 `java -jar … --version` 这类「探测」):目标机上
+	// 执行的每一条命令都得是用户在部署节点里写的。
+	if failMsg, ok := s.runStep(execCtx, srv.ID, [][]string{
 		{"sh", "-c", `printf '%s' "$1" | base64 -d > "$0"`, file, payload},
-	}
-	if a.Type == run.ArtifactJar {
-		// jar:放置后探测启动命令(目标无 java → 非零退出 → 该机 failed 人读)。
-		placeCmds = append(placeCmds, []string{"java", "-jar", file, "--version"})
-	}
-	if failMsg, ok := s.runStep(execCtx, srv.ID, placeCmds); !ok {
+	}); !ok {
 		return st, failMsg, false
 	}
 	return st, "", true
+}
+
+// CfgKeyPreDeployCommand 是「部署前指令」的 cfg 键(与前端字段、DAG 透传同名 —— 两侧键名不同
+// 就等于用户在节点里填了却没人读它)。
+const CfgKeyPreDeployCommand = "preDeployCommand"
+
+// preDeployCmds 组装部署前指令的执行形态,与 restartCommand 逐字同形:`cd "$0" && set -e` 后接
+// 用户命令体,部署目录作**位置参数**传入(绝不把用户文本拼进脚本;AC-SEC-02)。未配置返回 nil,
+// 调用方据此整步跳过。
+//
+// 用在产物落位之前:这一步跑在非零退出时,部署目录里的旧文件一个字节都还没被覆盖,该机直接记
+// failed —— 正是「先备份再铺」想要的语义。
+func preDeployCmds(cfg map[string]string, dir string) [][]string {
+	rc := strings.TrimSpace(cfg[CfgKeyPreDeployCommand])
+	if rc == "" {
+		return nil
+	}
+	return [][]string{{"sh", "-c", "cd \"$0\" && set -e\n" + rc, dir}}
 }
 
 // stageStoredArtifact 把制品库里的**真字节**直铺进部署目录:
@@ -198,11 +220,6 @@ func (s *service) stageStoredArtifact(ctx context.Context, srv *target.Server, a
 		if failMsg, ok := s.runStagedCmd(ctx, srv, [][]string{{"mv", "-f", tmp, dest}}); !ok {
 			s.dropStaging(ctx, srv, tmp)
 			return "制品落位失败:" + failMsg, false
-		}
-		if a.Type == run.ArtifactJar {
-			if failMsg, ok := s.runStagedCmd(ctx, srv, [][]string{{"java", "-jar", dest, "--version"}}); !ok {
-				return failMsg, false
-			}
 		}
 		return "", true
 	}

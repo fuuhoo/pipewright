@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: 'La taille du premier lot doit rester inférieure au nombre d’hôtes, sinon il ne reste rien à fractionner',
   fieldRestartCommandLabel: 'Commande de redémarrage / bascule',
   fieldRestartCommandHint:
-    'Optionnel, multiligne (set -e, ligne par ligne) ; exécutée dans le répertoire current de la cible après le déploiement, pour redémarrer/recharger ; retour arrière automatique en cas d’échec',
+    'Facultatif, multiligne (set -e, ligne par ligne) ; exécutée dans le répertoire de déploiement après le dépôt de l’artefact, pour redémarrer/recharger ; en cas d’échec l’hôte est marqué en échec (les artefacts fichiers n’ont pas de version précédente où revenir)',
+  fieldPreDeployCommandLabel: 'Commande préalable au déploiement',
+  fieldPreDeployCommandHint:
+    'Optionnel, multiligne (set -e, ligne par ligne) ; exécutée sur la cible avant que l’artefact ne soit déposé dans le répertoire de déploiement — sauvegarde des fichiers, arrêt du service ou purge du cache. En cas d’échec l’hôte est marqué en échec, sans écraser les fichiers existants ; accepte {\'{{param}}\'}',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Récupérer la source',

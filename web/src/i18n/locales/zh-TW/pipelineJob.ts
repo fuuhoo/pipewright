@@ -95,7 +95,10 @@ export default {
   canaryCountTooMany: '首批台數要小於主機總數,否則後面沒有可分批的主機',
   fieldRestartCommandLabel: '重啟 / 切換命令',
   fieldRestartCommandHint:
-    '可選,多行(set -e 逐行執行);部署後在目標機 current 目錄下執行,用於重啟/重載;失敗自動回復',
+    '可選,多行(set -e 逐行執行);產品鋪進部署目錄後在該目錄執行,用於重啟/重載;失敗該機記為失敗(檔案產品沒有上一版本可回滾)',
+  fieldPreDeployCommandLabel: '部署前指令',
+  fieldPreDeployCommandHint:
+    '可選,多行(set -e 逐行執行);在產品鋪進部署目錄之前於該機執行,用來先備份舊檔案、停服務或清快取。失敗該機即判失敗,舊檔案不會被覆蓋;支援 {\'{{param}}\'} 佔位',
 
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '拉取原始碼',
