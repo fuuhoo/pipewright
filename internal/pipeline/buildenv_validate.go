@@ -70,6 +70,15 @@ type ConfigProfileOption struct {
 	TargetPath string
 }
 
+// LanguageUnbound 是「不绑定语言」的语言值:语言下拉里「其他(不绑定语言)」那一档,
+// 即 web/src/lib/languageOptions.ts 的 OTHER_LANGUAGE。
+// 配置资源注入只是按 targetPath 往容器里挂一个文件,挂载本身与语言无关;语言绑定的作用是
+// 帮人从一堆资源里筛出该挂的那个。所以任一侧选了「不绑定语言」就没有可比性,不该拿来报错。
+const LanguageUnbound = "other"
+
+// languageBound 报告一个语言值是否真的做了绑定:空值(环境尚未解析出来)和「不绑定语言」都不算。
+func languageBound(l string) bool { return l != "" && l != LanguageUnbound }
+
 // BuildEnvSnapshot 是预置目录的一次快照(保存期即时构造,不吃缓存)。
 type BuildEnvSnapshot struct {
 	byID      map[string]BuildEnvOption
@@ -237,6 +246,7 @@ func ValidateBuildEnvRefs(spec Spec, snapshot BuildEnvSnapshot) []BuildEnvProble
 
 // profileProblems 校验配置资源引用:必须存在且启用,语言须与所选构建环境一致。
 // 环境未解析出来(占位待渲染 / 零值)时跳过语言匹配 —— 那条已另行报错,不再叠加噪音。
+// 任一侧选了「不绑定语言」同样跳过(见 LanguageUnbound)。
 func (s BuildEnvSnapshot) profileProblems(ref BuildEnvRef, env BuildEnvOption, stage, job string) []BuildEnvProblem {
 	var out []BuildEnvProblem
 	for _, id := range ref.ProfileIDs {
@@ -248,7 +258,8 @@ func (s BuildEnvSnapshot) profileProblems(ref BuildEnvRef, env BuildEnvOption, s
 			})
 			continue
 		}
-		if env.ID != "" && env.Language != "" && p.Language != env.Language {
+		bound := languageBound(env.Language) && languageBound(p.Language)
+		if env.ID != "" && bound && p.Language != env.Language {
 			out = append(out, BuildEnvProblem{
 				Code: ProblemConfigProfileLanguage, Stage: stage, Job: job, Field: ConfigKeyConfigProfileIDs,
 				Message: fmt.Sprintf("阶段「%s」的节点「%s」的配置资源「%s」语言(%s)与构建环境(%s)不匹配,注入不会生效,请重新勾选", stage, job, p.ID, p.Language, env.Language),

@@ -6,18 +6,21 @@ import (
 	"testing"
 )
 
-// 目录快照:node20(启用)/ java21+mvn(启用)/ old-ruby(禁用)/ private runner(禁用)。
+// 目录快照:node20(启用)/ java21+mvn(启用)/ old-ruby(禁用)/ private runner(禁用),
+// 外加两个「不绑定语言」的样本(env-any 与 cp-other)。
 func testSnapshot() BuildEnvSnapshot {
 	return NewBuildEnvSnapshot([]BuildEnvOption{
 		{ID: "env-node20", Language: "node", Version: "20", DisplayName: "Node.js 20", Image: "node:20-alpine", Enabled: true, CheckStatus: "available"},
 		{ID: "env-java21", Language: "java", Version: "21", DisplayName: "Java 21", Image: "eclipse-temurin:21-jdk-alpine", Enabled: true},
 		{ID: "env-mvn", Language: "java", Version: "21-maven", DisplayName: "Java 21 + Maven 3.9", Image: "maven:3.9-eclipse-temurin-21", Enabled: true},
 		{ID: "env-old-ruby", Language: "ruby", Version: "2.7", DisplayName: "Ruby 2.7", Image: "ruby:2.7", Enabled: false},
+		{ID: "env-any", Language: LanguageUnbound, Version: "1.0", DisplayName: "全量工具链", Image: "alpine:3.20", Enabled: true},
 	}, []ConfigProfileOption{
 		// FilePath/TargetPath 是执行期注入用的字段;保存期会顺带判资源自身可注入(见 profileDefect)。
 		{ID: "cp-npmrc", Language: "node", Enabled: true, FilePath: "/data/config_profiles/cp-npmrc/.npmrc", TargetPath: "/root/.npmrc"},
 		{ID: "cp-mvn", Language: "java", Enabled: true, FilePath: "/data/config_profiles/cp-mvn/settings.xml", TargetPath: "/root/.m2/settings.xml"},
 		{ID: "cp-off", Language: "node", Enabled: false, FilePath: "/data/config_profiles/cp-off/x", TargetPath: "/root/x"},
+		{ID: "cp-other", Language: LanguageUnbound, Enabled: true, FilePath: "/data/config_profiles/cp-other/settings.xml", TargetPath: "/root/.m2/settings.xml"},
 	})
 }
 
@@ -76,6 +79,10 @@ func TestValidateBuildEnvRefs(t *testing.T) {
 		{"配置资源已禁用", "script", map[string]any{"buildEnvId": "env-node20", "configProfileIds": "cp-off"}, ProblemConfigProfileUnknown},
 		{"配置资源语言不匹配", "script", map[string]any{"buildEnvId": "env-node20", "configProfileIds": "cp-mvn"}, ProblemConfigProfileLanguage},
 		{"配置资源语言匹配", "script", map[string]any{"buildEnvId": "env-node20", "configProfileIds": "cp-npmrc"}, ""},
+		// 「不绑定语言」的那一档就是给跨语言资源用的(settings.xml 挂进 node 容器也照样能挂),
+		// 两侧任一说「不绑定」都不该报语言不匹配。
+		{"配置资源不绑定语言", "script", map[string]any{"buildEnvId": "env-node20", "configProfileIds": "cp-other"}, ""},
+		{"构建环境不绑定语言", "script", map[string]any{"buildEnvId": "env-any", "configProfileIds": "cp-mvn"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

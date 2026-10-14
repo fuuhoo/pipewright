@@ -46,6 +46,22 @@ const presetProfiles: ConfigProfile[] = [
     createdAt: '',
     updatedAt: '',
   },
+  {
+    // 「其他(不绑定语言)」的资源:挂哪个路径由自己填,任何环境的候选里都该有它。
+    id: 'cp-any-mvn',
+    language: 'other',
+    configType: 'maven-settings',
+    name: 'sw-maven',
+    targetPath: '/root/.m2/settings.xml',
+    filePath: '',
+    isDefault: false,
+    isBuiltin: false,
+    description: '',
+    enabled: true,
+    createdBy: '',
+    createdAt: '',
+    updatedAt: '',
+  },
 ]
 
 vi.mock('../../api/buildEnvs', () => ({
@@ -196,6 +212,33 @@ describe('JobDrawer 配置资源多选', () => {
 
     const last = wrapper.emitted('update')!.at(-1)![0] as Partial<PipelineJob>
     expect(last.config!.configProfileIds).toBe('cp-npm')
+  })
+
+  it('不绑定语言的资源在同语言候选里也出现', async () => {
+    const wrapper = mount(JobDrawer, { props: { job: scriptJob({}), stage } })
+    await flushPromises()
+
+    const selects = wrapper.findAll('select.drawer-select')
+    const envSelect = selects.find((s) => s.text().includes('Node.js 20'))!
+    await envSelect.setValue('env-node20')
+    await flushPromises()
+
+    // 同语言命中时旧逻辑会把「其他」那一档藏掉,导致选不上、只能去改资源语言。
+    expect(wrapper.find('input[type="checkbox"][aria-label="sw-maven"]').exists()).toBe(true)
+  })
+
+  it('环境语言一个都没命中时退回全量(自定义语言词不误伤)', async () => {
+    const wrapper = mount(JobDrawer, { props: { job: scriptJob({}), stage } })
+    await flushPromises()
+
+    const selects = wrapper.findAll('select.drawer-select')
+    const envSelect = selects.find((s) => s.text().includes('Java 21'))!
+    await envSelect.setValue('env-java21')
+    await flushPromises()
+
+    // 目录里没有 java 语言的资源 → 全量候选(node 的也在)
+    expect(wrapper.find('input[type="checkbox"][aria-label=".npmrc"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="checkbox"][aria-label="sw-maven"]').exists()).toBe(true)
   })
 })
 

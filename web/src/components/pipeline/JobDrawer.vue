@@ -10,6 +10,7 @@ import type { NotificationChannel } from '../../api/notifications'
 import type { Environment } from '../../api/pipelineSettings'
 import { listEnabledBuildEnvs, type PresetBuildEnv } from '../../api/buildEnvs'
 import { listEnabledConfigProfiles, type ConfigProfile } from '../../api/configProfiles'
+import { OTHER_LANGUAGE } from '../../lib/languageOptions'
 import {
   getJobTypeSpec,
   splitConfig,
@@ -483,12 +484,14 @@ function selectedProfileIds(): string[] {
   return (typedConfig.value.configProfileIds ?? '').split(',').map((s) => s.trim()).filter(Boolean)
 }
 
-/** 候选项按所选环境的语言过滤;未选环境时给全量。 */
+/** 候选项 = 与所选环境同语言的 + 不绑定语言的;一个同语言命中都没有时退回全量(环境语言是自定义词时不误伤)。 */
 function profileOptions(): ConfigProfile[] {
+  const all = presetProfiles.value
   const env = presetById(buildEnvFieldValue())
-  if (!env) return presetProfiles.value
-  const same = presetProfiles.value.filter((p) => p.language === env.language)
-  return same.length > 0 ? same : presetProfiles.value
+  if (!env || env.language === OTHER_LANGUAGE) return all
+  const matched = all.filter((p) => p.language === env.language)
+  if (!matched.length) return all
+  return [...matched, ...all.filter((p) => p.language === OTHER_LANGUAGE)]
 }
 
 function toggleProfile(id: string): void {
@@ -976,7 +979,7 @@ async function confirmSave(): Promise<void> {
           </option>
         </select>
 
-        <!-- 配置资源多选(按所选环境语言过滤) -->
+        <!-- 配置资源多选(按所选环境语言过滤,不绑定语言的资源恒在候选里) -->
         <div v-else-if="field.kind === 'configprofiles'" class="profile-multi">
           <label v-for="p in profileOptions()" :key="p.id" class="profile-option">
             <input
