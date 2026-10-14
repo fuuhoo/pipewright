@@ -158,6 +158,7 @@ export default {
   maskedTitle: 'Informations sensibles masquées',
   jumpToLatest: 'Aller au journal le plus récent',
   jumpToBottom: 'Aller en bas',
+  showEarlier: 'Afficher {n} lignes précédentes',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Modifications de code de ce commit',

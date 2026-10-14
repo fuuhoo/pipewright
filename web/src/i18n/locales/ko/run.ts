@@ -158,6 +158,7 @@ export default {
   maskedTitle: '민감 정보가 마스킹되었습니다',
   jumpToLatest: '최신 로그로 이동',
   jumpToBottom: '맨 아래로 이동',
+  showEarlier: '이전 {n} 행 표시',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: '이 커밋의 코드 변경',

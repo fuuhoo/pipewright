@@ -158,6 +158,7 @@ export default {
   maskedTitle: 'Vertrauliche Informationen maskiert',
   jumpToLatest: 'Zum neuesten Log springen',
   jumpToBottom: 'Zum Ende springen',
+  showEarlier: 'Frühere {n} Zeilen anzeigen',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Code-Änderungen in diesem Commit',

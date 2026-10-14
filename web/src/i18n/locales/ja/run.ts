@@ -158,6 +158,7 @@ export default {
   maskedTitle: '機密情報はマスクされています',
   jumpToLatest: '最新のログへ移動',
   jumpToBottom: '最下部へ移動',
+  showEarlier: 'それ以前の {n} 行を表示',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'このコミットのコード変更',

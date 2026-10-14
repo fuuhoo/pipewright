@@ -158,6 +158,7 @@ export default {
   maskedTitle: '敏感資訊已遮罩',
   jumpToLatest: '跳到最新日誌',
   jumpToBottom: '跳到底部',
+  showEarlier: '顯示更早的 {n} 行',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: '本次提交程式碼變更',

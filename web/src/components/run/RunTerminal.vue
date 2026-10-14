@@ -6,16 +6,22 @@
     · live=false (终态)          → 仅历史回放,一次性 getRunLogs 拉全量,只读。
 
   关键行为:
-    · seq 去重 + 升序:SSE 回放历史与实时行可能重叠,统一以 seq 为主键去重、
-      按 seq 升序维护(用 Map<seq,line> + 已知最大 seq 守门,O(1) 去重)。
+    · seq 去重 + 升序:SSE 回放历史与实时行可能重叠,统一以 seq 为主键(纯逻辑见
+      lib/runLogBuffer.ts:追加 O(1)、乱序才二分插)。
+    · **逐行不重算**:SSE 是一行一个事件,直接照单处理会让每行重建一次全表。入队后
+      按帧合并(rAF),一帧最多重算/重渲染一次。
+    · **只挂尾部窗口**:默认只渲染最近 LOG_TAIL_WINDOW 行,更早的靠「显示更早」逐批
+      展开;否则一条 13553 行的日志就是 4 万个 DOM 节点,打开即卡。
     · 自动滚底:新行到达滚到底;但用户手动上滚(离开底部)时暂停自动滚——
       这是终端的常见行为;用户滚回底部自动恢复。滚动用 scrollTop 写入,
       不触发布局抖动。
     · stdout 默认色 / stderr 红色着色;行号(line-num token);命中 [MASKED]
-      子串高亮标识(脱敏由后端完成,前端仅渲染标记)。
+      子串高亮标识(脱敏由后端完成,前端仅渲染标记)。分段在入队时切一次,
+      不放在 render 里(那等于每帧把全表文本重扫一遍)。
 
   脱敏铁律:text 已由后端脱敏,前端绝不二次处理 secret,仅按 [MASKED] 标记渲染。
-  动效:仅 opacity(新行淡入);prefers-reduced-motion 降级。
+  动效:仅 opacity(实时 tail 的新行淡入;整屏回放的大批不逐行动画);
+  prefers-reduced-motion 降级。
 -->
 <script setup lang="ts">
 import { ref, computed, shallowRef, onMounted, onUnmounted, nextTick, watch } from 'vue'
@@ -25,6 +31,12 @@ import {
   subscribeRunEvents,
   type RunLogLine,
 } from '../../api/runs'
+import {
+  createRunLogBuffer,
+  logWindowFor,
+  LOG_ANIMATE_MAX,
+  LOG_WINDOW_STEP,
+} from '../../lib/runLogBuffer'
 
 const { t } = useI18n()
 
@@ -37,23 +49,55 @@ const props = defineProps<{
 }>()
 
 // ─── log buffer: seq-keyed, ascending ─────────────────────────────────────────
-// Map keeps insertion cheap and de-dupes by seq; we re-derive a sorted array
-// only when membership changes. seq is monotonic per-run so once we've seen a
-// seq we ignore any duplicate (SSE history replay overlapping live tail).
+// The buffer grows in place, so Vue can't see the mutation — `revision` is the
+// change stamp every recompute reads. Rendering takes a *slice* (a fresh array),
+// which keeps the keyed diff bounded by the window instead of the log length.
 
-const bySeq = new Map<number, RunLogLine>()
-const lines = shallowRef<RunLogLine[]>([])
+const buffer = createRunLogBuffer()
+const revision = shallowRef(0)
+// 用户点「显示更早」累计多展开的行数。
+const revealed = ref(0)
+// 本帧新增的 seq:只有它们做淡入,回放整屏时不能上千个动画一起跑。
+const NO_FRESH: ReadonlySet<number> = new Set()
+const freshSeqs = shallowRef<ReadonlySet<number>>(NO_FRESH)
 
-function ingest(incoming: RunLogLine[]): void {
-  let added = false
-  for (const line of incoming) {
-    if (bySeq.has(line.seq)) continue
-    bySeq.set(line.seq, line)
-    added = true
+// ─── 逐行合并:SSE 一行一个事件,按帧攒批再入缓冲 ────────────────────────────
+
+let pending: RunLogLine[] = []
+let flushHandle = 0
+
+function ingest(incoming: readonly RunLogLine[]): void {
+  if (incoming.length === 0) return
+  for (const line of incoming) pending.push(line)
+  if (!flushHandle) flushHandle = requestAnimationFrame(flushPending)
+}
+
+function flushPending(): void {
+  flushHandle = 0
+  const batch = pending
+  pending = []
+  const added = buffer.add(batch)
+  if (added.length === 0) return
+  freshSeqs.value =
+    props.live && added.length <= LOG_ANIMATE_MAX ? new Set(added.map((l) => l.seq)) : NO_FRESH
+  revision.value++
+  scheduleAutoScroll()
+}
+
+function dropQueued(): void {
+  if (flushHandle) {
+    cancelAnimationFrame(flushHandle)
+    flushHandle = 0
   }
-  if (!added) return
-  // Ascending by seq — authoritative ordering even if SSE/replay arrives jumbled.
-  lines.value = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq)
+  pending = []
+}
+
+function resetBuffer(): void {
+  dropQueued()
+  buffer.clear()
+  revealed.value = 0
+  freshSeqs.value = NO_FRESH
+  revision.value++
 }
 
 // ─── load / connection state ──────────────────────────────────────────────────
@@ -72,6 +116,7 @@ function stopSse(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  resetBuffer()
   loadState.value = 'loading'
   loadError.value = ''
 
@@ -94,7 +139,6 @@ async function bootstrap(): Promise<void> {
       onStep() {},
       onLog(line) {
         ingest([line])
-        scheduleAutoScroll()
       },
     })
   } else {
@@ -110,9 +154,12 @@ async function bootstrap(): Promise<void> {
         if (page.lines.length === 0) break
         sinceSeq = page.nextSeq
       }
+      // 历史回放是一次到位的终态:把攒着的这批立刻落进缓冲,别多等一帧。
+      if (flushHandle) flushPending()
       loadState.value = 'done'
       scheduleAutoScroll()
     } catch (err) {
+      dropQueued()
       loadError.value = err instanceof Error ? err.message : t('run.logLoadFailed')
       loadState.value = 'error'
     }
@@ -120,15 +167,16 @@ async function bootstrap(): Promise<void> {
 }
 
 onMounted(bootstrap)
-onUnmounted(stopSse)
+onUnmounted(() => {
+  stopSse()
+  dropQueued()
+})
 
 // Re-bootstrap if the run flips identity or live⇄terminal (status transition).
 watch(
   () => [props.runId, props.live] as const,
   () => {
     stopSse()
-    bySeq.clear()
-    lines.value = []
     void bootstrap()
   },
 )
@@ -168,43 +216,42 @@ function jumpToBottom(): void {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-// 仅展示当前所选步骤的日志(filterOrdinal 为 null = 全部)。
-const visibleLines = computed(() =>
-  props.filterOrdinal == null
-    ? lines.value
-    : lines.value.filter((l) => l.stepOrdinal === props.filterOrdinal),
-)
-const hasLines = computed(() => visibleLines.value.length > 0)
-const showFollowButton = computed(() => !stickToBottom.value && hasLines.value)
-
-// ─── [MASKED] segmentation ─────────────────────────────────────────────────────
-// Split a line into plain + masked segments so [MASKED] can be highlighted
-// without dangerouslySetInnerHTML. Pure rendering of backend-provided markers.
-
-interface Segment {
-  text: string
-  masked: boolean
-}
-
-const MASK_TOKEN = '[MASKED]'
-
-function segments(text: string): Segment[] {
-  if (!text.includes(MASK_TOKEN)) return [{ text, masked: false }]
-  const out: Segment[] = []
-  let rest = text
-  let idx = rest.indexOf(MASK_TOKEN)
-  while (idx !== -1) {
-    if (idx > 0) out.push({ text: rest.slice(0, idx), masked: false })
-    out.push({ text: MASK_TOKEN, masked: true })
-    rest = rest.slice(idx + MASK_TOKEN.length)
-    idx = rest.indexOf(MASK_TOKEN)
+// ─── 尾部窗口渲染 ────────────────────────────────────────────────────────────
+// 一次算出「这一帧挂哪些行 + 一共多少行 + 上面还压着多少行」。revision 是缓冲的
+// 变更戳(数组原地增长,Vue 看不见),所以这里显式读它;窗口切片每次是新数组,
+// keyed diff 的范围就只剩窗口大小。
+const shown = computed(() => {
+  void revision.value
+  const all = buffer.all()
+  const src =
+    props.filterOrdinal == null ? all : all.filter((l) => l.stepOrdinal === props.filterOrdinal)
+  const win = logWindowFor(src.length, revealed.value)
+  return {
+    lines: src.slice(win.start, win.end),
+    total: src.length,
+    hiddenEarlier: win.hiddenEarlier,
   }
-  if (rest.length > 0) out.push({ text: rest, masked: false })
-  return out
+})
+
+const hasLines = computed(() => shown.value.total > 0)
+const showFollowButton = computed(() => !stickToBottom.value && hasLines.value)
+const earlierBatch = computed(() => Math.min(LOG_WINDOW_STEP, shown.value.hiddenEarlier))
+
+// 往上展开一批历史。加了行,scrollHeight 会变长,若不锚定视窗就会跳到刚出现的旧行上;
+// 所以记下展开前的高度和位置,渲染完把多出来的高度补回 scrollTop,读的那一行原地不动。
+function revealEarlier(): void {
+  const el = scrollEl.value
+  const prevHeight = el ? el.scrollHeight : 0
+  const prevTop = el ? el.scrollTop : 0
+  revealed.value += LOG_WINDOW_STEP
+  void nextTick(() => {
+    if (!el) return
+    el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+  })
 }
 
-// Stable line key — seq is unique per run.
-function lineKey(line: RunLogLine): number {
+// seq 每 run 唯一,直接当 v-for 的 key。
+function lineKey(line: { seq: number }): number {
   return line.seq
 }
 </script>
@@ -227,7 +274,7 @@ function lineKey(line: RunLogLine): number {
         <span class="term-live-dot" aria-hidden="true" />
         LIVE
       </span>
-      <span class="term-count mono" v-if="hasLines">{{ t('run.lineCount', { n: visibleLines.length }) }}</span>
+      <span class="term-count mono" v-if="hasLines">{{ t('run.lineCount', { n: shown.total }) }}</span>
     </div>
 
     <!-- Log surface — 封顶 56vh,框内纵向滚动;实时 tail 框内贴底跟随 -->
@@ -259,23 +306,34 @@ function lineKey(line: RunLogLine): number {
         <template v-else>{{ t('run.noLogRecords') }}</template>
       </div>
 
-      <!-- Lines -->
-      <ol v-else class="term-lines" :aria-label="t('run.totalLinesAria', { n: visibleLines.length })">
-        <li
-          v-for="line in visibleLines"
-          :key="lineKey(line)"
-          class="term-line"
-          :class="{ 'term-line--err': line.stream === 'stderr' }"
+      <!-- Lines:先给「显示更早」的口子,再挂尾部窗口 -->
+      <template v-else>
+        <button
+          v-if="shown.hiddenEarlier > 0"
+          class="term-earlier mono"
+          type="button"
+          @click="revealEarlier"
         >
-          <span class="term-ln mono" aria-hidden="true">{{ line.seq }}</span>
-          <span class="term-text mono">
-            <template v-for="(seg, i) in segments(line.text)" :key="i">
-              <span v-if="seg.masked" class="term-masked" :title="t('run.maskedTitle')">{{ seg.text }}</span>
-              <template v-else>{{ seg.text }}</template>
-            </template>
-          </span>
-        </li>
-      </ol>
+          {{ t('run.showEarlier', { n: earlierBatch }) }}
+        </button>
+
+        <ol class="term-lines" :aria-label="t('run.totalLinesAria', { n: shown.total })">
+          <li
+            v-for="line in shown.lines"
+            :key="lineKey(line)"
+            class="term-line"
+            :class="{ 'term-line--err': line.stream === 'stderr', 'term-line--new': freshSeqs.has(line.seq) }"
+          >
+            <span class="term-ln mono" aria-hidden="true">{{ line.seq }}</span>
+            <span class="term-text mono">
+              <template v-for="(seg, i) in line.segs" :key="i">
+                <span v-if="seg.masked" class="term-masked" :title="t('run.maskedTitle')">{{ seg.text }}</span>
+                <template v-else>{{ seg.text }}</template>
+              </template>
+            </span>
+          </li>
+        </ol>
+      </template>
     </div>
 
     <!-- Jump-to-bottom affordance when auto-scroll is paused -->
@@ -416,6 +474,31 @@ function lineKey(line: RunLogLine): number {
   color: var(--color-red);
 }
 
+/* ─── 显示更早 ────────────────────────────────────────────────────────────── */
+.term-earlier {
+  display: block;
+  width: max-content;
+  margin: 0 16px 8px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  color: var(--color-line-num);
+  background: oklch(100% 0 0 / 0.05);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
+  cursor: pointer;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+
+.term-earlier:hover {
+  color: oklch(88% 0.006 270);
+  border-color: var(--color-border-strong);
+}
+
+.term-earlier:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 /* ─── lines ───────────────────────────────────────────────────────────────── */
 .term-lines {
   list-style: none;
@@ -434,7 +517,11 @@ function lineKey(line: RunLogLine): number {
   /* dense terminal line-height */
   line-height: 1.55;
   white-space: pre;
-  /* compositor-friendly entrance for newly streamed rows */
+}
+
+/* 淡入只给本帧真正新增的那几行。整条规则挂在 .term-line--new 上而不是 .term-line:
+   回放上万行历史时,挂全表等于同时启动上万个动画。 */
+.term-line--new {
   animation: line-in 140ms ease-out both;
 }
 
@@ -444,7 +531,7 @@ function lineKey(line: RunLogLine): number {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .term-line { animation: none; }
+  .term-line--new { animation: none; }
   .term-live-dot { animation: none; }
 }
 

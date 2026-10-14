@@ -158,6 +158,7 @@ export default {
   maskedTitle: 'Información sensible ofuscada',
   jumpToLatest: 'Ir al registro más reciente',
   jumpToBottom: 'Ir al final',
+  showEarlier: 'Mostrar {n} líneas anteriores',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Cambios de código en esta confirmación',
