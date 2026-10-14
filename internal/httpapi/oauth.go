@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/oauth"
 	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/go-chi/chi/v5"
@@ -140,13 +141,15 @@ func makeOAuthAuthorizeHandler(svc oauth.Service) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
 		}
-		// 用会话 token 作绑定身份(state 与发起授权的会话绑死,防 CSRF)。
-		state, err := svc.IssueState(sess.Token)
+		// 用会话 token 作 bindKey(state 与发起授权的会话绑死,防 CSRF)。
+		state, err := svc.IssueState(oauth.StateIssue{
+			Intent: oauth.IntentVault, Provider: provider, BindKey: sess.Token,
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return
 		}
-		redirectURI := requestOrigin(r) + "/api/oauth/" + url.PathEscape(provider) + "/callback"
+		redirectURI := oauthVaultCallbackURL(r, provider)
 		authURL, err := svc.AuthorizeURL(r.Context(), provider, state, redirectURI)
 		if err != nil {
 			writeOAuthError(w, err)
@@ -156,13 +159,32 @@ func makeOAuthAuthorizeHandler(svc oauth.Service) http.HandlerFunc {
 	}
 }
 
+// oauthCallbackDeps 是「已登录回调」端点需要的协作者:
+// svc 是 OAuth 领域,vault 落地凭据,ident 落地身份绑定,aud 记审计。
+// vault/ident 各自为 nil 只影响自己那条意图的分支(另一条照常工作)。
+type oauthCallbackDeps struct {
+	svc   oauth.Service
+	vault vaultCreator
+	ident identityLoginer
+	aud   audit.Recorder
+}
+
 // makeOAuthCallbackHandler 返回 GET /api/oauth/{provider}/callback handler(认证;豁免 CSRF,靠 state 校验)。
-// 验 state(绑会话)→ Exchange(code→token→login)→ vault.Create 存 git_token 凭据 →
-// 302 跳回 /settings/vault?connected={provider}&account={login};任一步失败 → 跳回 oauth_error(人读,无 secret)。
-func makeOAuthCallbackHandler(svc oauth.Service, v vaultCreator) http.HandlerFunc {
+//
+// 这一个回调地址服务**两条已登录的流**,按发起时记录的意图分流:
+//   - IntentVault:验 state(绑会话)→ Exchange(code→token→login)→ vault.Create 存 git_token 凭据
+//     → 302 跳回 /settings/vault?connected=…;
+//   - IntentBind:验 state → ExchangeIdentity(要稳定 ID)→ 把该 git 身份绑到当前账号
+//     → 302 跳回 /settings/account?bound=…(见 bindViaCallback)。
+//
+// 为什么两条流共用一个回调:OAuth 应用通常只允许登记一个回调地址,而这两条流都要求
+// 「已登录 + 同一个会话」。区分它们靠 state 里的意图 —— 意图不匹配一律拒绝,
+// 否则「为绑定拿到的授权码」可以被拿来写保险库,反之亦然。
+// 任一步失败 → 跳回对应页面带 oauth_error(人读,无 secret)。
+func makeOAuthCallbackHandler(d oauthCallbackDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		provider := chi.URLParam(r, "provider")
-		if svc == nil {
+		if d.svc == nil {
 			redirectVaultError(w, r, provider, "oauth_unavailable")
 			return
 		}
@@ -176,7 +198,30 @@ func makeOAuthCallbackHandler(svc oauth.Service, v vaultCreator) http.HandlerFun
 		state := q.Get("state")
 
 		// state CSRF 校验:必须匹配本会话发起的 state(一次性消费),否则拒绝。
-		if !svc.ConsumeState(state, sess.Token) {
+		st, ok := d.svc.ConsumeState(state, sess.Token)
+		if !ok {
+			redirectVaultError(w, r, provider, "invalid_state")
+			return
+		}
+		// 发起时的 provider 必须与回调路径一致:防拿 A 平台的授权码去触发 B 平台的流。
+		if st.Provider != provider {
+			redirectVaultError(w, r, provider, "invalid_state")
+			return
+		}
+		switch st.Intent {
+		case oauth.IntentBind:
+			// 绑定流的失败落点是账户页(用户从那里发起),不是保险库页。
+			if sess.UserID == "" {
+				redirectAccountError(w, r, provider, "session_unbound")
+				return
+			}
+			bindViaCallback(w, r, d, sess, provider)
+			return
+		case oauth.IntentVault:
+			// 继续走下面的凭据落地分支。
+		default:
+			// IntentLogin 的 state 用浏览器 nonce 当 bindKey,理论上不可能被会话 token 消费到;
+			// 显式拒绝而不是「未知意图按默认流处理」,免得将来加意图时静默放行。
 			redirectVaultError(w, r, provider, "invalid_state")
 			return
 		}
@@ -185,19 +230,19 @@ func makeOAuthCallbackHandler(svc oauth.Service, v vaultCreator) http.HandlerFun
 			return
 		}
 
-		redirectURI := requestOrigin(r) + "/api/oauth/" + url.PathEscape(provider) + "/callback"
-		res, err := svc.Exchange(r.Context(), provider, code, redirectURI)
+		redirectURI := oauthVaultCallbackURL(r, provider)
+		res, err := d.svc.Exchange(r.Context(), provider, code, redirectURI)
 		if err != nil {
 			redirectVaultError(w, r, provider, oauthErrorReason(err))
 			return
 		}
 
-		if v == nil {
+		if d.vault == nil {
 			redirectVaultError(w, r, provider, "vault_unavailable")
 			return
 		}
 		// 把 access_token 存成 git_token 凭据(name = {provider}:{login})。token 绝不回显/日志。
-		_, cerr := v.Create(vault.CreateInput{
+		_, cerr := d.vault.Create(vault.CreateInput{
 			Name:   provider + ":" + res.Login,
 			Type:   vault.TypeGitToken,
 			Scope:  "global",

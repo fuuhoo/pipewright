@@ -58,7 +58,10 @@ type TokenResult struct {
 	Login       string
 }
 
-// Service 定义 OAuth 领域对外接口。
+// Service 是 OAuth 领域的统一门面:一个对象同时供两条流用 ——
+// 「取 git 仓库凭据」(oauth_apps 表,已登录)与「用 git 账号登录」(oauth_login_apps 表,
+// 见 login.go)。两条流刻意用各自的表与各自的 scope,但共用 db / vault / http.Client /
+// state 存储:state 一次性且绑 bindKey,跨流复用拿不到别人的 bindKey,不构成混淆。
 type Service interface {
 	// ListApps 返回所有已配置 provider 的应用视图(client_secret 仅掩码)。
 	ListApps(ctx context.Context) ([]AppConfig, error)
@@ -71,10 +74,15 @@ type Service interface {
 	// Exchange 用 code 经 provider tokenURL 换 access_token(server-to-server,注入 http.Client),
 	// 再用 token 拉 userURL 取登录名。client_secret 绝不出现在错误/日志/响应。
 	Exchange(ctx context.Context, provider, code, redirectURI string) (*TokenResult, error)
-	// IssueState 生成绑定 sessionID 的随机 state(CSRF;放进 authorize URL)。
-	IssueState(sessionID string) (string, error)
-	// ConsumeState 校验并一次性消费 callback 带回的 state(存在+未过期+绑定会话匹配)。
-	ConsumeState(state, sessionID string) bool
+
+	// IssueState 生成高熵随机 state 并登记发起上下文(intent/provider/bindKey/redirect)。
+	IssueState(in StateIssue) (string, error)
+	// ConsumeState 校验并一次性消费 callback 带回的 state:存在 + 未过期 + bindKey 匹配。
+	// 回吐发起上下文,由调用方核对 Provider 与 Intent(路由上的 provider 必须与发起时一致)。
+	ConsumeState(state, bindKey string) (StateData, bool)
+
+	// LoginService 是「用 git 账号登录本平台」的那半接口。
+	LoginService
 }
 
 // service 是 store + vault + 注入 http.Client + 内存 state 存储支撑的 Service 实现。
@@ -97,10 +105,10 @@ func New(db *sql.DB, v vault.Vault, client *http.Client) Service {
 	return &service{db: db, vault: v, client: client, states: newStateStore()}
 }
 
-func (s *service) IssueState(sessionID string) (string, error) { return s.states.issue(sessionID) }
+func (s *service) IssueState(in StateIssue) (string, error) { return s.states.issue(in) }
 
-func (s *service) ConsumeState(state, sessionID string) bool {
-	return s.states.consume(state, sessionID)
+func (s *service) ConsumeState(state, bindKey string) (StateData, bool) {
+	return s.states.consume(state, bindKey)
 }
 
 func (s *service) ListApps(ctx context.Context) ([]AppConfig, error) {
@@ -209,8 +217,12 @@ func (s *service) AuthorizeURL(ctx context.Context, provider, state, redirectURI
 	if err != nil {
 		return "", err
 	}
+	return buildAuthorizeURL(endpoints, clientID, endpoints.scope(), state, redirectURI)
+}
 
-	u, err := url.Parse(endpoints.AuthorizeURL)
+// buildAuthorizeURL 拼授权跳转 URL。两条流(取凭据 / 登录)只差 scope 与 client_id。
+func buildAuthorizeURL(p Provider, clientID, scope, state, redirectURI string) (string, error) {
+	u, err := url.Parse(p.AuthorizeURL)
 	if err != nil {
 		return "", ErrAppNotConfigured
 	}
@@ -218,7 +230,7 @@ func (s *service) AuthorizeURL(ctx context.Context, provider, state, redirectURI
 	q.Set("client_id", clientID)
 	q.Set("redirect_uri", redirectURI)
 	q.Set("response_type", "code")
-	q.Set("scope", endpoints.scope())
+	q.Set("scope", scope)
 	q.Set("state", state)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
@@ -246,22 +258,26 @@ func (s *service) Exchange(ctx context.Context, provider, code, redirectURI stri
 		return nil, err
 	}
 
-	accessToken, err := s.requestToken(ctx, endpoints, clientID, secret, code, redirectURI)
+	accessToken, err := requestToken(ctx, s.client, endpoints, clientID, secret, code, redirectURI)
 	// 明文 secret 用完即弃。
 	secret = ""
 	if err != nil {
 		return nil, err
 	}
 
-	login, err := s.requestUser(ctx, endpoints, accessToken)
+	id, err := fetchIdentity(ctx, s.client, endpoints, accessToken)
 	if err != nil {
 		return nil, err
 	}
-	return &TokenResult{AccessToken: accessToken, Login: login}, nil
+	if id.Login == "" {
+		return nil, ErrExchangeFailed
+	}
+	return &TokenResult{AccessToken: accessToken, Login: id.Login}, nil
 }
 
 // requestToken POST code→token 到 provider tokenURL,取回 access_token(绝不日志 secret/token)。
-func (s *service) requestToken(ctx context.Context, p Provider, clientID, clientSecret, code, redirectURI string) (string, error) {
+// 包级函数:vault 连接流与登录流共用同一份兑换实现,只差 client_id/secret 来自哪张表。
+func requestToken(ctx context.Context, client *http.Client, p Provider, clientID, clientSecret, code, redirectURI string) (string, error) {
 	form := url.Values{}
 	form.Set("client_id", clientID)
 	form.Set("client_secret", clientSecret)
@@ -277,7 +293,7 @@ func (s *service) requestToken(ctx context.Context, p Provider, clientID, client
 	// GitHub 默认回表单编码,显式要 JSON;其余平台本就回 JSON,加这头无害。
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", ErrExchangeFailed
 	}
@@ -301,34 +317,117 @@ func (s *service) requestToken(ctx context.Context, p Provider, clientID, client
 	return parsed.AccessToken, nil
 }
 
-// requestUser 用 access_token 拉 userURL 取登录名(绝不日志 token)。
-func (s *service) requestUser(ctx context.Context, p Provider, accessToken string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.UserURL, nil)
+// fetchIdentity 用 access_token 拉 userURL 解析身份(绝不日志 token)。
+// 包级函数:vault 连接流只用其中的 Login,登录流还要 ExternalID 与 Email。
+//
+// 登录名可能整体缺失(个别实例只回 id):这里不报错,由调用方按各自流的最低要求判定 ——
+// vault 流要 Login,登录流要 ExternalID。Email 拿不到时留空,由域名白名单 fail closed。
+func fetchIdentity(ctx context.Context, client *http.Client, p Provider, accessToken string) (Identity, error) {
+	m, err := fetchJSON(ctx, client, p.UserURL, accessToken)
 	if err != nil {
-		return "", ErrExchangeFailed
+		return Identity{}, err
+	}
+	id := p.parseIdentity(m)
+	if id.Email == "" && p.EmailsURL != "" {
+		// GitHub 的 /user 在「邮箱隐私」下回 email=null,须再打一次 /user/emails。
+		// 拿不到就当没邮箱(不因此失败):登录侧会因缺邮箱被白名单拒,连接侧本就不看邮箱。
+		if items, eerr := fetchEmailList(ctx, client, p.EmailsURL, accessToken); eerr == nil {
+			id.Email = pickEmail(items)
+		}
+	}
+	return id, nil
+}
+
+// fetchJSON GET url(Bearer token)并解成 JSON map。错误一律为人读的 ErrExchangeFailed,
+// 绝不带 provider 原文或 token。
+func fetchJSON(ctx context.Context, client *http.Client, u, accessToken string) (map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, ErrExchangeFailed
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return "", ErrExchangeFailed
+		return nil, ErrExchangeFailed
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", ErrExchangeFailed
+		return nil, ErrExchangeFailed
 	}
-
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		return "", ErrExchangeFailed
+		return nil, ErrExchangeFailed
 	}
-	login := p.parseLogin(m)
-	if login == "" {
-		return "", ErrExchangeFailed
+	return m, nil
+}
+
+// fetchEmailList GET url(Bearer token)并把 JSON 数组解出来(邮箱列表形态是数组不是对象)。
+func fetchEmailList(ctx context.Context, client *http.Client, u, accessToken string) ([]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, ErrExchangeFailed
 	}
-	return login, nil
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, ErrExchangeFailed
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, ErrExchangeFailed
+	}
+	var items []any
+	if err := json.Unmarshal(body, &items); err != nil {
+		return nil, ErrExchangeFailed
+	}
+	return items, nil
+}
+
+// pickEmail 从 /user/emails 的响应里挑一个可用邮箱:
+// 优先 primary+verified,次之任一 verified,再次首个。
+// 形态两种都兼容:GitHub/GitLab 回对象数组(带 primary/verified 布尔),
+// 个别实例只回字符串数组(那本就是实例认定的可用邮箱)。
+func pickEmail(items []any) string {
+	var first, verified, primary string
+	for _, it := range items {
+		var addr string
+		var isPrimary, isVerified bool
+		switch v := it.(type) {
+		case string:
+			addr = strings.TrimSpace(v)
+			isVerified = true
+		case map[string]any:
+			addr = firstStringField(v, "email")
+			isPrimary, _ = v["primary"].(bool)
+			isVerified, _ = v["verified"].(bool)
+		}
+		if addr == "" {
+			continue
+		}
+		if first == "" {
+			first = addr
+		}
+		if isVerified && verified == "" {
+			verified = addr
+		}
+		if isPrimary && isVerified && primary == "" {
+			primary = addr
+		}
+	}
+	switch {
+	case primary != "":
+		return primary
+	case verified != "":
+		return verified
+	default:
+		return first
+	}
 }
 
 // loadApp 读单个 provider 的应用行;返回 (provider, clientID, sealedSecret, baseURL, enabled, updatedAt, err)。

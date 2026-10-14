@@ -100,7 +100,13 @@ const (
 	ActionUserInvite = "user_invite" // 创建邀请 token
 	ActionUserCreate = "user_create" // 邀请注册落地
 	ActionUserUpdate = "user_update" // 改描述/启用禁用
-	ActionUserLogin  = "user_login"  // 普通用户登录成功(与 admin 区分)
+	ActionUserLogin  = "user_login"  // 口令登录成功
+	// OAuth 登录与凭据接入是两件事,审计也分开:这条记的是「谁用哪个平台的哪个身份登进来了」。
+	// 单独一个 action 是因为事后查入侵要能一眼把「外部身份换成的本地会话」和口令登录区分开。
+	ActionOauthLogin = "oauth_login"
+	// 绑定/解绑改的是「这个账号能由谁登录」,属于登录路径的变更,与改描述不同级。
+	ActionIdentityBind   = "identity_bind"
+	ActionIdentityUnbind = "identity_unbind"
 	// v6.2 阶段 9:管理员直接建号 + 重置他人口令。与 password_change(改自己的)分开,
 	// 因为「谁改的」和「被改的人有没有在场」完全不同。
 	ActionUserAdminCreate   = "user_admin_create"

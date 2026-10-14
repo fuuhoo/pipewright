@@ -125,6 +125,10 @@ type options struct {
 	// v6.2 分组权限:分组领域服务 + 判定服务。access 为 nil 时中间件直通(见 access_guard.go)。
 	groupSvc *group.Service
 	access   *access.Service
+	// identitySvc 是「外部 git 身份 ↔ 本地账号」的判定服务(OAuth 登录 / 绑定);
+	// sessionIssuer 为验证过的账号签发会话。两者缺一 → 登录回调回人读错误,不 panic。
+	identitySvc   identityLoginer
+	sessionIssuer sessionIssuer
 }
 
 // WithGroups 注入资源分组领域服务(挂载 /api/groups CRUD 与名册端点)。nil → 端点 503。
@@ -475,6 +479,27 @@ func WithOAuth(s oauth.Service) Option {
 	return func(o *options) { o.oauth = s }
 }
 
+// WithOAuthLogin 注入「用 git 平台账号登录本平台」那条流的两块拼图:
+//   - idsvc:外部身份 → 本地账号的判定与自动建号策略(internal/identity);
+//   - iss  :为已判定账号签发会话(*auth.Service 的 IssueSessionForUser)。
+//
+// 挂载:
+//   - 公开 GET /api/auth/oauth/{providers,{provider}/authorize,{provider}/callback}
+//     (匿名可访问;靠 state + 浏览器 nonce 双提交防 CSRF,不要求会话)
+//   - 认证 GET /api/oauth/{provider}/bind(把 git 身份绑到自己;回调按 state 意图分流)
+//   - 认证 GET/DELETE /api/account/identities[/{bindingId}](本人查/解绑)
+//   - 管理员 GET/PUT /api/admin/oauth/login-apps[/{provider}](配登录应用 + 域名白名单)
+//
+// 不传(idsvc / iss 任一为 nil)→ 登录流一律回人读错误,不影响既有「连接凭据」那条流。
+// 装配入口**必须同时传**两者:应用配了、登录页出了按钮,用户授权回来却被拒,比压根不出按钮更难排查;
+// handler 的 nil 兜底只是防误装配/测试用,不是一种可接受的运行形态。
+func WithOAuthLogin(idsvc identityLoginer, iss sessionIssuer) Option {
+	return func(o *options) {
+		o.identitySvc = idsvc
+		o.sessionIssuer = iss
+	}
+}
+
 // New 构建 HTTP 处理器:健康端点 + Auth API + (可选)凭据 API + 内嵌 SPA 静态托管。
 // webFS 是已嵌入的前端构建产物(根为 web/dist)。
 // authn 可选;为 nil 时认证中间件一律返回 401(仅便于测试静态服务)。
@@ -510,6 +535,19 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Post("/logout", func(w http.ResponseWriter, r *http.Request) {
 			requireAuth(svc, requireCSRF(makeLogoutHandler(svc))).ServeHTTP(w, r)
 		})
+		// OAuth 登录(匿名可访问,本组在 requireAuth 之外;GET 免 CSRF)。
+		// 与「已登录用户连接 git 凭据」那条流刻意分开:回调地址不同、应用配置表不同,
+		// 一个 OAuth 应用只登记一个回调地址,两种用途互不牵制。
+		// 未注入 identity 服务/会话签发器(nil)→ handler 回人读错误,不 panic。
+		loginDeps := oauthLoginDeps{
+			oauth:    o.oauth,
+			ident:    o.identitySvc,
+			sessions: o.sessionIssuer,
+			aud:      o.audit,
+		}
+		ar.Get("/oauth/providers", makePublicOAuthProvidersHandler(o.oauth))
+		ar.Get("/oauth/{provider}/authorize", makeOAuthLoginStartHandler(loginDeps))
+		ar.Get("/oauth/{provider}/callback", makeOAuthLoginCallbackHandler(loginDeps))
 	})
 
 	// Webhook 接收(公开入口,Story 3.2):豁免 requireAuth + CSRF,靠签名校验。
@@ -1075,7 +1113,21 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/oauth/apps", makeListOAuthAppsHandler(oa))
 		ar.Put("/oauth/apps/{provider}", makeSaveOAuthAppHandler(oa))
 		ar.Get("/oauth/{provider}/authorize", makeOAuthAuthorizeHandler(oa))
-		ar.Get("/oauth/{provider}/callback", makeOAuthCallbackHandler(oa, v))
+		// 回调按 state 里记录的「意图」分流:IntentVault → 存 git_token 凭据;
+		// IntentBind → 把外部身份绑到当前账号。意图不符即拒绝(见 oauth.go)。
+		ar.Get("/oauth/{provider}/callback", makeOAuthCallbackHandler(oauthCallbackDeps{
+			svc: oa, vault: v, ident: o.identitySvc, aud: aud,
+		}))
+		// 绑定自己的 git 身份:authorize 签发 IntentBind state(bindKey = 会话 token)→ 302。
+		// 身份列表/解绑:本人可见,DELETE 为写方法(过 CSRF)+ 审计。
+		ar.Get("/oauth/{provider}/bind", makeOAuthBindStartHandler(oa))
+		ar.Get("/account/identities", makeListIdentitiesHandler(o.identitySvc))
+		ar.Delete("/account/identities/{bindingId}", makeUnbindIdentityHandler(o.identitySvc, aud))
+
+		// 「登录用」OAuth 应用(admin 配置,与上面取 token 的 oauth_apps 分开两张表):
+		// GET 过 auth;PUT 为写方法(过 auth + CSRF)。clientSecret 只写、密文入库、响应仅掩码。
+		ar.With(RequireAdmin).Get("/admin/oauth/login-apps", makeListLoginAppsHandler(oa))
+		ar.With(RequireAdmin).Put("/admin/oauth/login-apps/{provider}", makeSaveLoginAppHandler(oa))
 
 		// DORA 四指标只读聚合(FR-8-15):部署频率 / 变更前置时长 / 变更失败率 / MTTR。
 		// 对既有运行数据做纯聚合(无新表、无副作用)。GET 只读 → 过 auth、豁免 CSRF。
@@ -1164,27 +1216,8 @@ func makeLoginHandler(svc auth.Authenticator) http.HandlerFunc {
 			return
 		}
 
-		// 设置 HttpOnly 会话 cookie(Secure 在 TLS 时自动加)。
-		secure := r.TLS != nil
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieSession,
-			Value:    sess.Token,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   secure,
-			Expires:  sess.ExpiresAt,
-		})
-		// 下发可读 CSRF cookie(非 HttpOnly,前端 JS 读取)。
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieCsrf,
-			Value:    sess.CSRFToken,
-			Path:     "/",
-			HttpOnly: false,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   secure,
-			Expires:  sess.ExpiresAt,
-		})
+		// 下发会话 + CSRF cookie(与 OAuth 登录共用一份,避免两条登录路径的 cookie 属性飘)。
+		setSessionCookies(w, r, sess)
 		// 回显真实登录名(v6.2:Session 带 Username,普通用户不再被误显为 admin)。
 		// 兜底:旧会话未解析出 Username 时,admin 角色仍走 admin_user 表读规范名。
 		username := sess.Username
@@ -1197,6 +1230,33 @@ func makeLoginHandler(svc auth.Authenticator) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, newSessionPayload(username, sessionRoleOf(sess)))
 	}
+}
+
+// setSessionCookies 下发会话 cookie(HttpOnly)+ CSRF cookie(非 HttpOnly,前端 JS 读)。
+//
+// SameSite=Lax:会话 cookie 需要在「跨站顶级导航」上带上(OAuth 回调就是 provider
+// 302 回我们的一次顶级 GET),Strict 会让回调拿不到会话,而 None 又要求 Secure
+// —— 直连 HTTP 部署下等于把登录打挂。Secure 仅在 TLS 在场时加。
+func setSessionCookies(w http.ResponseWriter, r *http.Request, sess *auth.Session) {
+	secure := r.TLS != nil
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieSession,
+		Value:    sess.Token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		Expires:  sess.ExpiresAt,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieCsrf,
+		Value:    sess.CSRFToken,
+		Path:     "/",
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		Expires:  sess.ExpiresAt,
+	})
 }
 
 // sessionRoleOf 归一化会话角色。旧部署会话 role 为空字符串(0053 迁移前的行),

@@ -12,6 +12,7 @@ package oauth
 import (
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -35,9 +36,17 @@ var (
 	ErrBaseURLRequired = errors.New("oauth: base url required for custom provider")
 )
 
-// userInfo 是从 provider user API 解析出的用户信息(仅取登录名)。
-type userInfo struct {
-	Login string
+// Identity 是从 provider user API 解析出的用户身份。
+//   - ExternalID 是 provider 内的稳定主键(数字 id 的字符串形式)。登录账号匹配只用它 ——
+//     username 可改、email 可换/可被他人抢注,拿它们认人就是账号接管漏洞。
+//   - Login / Email / Name 仅用于展示、用户名建议与域名白名单判定,不参与身份判定。
+//   - Provider 由调用方(LoginExchange)填入,便于下游记账。
+type Identity struct {
+	Provider   string
+	ExternalID string
+	Login      string
+	Email      string
+	Name       string
 }
 
 // Provider 描述一个 OAuth provider 的端点与解析策略。
@@ -51,14 +60,28 @@ type Provider struct {
 	TokenURL string
 	// UserURL 是取当前用户信息的 API 地址(带 access_token)。
 	UserURL string
-	// DefaultScopes 是申请的最小权限(含仓库读)。
+	// EmailsURL 是取邮箱列表的 API 地址;为空表示 user API 已带 email。
+	// GitHub 的 /user 在隐私邮箱场景会回 email=null,必须再打一次 /user/emails。
+	EmailsURL string
+	// DefaultScopes 是「连接仓库凭据」申请的权限(含仓库读)。
 	DefaultScopes []string
-	// parseLogin 从 user API 的 JSON map 解析登录名(各平台字段不同)。
-	parseLogin func(m map[string]any) string
+	// LoginScopes 是「登录」申请的最小权限,只碰身份,不碰仓库内容。
+	// 为空则回退 DefaultScopes。
+	LoginScopes []string
+	// parseIdentity 从 user API 的 JSON map 解析身份(各平台字段名不同)。
+	parseIdentity func(m map[string]any) Identity
 }
 
 // scope 把 DefaultScopes 以空格连接(OAuth2 标准 scope 串)。
 func (p Provider) scope() string { return strings.Join(p.DefaultScopes, " ") }
+
+// loginScope 是登录流程用的 scope 串:拿不到身份就不许登进来。
+func (p Provider) loginScope() string {
+	if len(p.LoginScopes) == 0 {
+		return p.scope()
+	}
+	return strings.Join(p.LoginScopes, " ")
+}
 
 // presets 是内置 provider 预设注册表(map 注册,设计可扩展)。
 // custom 不在此(需 base_url 动态推导),经 resolveProvider 单独处理。
@@ -69,15 +92,18 @@ var presets = map[string]Provider{
 		TokenURL:      "https://gitee.com/oauth/token",
 		UserURL:       "https://gitee.com/api/v5/user",
 		DefaultScopes: []string{"user_info", "projects"},
-		parseLogin:    parseLoginField("login"),
+		LoginScopes:   []string{"user_info"},
+		parseIdentity: parseIdentityFields("login"),
 	},
 	ProviderGitHub: {
 		Name:          ProviderGitHub,
 		AuthorizeURL:  "https://github.com/login/oauth/authorize",
 		TokenURL:      "https://github.com/login/oauth/access_token",
 		UserURL:       "https://api.github.com/user",
+		EmailsURL:     "https://api.github.com/user/emails",
 		DefaultScopes: []string{"repo", "read:user"},
-		parseLogin:    parseLoginField("login"),
+		LoginScopes:   []string{"read:user", "user:email"},
+		parseIdentity: parseIdentityFields("login"),
 	},
 	ProviderGitLab: {
 		Name:          ProviderGitLab,
@@ -85,25 +111,47 @@ var presets = map[string]Provider{
 		TokenURL:      "https://gitlab.com/oauth/token",
 		UserURL:       "https://gitlab.com/api/v4/user",
 		DefaultScopes: []string{"read_repository", "read_user"},
-		parseLogin:    parseLoginField("username"),
+		LoginScopes:   []string{"read_user"},
+		parseIdentity: parseIdentityFields("username"),
 	},
 }
 
-// parseLoginField 返回一个从 JSON map 取字符串字段(回退 "id" 数字)的解析器。
-func parseLoginField(field string) func(map[string]any) string {
-	return func(m map[string]any) string {
-		if v, ok := m[field].(string); ok && v != "" {
-			return v
+// parseIdentityFields 返回一个身份解析器:主字段定登录名,external_id 恒取 "id"。
+// primary 是各平台的登录名字段名(GitLab/Gitea 系 username,GitHub/Gitee 系 login)。
+func parseIdentityFields(primary string) func(map[string]any) Identity {
+	return func(m map[string]any) Identity {
+		return Identity{
+			ExternalID: idField(m),
+			Login:      firstStringField(m, primary, "username", "login"),
+			Email:      firstStringField(m, "email"),
+			Name:       firstStringField(m, "name"),
 		}
-		// 回退:部分实例可能只回 id(数字)。
-		if v, ok := m["username"].(string); ok && v != "" {
-			return v
-		}
-		if v, ok := m["login"].(string); ok && v != "" {
-			return v
-		}
+	}
+}
+
+// idField 取 provider 用户主键:JSON 数字(float64)与字符串都归一成字符串。
+// 缺 id 时返回空串 —— 调用方据此拒绝,绝不退化成「用登录名当主键」。
+func idField(m map[string]any) string {
+	switch v := m["id"].(type) {
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case string:
+		return strings.TrimSpace(v)
+	default:
 		return ""
 	}
+}
+
+// firstStringField 按字段名优先级返回第一个非空字符串值。
+func firstStringField(m map[string]any, fields ...string) string {
+	for _, f := range fields {
+		if v, ok := m[f].(string); ok {
+			if s := strings.TrimSpace(v); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // normalizeProvider 校验并归一 provider 枚举(空串非法)。
@@ -144,7 +192,8 @@ func resolveProvider(name, baseURL string) (Provider, error) {
 //	token    : {base}/oauth/token
 //	user     : {base}/api/v4/user   (GitLab;Gitea 为 /api/v1/user,登录名字段均含 username/login)
 //
-// 用户解析器同时认 username/login 字段,兼容 GitLab(username)与 Gitea(login)。
+// 解析器主字段取 username,回退 login,故同时兼容 GitLab(username)与 Gitea(login)。
+// Gitea 的用户主键同样是 id,external_id 判定不受影响。
 func customProvider(baseURL string) (Provider, error) {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
@@ -159,6 +208,7 @@ func customProvider(baseURL string) (Provider, error) {
 		TokenURL:      base + "/oauth/token",
 		UserURL:       base + "/api/v4/user",
 		DefaultScopes: []string{"read_repository", "read_user"},
-		parseLogin:    parseLoginField("username"),
+		LoginScopes:   []string{"read_user"},
+		parseIdentity: parseIdentityFields("username"),
 	}, nil
 }

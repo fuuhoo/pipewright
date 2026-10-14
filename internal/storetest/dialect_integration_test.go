@@ -21,12 +21,18 @@ func TestMigrationsApplied(t *testing.T) {
 			t.Fatalf("count migrations: %v", err)
 		}
 		// 与 migrations/{sqlite,mysql} 下的 .sql 文件数一致;新增迁移需同步改此值。
-		if n != 63 {
-			t.Fatalf("应用迁移数 = %d, 期望 63", n)
+		if n != 64 {
+			t.Fatalf("应用迁移数 = %d, 期望 64", n)
 		}
 		// 核心领域表存在(随手验一张)。
 		if _, err := st.DB.ExecContext(ctx, `SELECT 1 FROM audit_log WHERE 1=0`); err != nil {
 			t.Fatalf("audit_log 表缺失: %v", err)
+		}
+		// 0066 两表:两方言各写一份,列名/约束漂移在这里最先炸。
+		for _, tbl := range []string{"oauth_login_apps", "user_identities"} {
+			if _, err := st.DB.ExecContext(ctx, "SELECT 1 FROM "+tbl+" WHERE 1=0"); err != nil {
+				t.Fatalf("%s 表缺失: %v", tbl, err)
+			}
 		}
 	})
 }

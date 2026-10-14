@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/fuuhoo/pipewright/internal/users"
@@ -248,6 +249,37 @@ func (s *Service) Login(username, password string) (*Session, error) {
 		); err != nil {
 			log.Printf("[auth] 警告:更新 last_login_at 失败:%v", err)
 		}
+	}
+	return sess, nil
+}
+
+// ErrSessionRoleMissing 表示签发给某账号的会话缺角色信息。
+// 空 role 在旧会话里按「管理员」放行(Session.IsAdmin 的向后兼容语义),所以任何
+// **新签发**的会话都绝不能带空角色 —— 否则一条脏数据就能换出一个管理员会话。
+var ErrSessionRoleMissing = errors.New("auth: refusing to issue session without role")
+
+// IssueSessionForUser 为**已由口令之外的方式验证过身份**的账号签发会话(v6.x OAuth 登录)。
+//
+// 这里刻意不做任何身份判定:调用方(HTTP 层 + internal/identity)必须先确认「这个外部身份
+// 就属于 userID」。本方法只负责签发 + 同步 last_login_at,并守住「不签空角色」这条底线。
+func (s *Service) IssueSessionForUser(userID, username, role string) (*Session, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, errors.New("auth: issue session requires user id")
+	}
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return nil, ErrSessionRoleMissing
+	}
+	sess, err := s.sessions.Create(userID, role)
+	if err != nil {
+		return nil, fmt.Errorf("auth: create session: %w", err)
+	}
+	sess.Username = username
+	if _, err := s.db.Exec(
+		`UPDATE users SET last_login_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), userID,
+	); err != nil {
+		log.Printf("[auth] 警告:更新 last_login_at 失败:%v", err)
 	}
 	return sess, nil
 }

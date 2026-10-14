@@ -1,0 +1,172 @@
+// identity_test.go 守的是包注释里那三条铁律里,HTTP 层够不着的接缝:
+// 并发首登只产生一个账号、脏角色不白拿管理员、默认角色被删时拒建号而不是回退。
+package identity
+
+import (
+	"context"
+	"database/sql"
+	"sync"
+	"testing"
+
+	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/oauth"
+	"github.com/fuuhoo/pipewright/internal/role"
+	"github.com/fuuhoo/pipewright/internal/storetest"
+	"github.com/fuuhoo/pipewright/internal/users"
+)
+
+// fakeApps 是 LoginApps 的桩:本包的判定只读「启用/配全/白名单」这三件事。
+type fakeApps struct {
+	cfg oauth.LoginAppConfig
+	err error
+}
+
+func (f fakeApps) LoginApp(context.Context, string) (*oauth.LoginAppConfig, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	c := f.cfg
+	return &c, nil
+}
+
+// loadRoles 把 0063 播种的四档预置装进进程内目录 —— viewer 不在代码表里,
+// 不装载时 access.ValidRole("viewer") 一律 false,建号会走「角色不可用」那条分支。
+func loadRoles(t *testing.T, db *sql.DB) {
+	t.Helper()
+	access.SetRoleStore(role.New(db))
+	if err := access.ReloadRoles(context.Background()); err != nil {
+		t.Fatalf("装载角色目录: %v", err)
+	}
+	t.Cleanup(func() { access.SetRoleStore(nil) })
+}
+
+func enabledApp(domains ...string) fakeApps {
+	return fakeApps{cfg: oauth.LoginAppConfig{
+		Provider: oauth.ProviderGitLab, ClientID: "cid", Enabled: true,
+		Configured: true, AllowedDomains: domains,
+	}}
+}
+
+func identityOf(externalID, login string) *oauth.Identity {
+	return &oauth.Identity{Provider: oauth.ProviderGitLab, ExternalID: externalID, Login: login}
+}
+
+// TestConcurrentFirstLoginProvisionsSingleAccount 是 provisionMu 存在的理由:
+// 同一个人(同 provider+external_id)并发首登只许建出一个账号。
+func TestConcurrentFirstLoginProvisionsSingleAccount(t *testing.T) {
+	db := storetest.OpenDB(t)
+	loadRoles(t, db)
+	svc := NewService(db, users.NewService(db), enabledApp())
+
+	const n = 8
+	var wg sync.WaitGroup
+	accounts := make([]*Account, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			accounts[i], errs[i] = svc.Login(context.Background(), identityOf("9001", "bob"))
+		}(i)
+	}
+	wg.Wait()
+
+	var firstID string
+	for i := range accounts {
+		if errs[i] != nil {
+			t.Fatalf("并发首登第 %d 个请求失败: %v", i, errs[i])
+		}
+		if firstID == "" {
+			firstID = accounts[i].UserID
+		}
+		if accounts[i].UserID != firstID {
+			t.Fatalf("并发首登建出了不同账号:%s vs %s", firstID, accounts[i].UserID)
+		}
+	}
+	var userRows int64
+	if err := db.QueryRow(`SELECT COUNT(1) FROM users WHERE username = 'bob'`).Scan(&userRows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if userRows != 1 {
+		t.Fatalf("并发首登应只建 1 个账号,实际 %d 个", userRows)
+	}
+	var nb int64
+	if err := db.QueryRow(`SELECT COUNT(1) FROM user_identities WHERE external_id = '9001'`).Scan(&nb); err != nil {
+		t.Fatalf("count bindings: %v", err)
+	}
+	if nb != 1 {
+		t.Fatalf("并发首登应只落 1 条映射,实际 %d 条", nb)
+	}
+}
+
+// TestBoundAccountWithEmptyRoleIsRefused:role=” 是 0053 之前旧会话的取值,语义是「按管理员」。
+// 映射指向的账号若查出空串必须拒登 —— 绝不能因为脏数据白拿一个管理员会话。
+func TestBoundAccountWithEmptyRoleIsRefused(t *testing.T) {
+	db := storetest.OpenDB(t)
+	loadRoles(t, db)
+	u := users.NewService(db)
+	svc := NewService(db, u, enabledApp())
+
+	hash, err := auth.HashPassword("whatever-pass-123")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	created, err := u.Create(users.CreateInput{Username: "legacy", PasswordHash: hash, Role: "user"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE users SET role = '' WHERE id = ?`, created.ID); err != nil {
+		t.Fatalf("脏化 role: %v", err)
+	}
+	if _, err := svc.Bind(context.Background(), created.ID, identityOf("9002", "legacy")); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+
+	if _, err := svc.Login(context.Background(), identityOf("9002", "legacy")); err != ErrAccountUnavailable {
+		t.Fatalf("空角色账号登录 err = %v, want ErrAccountUnavailable", err)
+	}
+}
+
+// TestProvisionRefusedWhenDefaultRoleMissing:管理员删掉 viewer 档之后,建号必须明确失败,
+// 而不是像 users.Create 那样静默回退到 'user'(那一档权限明显更大)。
+func TestProvisionRefusedWhenDefaultRoleMissing(t *testing.T) {
+	db := storetest.OpenDB(t)
+	loadRoles(t, db)
+	if _, err := db.Exec(`DELETE FROM role_perms WHERE role_id = ?`, DefaultRole); err != nil {
+		t.Fatalf("清理点集: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM roles WHERE id = ?`, DefaultRole); err != nil {
+		t.Fatalf("删掉 viewer 档: %v", err)
+	}
+	// 重载后 viewer 不再存在于目录里(它不是内置档,代码表兜不住)。
+	if err := access.ReloadRoles(context.Background()); err != nil {
+		t.Fatalf("重载角色目录: %v", err)
+	}
+
+	svc := NewService(db, users.NewService(db), enabledApp())
+	if _, err := svc.Login(context.Background(), identityOf("9003", "nobody")); err != ErrRoleUnavailable {
+		t.Fatalf("默认角色已删时 err = %v, want ErrRoleUnavailable", err)
+	}
+	var n int64
+	if err := db.QueryRow(`SELECT COUNT(1) FROM users WHERE username = 'nobody'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("角色不可用时不该建出任何账号,得到 %d 个", n)
+	}
+}
+
+// TestDomainWhitelistRequiresEmail:白名单非空时「拿不到邮箱」必须拒,
+// 而不是把查不到当成「不限制」—— 那是把白名单变成摆设的最短路径。
+func TestDomainWhitelistRequiresEmail(t *testing.T) {
+	if err := checkDomain([]string{"corp.example.com"}, ""); err != ErrDomainNotAllowed {
+		t.Fatalf("空邮箱 err = %v, want ErrDomainNotAllowed", err)
+	}
+	if err := checkDomain([]string{"corp.example.com"}, "bob@sub.corp.example.com"); err != ErrDomainNotAllowed {
+		t.Fatalf("子域名不该命中父域白名单: %v", err)
+	}
+	if err := checkDomain(nil, ""); err != nil {
+		t.Fatalf("空白名单 = 不限域名,得到 %v", err)
+	}
+}

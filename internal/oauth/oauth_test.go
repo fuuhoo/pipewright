@@ -327,41 +327,63 @@ func TestExchangeProviderErrorMapsToExchangeFailed(t *testing.T) {
 
 func TestStateRoundTrip(t *testing.T) {
 	svc, _, _, _ := newService(t, http.DefaultClient)
-	st, err := svc.IssueState("session-A")
+	st, err := svc.IssueState(StateIssue{Intent: IntentVault, Provider: ProviderGitHub, BindKey: "session-A"})
 	if err != nil {
 		t.Fatalf("IssueState: %v", err)
 	}
 	if st == "" {
 		t.Fatal("state empty")
 	}
-	if !svc.ConsumeState(st, "session-A") {
+	data, ok := svc.ConsumeState(st, "session-A")
+	if !ok {
 		t.Fatal("匹配会话应消费成功")
 	}
+	// 发起上下文必须原样回吐:回调靠它认意图、认 provider、认落地页。
+	if data.Intent != IntentVault || data.Provider != ProviderGitHub {
+		t.Fatalf("回吐上下文 = %+v,期望 vault/github", data)
+	}
 	// 一次性:重复消费应失败(防重放)。
-	if svc.ConsumeState(st, "session-A") {
+	if _, ok := svc.ConsumeState(st, "session-A"); ok {
 		t.Fatal("state 应一次性,重复消费应拒")
 	}
 }
 
 func TestStateWrongSessionRejected(t *testing.T) {
 	svc, _, _, _ := newService(t, http.DefaultClient)
-	st, _ := svc.IssueState("session-A")
-	if svc.ConsumeState(st, "session-B") {
+	st, _ := svc.IssueState(StateIssue{Intent: IntentLogin, Provider: ProviderGitLab, BindKey: "session-A"})
+	if _, ok := svc.ConsumeState(st, "session-B"); ok {
 		t.Fatal("不同会话的 state 应拒(CSRF 防护)")
 	}
 	// 即便会话错被拒,state 也已被消费,正确会话再用也应失败。
-	if svc.ConsumeState(st, "session-A") {
+	if _, ok := svc.ConsumeState(st, "session-A"); ok {
 		t.Fatal("被错误会话触碰后 state 应已失效")
 	}
 }
 
 func TestStateUnknownRejected(t *testing.T) {
 	svc, _, _, _ := newService(t, http.DefaultClient)
-	if svc.ConsumeState("never-issued", "session-A") {
+	if _, ok := svc.ConsumeState("never-issued", "session-A"); ok {
 		t.Fatal("未签发的 state 应拒")
 	}
-	if svc.ConsumeState("", "session-A") {
+	if _, ok := svc.ConsumeState("", "session-A"); ok {
 		t.Fatal("空 state 应拒")
+	}
+}
+
+func TestStateRedirectRoundTrip(t *testing.T) {
+	svc, _, _, _ := newService(t, http.DefaultClient)
+	st, err := svc.IssueState(StateIssue{
+		Intent: IntentLogin, Provider: ProviderCustom, BindKey: "nonce-1", Redirect: "/projects",
+	})
+	if err != nil {
+		t.Fatalf("IssueState: %v", err)
+	}
+	data, ok := svc.ConsumeState(st, "nonce-1")
+	if !ok {
+		t.Fatal("匹配 bindKey 应消费成功")
+	}
+	if data.Redirect != "/projects" || data.Intent != IntentLogin {
+		t.Fatalf("回吐 = %+v,期望 login + /projects", data)
 	}
 }
 
