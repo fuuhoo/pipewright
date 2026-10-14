@@ -33,6 +33,8 @@ export default {
   edit: 'Edit config profile',
   targetPathPlaceholder: 'e.g. /root/.m2/settings.xml',
   targetPathHint: 'Copied to this path inside the container at build time.',
+  targetPathPresetsLabel: 'Common paths (click to fill)',
+  presetChipTitle: 'Click to fill this path',
   contentHint: 'Editable directly. Save writes atomically (tmp + fsync + rename); any failing step rolls the whole write back.',
   builtinHint: 'Built-in profiles only allow editing description and enabled state — not content or path.',
   contentLoading: 'Loading content…',

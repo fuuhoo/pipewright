@@ -299,57 +299,8 @@
 }
 
 /* ─── 点选填入的芯片行(命令模板 + 字段示例值共用)──────────────────────────
-   放在全局样式里:抽屉与 CommandTemplateChips 是两个组件,scoped 会逼着同一套视觉抄两份。 */
-.tpl-chips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 6px;
-}
-
-.tpl-chips-label {
-  flex: 1 0 100%;
-  font-size: 0.72rem;
-  color: var(--color-faint);
-}
-
-.tpl-chip {
-  font-size: 0.72rem;
-  line-height: 1.4;
-  padding: 2px 8px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: 999px;
-  background: none;
-  color: var(--color-dim);
-  cursor: pointer;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  transition: color var(--duration-fast), border-color var(--duration-fast), background-color var(--duration-fast);
-}
-
-.tpl-chip:hover {
-  color: var(--color-text);
-  border-color: var(--color-primary);
-  border-style: solid;
-  background: var(--color-primary-soft);
-}
-
-.tpl-chip:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-/* 展开/收起那颗:实线描边,和「可点的值」区分开。 */
-.tpl-chip--more {
-  border-style: solid;
-  border-color: var(--color-border);
-  color: var(--color-primary);
-  font-family: inherit;
-}
+   视觉已上提到 styles/global.css 的 .tpl-chips / .tpl-chip:设置页的「容器内目标路径」
+   芯片要用同一套,而 pipeline.css 只被 pipeline 组件 import,设置页引不到。 */
 
 .drawer-head {
   padding: 15px 18px;

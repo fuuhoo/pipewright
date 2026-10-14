@@ -38,6 +38,8 @@ export default {
 
   targetPathPlaceholder: '如 /root/.m2/settings.xml',
   targetPathHint: '构建时会被拷贝到容器内的这个路径。',
+  targetPathPresetsLabel: '常用路径(点一下填入)',
+  presetChipTitle: '点击填入该路径',
   contentHint: '可直接编辑;保存时原子写盘(tmp + fsync + rename),任一步失败整笔回滚。',
   builtinHint: '内置配置仅可修改说明与启用状态,不可改内容或路径。',
 

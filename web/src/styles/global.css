@@ -117,3 +117,56 @@ a:hover {
 .mono {
   font-family: var(--font-mono);
 }
+
+/* ——— 点选填入的芯片行(流水线字段示例 / 命令模板 / 设置页目标路径共用)———
+   放全局是因为三个组件各自 scoped 会逼着同一套视觉抄三份;正文一律是路径或 shell 片段,不进 i18n。 */
+.tpl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.tpl-chips-label {
+  flex: 1 0 100%;
+  font-size: 0.72rem;
+  color: var(--color-faint);
+}
+
+.tpl-chip {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  padding: 2px 8px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-dim);
+  cursor: pointer;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  transition: color var(--duration-fast), border-color var(--duration-fast), background-color var(--duration-fast);
+}
+
+.tpl-chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+  border-style: solid;
+  background: var(--color-primary-soft);
+}
+
+.tpl-chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* 展开/收起那颗:实线描边,和「可点的值」区分开。 */
+.tpl-chip--more {
+  border-style: solid;
+  border-color: var(--color-border);
+  color: var(--color-primary);
+  font-family: inherit;
+}

@@ -26,6 +26,7 @@ import type { ConfigProfile, ConfigProfileInput } from '../../api/configProfiles
 import { exceedsUploadLimit, submitMode } from '../../lib/configProfileFile'
 import { listBuildEnvLanguages } from '../../api/buildEnvs'
 import { languagesFrom, mergeLanguageLists } from '../../lib/languageOptions'
+import { targetPathPresets } from '../../lib/configProfileTargets'
 import LanguageSelect from '../../components/ui/LanguageSelect.vue'
 import { HttpError } from '../../api/http'
 
@@ -72,6 +73,9 @@ const editingBuiltin = ref(false)
 // 编辑弹窗的文件态:正文靠详情接口单独取(列表不带),来源决定是否可信。
 const detailLoading = ref(false)
 const contentSource = ref<'disk' | 'db'>('disk')
+
+// 目标路径的可点值:填错是静默的(文件照样挂进容器,只是工具不去那个位置读),所以把常用值抬到脸上。
+const pathPresets = computed(() => targetPathPresets(form.value.language, form.value.configType))
 
 function openAdd(): void {
   editingId.value = null
@@ -344,6 +348,21 @@ async function confirmDelete(): Promise<void> {
               :disabled="editingBuiltin"
               :placeholder="t('configProfiles.targetPathPlaceholder')"
             />
+            <!-- 值本身是路径,不进 i18n;只有行首说明走 i18n。 -->
+            <div v-if="!editingBuiltin && pathPresets.length" class="tpl-chips">
+              <span class="tpl-chips-label">{{ t('configProfiles.targetPathPresetsLabel') }}</span>
+              <button
+                v-for="p in pathPresets"
+                :key="p"
+                type="button"
+                class="tpl-chip"
+                :title="p"
+                :aria-label="t('configProfiles.presetChipTitle')"
+                @click="form.targetPath = p"
+              >
+                {{ p }}
+              </button>
+            </div>
             <small>{{ t('configProfiles.targetPathHint') }}</small>
           </label>
           <div v-if="!editingBuiltin" class="field field--wide">
