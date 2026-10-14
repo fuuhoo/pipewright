@@ -22,7 +22,7 @@
  * `artifactPath`;`image`/`workDir` 作为节点级字段单独保留(由调用方合并)。
  *
  * 反解析(config → steps):把 `commands` 按行拆开,逐行识别成「设环境变量」/「切目录」/
- * 「运行命令」三类步骤(`artifactPath` 的每一行还原成「上传产物」步骤)。
+ * 「运行命令」三类步骤(`artifactPath` 的每一行还原成「产物路径」步骤)。
  * 反解析允许有损(注释、奇异语法仍归类为「运行命令」原样保留),绝不丢用户数据。
  */
 
@@ -203,7 +203,7 @@ export function lineToStep(line: string): StepBlock {
 }
 
 /**
- * 从 config 反解析出步骤列表。`commands` 逐行分类;`artifactPath` 每行还原成上传产物步骤
+ * 从 config 反解析出步骤列表。`commands` 逐行分类;`artifactPath` 每行还原成产物路径步骤
  * (追加在末尾,顺序无关)。空 → 空列表(由调用方决定是否兜底)。
  */
 export function parseSteps(config: Record<string, string>): StepBlock[] {

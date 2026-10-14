@@ -278,7 +278,7 @@ const stepCount = computed(() => steps.value.length)
           </p>
         </div>
 
-        <!-- 上传产物 -->
+        <!-- 产物路径 -->
         <input
           v-else
           :value="step.artifact ?? ''"

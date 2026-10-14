@@ -277,7 +277,7 @@ export default {
   stepCommandLabel: '명령 실행',
   stepEnvLabel: '환경 변수 설정',
   stepWorkDirLabel: '디렉터리 전환',
-  stepArtifactLabel: '아티팩트 업로드',
+  stepArtifactLabel: '아티팩트 경로',
   stepConditionLabel: '조건 가드',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -295,7 +295,7 @@ export default {
   studioStepPath: 'PATH 추가',
   studioStepTest: '테스트 실행 + 보고서',
   studioStepHealthcheck: '헬스 체크',
-  studioStepArtifact: '아티팩트 업로드',
+  studioStepArtifact: '아티팩트 경로',
   studioStepDownload: '파일 다운로드',
   studioStepExtract: '아카이브 압축 해제',
   studioStepCondition: '조건 가드',

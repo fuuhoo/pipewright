@@ -277,7 +277,7 @@ export default {
   stepCommandLabel: 'コマンド実行',
   stepEnvLabel: '環境変数を設定',
   stepWorkDirLabel: 'ディレクトリ切替',
-  stepArtifactLabel: '成果物をアップロード',
+  stepArtifactLabel: '成果物パス',
   stepConditionLabel: '条件ガード',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -295,7 +295,7 @@ export default {
   studioStepPath: 'PATH を追加',
   studioStepTest: 'テスト実行 + レポート',
   studioStepHealthcheck: 'ヘルスチェック',
-  studioStepArtifact: '成果物をアップロード',
+  studioStepArtifact: '成果物パス',
   studioStepDownload: 'ファイルをダウンロード',
   studioStepExtract: 'アーカイブを解凍',
   studioStepCondition: '条件ガード',

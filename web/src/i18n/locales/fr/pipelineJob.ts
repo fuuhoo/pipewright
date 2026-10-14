@@ -277,7 +277,7 @@ export default {
   stepCommandLabel: 'Exécuter une commande',
   stepEnvLabel: 'Définir une variable d’environnement',
   stepWorkDirLabel: 'Changer de répertoire',
-  stepArtifactLabel: 'Téléverser un artefact',
+  stepArtifactLabel: 'Chemin d’artefact',
   stepConditionLabel: 'Garde conditionnelle',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -295,7 +295,7 @@ export default {
   studioStepPath: 'Ajouter au PATH',
   studioStepTest: 'Exécuter les tests + rapport',
   studioStepHealthcheck: 'Contrôle de santé',
-  studioStepArtifact: 'Téléverser un artefact',
+  studioStepArtifact: 'Chemin d’artefact',
   studioStepDownload: 'Télécharger un fichier',
   studioStepExtract: 'Extraire l’archive',
   studioStepCondition: 'Garde conditionnelle',

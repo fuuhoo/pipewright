@@ -277,7 +277,7 @@ export default {
   stepCommandLabel: 'Run command',
   stepEnvLabel: 'Set env var',
   stepWorkDirLabel: 'Change dir',
-  stepArtifactLabel: 'Upload artifact',
+  stepArtifactLabel: 'Artifact path',
   stepConditionLabel: 'Condition guard',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -295,7 +295,7 @@ export default {
   studioStepPath: 'Add PATH',
   studioStepTest: 'Run tests + report',
   studioStepHealthcheck: 'Health check',
-  studioStepArtifact: 'Upload artifact',
+  studioStepArtifact: 'Artifact path',
   studioStepDownload: 'Download file',
   studioStepExtract: 'Extract archive',
   studioStepCondition: 'Condition guard',

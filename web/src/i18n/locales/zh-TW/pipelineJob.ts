@@ -277,7 +277,7 @@ export default {
   stepCommandLabel: '執行命令',
   stepEnvLabel: '設環境變數',
   stepWorkDirLabel: '切目錄',
-  stepArtifactLabel: '上傳產物',
+  stepArtifactLabel: '產物路徑',
   stepConditionLabel: '條件守衛',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -295,7 +295,7 @@ export default {
   studioStepPath: '加 PATH',
   studioStepTest: '執行測試 + 報告',
   studioStepHealthcheck: '健康檢查',
-  studioStepArtifact: '上傳產物',
+  studioStepArtifact: '產物路徑',
   studioStepDownload: '下載檔案',
   studioStepExtract: '解壓歸檔',
   studioStepCondition: '條件守衛',

@@ -277,7 +277,7 @@ export default {
   stepCommandLabel: 'Befehl ausführen',
   stepEnvLabel: 'Umgebungsvariable setzen',
   stepWorkDirLabel: 'Verzeichnis wechseln',
-  stepArtifactLabel: 'Artefakt hochladen',
+  stepArtifactLabel: 'Artefaktpfad',
   stepConditionLabel: 'Bedingungs-Guard',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -295,7 +295,7 @@ export default {
   studioStepPath: 'PATH hinzufügen',
   studioStepTest: 'Tests ausführen + Bericht',
   studioStepHealthcheck: 'Health-Check',
-  studioStepArtifact: 'Artefakt hochladen',
+  studioStepArtifact: 'Artefaktpfad',
   studioStepDownload: 'Datei herunterladen',
   studioStepExtract: 'Archiv entpacken',
   studioStepCondition: 'Bedingungs-Guard',
