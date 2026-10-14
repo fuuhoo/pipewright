@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -76,15 +77,17 @@ func (d *shellDriver) RunToolchain(ctx context.Context, image, hostDir, mountAt,
 		args = append(args, "--network", net)
 		display = append(display, "--network", net)
 	}
-	// 配置资源注入(R6):res.Mounts 由预置目录把 configProfileIds 解析而来(宿主只读文件 → 容器路径)。
+	// 配置资源注入(R6)+ 项目依赖缓存:res.Mounts 是「宿主路径 → 容器路径」的挂载,前者由预置目录
+	// 把 configProfileIds 解析而来(只读文件),后者由 projectcache 布局给出(可写目录)。
 	// 路径经 pipeline 侧安全收口(绝对、无 ..);值原样作 array 实参,不拼 shell。
+	// 用 --mount 而不是 `-v src:dst:ro` 的理由见 bindMountFlag。
 	for _, m := range res.Mounts {
-		bind := m.HostPath + ":" + m.ContainerPath
-		if m.ReadOnly {
-			bind += ":ro"
+		spec, merr := bindMountFlag(m)
+		if merr != nil {
+			return 0, merr
 		}
-		args = append(args, "-v", bind)
-		display = append(display, "-v", bind)
+		args = append(args, "--mount", spec)
+		display = append(display, "--mount", spec)
 	}
 	for _, kv := range env {
 		args = append(args, "-e", kv)
@@ -97,6 +100,26 @@ func (d *shellDriver) RunToolchain(ctx context.Context, image, hostDir, mountAt,
 
 	emitCmd(onLine, d.bin, display)
 	return d.cmdr.Stream(ctx, d.bin, args, "", onLine)
+}
+
+// bindMountFlag 把一条宿主挂载组成 docker 的 --mount 实参。
+//
+// 刻意不用 `-v src:dst:ro`:`-v` 对**不存在的来源会凭空建一个空目录**挂进去(daemon 按自己的
+// 文件系统解析源路径 —— 容器形态下平台自己 stat 得到「文件在」并不能保证 daemon 看得见),
+// 于是配置文件挂成一个空目录,失败方式是一个看不懂的路由错误。`--mount type=bind` 在源不存在时
+// 由 daemon 直接拒绝启动容器(exit 125,报 "bind source path does not exist: <路径>"),根因写在日志里。
+// --mount 的键值对以逗号分隔且无转义手段,故含逗号的路径必须先挡下,否则参数会被拆错。
+func bindMountFlag(m pipeline.ContainerMount) (string, error) {
+	for _, p := range []string{m.HostPath, m.ContainerPath} {
+		if strings.Contains(p, ",") {
+			return "", fmt.Errorf("build: 挂载路径含逗号无法交给 docker(%s),请改用不含逗号的文件名/路径", p)
+		}
+	}
+	spec := "type=bind,source=" + m.HostPath + ",target=" + m.ContainerPath
+	if m.ReadOnly {
+		spec += ",readonly"
+	}
+	return spec, nil
 }
 
 func (d *shellDriver) Tag(ctx context.Context, localTag, remoteTag string, onLine func(stream, line string)) (int, error) {

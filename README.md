@@ -140,11 +140,14 @@ compose 文件本身只读这几个变量(平台自身的环境变量见下方[�
 | `PIPEWRIGHT_PORT` | 宿主侧发布端口 | `8080` |
 | `PIPEWRIGHT_WORK_DIR` | 容器内构建的工作区目录(宿主绝对路径)。它同时是**项目依赖缓存**的落点(该目录下的 `pipewright-project-cache/`),所以想让容器里的构建跨运行吃到缓存,只需把这一条路径映射到宿主 | 空(此时容器内隔离构建不可用,缓存落容器 `/tmp`) |
 | `PIPEWRIGHT_RUNNER` | 留空即默认 DAG 执行器;`legacy` 回退旧版固定流程 | 空 |
+| `PIPEWRIGHT_DATA_DIR` | 「配置资源」上传文件的落点(其下的 `config_profiles/`)。要在容器里构建并勾配置资源,它也得是宿主同路径目录 —— 用 `PIPEWRIGHT_WORK_DIR/data` 就共用同一条映射,不必再加一行 | `./data`(容器 WORKDIR 下,即在具名卷里) |
 | `PIPEWRIGHT_BIN_DIR` | 宿主放二进制的目录,仅在「只换二进制」覆盖文件里用(见下) | `./bin` |
 
 数据(sqlite 库、制品库、代码管理区、构建依赖缓存)全落在容器 `/data`,由具名卷 `pipewright-data` 持久化。master key 一旦写入凭据就要长期保存 —— 换 key 会让已存凭据无法解密。
 
 **例外**:项目依赖缓存**不**放 `/data`。它是被 `docker run -v` 挂进构建容器的,而 `-v` 的源路径由**宿主** daemon 解析 —— `/data` 在宿主上的真身是 `/var/lib/docker/volumes/pipewright-data/_data`,拿 `/data/...` 当源只会在宿主根下凭空建一个空目录。所以它跟着 `PIPEWRIGHT_WORK_DIR`(要求宿主同路径)走,详见下节。
+
+「配置资源」的磁盘副本(`PIPEWRIGHT_DATA_DIR` 下的 `config_profiles/`)是同一条规则的第二个受害者:勾上的资源是按 `target_path` 只读挂进构建容器的,路径只在容器里可见时,docker 现在会直接报 `bind source path does not exist`(而不是像过去那样挂进一个空目录,由 Maven 说句 `Is a directory`)。要在容器里构建又用配置资源,把 `PIPEWRIGHT_DATA_DIR` 指到 `PIPEWRIGHT_WORK_DIR/data` 即可 —— 共用那一条同路径映射。留默认值时启动日志会带一条 `[configprofile] 警告` 说明这点。
 
 #### 两档镜像:要不要在容器里打包镜像
 
@@ -176,12 +179,13 @@ docker exec pipewright sh -c 'mkdir -p "$TMPDIR/probe" && printf "FROM alpine:3.
 上面三处改动仓库里备了一份现成的叠加文件,顺带把端口与容器名让开,容器形态可以与 :8080 的裸实例并存:
 
 ```bash
-# .env 里设:PIPEWRIGHT_VERSION=<版本>-docker、PIPEWRIGHT_PORT=8081、PIPEWRIGHT_WORK_DIR=<宿主绝对路径>
+# .env 里设:PIPEWRIGHT_VERSION=<版本>-docker、PIPEWRIGHT_PORT=8081、PIPEWRIGHT_WORK_DIR=<宿主绝对路径>、
+#           PIPEWRIGHT_DATA_DIR=$PIPEWRIGHT_WORK_DIR/data(配置资源也要宿主同路径,见上)
 mkdir -p "$PIPEWRIGHT_WORK_DIR"      # 工作区目录得先在宿主存在,同路径映射才有意义
 docker compose -p pwtest -f docker-compose.yml -f docker-compose.devtest.yml up -d
 ```
 
-覆盖层只有三行动作:容器名换 `pipewright-composetest`;`ports` 用 `!override` **替换**而不是追加(compose 默认对列表是追加,不写就同时申请 8080 和 8081,和裸实例抢端口直接起不来);放开 docker.sock 与工作区的同路径自绑定。数据走 `pwtest_pipewright-data` 具名卷、依赖缓存走 `PIPEWRIGHT_WORK_DIR`,都在项目名 `pwtest` 底下,与默认那套 compose 互不干扰;`down` 不带 `-v` 即保留数据。挂 socket = 容器拿到宿主 root 级权限,这份文件是给信任的本机环境用的,别抄上生产。
+覆盖层只有三行动作:容器名换 `pipewright-composetest`;`ports` 用 `!override` **替换**而不是追加(compose 默认对列表是追加,不写就同时申请 8080 和 8081,和裸实例抢端口直接起不来);放开 docker.sock 与工作区的同路径自绑定。数据走 `pwtest_pipewright-data` 具名卷、依赖缓存走 `PIPEWRIGHT_WORK_DIR`、配置资源走它的 `data/` 子目录(同一条同路径映射,勾了配置资源的构建节点才挂得进),都在项目名 `pwtest` 底下,与默认那套 compose 互不干扰;`down` 不带 `-v` 即保留数据。挂 socket = 容器拿到宿主 root 级权限,这份文件是给信任的本机环境用的,别抄上生产。
 
 #### 在容器里看宿主机上的镜像 / 容器
 

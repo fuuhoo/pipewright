@@ -6,6 +6,9 @@
 package httpapi
 
 import (
+	"path/filepath"
+	"strings"
+
 	"github.com/fuuhoo/pipewright/internal/buildenv"
 	"github.com/fuuhoo/pipewright/internal/configprofile"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
@@ -54,10 +57,24 @@ func (g *buildEnvGate) Snapshot() (pipeline.BuildEnvSnapshot, error) {
 		profs = make([]pipeline.ConfigProfileOption, 0, len(ps))
 		for _, p := range ps {
 			// FilePath/TargetPath 只供执行期注入用(#10);HTTP 响应侧由各自 DTO 置空,不经此处泄漏。
+			// 磁盘位置按**当前** dataDir 现算,而不是用库里那一列:入库的绝对路径是「写入那一刻」的
+			// 快照,改了 PIPEWRIGHT_DATA_DIR(或内置行只在旧根 seed 过一次)之后就指向不存在的副本了。
+			// 文件名沿用写入时的同一条规则 —— target_path 的基名(见 configprofile.Service.Create)。
 			profs = append(profs, pipeline.ConfigProfileOption{
-				ID: p.ID, Language: p.Language, Enabled: p.Enabled, FilePath: p.FilePath, TargetPath: p.TargetPath,
+				ID: p.ID, Language: p.Language, Enabled: p.Enabled,
+				FilePath: profileFilePath(g.profiles.DataDir(), p), TargetPath: p.TargetPath,
 			})
 		}
 	}
 	return pipeline.NewBuildEnvSnapshot(opts, profs), nil
+}
+
+// profileFilePath 用当前 dataDir 重算一条配置资源的磁盘路径;算不出有效文件名时退回库里的快照
+// (那种行本就注不进,保存期会由 profileDefect 报出来,这里不再叠加噪音)。
+func profileFilePath(dataDir string, p *configprofile.ConfigProfile) string {
+	base := filepath.Base(strings.TrimSpace(p.TargetPath))
+	if strings.TrimSpace(dataDir) == "" || base == "" || base == "." || base == "/" {
+		return p.FilePath
+	}
+	return configprofile.ProfilePath(dataDir, p.ID, base)
 }

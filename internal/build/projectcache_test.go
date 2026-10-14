@@ -47,8 +47,8 @@ func TestRunScriptStepMountsProjectCache(t *testing.T) {
 
 	dir := l.ProjectDir("p42")
 	for _, want := range []string{
-		"-v " + dir + ":" + projectcache.ContainerBase,
-		"-v " + filepath.Join(dir, "maven") + ":/root/.m2/repository",
+		"--mount type=bind,source=" + dir + ",target=" + projectcache.ContainerBase,
+		"--mount type=bind,source=" + filepath.Join(dir, "maven") + ",target=/root/.m2/repository",
 		"-e MAVEN_ARGS=-Dmaven.repo.local=" + projectcache.ContainerBase + "/maven",
 		"-e GOMODCACHE=" + projectcache.ContainerBase + "/go-mod",
 	} {
@@ -129,13 +129,13 @@ func TestRunScriptStepYieldsToConfigProfileMount(t *testing.T) {
 		t.Fatalf("runScriptStep: %v", err)
 	}
 	joined := strings.Join(cmdr.scriptRunArgs()[0], " ")
-	if strings.Contains(joined, "/root/.m2/repository:") {
+	if strings.Contains(joined, ",target=/root/.m2/repository") {
 		t.Fatalf("冲突档必须让路(否则遮蔽挂进来的配置): %s", joined)
 	}
-	if !strings.Contains(joined, "-v /host/settings.xml:/root/.m2:ro") {
+	if !strings.Contains(joined, "--mount type=bind,source=/host/settings.xml,target=/root/.m2,readonly") {
 		t.Fatalf("配置资源挂载必须原样保留: %s", joined)
 	}
-	if !strings.Contains(joined, ":/root/.npm") {
+	if !strings.Contains(joined, ",target=/root/.npm") {
 		t.Fatalf("不冲突的档仍要挂上: %s", joined)
 	}
 	if logs := sink.allLogText(); !strings.Contains(logs, "缓存位 /root/.m2/repository 与已挂载路径冲突") {

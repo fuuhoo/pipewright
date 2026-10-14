@@ -190,6 +190,11 @@ func main() {
 	} else if n > 0 {
 		log.Printf("[seed] configprofile 新增 %d 条", n)
 	}
+	// 容器形态下数据目录的宿主可见性自检:配置资源是读磁盘直挂进构建容器的,而源路径由**宿主的
+	// daemon** 解析 —— 目录只在容器里可见时注入必然失败(判据与告警文案见 internal/config/datadir.go)。
+	if warn := config.DataDirVisibilityWarning(cfg.DataDir); warn != "" {
+		log.Printf("[configprofile] 警告:%s", warn)
+	}
 
 	// 装配流水线配置服务(Story 2.2):经 store 触库,惰性默认 + spec 校验 + YAML 渲染。
 	// 同一个目录快照来源既给流水线保存期白名单(R4,见 internal/pipeline/buildenv_validate.go),

@@ -140,11 +140,14 @@ The compose file itself only reads these (the app's own variables are in the [co
 | `PIPEWRIGHT_PORT` | Host-side published port | `8080` |
 | `PIPEWRIGHT_WORK_DIR` | Build workspace directory (absolute host path). It is also where the per-project dependency cache lands (`pipewright-project-cache/` under it), so mapping this one path is all you need for cached builds inside the container | empty (in-container isolated builds unavailable, cache falls back to the container's `/tmp`) |
 | `PIPEWRIGHT_RUNNER` | Empty = the default DAG runner; `legacy` falls back to the old fixed flow | empty |
+| `PIPEWRIGHT_DATA_DIR` | Where config-profile files are stored (`config_profiles/` beneath it). To build inside the container *and* tick a config profile, this too must be a host-same-path directory — `PIPEWRIGHT_WORK_DIR/data` reuses the one existing bind, no extra volumes line | `./data` (under the container WORKDIR, i.e. inside the named volume) |
 | `PIPEWRIGHT_BIN_DIR` | Host directory holding the binary — only used by the "swap just the binary" override below | `./bin` |
 
 Everything the app stores (SQLite DB, artifact library, repo cache, build dependency cache) lives under `/data` in the container, persisted by the named volume `pipewright-data`. Keep the master key forever once credentials exist — rotating it makes stored credentials undecryptable.
 
 **One exception**: the per-project dependency cache does **not** live under `/data`. It is bind-mounted into build containers via `docker run -v`, and the source path of `-v` is resolved by the **host** daemon — `/data` on the host is really `/var/lib/docker/volumes/pipewright-data/_data`, so using `/data/...` as the source would just create an empty directory at the host root. It therefore follows `PIPEWRIGHT_WORK_DIR` (the one path that must exist at the same absolute location on host and container); see the next section.
+
+Config-profile files (`config_profiles/` under `PIPEWRIGHT_DATA_DIR`) are the second casualty of the same rule: a ticked profile is bind-mounted read-only at its `target_path`, and when that path only exists inside the container docker now fails loudly with `bind source path does not exist` — instead of the old behaviour of mounting an empty directory and letting Maven complain `Is a directory`. Point `PIPEWRIGHT_DATA_DIR` at `PIPEWRIGHT_WORK_DIR/data` to share that one same-path bind. Leaving the default logs a `[configprofile]` warning at startup saying exactly this.
 
 #### Two image tiers: building images inside the container
 
@@ -176,12 +179,13 @@ A `sha256:…` on the last line means success. The `DEPRECATED: The legacy build
 Those three edits are already packaged as an overlay in the repo root, which also frees up the port and container name so the container tier can sit next to the bare instance on :8080:
 
 ```bash
-# In .env set: PIPEWRIGHT_VERSION=<ver>-docker, PIPEWRIGHT_PORT=8081, PIPEWRIGHT_WORK_DIR=<absolute host path>
+# In .env set: PIPEWRIGHT_VERSION=<ver>-docker, PIPEWRIGHT_PORT=8081, PIPEWRIGHT_WORK_DIR=<absolute host path>,
+#              PIPEWRIGHT_DATA_DIR=$PIPEWRIGHT_WORK_DIR/data (config profiles need the same host-visible path)
 mkdir -p "$PIPEWRIGHT_WORK_DIR"      # the dir must exist on the host first, otherwise the same-path bind is pointless
 docker compose -p pwtest -f docker-compose.yml -f docker-compose.devtest.yml up -d
 ```
 
-The overlay does exactly three things: renames the container to `pipewright-composetest`; declares `ports` with `!override` so it **replaces** instead of appends (compose appends lists by default — without this it requests both 8080 and 8081 and fails to start next to the bare instance); and enables the docker.sock plus same-path workspace bind. Data lives in the `pwtest_pipewright-data` volume and dependency cache under `PIPEWRIGHT_WORK_DIR`, both namespaced by the project name `pwtest`, so nothing touches the default stack; `down` without `-v` keeps the data. Mounting the socket grants the container host-level root — this file is for a trusted local machine, don't copy it into production.
+The overlay does exactly three things: renames the container to `pipewright-composetest`; declares `ports` with `!override` so it **replaces** instead of appends (compose appends lists by default — without this it requests both 8080 and 8081 and fails to start next to the bare instance); and enables the docker.sock plus same-path workspace bind. Data lives in the `pwtest_pipewright-data` volume, dependency cache under `PIPEWRIGHT_WORK_DIR`, and config profiles under its `data/` subdirectory (the same one bind — that is what lets a build node actually mount a ticked profile), all namespaced by the project name `pwtest`, so nothing touches the default stack; `down` without `-v` keeps the data. Mounting the socket grants the container host-level root — this file is for a trusted local machine, don't copy it into production.
 
 #### Seeing the host's images / containers from inside the container
 

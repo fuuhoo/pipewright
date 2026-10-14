@@ -151,12 +151,29 @@ func TestShellDriverEmitsProfileMounts(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	rec := cmdr.execs[0]
-	want := []string{"run", "--rm", "-v", "/ws:/workspace", "-w", "/workspace", "-v", "/data/p-1/.npmrc:/root/.npmrc:ro", "node:20", "sh", "-c", "npm ci"}
+	want := []string{"run", "--rm", "-v", "/ws:/workspace", "-w", "/workspace",
+		"--mount", "type=bind,source=/data/p-1/.npmrc,target=/root/.npmrc,readonly", "node:20", "sh", "-c", "npm ci"}
 	if strings.Join(rec.args, " ") != strings.Join(want, " ") {
 		t.Errorf("docker 实参 = %v\nwant %v", rec.args, want)
 	}
-	if !strings.Contains(strings.Join(logged, "\n"), "/data/p-1/.npmrc:/root/.npmrc:ro") {
+	if !strings.Contains(strings.Join(logged, "\n"), "type=bind,source=/data/p-1/.npmrc,target=/root/.npmrc,readonly") {
 		t.Errorf("命令回显应含挂载: %v", logged)
+	}
+}
+
+// 路径含逗号会被 --mount 的键值解析拆成两段(docker 侧没有转义手段),所以在这里硬拒,
+// 而不是把一条语义错乱的挂载参数交给 daemon。
+func TestShellDriverRejectsCommaInMountPath(t *testing.T) {
+	cmdr := newFakeCommander()
+	cmdr.script("run", fakeCmd{exitCode: 0})
+	d := &shellDriver{bin: "docker", cmdr: cmdr}
+	_, err := d.RunToolchain(context.Background(), "node:20", "/ws", "/workspace", "/workspace", nil, []string{"true"},
+		pipeline.Resource{Mounts: []pipeline.ContainerMount{{HostPath: "/data/a,b/settings.xml", ContainerPath: "/root/.m2/settings.xml", ReadOnly: true}}}, nil)
+	if err == nil {
+		t.Fatal("挂载路径含逗号应拒绝执行")
+	}
+	if len(cmdr.execs) != 0 {
+		t.Errorf("拒绝时不该已经把命令交给 docker: %v", cmdr.execs)
 	}
 }
 

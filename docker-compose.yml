@@ -40,6 +40,13 @@ services:
       # 想换盘(挪到 NVMe 等)时填,填了就必须仍是宿主与容器同路径的目录,否则见下方 ② 的症状。
       PIPEWRIGHT_PROJECT_CACHE_DIR: ${PIPEWRIGHT_PROJECT_CACHE_DIR:-}
       PIPEWRIGHT_NO_PROJECT_CACHE: ${PIPEWRIGHT_NO_PROJECT_CACHE:-}
+      # 「配置资源」上传的那些文件(.npmrc / settings.xml 等)在宿主上的落点。留空 = 默认 ./data,
+      # 即具名卷里 —— 平台进程读得到,但宿主的 daemon 读不到那个路径;构建容器要按 target_path
+      # 只读挂进去时,docker 会直接报 "bind source path does not exist"(见 ④)。
+      # 要在容器内构建 + 用配置资源:把它指到宿主与容器**同路径**的目录,最省事的是下面 ② 那条
+      # 工作区目录的子目录(同一条映射就够,不必再开第二条),例如 /srv/pipewright/work/data。
+      # 不在容器里构建就不用管;启动日志在需要管时会带一条 [configprofile] 告警说明怎么改。
+      PIPEWRIGHT_DATA_DIR: ${PIPEWRIGHT_DATA_DIR:-}
     volumes:
       - pipewright-data:/data
       # ---- 想让平台在容器里打包镜像?三行一起放开(缺一不可)----
@@ -62,6 +69,11 @@ services:
       #    daemon 按宿主路径解析 -v 的源,拿 /data 当源会在宿主根下凭空建一个空目录(看着在写,
       #    实则不进卷、down -v 删不掉、备份不到)。没放开 ②③ 时缓存落容器 /tmp,重启即失,
       #    启动日志会带一条 [projectcache] 告警说明这点。
+      # ④ 「配置资源」的磁盘副本走的也是同一条规则:构建节点把它按 target_path 只读挂进构建容器,
+      #    源路径同样由宿主 daemon 解析。所以要在容器内构建 + 勾选配置资源,PIPEWRIGHT_DATA_DIR
+      #    也必须是宿主与容器同路径的目录 —— 指到上面 ② 那条的子目录最省(共用同一条映射,
+      #    不必再加 volumes)。指到别处就得再补一条同名映射;留在默认的 /data 里则 docker 报
+      #    "bind source path does not exist",启动日志会带一条 [configprofile] 告警点出这一点。
       # - ${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}:${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}
     # 容器内的 localhost 是容器自己,不是宿主。要在 UI 里看**宿主机**的镜像列表 / 部署容器
     # (那两条路走 SSH 而非 socket),就把宿主登记成主机 host.docker.internal 的服务器。

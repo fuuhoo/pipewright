@@ -7,6 +7,9 @@
 # 这一层只做主文件里注释掉的那几件事:挂宿主 docker socket + 把工作区目录按**宿主与容器
 # 同路径**映射进去(容器内打包镜像的必要条件,原理见主文件 ②③ 段)。数据仍走具名卷。
 #
+# .env 里另有一行 PIPEWRIGHT_DATA_DIR 指到该工作区目录的 ./data 子目录:配置资源的磁盘副本要
+# 按同路径被宿主 daemon 看见才挂得进构建容器(主文件 ④),而 DB / 产物 / 仓库缓存照旧留在具名卷。
+#
 # 必须是 -docker 档镜像(带 docker CLI):.env 里 PIPEWRIGHT_VERSION=0.6.0-docker。
 # 挂 socket = 容器拿到宿主 root 级权限,只在本机这种信任环境开,别把这份覆盖层抄上生产。
 services:

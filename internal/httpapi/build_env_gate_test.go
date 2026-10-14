@@ -136,6 +136,58 @@ func TestSavePipeline_BuildEnvWhitelist(t *testing.T) {
 	}
 }
 
+// TestBuildEnvSnapshotMountFollowsDataDir 钉住「磁盘位置跟着当前 PIPEWRIGHT_DATA_DIR 走」。
+// 库里 file_path 存的是写入那一刻拼出的绝对路径;换过 dataDir 之后(内置行只在旧根 seed 过一次,
+// 永远不改写),照库里那条挂载指向的是一个不存在的副本 —— docker 会挂上一个空文件,构建以
+// 「配置文件是空的」这种看不出根因的方式失败。
+func TestBuildEnvSnapshotMountFollowsDataDir(t *testing.T) {
+	st := testStoreAuth(t)
+	bSvc := buildenv.NewService(buildenv.NewSQLiteRepo(st.DB))
+	env, err := bSvc.Create(&buildenv.BuildEnv{
+		Language: "node", Version: "20", DisplayName: "Node 20",
+		Image: "node:20-alpine", SourceType: buildenv.SourceOfficial, ImageCheckStatus: buildenv.StatusAvailable, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create build env: %v", err)
+	}
+	repo := configprofile.NewSQLiteRepo(st.DB)
+	oldDir, newDir := t.TempDir(), t.TempDir()
+	oldSvc := configprofile.NewService(repo, oldDir)
+	created, err := oldSvc.Create(&configprofile.ConfigProfile{
+		Language: "node", ConfigType: "npmrc", Name: "in-house",
+		TargetPath: "/root/.npmrc", Content: "registry=https://in-house.example", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create config profile: %v", err)
+	}
+	stored, err := oldSvc.GetByID(created.ID)
+	if err != nil {
+		t.Fatalf("reload profile: %v", err)
+	}
+	if !strings.HasPrefix(stored.FilePath, oldDir) {
+		t.Fatalf("夹具应让库里的快照指向旧根, got %q", stored.FilePath)
+	}
+
+	// 同一张表、换成新 dataDir(等价于改了 PIPEWRIGHT_DATA_DIR 重启)后解析出的挂载源。
+	snap, err := NewBuildEnvGate(bSvc, configprofile.NewService(repo, newDir)).Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	resolved, err := snap.ResolveJobEnv(map[string]any{
+		"buildEnvId": env.ID, "configProfileIds": created.ID,
+	}, "", "构建", "前端构建")
+	if err != nil {
+		t.Fatalf("ResolveJobEnv: %v", err)
+	}
+	if len(resolved.Mounts) != 1 {
+		t.Fatalf("应解析出 1 条挂载, got %+v", resolved.Mounts)
+	}
+	want := configprofile.ProfilePath(newDir, created.ID, ".npmrc")
+	if resolved.Mounts[0].HostPath != want {
+		t.Errorf("挂载源 = %q, want 当前根下的 %q(不该用库里的旧根快照)", resolved.Mounts[0].HostPath, want)
+	}
+}
+
 // TestSavePipeline_ServiceImageExempt 钉住豁免边界:阶段旁挂服务的镜像不经白名单
 // (被测件依赖 DB/redis,不是构建环境),手输仍要能通过保存。
 func TestSavePipeline_ServiceImageExempt(t *testing.T) {
