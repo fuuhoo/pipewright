@@ -87,7 +87,7 @@
 curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
 # 钉版本 / 自定义目录 / Linux 顺带自动装 Docker:
-VERSION=v0.6.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
+VERSION=v0.7.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
 # 运行(首次启动引导管理员;master key 用于凭据保险库)
@@ -120,6 +120,14 @@ PIPEWRIGHT_ADMIN_PASSWORD=change-me ./run.sh   # 默认监听 :8080;口令只在
 
 落点全在实例根(要换地方就显式传 `INSTALL_DIR`):`./pipewright` 二进制 · `./data/`(sqlite 库,`artifacts/ repos/ cache/ config_profiles/` 与它同级)· `./master.key`(0600)· `./pipewright.env`(0600,改端口/切 MySQL 都在这里,重装不覆盖)· `./run.sh` 启动器。数据路径一律写绝对路径,所以从别的目录拉起 `./run.sh` 也还认这一份库。与 `SETUP_SERVICE=1` 互斥(便携形态不写 systemd);整目录迁移时 `master.key` 务必同带,换 key 旧凭据无法解密。
 
+**连构建的临时工作区都收进这一个目录**:脚本生成的 `pipewright.env` 里没有 `TMPDIR`,而构建工作区是 `os.MkdirTemp` 建的、落点跟 `TMPDIR` 走(`internal/build/cloner.go:141`),所以不补就会写到系统 `/tmp`。手动加一行再重跑 `./run.sh` 即可:
+
+```bash
+echo "TMPDIR=$(pwd)/work/tmp" >> ./pipewright.env && mkdir -p ./work/tmp
+```
+
+项目依赖缓存不用管:进程形态默认就落在库同级的 `data/project-cache`(`internal/projectcache/root.go:46`)。补完在真机(CentOS 7)实测:进程打开的可写文件只剩本目录内的 `pipewright.db{,-wal,-shm}` 与日志,`/tmp`、`/var/tmp`、`~/.cache` 下没有任何 `pipewright*` 残留。唯一仍在目录外的是 docker 镜像本身 —— 构建指挥的是宿主 daemon,镜像落在 `/var/lib/docker`。
+
 > Windows 用户:到 [Releases](https://github.com/fuuhoo/pipewright/releases) 下载 `.zip`。
 
 ### ② docker compose(推荐自托管)
@@ -128,8 +136,12 @@ PIPEWRIGHT_ADMIN_PASSWORD=change-me ./run.sh   # 默认监听 :8080;口令只在
 curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/docker-compose.yml
 curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/.env.example
 cp .env.example .env       # 至少设 PIPEWRIGHT_ADMIN_PASSWORD,并 openssl rand -base64 32 填 MASTER_KEY
+docker login registry.cn-qingdao.aliyuncs.com   # ACR 上这两档是**私有**仓库,匿名拉直接 401
 docker compose up -d       # 数据持久化在具名卷 pipewright-data;切 MySQL 见 .env 注释
 ```
+
+> 登录这步别省:实测拿匿名 token 请求 `.../v2/fubin/pipewright/manifests/latest` 返回 HTTP 401,`docker compose up -d` 会卡在 `pull access denied`。ACR 的账号是**独立于阿里云账号密码**的「访问凭证 / 固定密码」,在容器镜像服务控制台设;只读拉取用 RAM 子账号即可。
+> 把 `PIPEWRIGHT_IMAGE` 换成 `ghcr.io/fuuhoo/pipewright` 时同样可能要登录(取决于那个包设成公开还是私有 —— 本仓库文档没实测过 ghcr 的匿名拉取,拉不到就先 `docker login ghcr.io`,用户名是你的 GitHub 用户名、密码用带 `read:packages` 的 PAT)。
 
 compose 文件本身只读这几个变量(平台自身的环境变量见下方[配置](#配置环境变量)表):
 
@@ -145,6 +157,8 @@ compose 文件本身只读这几个变量(平台自身的环境变量见下方[�
 
 数据(sqlite 库、制品库、代码管理区、构建依赖缓存)全落在容器 `/data`,由具名卷 `pipewright-data` 持久化。master key 一旦写入凭据就要长期保存 —— 换 key 会让已存凭据无法解密。
 
+想让数据就是一个能 `rsync` / 能直接看目录的文件夹,把上面那条卷挂载换成宿主 bind 即可(`- /srv/pipewright/data:/data`)。只有一个坑:**默认档以 nonroot(uid 65532)运行**,具名卷会继承镜像里 `/data` 的属主(`Dockerfile:72-74`),而宿主目录通常是 root 所有 —— 首启就会写不进 sqlite 库。要么先 `chown 65532:65532`,要么用 `-docker` 档(它刻意以 root 跑,因为要访问宿主 socket)。
+
 **例外**:项目依赖缓存**不**放 `/data`。它是被 `docker run -v` 挂进构建容器的,而 `-v` 的源路径由**宿主** daemon 解析 —— `/data` 在宿主上的真身是 `/var/lib/docker/volumes/pipewright-data/_data`,拿 `/data/...` 当源只会在宿主根下凭空建一个空目录。所以它跟着 `PIPEWRIGHT_WORK_DIR`(要求宿主同路径)走,详见下节。
 
 「配置资源」的磁盘副本(`PIPEWRIGHT_DATA_DIR` 下的 `config_profiles/`)是同一条规则的第二个受害者:勾上的资源是按 `target_path` 只读挂进构建容器的,路径只在容器里可见时,docker 现在会直接报 `bind source path does not exist`(而不是像过去那样挂进一个空目录,由 Maven 说句 `Is a directory`)。要在容器里构建又用配置资源,把 `PIPEWRIGHT_DATA_DIR` 指到 `PIPEWRIGHT_WORK_DIR/data` 即可 —— 共用那一条同路径映射。留默认值时启动日志会带一条 `[configprofile] 警告` 说明这点。
@@ -158,13 +172,23 @@ compose 文件本身只读这几个变量(平台自身的环境变量见下方[�
 
 两档都由 `.github/workflows/aliyun-image.yml` 出多架构镜像并发布到阿里云容器镜像服务(青岛),compose / `.env` 默认就拉它。推 `v*` tag 时 GoReleaser 另外把默认档发到 `ghcr.io/fuuhoo/pipewright`(`latest` / `<版本>`);ghcr 上没有 `-docker` 档 —— 要 `-docker` 就从 ACR 拉,或用根目录 `Dockerfile` 自行 `--target with-docker` 构建。默认档是刻意选的:最小攻击面;只有确实要在平台容器里构建/推镜像,才升 `-docker` 档。
 
-#### 让平台在容器里打包镜像(三处一起改,缺一不可)
+#### 让平台在容器里打包镜像(三处一起改,缺一不可;私有仓库再加第四处)
 
 1. `.env` 里换到 `-docker` 档:`PIPEWRIGHT_VERSION=latest-docker`(默认 `PIPEWRIGHT_IMAGE` 已经是 ACR,两档都有 —— 若换成 `ghcr.io/fuuhoo/pipewright`,ghcr 上没有 `-docker` 标签,会拉不到镜像);
 2. 放开 `docker-compose.yml` 的 `- /var/run/docker.sock:/var/run/docker.sock`。**挂 socket 等同授予容器宿主 root 级权限**,只在信任的自托管机器上开;
 3. 放开工作区目录的自绑定,并把 `TMPDIR` 指到同一目录 —— 三者的值都是 `.env` 里的 `PIPEWRIGHT_WORK_DIR`。
 
 第 3 步不是洁癖:script 节点跑隔离构建发的是 `docker run -v <工作区>:<挂载点>`,而 daemon 是**宿主**的 —— 它按宿主路径解析 `-v` 的源。路径不一致时 daemon 会在宿主凭空建一个空目录,构建拿到空工作区,症状是日志里全是 `no such file or directory` 而平台侧看着一切正常。`docker-compose.yml` 的 `volumes` 注释里有逐行说明。
+
+**用到私有镜像再加第 4 处**(基础镜像在自己的 ACR / Harbor 里,或 `pushImage` 推私有库)。挂上 socket 之后,构建与推送都是**容器内的 docker CLI** 发的,而它读的是**自己**那个 `~/.docker/config.json` —— 容器里那份是空的,宿主的登录态带不过来。实测症状不是「找不到镜像」而是每个私有镜像都 `denied` / `unauthorized: authentication required`,极易被误读成镜像不存在。修法是把宿主的凭证文件只读挂进去:
+
+```yaml
+volumes:
+  # 宿主是谁登录的,就挂谁的 config.json;:ro 是刻意的 —— 容器不该往宿主写凭据
+  - ${PIPEWRIGHT_HOST_DOCKER_CONFIG:-/root/.docker/config.json}:/root/.docker/config.json:ro
+```
+
+`-docker` 档以 root 运行,路径正好对上;`PIPEWRIGHT_HOST_DOCKER_CONFIG` 用于非 root 用户或自定义 `DOCKER_CONFIG` 的机器。只在默认档或非私有仓库时才不需要这一条,所以 `docker-compose.yml` 里它保持注释状态。
 
 起容器后一条命令验证是否真通(`-docker` 档有 shell,可以在容器里直接试):
 
@@ -260,6 +284,47 @@ docker run -d -p 8080:8080 -v pipewright-data:/data \
   registry.cn-qingdao.aliyuncs.com/fubin/pipewright:latest
 ```
 
+### ④ 内网机器:GitHub 与 Docker Hub 都不通
+
+这是一台 CentOS 7 内网机上跑通的路线(它到 `raw.githubusercontent.com`、`registry-1.docker.io`、`ghcr.io` 全部超时,到自己那台 ACR 通),按「平台本体 → 构建环境 → 源码 → 依赖」四层逐个解决。
+
+**平台本体**。compose 形态照 ② 走(默认仓库就是 ACR,先 `docker login`)。单机/便携形态下 Release 下不到,就从已经拉下来的镜像里把二进制取出来 —— 它是 `CGO_ENABLED=0` 的静态文件,CentOS 7 这类老系统直接跑得动:
+
+```bash
+D=/home/pipewright && mkdir -p $D/data $D/work/tmp
+cid=$(docker create registry.cn-qingdao.aliyuncs.com/fubin/pipewright:latest-docker)
+docker cp $cid:/pipewright $D/pipewright && docker rm -f $cid && chmod +x $D/pipewright
+```
+
+这套动作等于把 ① 便携形态里脚本自动做的事手工做一遍:`master.key` 生成一次(`openssl rand -base64 32 > master.key && chmod 600 master.key`,已有就别再动 —— 换了旧凭据解不开)、`pipewright.env` 手写 ① 列的那几行(记得带上 `TMPDIR`)、`run.sh` 照 ① 的启动器抄。
+
+**构建环境镜像**。预置清单写的是 Docker Hub 名(`node:26-alpine`、`golang:1.22-alpine`…,见 `internal/buildenv/seed.go`),离线机上一个都拉不到,症状是流水线第一个构建节点就报 pull 超时。两条路:
+
+- 把要用的镜像同步进自己的 ACR / Harbor,然后在 **设置 → 构建环境** 逐条改「镜像」地址;镜像多就在能上网的机器导出清单、批量改掉前缀再导入(构建环境支持导出 / 导入)。
+- 改完点列表页的「检查全部」(或选中若干条点「检查所选」):每条状态应变成「本地可用」(构建机上已有)或「可拉取」。**改过镜像地址的行会退回「未检查」,要检查通过才能启用**;仍是「不可用」的那条一被选中就会在构建节点失败。离线机上可以顺手点该页的「拉取」,把「可拉取」的镜像提前落到构建机,省掉流水线里那次注定超时的现场拉取。
+
+**源码仓库**。内网自建 Git 服务能用,但有两个硬条件,外加一条凭据上的别扭:
+
+- 传输必须是**智能 HTTP**(`git-http-backend` CGI)或 SSH。把裸仓库用静态文件方式分享出去(如 `python3 -m http.server` 挂 `--bare` 目录)属于 dumb HTTP,go-git 会直接拒成 `repo_unreachable`。
+- 地址不能填 `127.0.0.1` / `localhost` / `file://` —— 回环、链路本地(含云元数据 `169.254.169.254`)都在 SSRF 禁止区(`internal/giturl/giturl.go:145`),填了被判非法。**RFC1918 私网与内网域名是放行的**,所以填那台机器的内网 IP 或 DNS 名即可。
+- 仓库允许匿名拉取时,项目里仍旧要挂一条凭据:校验规则是「填了仓库地址就必须选凭据」(`internal/project/project.go:204-205`)。而保险库不收空 secret(`internal/vault/vault.go:215-216`),所以建一条 `git_token`、填个不会被用到的占位值即可 —— 匿名 HTTP 仓库不会真的把它带上。
+
+**依赖源**。npm / Maven / pip / Go 拉不到公网时,用 **设置 → 配置资源** 把 `.npmrc` / `settings.xml` / `pip.conf` 挂进构建容器(目标路径该页有芯片可点),`GOPROXY` 之类可以写进流水线命令或环境变量。容器形态下记得:配置资源的 `PIPEWRIGHT_DATA_DIR` 也必须宿主同路径,否则 docker 报 `bind source path does not exist`(见 ② 的 ④ 条注释)。
+
+### 部署完怎么确认这条路真通
+
+界面打得开不代表能用 —— 最容易坏的两件事(「构建拿不到工作区」「私有镜像拉不到」)都不会让平台自己报错。跑一条最小流水线,一次覆盖产物与镜像两条腿:
+
+1. 新建项目,仓库指向你的 git 地址(离线机按上一节);
+2. 流水线三段:**源** → **构建产物**(产物档,填构建命令与 `artifactPath`)→ **构建镜像**(镜像档,`pushImage` 关掉,`Dockerfile` 的 `FROM` 用构建机上**已有**的镜像,免得又去拉公网);
+3. 跑一次,运行详情页应出现**两条**产物:一条 `archive`(体积就是 `artifactPath` 打包结果)、一条 `image`;
+4. 在构建机上 `docker images | grep '^pipewright/'` —— 本地镜像命名规则是 `pipewright/<项目名 slug>:<提交短 sha>`(`internal/build/builder.go:35,462`)。看到它就说明镜像确实落在了宿主 daemon 里,而不是构建器空转;
+5. 回运行详情页下载那条 `archive`,能取回字节即产物存储可读。
+
+单机形态在本机直接构建,不需要先在「设置 → 服务器」登记自己;容器形态要能在容器里出镜像,得先按 ② 把 socket 等三处放开。
+
+实测参考值(CentOS 7 单机形态,只依赖标准库的 go 例子,基础镜像构建机上已有):`archive` 4763800 字节、本地图像 13185840 字节;冷跑 17 秒,同项目第二次 2 秒。这个例子不下载依赖,所以差值只反映克隆与打包的开销 —— 依赖型项目的冷暖差距看 `data/project-cache`(平台自带的每项目零配置缓存)。
+
 ### 从源码构建
 
 ```bash
@@ -274,6 +339,7 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 - **二进制部署**:点「立即更新」即自动下载新版 + 校验和核验 + 替换 + 重启(需对二进制文件有写权限;装在 `$HOME/.local/bin` 免 sudo,或用 `SETUP_SERVICE=1` 装的 root systemd 服务亦满足)。
 - **Docker 部署**:容器不替换自身镜像,按提示在宿主执行 `docker compose pull && docker compose up -d`(数据卷保留)。
 - **映射二进制的 compose 形态**(见上节):换 `./bin/pipewright` 那个文件再 `docker compose -f docker-compose.yml -f docker-compose.binary.yml restart`,不拉镜像;`curl :8080/version` 核对新版本号。
+- **便携 / 单机形态**(见 ①):二进制就在实例目录里、属主是你,所以「立即更新」的写权限条件天然满足;但它的下载仍旧走 GitHub Release —— 没有外网时按 ④ 从新版镜像 `docker cp` 出二进制覆盖 `./pipewright`,再重跑 `./run.sh`,`pipewright.db` 与 `master.key` 一个字节都不用动。
 
 ### 配置(环境变量)
 

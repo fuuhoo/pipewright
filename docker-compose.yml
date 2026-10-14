@@ -1,8 +1,11 @@
 # Pipewright 自托管 —— docker compose 一键起。
 #
 #   1. cp .env.example .env  并按注释填好(至少生成 PIPEWRIGHT_MASTER_KEY)
-#   2. docker compose up -d
-#   3. 打开 http://localhost:8080,用 admin / 你设的口令登录
+#   2. docker login registry.cn-qingdao.aliyuncs.com
+#      (ACR 上这两档是私有仓库,匿名拉直接 401;账号是容器镜像服务控制台里的「访问凭证」,
+#       不是阿里云登录密码。换 ghcr.io 且那个包是私有时同理要 login ghcr.io。)
+#   3. docker compose up -d
+#   4. 打开 http://localhost:8080,用 admin / 你设的口令登录
 #
 # 数据(sqlite 库 / 构建产物 / 仓库缓存)持久化在具名卷 pipewright-data(挂到容器 /data,
 # 镜像已将 /data 设为 nonroot 属主与工作目录)。master key 务必持久保存:换 key 旧凭据无法解密。
@@ -49,7 +52,7 @@ services:
       PIPEWRIGHT_DATA_DIR: ${PIPEWRIGHT_DATA_DIR:-}
     volumes:
       - pipewright-data:/data
-      # ---- 想让平台在容器里打包镜像?三行一起放开(缺一不可)----
+      # ---- 想让平台在容器里打包镜像?三行一起放开(缺一不可;用到私有仓库再加下面的 ⑤)----
       # 前提:用 <版本>-docker 档镜像(默认 distroless 档里没有 docker CLI,放开下面三行也没用)。
       #
       # ① 宿主 Docker socket:平台的构建器是在进程内 exec 容器 CLI(internal/build/driver.go),
@@ -74,6 +77,12 @@ services:
       #    也必须是宿主与容器同路径的目录 —— 指到上面 ② 那条的子目录最省(共用同一条映射,
       #    不必再加 volumes)。指到别处就得再补一条同名映射;留在默认的 /data 里则 docker 报
       #    "bind source path does not exist",启动日志会带一条 [configprofile] 告警点出这一点。
+      # ⑤ 仅当基础镜像 / 推送目标在**私有仓库**时才需要:构建与推送都是容器内的 docker CLI 发的,
+      #    它读的是容器自己的 ~/.docker/config.json —— 那份是空的,宿主的登录态带不过来。不挂的
+      #    症状是每个私有镜像都 denied / unauthorized: authentication required(极易误读成镜像
+      #    不存在)。把宿主那份**只读**挂进来;-docker 档以 root 运行所以路径是 /root/...,非 root
+      #    或自定义 DOCKER_CONFIG 的机器把 PIPEWRIGHT_HOST_DOCKER_CONFIG 指过去。
+      # - ${PIPEWRIGHT_HOST_DOCKER_CONFIG:-/root/.docker/config.json}:/root/.docker/config.json:ro
       # - ${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}:${PIPEWRIGHT_WORK_DIR:?仅容器内构建才需要}
     # 容器内的 localhost 是容器自己,不是宿主。要在 UI 里看**宿主机**的镜像列表 / 部署容器
     # (那两条路走 SSH 而非 socket),就把宿主登记成主机 host.docker.internal 的服务器。

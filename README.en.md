@@ -87,7 +87,7 @@ Downloads the static binary for your platform from GitHub Releases and installs 
 curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
 # Pin a version / custom dir / auto-install Docker on Linux too:
-VERSION=v0.6.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
+VERSION=v0.7.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
 # Run (first launch bootstraps the admin; master key is for the credential vault)
@@ -120,6 +120,14 @@ PIPEWRIGHT_ADMIN_PASSWORD=change-me ./run.sh   # listens on :8080; the password 
 
 Everything sits under the instance root (pass `INSTALL_DIR` to put it elsewhere): `./pipewright` binary · `./data/` (SQLite DB, with `artifacts/ repos/ cache/ config_profiles/` alongside it) · `./master.key` (0600) · `./pipewright.env` (0600 — change the port or switch to MySQL here; reinstalling never overwrites it) · `./run.sh` launcher. All data paths are written absolute, so launching `./run.sh` from another directory still opens the same database. Mutually exclusive with `SETUP_SERVICE=1` (portable mode writes no systemd unit); when migrating, always bring `master.key` along — a new key makes existing credentials undecryptable.
 
+**To keep even the throwaway build workspaces inside that one directory**, add `TMPDIR` yourself: the generated `pipewright.env` does not contain it, while workspaces are created by `os.MkdirTemp`, which follows `TMPDIR` (`internal/build/cloner.go:141`) — without it they land in the system `/tmp`.
+
+```bash
+echo "TMPDIR=$(pwd)/work/tmp" >> ./pipewright.env && mkdir -p ./work/tmp
+```
+
+The dependency cache needs no extra step: in process form it defaults to `data/project-cache` next to the DB (`internal/projectcache/root.go:46`). Measured on the box where we did this (CentOS 7): after the change the only writable files the process holds are `pipewright.db{,-wal,-shm}` and its log inside the instance directory, and nothing matching `pipewright*` remains under `/tmp`, `/var/tmp` or `~/.cache`. The only thing still outside is docker itself — builds drive the host daemon, so images live in `/var/lib/docker`.
+
 > Windows users: download the `.zip` from [Releases](https://github.com/fuuhoo/pipewright/releases).
 
 ### ② docker compose (recommended for self-hosting)
@@ -128,8 +136,12 @@ Everything sits under the instance root (pass `INSTALL_DIR` to put it elsewhere)
 curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/docker-compose.yml
 curl -fsSLO https://raw.githubusercontent.com/fuuhoo/pipewright/master/.env.example
 cp .env.example .env       # at minimum set PIPEWRIGHT_ADMIN_PASSWORD, and openssl rand -base64 32 for MASTER_KEY
+docker login registry.cn-qingdao.aliyuncs.com   # both ACR tags are in a **private** repo — an anonymous pull gets 401
 docker compose up -d       # data persists in the named volume pipewright-data; see .env comments to switch to MySQL
 ```
+
+> Do not skip the login: requesting `.../v2/fubin/pipewright/manifests/latest` with an anonymous token returns HTTP 401, so `docker compose up -d` stalls on `pull access denied`. The ACR credentials are the **access credentials / fixed password** you set in the Container Registry console — *not* your Aliyun account password; a read-only RAM user is enough.
+> Switching `PIPEWRIGHT_IMAGE` to `ghcr.io/fuuhoo/pipewright` may require a login too, depending on whether that package is public or private (we have not tested an anonymous ghcr pull; if the pull fails, `docker login ghcr.io` with your GitHub username and a PAT scoped `read:packages`).
 
 The compose file itself only reads these (the app's own variables are in the [configuration](#configuration-environment-variables) table below):
 
@@ -145,6 +157,8 @@ The compose file itself only reads these (the app's own variables are in the [co
 
 Everything the app stores (SQLite DB, artifact library, repo cache, build dependency cache) lives under `/data` in the container, persisted by the named volume `pipewright-data`. Keep the master key forever once credentials exist — rotating it makes stored credentials undecryptable.
 
+If you would rather have a plain directory you can `rsync` or browse, replace that volume with a bind (`- /srv/pipewright/data:/data`). One catch: **the default tier runs as non-root (uid 65532)** — a named volume inherits the owner of `/data` baked into the image (`Dockerfile:72-74`), whereas a host directory is normally root-owned, so the very first start cannot write the SQLite DB. Either `chown 65532:65532` it, or use the `-docker` tier (which runs as root on purpose, because it needs the host socket).
+
 **One exception**: the per-project dependency cache does **not** live under `/data`. It is bind-mounted into build containers via `docker run -v`, and the source path of `-v` is resolved by the **host** daemon — `/data` on the host is really `/var/lib/docker/volumes/pipewright-data/_data`, so using `/data/...` as the source would just create an empty directory at the host root. It therefore follows `PIPEWRIGHT_WORK_DIR` (the one path that must exist at the same absolute location on host and container); see the next section.
 
 Config-profile files (`config_profiles/` under `PIPEWRIGHT_DATA_DIR`) are the second casualty of the same rule: a ticked profile is bind-mounted read-only at its `target_path`, and when that path only exists inside the container docker now fails loudly with `bind source path does not exist` — instead of the old behaviour of mounting an empty directory and letting Maven complain `Is a directory`. Point `PIPEWRIGHT_DATA_DIR` at `PIPEWRIGHT_WORK_DIR/data` to share that one same-path bind. Leaving the default logs a `[configprofile]` warning at startup saying exactly this.
@@ -158,13 +172,24 @@ Config-profile files (`config_profiles/` under `PIPEWRIGHT_DATA_DIR`) are the se
 
 CI publishes both tiers as multi-arch images to Aliyun Container Registry (Qingdao) via `.github/workflows/aliyun-image.yml` — that is also what `docker-compose.yml` and `.env.example` default to. GoReleaser additionally publishes the default tier to `ghcr.io/fuuhoo/pipewright` (`latest` / `<version>`) when you push a `v*` tag; ghcr ships no `-docker` tier, so pull `-docker` from ACR, or build it yourself from the root `Dockerfile` with `--target with-docker`. The default tier is deliberate: smallest attack surface. Upgrade to `-docker` only if the platform really has to build/push images from inside its own container.
 
-#### Let the platform build images inside its container (change all three, none optional)
+#### Let the platform build images inside its container (change all three, none optional — plus a fourth for private registries)
 
 1. switch `.env` to the `-docker` tier: `PIPEWRIGHT_VERSION=latest-docker` (the default `PIPEWRIGHT_IMAGE` is already ACR, which has both tiers — if you set it to `ghcr.io/fuuhoo/pipewright`, ghcr has no `-docker` tag and the pull will fail);
 2. uncomment `- /var/run/docker.sock:/var/run/docker.sock` in `docker-compose.yml`. **Mounting the socket is equivalent to granting the container root-level access to the host** — only do it on a machine you trust;
 3. uncomment the workspace self-bind and point `TMPDIR` at the same directory — all three values come from `PIPEWRIGHT_WORK_DIR` in `.env`.
 
 Step 3 is not busywork: an isolated script-job build issues `docker run -v <workspace>:<mount>`, and the daemon is the **host's** — it resolves the `-v` source as a host path. When the paths differ the daemon silently creates an empty directory on the host and the build gets an empty workspace; the symptom is a log full of `no such file or directory` while the platform looks healthy. The `volumes` comments in `docker-compose.yml` spell it out line by line.
+
+**Add a fourth change only when private images are involved** (your base images live in your own ACR / Harbor, or `pushImage` targets a private registry). Once the socket is mounted, builds and pushes are issued by the **docker CLI inside the container**, which reads *its own* `~/.docker/config.json` — and that file is empty, so the host's login state does not carry over. The measured symptom is not "image not found" but `denied` / `unauthorized: authentication required` for every private image, which is easy to misread as the tag not existing. Fix: bind the host credential file in read-only.
+
+```yaml
+volumes:
+  # whichever user logged in on the host decides the source path; :ro is deliberate —
+  # the container has no business writing credentials to the host
+  - ${PIPEWRIGHT_HOST_DOCKER_CONFIG:-/root/.docker/config.json}:/root/.docker/config.json:ro
+```
+
+The `-docker` tier runs as root, so the path lines up; set `PIPEWRIGHT_HOST_DOCKER_CONFIG` on machines where you logged in as another user or use a custom `DOCKER_CONFIG`. This is unnecessary on the default tier or with public registries, which is why the line stays commented out in `docker-compose.yml`.
 
 One command proves it works (the `-docker` tier has a shell):
 
@@ -261,6 +286,47 @@ docker run -d -p 8080:8080 -v pipewright-data:/data \
   registry.cn-qingdao.aliyuncs.com/fubin/pipewright:latest
 ```
 
+### ④ Air-gapped hosts: no GitHub, no Docker Hub
+
+This is the route we actually got green on a CentOS 7 box inside a private network (it times out against `raw.githubusercontent.com`, `registry-1.docker.io` and `ghcr.io`, while its own ACR is reachable). Work through four layers: the platform binary, the build-environment images, the source repo, then dependencies.
+
+**The platform itself.** The compose form follows ② (the default registry is already ACR — just `docker login`). For the portable form, when Releases are unreachable, lift the binary out of an image you already pulled — it is a `CGO_ENABLED=0` static file and runs fine on old systems like CentOS 7:
+
+```bash
+D=/home/pipewright && mkdir -p $D/data $D/work/tmp
+cid=$(docker create registry.cn-qingdao.aliyuncs.com/fubin/pipewright:latest-docker)
+docker cp $cid:/pipewright $D/pipewright && docker rm -f $cid && chmod +x $D/pipewright
+```
+
+This is ①'s portable form done by hand instead of by the script: generate `master.key` once (`openssl rand -base64 32 > master.key && chmod 600 master.key` — never regenerate it once credentials exist), write the `pipewright.env` lines listed in ① (include `TMPDIR`), and copy the `run.sh` launcher from ①.
+
+**Build-environment images.** The preset catalogue ships Docker Hub names (`node:26-alpine`, `golang:1.22-alpine`, … see `internal/buildenv/seed.go`), which an air-gapped host cannot pull at all — the first build node fails on a pull timeout. Two options:
+
+- Sync the images you need into your own ACR / Harbor, then edit the **image** field per row under **Settings → Build environments**; with many rows, export the catalogue on a connected machine, rewrite the prefix in bulk and import it back (build environments support export / import).
+- Afterwards use **Check all** on that page (or select rows and use **Check selected**): each row should read **Available (local)** (already on the build machine) or **Pullable**. **A row whose image address you just edited drops back to "Unchecked" and can only be enabled after a successful check**; anything still marked **Unavailable** will fail the moment a job picks it. On an air-gapped host, use the page's **Pull** action to land Pullable images on the build machine ahead of time, sparing the pipeline a pull that would only time out.
+
+**The source repository.** Self-hosted Git works, under two hard conditions plus one credential quirk:
+
+- The transport must be **smart HTTP** (`git-http-backend` CGI) or SSH. Serving a bare repo as static files (e.g. `python3 -m http.server` over a `--bare` directory) is dumb HTTP, which go-git rejects as `repo_unreachable`.
+- The URL cannot be `127.0.0.1` / `localhost` / `file://` — loopback, link-local (including the cloud metadata address `169.254.169.254`) fall in the SSRF blocklist (`internal/giturl/giturl.go:145`) and are rejected. **RFC1918 space and internal DNS names are allowed**, so use that machine's LAN IP or hostname.
+- Even an anonymously pullable repository needs a credential attached — validation requires one whenever a repo URL is set (`internal/project/project.go:204-205`). The vault rejects an empty secret (`internal/vault/vault.go:215-216`), so create a `git_token` with any placeholder value that will never be used; an anonymous HTTP repo never carries it along.
+
+**Dependency sources.** When npm / Maven / pip / Go cannot reach the public internet, mount `.npmrc` / `settings.xml` / `pip.conf` into the build container via **Settings → Config profiles** (that dialog offers the common target paths as chips), and put things like `GOPROXY` into the pipeline command or environment. In the container form remember that config profiles also need `PIPEWRIGHT_DATA_DIR` to be a host-same-path directory, otherwise docker reports `bind source path does not exist` (see note ④ in the `volumes` block of `docker-compose.yml`).
+
+### After deploying: prove the path actually works
+
+A reachable UI does not mean the platform works — the two things most likely to be broken ("builds get an empty workspace", "private images cannot be pulled") never make the platform itself report an error. Run one minimal pipeline that covers both legs, artifact and image:
+
+1. Create a project pointing at your git URL (on an air-gapped host, per the section above);
+2. Build a three-node pipeline: **source** → **build artifact** (artifact tier: build command plus `artifactPath`) → **build image** (image tier, `pushImage` off, and a `Dockerfile` whose `FROM` is an image already present on the build machine, so nothing has to be pulled from the public internet);
+3. Run it. The run detail page should list **two** artifacts: an `archive` (its size is the packed `artifactPath`) and an `image`;
+4. On the build machine run `docker images | grep '^pipewright/'` — local images are named `pipewright/<project slug>:<short commit>` (`internal/build/builder.go:35,462`). Seeing it proves the image really landed in the host daemon instead of the builder spinning its wheels;
+5. Back on the run page, download that `archive` — getting bytes back means the artifact store is readable.
+
+The standalone form builds on its own machine without registering it under **Settings → Servers**; the container form needs the three socket/workspace changes from ② first.
+
+Reference numbers from the actual run (CentOS 7, standalone form, a Go example that only uses the standard library, base image already present on the build machine): `archive` 4,763,800 bytes, local image 13,185,840 bytes; the cold run took 17 seconds and the second run of the same project 2 seconds. That example downloads no dependencies, so the gap only reflects clone and packaging overhead — for dependency-heavy projects the warm/cold difference lives in `data/project-cache` (the platform's zero-config per-project cache).
+
 ### Build from source
 
 ```bash
@@ -275,6 +341,7 @@ Open **Settings → System** and click "Check for updates" to query the latest r
 - **Binary deployment**: click "Update now" to auto-download the new version + verify checksum + replace + restart (requires write permission to the binary file; installing to `$HOME/.local/bin` avoids sudo, and a root systemd service installed via `SETUP_SERVICE=1` also satisfies this).
 - **Docker deployment**: the container doesn't replace its own image; follow the prompt to run `docker compose pull && docker compose up -d` on the host (the data volume is preserved).
 - **Compose with a mounted binary** (see the section above): replace `./bin/pipewright`, then `docker compose -f docker-compose.yml -f docker-compose.binary.yml restart` — no image pull; confirm with `curl :8080/version`.
+- **Portable / standalone form** (see ①): the binary sits in your instance directory and belongs to you, so "Update now" always meets its write-permission condition — but the download still goes to GitHub Releases. With no external network, follow ④: `docker cp` the binary out of the new image over `./pipewright` and re-run `./run.sh`; neither `pipewright.db` nor `master.key` has to move.
 
 ### Configuration (environment variables)
 
