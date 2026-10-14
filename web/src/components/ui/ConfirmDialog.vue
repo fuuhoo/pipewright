@@ -242,6 +242,8 @@ function doConfirm() {
   color: var(--color-dim);
   line-height: 1.6;
 }
+/* 确认正文里的换行是有意写的(带清单的确认框用它逐条列体积),默认 HTML 会把整段挤成一行。 */
+.cfm-dialog__body p { white-space: pre-line; }
 
 /* Type-to-confirm */
 .cfm-dialog__type-field {

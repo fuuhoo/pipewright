@@ -42,18 +42,22 @@ const (
 	ActionProjectCreate      = "project_create"
 	ActionProjectUpdate      = "project_update"
 	ActionProjectDelete      = "project_delete"
-	ActionRunTriggerManual   = "run_trigger_manual"
-	ActionPasswordChange     = "password_change"
-	ActionSessionRevoke      = "session_revoke"
-	ActionServiceOp          = "service_op"
-	ActionContainerCreate    = "container_create"
-	ActionImageOp            = "image_op"
-	ActionStackOp            = "stack_op"
-	ActionVolumeOp           = "volume_op"
-	ActionNetworkOp          = "network_op"
-	ActionSystemPrune        = "system_prune"
-	ActionContainerTerminal  = "container_terminal"
-	ActionServerTerminal     = "server_terminal"
+	// ActionProjectCacheClear 清除项目的本地磁盘缓存(代码镜像 / 项目依赖缓存)。
+	// 单列一个动作而不是塞进 project_update:它不改任何库内配置,改的是磁盘上的缓存目录,
+	// 事后要看的是「谁在什么时候把谁的依赖清空了」(清错会让下一次构建慢很久)。
+	ActionProjectCacheClear = "project_cache_clear"
+	ActionRunTriggerManual  = "run_trigger_manual"
+	ActionPasswordChange    = "password_change"
+	ActionSessionRevoke     = "session_revoke"
+	ActionServiceOp         = "service_op"
+	ActionContainerCreate   = "container_create"
+	ActionImageOp           = "image_op"
+	ActionStackOp           = "stack_op"
+	ActionVolumeOp          = "volume_op"
+	ActionNetworkOp         = "network_op"
+	ActionSystemPrune       = "system_prune"
+	ActionContainerTerminal = "container_terminal"
+	ActionServerTerminal    = "server_terminal"
 	// ActionServerCommand 是远程终端里 shell 真正执行掉的一条命令(远端提示符钩子回报,机制见
 	// internal/httpapi/terminal_recorder.go)。开终端那一行只说明「谁连上了哪台机」,事后追责
 	// 要看的是连上之后干了什么 —— 一条命令一行,按 session 串得起来。

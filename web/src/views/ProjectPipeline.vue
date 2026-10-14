@@ -26,6 +26,7 @@ import { HttpError } from '../api/http'
 import PipelineCanvas from '../components/pipeline/PipelineCanvas.vue'
 import { canonicalJobType } from '../components/pipeline/jobConfigSchema'
 import VarsCacheTab from '../components/pipeline/VarsCacheTab.vue'
+import ProjectCacheCard from '../components/pipeline/ProjectCacheCard.vue'
 import EnvCredsTab from '../components/pipeline/EnvCredsTab.vue'
 import TriggersPanel from '../components/TriggersPanel.vue'
 import ValidationPanel from '../components/pipeline/ValidationPanel.vue'
@@ -709,6 +710,13 @@ async function togglePrStatus(next: boolean): Promise<void> {
             :credentials="credentials"
             :disabled="saveSubmitting"
             @update="handleBuildUpdate"
+          />
+
+          <!-- 本机磁盘上属于这个项目的缓存:怀疑「没拉到最新代码 / 私服还是旧包」时在这里核对并清掉。
+               列体积要遍历缓存目录,所以只在打开这一页时才挂载。 -->
+          <ProjectCacheCard
+            v-if="activeTab === 'vars'"
+            :project-id="projectId"
           />
         </div>
 

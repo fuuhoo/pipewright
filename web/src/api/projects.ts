@@ -149,3 +149,54 @@ export async function previewPacConfig(id: string, ref?: string): Promise<PacPre
   const qs = ref && ref.trim() ? `?ref=${encodeURIComponent(ref.trim())}` : ''
   return http.get<PacPreviewResult>(`/api/projects/${id}/pac/preview${qs}`)
 }
+
+/**
+ * 项目本地磁盘缓存(GET /api/projects/{id}/cache)。
+ *
+ * 两处按项目分格的缓存:
+ *   - repo:代码管理区的 bare 镜像(构建只增量 fetch,怀疑和远程不一致时要能重来)
+ *   - deps:每项目固定依赖缓存(Maven 的 .m2 里存着 SNAPSHOT,私服重发过也可能拿到旧的那份)
+ *
+ * 未启用那一处(启动时 PIPEWRIGHT_NO_REPO_CACHE / PIPEWRIGHT_NO_PROJECT_CACHE)不会出现在 items 里。
+ */
+export type CacheKind = 'repo' | 'deps'
+
+export interface ProjectCacheItem {
+  kind: CacheKind | string
+  path: string
+  bytes: number
+  exists: boolean
+}
+
+export interface ProjectCacheInfo {
+  items: ProjectCacheItem[]
+  totalBytes: number
+}
+
+/** 清除结果:bytes 是删除前的体积 = 本次释放量;existed=false 表示原本就是空的。 */
+export interface ClearedCacheItem {
+  kind: CacheKind | string
+  path: string
+  bytes: number
+  existed: boolean
+}
+
+export interface ClearedCacheResult {
+  items: ClearedCacheItem[]
+  totalBytes: number
+}
+
+export async function getProjectCache(id: string): Promise<ProjectCacheInfo> {
+  return http.get<ProjectCacheInfo>(`/api/projects/${encodeURIComponent(id)}/cache`)
+}
+
+/**
+ * 清除项目本地缓存。kinds 省略 = 清本实例启用的全部。
+ * 该项目正在构建时服务端回 409(cache_busy);未绑仓库偏要清 repo 回 400(repo_not_bound)。
+ */
+export async function clearProjectCache(id: string, kinds?: string[]): Promise<ClearedCacheResult> {
+  return http.post<ClearedCacheResult>(
+    `/api/projects/${encodeURIComponent(id)}/cache/clear`,
+    kinds && kinds.length ? { kinds } : {},
+  )
+}

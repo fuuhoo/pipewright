@@ -35,8 +35,10 @@ import (
 	"github.com/fuuhoo/pipewright/internal/oauth"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/projectcache"
 	"github.com/fuuhoo/pipewright/internal/promotion"
 	"github.com/fuuhoo/pipewright/internal/proxy"
+	"github.com/fuuhoo/pipewright/internal/repocache"
 	"github.com/fuuhoo/pipewright/internal/retention"
 	"github.com/fuuhoo/pipewright/internal/role"
 	"github.com/fuuhoo/pipewright/internal/run"
@@ -86,8 +88,10 @@ type options struct {
 	runDiffer        ai.RunDiffer
 	sourceReader     SourceReader
 	refsLister       RefsLister
-	runnerConfig     runner.Service
-	servers          target.Service
+	// projectCache 是「清除项目本地缓存」端点看得到的两处磁盘底盘(代码镜像 + 项目依赖缓存)。
+	projectCache cacheStoreSet
+	runnerConfig runner.Service
+	servers      target.Service
 	// kubeClusters 是「集群目标」这一条腿(K8s 发布直连 API server,不经目标机 SSH)。
 	kubeClusters    kube.Service
 	notifications   notify.Service
@@ -353,6 +357,24 @@ func WithSource(reader SourceReader) Option {
 // WithRefs 注入「列仓库分支/tag」能力(代码管理区 repocache;Story 8-18)。nil → 端点 503。
 func WithRefs(lister RefsLister) Option {
 	return func(o *options) { o.refsLister = lister }
+}
+
+// WithProjectCache 注入项目本地缓存的两处底盘:代码管理区的仓库镜像与每项目依赖缓存。
+// 任一为 nil = 本实例没启用那一处(该类别不进清单、点名清除它 → 400);两处都 nil → 503。
+//
+// 参数收具体类型而不是接口,是为了让调用方(main)能直接把自己那两个可能为 nil 的变量传进来:
+// 传进接口参数会得到「非 nil 接口 + nil 指针」,端点就会把根本没启用的那处也列出来。
+// 为什么要显式注入而不是在 httpapi 里自己构造:缓存根目录的推导(容器形态要宿主同路径)只在
+// cmd/pipewright 做过一次,执行链路和清除链路必须看到同一个根,否则清的不是构建在用的那份。
+func WithProjectCache(mirrors *repocache.Cache, deps *projectcache.Layout) Option {
+	set := cacheStoreSet{}
+	if mirrors != nil {
+		set.mirrors = mirrors
+	}
+	if deps != nil {
+		set.deps = deps
+	}
+	return func(o *options) { o.projectCache = set }
 }
 
 // WithRunnerConfig 注入项目「远程构建 runner」配置服务(FR-8-14 续)。nil → 端点 503。
@@ -824,6 +846,12 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 列仓库分支/tag(代码管理区 · Story 8-18):供前端触发时分支/commit 下拉。o.refsLister 为 nil → 503。
 		ar.Get("/projects/{id}/refs", makeListRefsHandler(p, v, o.refsLister))
 		ar.Get("/projects/{id}/commits", makeListCommitsHandler(p, v, o.refsLister))
+
+		// 项目本地缓存:列体积 + 一键清除(代码镜像 / 项目依赖缓存)。GET 只读;POST 是写方法 →
+		// 过 auth + CSRF,并被 accessGuardMiddleware 按 URL 认成项目资源判 ActOperate。
+		// 两处底盘都没注入 → 503。清除逐类记一条审计(project_cache_clear)。
+		ar.Get("/projects/{id}/cache", makeGetProjectCacheHandler(p, o.projectCache))
+		ar.Post("/projects/{id}/cache/clear", makeClearProjectCacheHandler(p, o.projectCache, aud, authn))
 		// 显式同步仓库(refs sync):用户在前端点「⟳ 同步远程」时调用,触发 repocache 增量 fetch + 回读,
 		// 让远程刚 push 的新分支/新 tag 立刻出现在下拉里。POST 命中写方法 → 过 auth + CSRF(上层 middleware 已统一罩住);
 		// handler 内部按结果记 audit(NFR-8:写操作的任何尝试均留痕)。o.refsLister 为 nil → 503。
