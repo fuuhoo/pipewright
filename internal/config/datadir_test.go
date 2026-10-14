@@ -72,6 +72,53 @@ func TestDataDirVisibilityWarningIsActionable(t *testing.T) {
 	}
 }
 
+// 172.17.4.75(CentOS 7,/home 独立卷)实机 `cat /proc/self/mountinfo` 抄来的两条:
+// 同路径映射的工作区,和一条路径不一致的宿主 bind(/data)。前者的 root 只是源文件系统内的子路径,
+// 少了宿主那层 /home 前缀 —— 早先版本据此判定「宿主看不见」,对这类最普通的 RHEL 分区布局误报。
+const centosHomeMountinfo = `706 649 253:2 /base/docker-pipewright/data /data rw,relatime - xfs /dev/mapper/centos-home rw,seclabel,attr2
+712 649 253:2 /base/docker-pipewright/work /home/base/docker-pipewright/work rw,relatime - xfs /dev/mapper/centos-home rw,seclabel,attr2`
+
+func TestDataDirVisibilityCentosHome(t *testing.T) {
+	cases := []struct {
+		name, path, want string
+	}{
+		{
+			name: "独立 /home 卷上的同路径映射不告警",
+			path: "/home/base/docker-pipewright/work/data",
+		},
+		{
+			name: "挂载点自身也不告警",
+			path: "/home/base/docker-pipewright/work",
+		},
+		{
+			// 宿主真身是 /home/base/docker-pipewright/data,容器里却叫 /data:daemon 按 /data 解析落空。
+			name: "宿主与容器路径不一致仍要告警",
+			path: "/data/config_profiles",
+			want: "PIPEWRIGHT_DATA_DIR=/data/config_profiles",
+		},
+	}
+	for _, c := range cases {
+		got := dataDirVisibility(c.path, centosHomeMountinfo)
+		if c.want == "" {
+			if got != "" {
+				t.Errorf("%s:不该告警,实际 = %q", c.name, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s:告警应含 %q,实际 = %q", c.name, c.want, got)
+		}
+	}
+}
+
+// 尾缀对齐要按路径段,否则 /fooobar 会被当成 /foo + /bar 的同路径映射。
+func TestHostSamePathSegmentBoundary(t *testing.T) {
+	info := `900 649 253:2 /bar /fooobar rw,relatime - xfs /dev/mapper/vg rw`
+	if got := dataDirVisibility("/fooobar/data", info); !strings.Contains(got, "PIPEWRIGHT_DATA_DIR=/fooobar/data") {
+		t.Errorf("段边界不对齐时应告警,实际 = %q", got)
+	}
+}
+
 func TestParseMountinfoLine(t *testing.T) {
 	c, ok := parseMountinfoLine(`438 424 0:36 /host/a\040b /ctr/a\040b rw,relatime - virtiofs mac rw`)
 	if !ok {

@@ -6,8 +6,9 @@
 // 「文件在」恰恰可能等于「只有容器看得见」(典型:/data 是具名卷,宿主真身在 volumes/.../_data 下)。
 // 那种情况挂载会被 daemon 硬拒,失败点在构建日志里,离配置动作隔着一次运行 —— 所以启动时就说明白。
 //
-// 判据取自 /proc/self/mountinfo:覆盖该目录的那条挂载,只有「挂载点 = 源子路径」才意味着宿主上
-// 存在同一路径(compose 的同路径 bind 正是这种形态,PIPEWRIGHT_WORK_DIR 的约定同理)。任何信息不足
+// 判据取自 /proc/self/mountinfo:覆盖该目录的那条挂载,只有能从挂载点与源子路径推出「宿主上同一
+// 路径存在」才放行(compose 的同路径 bind 正是这种形态,PIPEWRIGHT_WORK_DIR 的约定同理;源文件系统
+// 自己挂在宿主某个前缀下时会多出一段前缀,见 hostSamePath)。任何信息不足
 // (非容器形态 / 没挂 socket / mountinfo 读不到)一律返回空串,绝不做可能误伤健康部署的破坏性判断。
 package config
 
@@ -78,16 +79,31 @@ type mountCover struct {
 
 // hostSamePath 报告「容器里这个路径在宿主上也存在且同路径」。
 //   - 根挂载(overlay/tmpfs 等容器自己的文件系统)显然不是宿主路径;
-//   - 具名卷与「宿主 A → 容器 B」的 bind 都是 root != mountpoint,daemon 按 B 解析必然落空;
-//   - 只有同路径 bind 才是 root == mountpoint 且不是 /。
+//   - 具名卷与「宿主 A → 容器 B」的 bind 都推不出同路径,daemon 按 B 解析必然落空;
+//   - 同路径 bind 是 root == mountpoint。
+//
+// root 不是宿主绝对路径,而是**源文件系统内部**的子路径 —— 宿主把那个文件系统自己挂在某个前缀下,
+// 再从中间挑一段 bind 进容器。RHEL/CentOS 默认把 /home 单独划一个卷,同路径映射就会呈现
+// 「mountpoint = 宿主前缀(/home) + root(/base/x/work)」这种形态:容器路径与宿主路径仍然一致,
+// daemon 解析得到。逐段比对才算对齐,否则 /fooobar 会被当成 /foo + /bar 的同路径映射。
 func (m mountCover) hostSamePath() bool {
-	if m.mountpoint == "/" || m.mountpoint == "" {
+	if m.mountpoint == "/" || m.mountpoint == "" || m.root == "/" || m.root == "" {
 		return false
 	}
 	if m.fstype == "overlay" || m.fstype == "tmpfs" {
 		return false
 	}
-	return m.root == m.mountpoint
+	ms := strings.Split(strings.Trim(m.mountpoint, "/"), "/")
+	rs := strings.Split(strings.Trim(m.root, "/"), "/")
+	if len(rs) > len(ms) {
+		return false
+	}
+	for i, seg := range rs {
+		if ms[len(ms)-len(rs)+i] != seg {
+			return false
+		}
+	}
+	return true
 }
 
 // coveringMount 在 mountinfo 文本里找覆盖 path 的最长挂载点(即真正生效的那层挂载)。
