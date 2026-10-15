@@ -122,6 +122,85 @@ func makeChangePasswordHandler(svc accountService, aud audit.Recorder) http.Hand
 	}
 }
 
+// profileDTO 是本地档案的响应体(camelCase;只回归一化后的两列)。
+type profileDTO struct {
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+}
+
+// makeUpdateProfileHandler 返回 POST /api/account/profile handler(认证 + CSRF)。
+//
+// 本人改「本地档案」(users.display_name / email,迁移 0069):显示名给顶栏与账户页用,
+// 为空时前端回退到用户名。改的是本地值而不是 user_identities 里的平台快照 —— 后者每次
+// 登录都会被平台覆盖,把昵称写在那儿等于下次登录就丢。
+//
+// 只允许改自己:别人的档案归「用户管理」的 PATCH 端点管,那条路有管理员鉴权和不同的审计动作。
+// 成功后回服务端归一化后的值(空白折叠、按 rune 截断都可能改掉提交内容),前端据此回显。
+func makeUpdateProfileHandler(us *users.Service, aud audit.Recorder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if us == nil {
+			writeError(w, http.StatusServiceUnavailable, "users_unavailable", "用户服务未初始化")
+			return
+		}
+		id := currentUserIDFromRequest(r)
+		if id == "" {
+			// 0053 之前签发的旧会话没有 user_id:档案写不到确定的那一行,让人重登一次
+			// 也比按名字猜个账号写过去安全。
+			writeError(w, http.StatusConflict, "session_without_user", "当前会话未绑定账号,请重新登录后再修改")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			DisplayName *string `json:"displayName"`
+			Email       *string `json:"email"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if req.DisplayName == nil && req.Email == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "至少提供 displayName 或 email")
+			return
+		}
+		target, err := us.GetByID(id)
+		if err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		name, email := target.DisplayName, target.Email
+		if req.DisplayName != nil {
+			name = *req.DisplayName
+		}
+		if req.Email != nil {
+			email = *req.Email
+		}
+		if err := us.SetProfile(id, name, email); err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		fresh, err := us.GetByID(id)
+		if err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		recordAudit(r.Context(), aud, audit.Entry{
+			Actor:      auditActor,
+			Action:     audit.ActionProfileUpdate,
+			TargetType: audit.TargetAccount,
+			TargetID:   fresh.ID,
+			// 记新值而不是只记「改了」:自我改名可以冒充别人(比如改成 Administrator),
+			// 事后要能看出改成了什么。这两项都不是密钥,页面上本来就看得见。
+			Detail: map[string]any{
+				"username":    fresh.Username,
+				"displayName": fresh.DisplayName,
+				"email":       fresh.Email,
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, profileDTO{DisplayName: fresh.DisplayName, Email: fresh.Email})
+	}
+}
+
 // makeListSessionsHandler 返回 GET /api/account/sessions handler(认证保护;只读)。
 // 只返回**当前登录用户自己**的未过期会话;**绝不回传原 token**;current 标识本请求所属会话。
 func makeListSessionsHandler(svc accountService) http.HandlerFunc {

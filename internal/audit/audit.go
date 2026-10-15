@@ -48,6 +48,9 @@ const (
 	ActionProjectCacheClear = "project_cache_clear"
 	ActionRunTriggerManual  = "run_trigger_manual"
 	ActionPasswordChange    = "password_change"
+	// ActionProfileUpdate 是本人改显示名/邮箱(账户设置里的本地档案)。
+	// 与 user_update 分开:那是管理员改别人的账号行,actor 与改的东西都不是一回事。
+	ActionProfileUpdate     = "profile_update"
 	ActionSessionRevoke     = "session_revoke"
 	ActionServiceOp         = "service_op"
 	ActionContainerCreate   = "container_create"

@@ -10,6 +10,7 @@
 //   - BootstrapAdminRow:首次启动在 users 中同步 admin_user 的管理员行
 //   - SyncAdminPasswordChange:admin_user 改口令后同步到 users.role='admin' 行
 //   - Create / SetPassword / SetEnabled:管理员建号与重置口令(/api/admin/users/*)
+//   - SetProfile / FillProfileIfEmpty:本地档案(显示名 + 邮箱)的改写与「仅空则回填」
 //   - GetByUsername / GetByID / List:查询
 //
 // 后续 story:邀请注册(邀请 token + URL)。
@@ -21,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/go-sql-driver/mysql"
@@ -59,6 +61,12 @@ type User struct {
 	Role        string
 	Enabled     bool
 	Description string
+	// DisplayName 是展示用的昵称/全名;为空时各处回退到 Username。
+	// 它是**本地档案**:OAuth 首次建号时从平台写入,之后以本地值为准(见 FillProfileIfEmpty)。
+	DisplayName string
+	// Email 是档案邮箱,仅用于展示与联系。登录判定与域名白名单都不看它
+	// (白名单读 user_identities.email 那份平台快照,见 internal/identity)。
+	Email       string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	LastLoginAt *time.Time
@@ -137,7 +145,8 @@ type InternalUser struct {
 
 func (s *Service) GetByUsername(username string) (*InternalUser, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, role, enabled, description, created_at, updated_at, last_login_at
+		`SELECT id, username, password_hash, role, enabled, description, display_name, email,
+		        created_at, updated_at, last_login_at
 		 FROM users WHERE username = ?`, username)
 	return scanInternal(row)
 }
@@ -145,7 +154,8 @@ func (s *Service) GetByUsername(username string) (*InternalUser, error) {
 // GetByID 取用户 view(无 hash)。
 func (s *Service) GetByID(id string) (*User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, role, enabled, description, created_at, updated_at, last_login_at
+		`SELECT id, username, role, enabled, description, display_name, email,
+		        created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id)
 	return scanView(row)
 }
@@ -186,7 +196,8 @@ func (s *Service) List(f ListFilter) ([]*User, error) {
 	args = append(args, limit, f.Offset)
 
 	rows, err := s.db.Query(
-		`SELECT id, username, role, enabled, description, created_at, updated_at, last_login_at
+		`SELECT id, username, role, enabled, description, display_name, email,
+		        created_at, updated_at, last_login_at
 		 FROM users WHERE `+strings.Join(conds, " AND ")+`
 		 ORDER BY username ASC
 		 LIMIT ? OFFSET ?`, args...)
@@ -219,10 +230,13 @@ type CreateInput struct {
 	PasswordHash string
 	Role         string // RoleAdmin | RoleUser;空 → RoleUser
 	Description  string
+	DisplayName  string // 展示名;空则各处回退到 Username
+	Email        string // 档案邮箱;仅展示,不参与任何判定
 }
 
 // Create 建普通用户或管理员账号(管理员建号,v6.2 阶段 9)。
 //   - username 归一化后需 2~64 字符,仅允许字母/数字/._-;唯一冲突 → ErrConflict
+//   - displayName / email 见 normalizeDisplayName / normalizeEmail(留空合法)
 //   - role 不在 access 的角色枚举内(含空)一律按 user 处理
 //   - 返回视图(不含 hash)
 //
@@ -236,6 +250,14 @@ func (s *Service) Create(in CreateInput) (*User, error) {
 	if in.PasswordHash == "" {
 		return nil, fmt.Errorf("%w:建号需要口令哈希", ErrValidation)
 	}
+	displayName, err := normalizeDisplayName(in.DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	email, err := normalizeEmail(in.Email)
+	if err != nil {
+		return nil, err
+	}
 	role := strings.TrimSpace(in.Role)
 	if !access.ValidRole(role) {
 		// 空串与未知名都落 user。注意:users.role 的空串只属于 0053 之前的旧**会话**行,
@@ -244,10 +266,12 @@ func (s *Service) Create(in CreateInput) (*User, error) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := NewID()
-	_, err := s.db.Exec(
-		`INSERT INTO users (id, username, password_hash, role, enabled, description, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
-		id, username, in.PasswordHash, role, strings.TrimSpace(in.Description), now, now,
+	_, err = s.db.Exec(
+		`INSERT INTO users (id, username, password_hash, role, enabled, description,
+		                   display_name, email, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		id, username, in.PasswordHash, role, strings.TrimSpace(in.Description),
+		displayName, email, now, now,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -310,6 +334,105 @@ func (s *Service) SetRole(id, role string) error {
 	)
 }
 
+// SetProfile 改本地档案:显示名与邮箱。两个字段都由调用方决定,允许清空
+// (空显示名 = 回退展示用户名;空邮箱 = 未填)。改这个不动角色,也不影响登录。
+func (s *Service) SetProfile(id, displayName, email string) error {
+	name, err := normalizeDisplayName(displayName)
+	if err != nil {
+		return err
+	}
+	mail, err := normalizeEmail(email)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	return s.execOneRow("set profile",
+		`UPDATE users SET display_name = ?, email = ?, updated_at = ? WHERE id = ?`,
+		name, mail, now, id,
+	)
+}
+
+// FillProfileIfEmpty 只在本地档案为空时填入平台给的值,两个字段各自独立判定。
+//
+// 为什么不干脆每次登录都覆盖:显示名是「首次建号写入、之后本地可编辑」的那一类
+// —— 平台改了昵称不该把用户在本地改好的名字冲掉。同时它又得能给本迁移之前
+// 建出来的老账号补上值(那些行 display_name 是空串),否则首登后前端依旧只有一个名字。
+// 只动空值正好同时满足这两条。
+//
+// 两处都已有值时语句命中 0 行 —— 那是预期结果,不当失败处理,故不走 execOneRow。
+func (s *Service) FillProfileIfEmpty(id, displayName, email string) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	name, err := normalizeDisplayName(displayName)
+	if err != nil {
+		return err
+	}
+	mail, err := normalizeEmail(email)
+	if err != nil {
+		return err
+	}
+	if name == "" && mail == "" {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec(
+		`UPDATE users
+		    SET display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END,
+		        email        = CASE WHEN email = '' THEN ? ELSE email END,
+		        updated_at   = ?
+		  WHERE id = ? AND (display_name = '' OR email = '')`,
+		name, mail, now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("users: fill profile: %w", err)
+	}
+	return nil
+}
+
+// MaxDisplayNameLen / MaxEmailLen 是档案两字段的长度上限(按字符计,中文算一个)。
+// 迁移里的 VARCHAR 宽度与这里必须一致,否则 MySQL 侧会静默截断。
+const (
+	MaxDisplayNameLen = 64
+	MaxEmailLen       = 254
+)
+
+// normalizeDisplayName 去首尾空白并按**字符**截断。
+// 刻意不校验字符集:显示名要能写中文、日文、带空格的全名,它是给人看的不是给人查的。
+func normalizeDisplayName(v string) (string, error) {
+	v = strings.Join(strings.Fields(v), " ") // 折叠内部连续空白(含换行),避免脏值挤坏表格
+	if len(v) > MaxDisplayNameLen {
+		runes := []rune(v)
+		if len(runes) > MaxDisplayNameLen {
+			v = string(runes[:MaxDisplayNameLen])
+		}
+	}
+	return v, nil
+}
+
+// normalizeEmail 去空白 + 长度上限 + 最低限度形状校验(空串合法 = 未填)。
+//
+// 刻意不做 RFC 完整校验:这个字段只用于展示与联系,不参与登录、白名单或任何账号匹配,
+// 严格校验只会让 OAuth 回填时因平台给的怪值而整条链路报错。但「压根不是个邮箱」的要拒:
+// 管理员手输错值时,一句人读提示比页面上一直挂着一串乱码有用。
+func normalizeEmail(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	if strings.IndexFunc(v, unicode.IsSpace) >= 0 {
+		return "", fmt.Errorf("%w:邮箱不能含空格", ErrValidation)
+	}
+	at := strings.LastIndex(v, "@")
+	if at <= 0 || at == len(v)-1 || strings.Count(v, "@") != 1 {
+		return "", fmt.Errorf("%w:邮箱格式不正确", ErrValidation)
+	}
+	if len([]rune(v)) > MaxEmailLen {
+		return "", fmt.Errorf("%w:邮箱过长", ErrValidation)
+	}
+	return v, nil
+}
+
 // execOneRow 执行必须命中恰好一行的 UPDATE;0 行 → ErrNotFound。op 仅用于错误文案。
 func (s *Service) execOneRow(op, query string, args ...any) error {
 	res, err := s.db.Exec(query, args...)
@@ -365,7 +488,7 @@ func scanInternal(sc scanner) (*InternalUser, error) {
 	var createdStr, updatedStr string
 	if err := sc.Scan(
 		&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Enabled, &u.Description,
-		&createdStr, &updatedStr, &lastLogin,
+		&u.DisplayName, &u.Email, &createdStr, &updatedStr, &lastLogin,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -392,11 +515,11 @@ func scanInternal(sc scanner) (*InternalUser, error) {
 	return &u, nil
 }
 
-// scanView 把「8 列视图 SELECT(id, username, role, enabled, description, created_at,
-// updated_at, last_login_at,不含 password_hash)」扫描为 User。
+// scanView 把「10 列视图 SELECT(id, username, role, enabled, description, display_name,
+// email, created_at, updated_at, last_login_at,不含 password_hash)」扫描为 User。
 //
 // 不复用 scanInternal(后者要求 password_hash 在 SELECT 里),否则 GetByID 的
-// 8 列查询会因 destination 数不匹配直接报错(scan: expected 9 destination, not 8)。
+// 10 列查询会因 destination 数不匹配直接报错(scan: expected 11 destination, not 10)。
 func scanView(sc scanner) (*User, error) {
 	var (
 		u            User
@@ -406,7 +529,7 @@ func scanView(sc scanner) (*User, error) {
 		lastLoginStr sql.NullString
 	)
 	if err := sc.Scan(
-		&u.ID, &u.Username, &u.Role, &enabled, &u.Description,
+		&u.ID, &u.Username, &u.Role, &enabled, &u.Description, &u.DisplayName, &u.Email,
 		&createdStr, &updatedStr, &lastLoginStr,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

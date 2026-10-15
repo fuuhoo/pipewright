@@ -529,8 +529,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 
 	// Auth 端点:登录/登出/会话探测(见冻结契约)。
 	r.Route("/api/auth", func(ar chi.Router) {
-		ar.Post("/login", makeLoginHandler(svc))
-		ar.Get("/session", makeSessionHandler(svc))
+		ar.Post("/login", makeLoginHandler(svc, o.usersSvc))
+		ar.Get("/session", makeSessionHandler(svc, o.usersSvc))
 		// 登出属写操作:先认证后 CSRF。
 		ar.Post("/logout", func(w http.ResponseWriter, r *http.Request) {
 			requireAuth(svc, requireCSRF(makeLogoutHandler(svc))).ServeHTTP(w, r)
@@ -822,6 +822,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 改口令 / 撤销会话为敏感操作,业务成功后接 audit(detail 绝无明文口令)。
 		ac := o.account
 		ar.Post("/account/password", makeChangePasswordHandler(ac, aud))
+		// 本地档案(显示名 + 邮箱)本人可改;写 users 两列,审计记新值供事后认出冒充。
+		ar.Post("/account/profile", makeUpdateProfileHandler(o.usersSvc, aud))
 		ar.Get("/account/sessions", makeListSessionsHandler(ac))
 		ar.Delete("/account/sessions/{id}", makeRevokeSessionHandler(ac, aud))
 
@@ -1182,7 +1184,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 
 // makeLoginHandler 返回 POST /api/auth/login handler。
 // 登录端点豁免 CSRF(此时尚无会话);但受锁定限制。
-func makeLoginHandler(svc auth.Authenticator) http.HandlerFunc {
+func makeLoginHandler(svc auth.Authenticator, us *users.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_auth", "认证服务未初始化")
@@ -1228,7 +1230,7 @@ func makeLoginHandler(svc auth.Authenticator) http.HandlerFunc {
 				username = req.Username
 			}
 		}
-		writeJSON(w, http.StatusOK, newSessionPayload(username, sessionRoleOf(sess)))
+		writeJSON(w, http.StatusOK, buildSessionPayload(us, sess, username, sessionRoleOf(sess)))
 	}
 }
 
@@ -1273,8 +1275,13 @@ func sessionRoleOf(sess *auth.Session) string {
 // capabilities 是从 internal/access 的角色档位表(roles.go)算出的展示副本:前端据此决定
 // 菜单、路由与控件是否出现。它不是授权凭证——服务端每个请求都重新查表判定,
 // 前端篡改这个对象不会多拿到一个字节的服务端权限。
+//
+// displayName / email 是 users 表里的**本地档案**(0069):显示名给顶栏与账户页用,
+// 为空时前端回退到 username。两者都刻意不做进会话快照 —— 见 buildSessionPayload。
 type sessionPayload struct {
 	Username     string              `json:"username"`
+	DisplayName  string              `json:"displayName"`
+	Email        string              `json:"email"`
 	Role         string              `json:"role"`
 	Capabilities access.Capabilities `json:"capabilities"`
 }
@@ -1284,9 +1291,29 @@ func newSessionPayload(username, role string) sessionPayload {
 	return sessionPayload{Username: username, Role: role, Capabilities: access.CapabilitiesFor(role)}
 }
 
+// buildSessionPayload 在 newSessionPayload 之上补本地档案两项。
+//
+// 为什么现查而不是登录时快照进会话行:显示名是「本地可编辑」的,快照会让人改完名字
+// 后要等下次登录才看到。这是一次 users 主键查询,与会话校验本身同一量级,而
+// GET /api/auth/session 每个页面加载最多一次(前端 store 有缓存)。
+//
+// us 未装配、旧会话没有 user_id、或那一行查不到 —— 一律只回用户名,绝不影响登录本身:
+// 拿不到昵称不是把人挡在门外的理由。
+func buildSessionPayload(us *users.Service, sess *auth.Session, username, role string) sessionPayload {
+	p := newSessionPayload(username, role)
+	if us == nil || sess == nil || sess.UserID == "" {
+		return p
+	}
+	if u, err := us.GetByID(sess.UserID); err == nil {
+		p.DisplayName = u.DisplayName
+		p.Email = u.Email
+	}
+	return p
+}
+
 // makeSessionHandler 返回 GET /api/auth/session handler。
 // 此端点本身不要求登录(用于前端探测会话状态)。
-func makeSessionHandler(svc auth.Authenticator) http.HandlerFunc {
+func makeSessionHandler(svc auth.Authenticator, us *users.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
@@ -1328,7 +1355,7 @@ func makeSessionHandler(svc auth.Authenticator) http.HandlerFunc {
 			username = "admin"
 		}
 		// v6.2:role 从会话读(§5.2 要求 login/session 均返回 role)。
-		writeJSON(w, http.StatusOK, newSessionPayload(username, sessionRoleOf(sess)))
+		writeJSON(w, http.StatusOK, buildSessionPayload(us, sess, username, sessionRoleOf(sess)))
 	}
 }
 

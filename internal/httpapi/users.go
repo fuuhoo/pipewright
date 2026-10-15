@@ -4,9 +4,9 @@
 //
 //	GET    /api/admin/users                  → List(role/includeDisabled/limit/offset)
 //	GET    /api/admin/users/{id}             → GetByID
-//	POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色)
+//	POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色,可带显示名/邮箱)
 //	POST   /api/admin/users/{id}/password    → 重置口令
-//	PATCH  /api/admin/users/{id}             → 改描述 / 启用禁用 / 改角色
+//	PATCH  /api/admin/users/{id}             → 改描述 / 显示名 / 邮箱 / 启用禁用 / 改角色
 //
 // 不在这里的:内置管理员(bootstrap admin)那一行——它的口令与启用状态由
 // admin_user + 「账户设置」管,上述写端点对它一律 409,理由见 isBootstrapAdminRow。
@@ -26,9 +26,14 @@ import (
 )
 
 // userDTO 是用户对外响应体(camelCase;不含 password_hash)。
+//
+// displayName / email 是本地档案(迁移 0069):列表页拿 display_name 当主标签、
+// username 当登录名并列显示。两者可为空(老账号/没走 OAuth 建号的),前端回退到 username。
 type userDTO struct {
 	ID          string  `json:"id"`
 	Username    string  `json:"username"`
+	DisplayName string  `json:"displayName"`
+	Email       string  `json:"email"`
 	Role        string  `json:"role"`
 	Enabled     bool    `json:"enabled"`
 	Description string  `json:"description"`
@@ -49,6 +54,8 @@ func toUserDTO(u *users.User) userDTO {
 	return userDTO{
 		ID:          u.ID,
 		Username:    u.Username,
+		DisplayName: u.DisplayName,
+		Email:       u.Email,
 		Role:        u.Role,
 		Enabled:     u.Enabled,
 		Description: u.Description,
@@ -140,7 +147,9 @@ func sessionUserID(r *http.Request) string {
 }
 
 // makeCreateUserHandler 返回 POST /api/admin/users handler(管理员建号)。
-// body:{username, password, role, description}。审计只记用户名与角色,绝不含口令。
+// body:{username, password, role, description, displayName, email}。
+// 显示名/邮箱可留空:留空就是「本地档案还没填」,页面回退到用户名,以后随时能补。
+// 审计只记用户名与角色,绝不含口令。
 func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if us == nil {
@@ -153,6 +162,8 @@ func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authen
 			Password    string `json:"password"`
 			Role        string `json:"role"`
 			Description string `json:"description"`
+			DisplayName string `json:"displayName"`
+			Email       string `json:"email"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -172,6 +183,8 @@ func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authen
 			PasswordHash: hash,
 			Role:         req.Role,
 			Description:  req.Description,
+			DisplayName:  req.DisplayName,
+			Email:        req.Email,
 		})
 		if err != nil {
 			writeUsersError(w, err)
@@ -241,7 +254,7 @@ func makeResetUserPasswordHandler(us *users.Service, aud audit.Recorder, ac auth
 }
 
 // makePatchUserHandler 返回 PATCH /api/admin/users/{id} handler。
-// 支持改描述、启用/禁用与改角色(功能轴);改口令走 /password(审计动作不同)。
+// 支持改描述、本地档案(显示名/邮箱)、启用/禁用与改角色(功能轴);改口令走 /password(审计动作不同)。
 func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if us == nil {
@@ -257,6 +270,8 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
 			Description *string `json:"description"`
+			DisplayName *string `json:"displayName"`
+			Email       *string `json:"email"`
 			Enabled     *bool   `json:"enabled"`
 			Role        *string `json:"role"`
 		}
@@ -264,8 +279,10 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
-		if req.Description == nil && req.Enabled == nil && req.Role == nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "至少提供 description、enabled 或 role")
+		if req.Description == nil && req.DisplayName == nil && req.Email == nil &&
+			req.Enabled == nil && req.Role == nil {
+			writeError(w, http.StatusBadRequest, "bad_request",
+				"至少提供 description、displayName、email、enabled 或 role")
 			return
 		}
 		// 禁用自己在写库前拦下:把唯一的管理员账号禁用掉之后再没人能改回来。
@@ -280,6 +297,21 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 		}
 		if req.Description != nil {
 			if err := us.SetDescription(id, *req.Description); err != nil {
+				writeUsersError(w, err)
+				return
+			}
+		}
+		// 显示名/邮箱是一行 UPDATE 同时写两列,所以只提交其中一个时要把另一个现值带回去,
+		// 否则 SET 会把没提交的那列清空。SetProfile 负责归一化(空白折叠 + 按 rune 截断)。
+		if req.DisplayName != nil || req.Email != nil {
+			name, email := target.DisplayName, target.Email
+			if req.DisplayName != nil {
+				name = *req.DisplayName
+			}
+			if req.Email != nil {
+				email = *req.Email
+			}
+			if err := us.SetProfile(id, name, email); err != nil {
 				writeUsersError(w, err)
 				return
 			}
@@ -314,6 +346,11 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 		detail := map[string]any{"username": fresh.Username, "role": fresh.Role, "enabled": fresh.Enabled}
 		if roleChanged {
 			detail["role_from"] = target.Role
+		}
+		// 档案改过就把新值留下:改显示名可以冒充别人,只记「改过」事后看不出改成了什么。
+		if req.DisplayName != nil || req.Email != nil {
+			detail["displayName"] = fresh.DisplayName
+			detail["email"] = fresh.Email
 		}
 		recordAuditFromRequest(r, aud, ac, audit.Entry{
 			Action:     action,

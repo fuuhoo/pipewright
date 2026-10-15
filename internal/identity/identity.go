@@ -181,7 +181,13 @@ func (s *Service) Bind(ctx context.Context, userID string, id *oauth.Identity) (
 			return nil, ErrProviderBound
 		}
 	}
-	return s.insert(ctx, userID, id)
+	b, err := s.insert(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	// 与自动登录同理:这条账号原本没有本地档案时,把平台给的名字补进去;已有的一律不动。
+	_ = s.users.FillProfileIfEmpty(userID, id.Name, id.Email)
+	return b, nil
 }
 
 // Unbind 解绑:只删属于该账号的那条。0 行命中 → ErrNotFound。
@@ -224,6 +230,11 @@ func (s *Service) accountFromBinding(ctx context.Context, b *Binding, id *oauth.
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE user_identities SET username = ?, email = ?, updated_at = ? WHERE id = ?`,
 		id.Login, id.Email, time.Now().UTC().Format(time.RFC3339), b.ID)
+	// 本地档案(users 那两列)反过来:**只补空**。上面那张表是平台快照,每次登录照抄;
+	// 这里的显示名是「首次建号写入、之后本地可编辑」的,无脑覆盖会把人自己改的名字冲掉。
+	// 需要它的原因是 0069 之前建出来的账号这两列全空,不回填就永远只显示一个用户名。
+	// 同样不阻断登录。
+	_ = s.users.FillProfileIfEmpty(u.ID, id.Name, id.Email)
 
 	return &Account{
 		UserID: u.ID, Username: u.Username, Role: role, Provider: b.Provider,
@@ -273,6 +284,8 @@ func (s *Service) provision(ctx context.Context, app *oauth.LoginAppConfig, id *
 		PasswordHash: placeholder,
 		Role:         DefaultRole,
 		Description:  fmt.Sprintf("OAuth 自动建号(%s:%s)", id.Provider, displayHandle(id)),
+		DisplayName:  id.Name,
+		Email:        id.Email,
 	})
 	if err != nil {
 		if errors.Is(err, users.ErrConflict) {
