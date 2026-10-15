@@ -338,10 +338,26 @@ func checkDomain(allowed []string, email string) error {
 
 // suggestUsername 把平台登录名洗成本地用户名:只留 [A-Za-z0-9._-],截到 64 字符。
 // 洗空了(平台昵称全是符号/中文)则退成 provider+外部 ID 前缀 —— 稳定的 ID 派生,
-// 不拿别人的名字赌运气。
+// 不拿别人的名字赌运气。退路那一路同样要洗字符:见下。
 func suggestUsername(id *oauth.Identity) string {
+	name := sanitizeUsernameChars(id.Login)
+	if len(name) < 2 {
+		// 企业微信的主键形如 corpid/userid,照原文截断会带出 '/',建号当场被 users 的
+		// 字符集校验打回,用户只看到一个说不清的登录失败。
+		short := sanitizeUsernameChars(id.ExternalID)
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		name = id.Provider + "-" + short
+	}
+	return name
+}
+
+// sanitizeUsernameChars 逐字过滤成 users.username 认的字符集(字母数字与 . _ -),
+// 截到 64 字符 —— 与 validateUsername 同一套规则,免得建号时才被撞回来。
+func sanitizeUsernameChars(s string) string {
 	var b strings.Builder
-	for _, r := range strings.TrimSpace(id.Login) {
+	for _, r := range strings.TrimSpace(s) {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
 			r == '.', r == '_', r == '-':
@@ -351,15 +367,7 @@ func suggestUsername(id *oauth.Identity) string {
 			break
 		}
 	}
-	name := b.String()
-	if len(name) < 2 {
-		short := id.ExternalID
-		if len(short) > 12 {
-			short = short[:12]
-		}
-		name = id.Provider + "-" + short
-	}
-	return name
+	return b.String()
 }
 
 // displayHandle 给建号备注用:优先登录名,没有就用外部 ID(备注只是给人看的线索)。

@@ -5,6 +5,7 @@ package identity
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -155,6 +156,68 @@ func TestProvisionRefusedWhenDefaultRoleMissing(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("角色不可用时不该建出任何账号,得到 %d 个", n)
 	}
+}
+
+// TestSuggestUsernameStaysInsideTheAllowedCharset 守的是建号最后一步:
+// 平台给的名字千奇百怪(中文昵称、带空格的显示名),派生出的本地用户名必须撞得进
+// users.username 的字符集,否则访客看到的是一句说不清的登录失败。
+func TestSuggestUsernameStaysInsideTheAllowedCharset(t *testing.T) {
+	cases := []struct {
+		name string
+		id   *oauth.Identity
+		want string
+	}{
+		{
+			// 企业微信:查档案失败时 Login 退成 userid、主键形如 corpid/userid。
+			// '/' 落在截断窗口内,照原文洗不洗都行不通 —— 必须逐字过滤再截。
+			name: "企业微信 corpid/userid 主键",
+			id:   &oauth.Identity{Provider: oauth.ProviderWeCom, ExternalID: "wp-corp-9/alice", Login: ""},
+			want: "wecom-wp-corp-9ali",
+		},
+		{
+			name: "中文昵称洗空后退主键",
+			id:   &oauth.Identity{Provider: oauth.ProviderWeCom, ExternalID: "ww1234567/chen", Login: "张三"},
+			want: "wecom-ww1234567che",
+		},
+		{
+			name: "合法登录名原样保留",
+			id:   &oauth.Identity{Provider: oauth.ProviderGitLab, ExternalID: "42", Login: " Fu Bin "},
+			want: "FuBin",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := suggestUsername(tc.id)
+			if got != tc.want {
+				t.Fatalf("suggestUsername = %q, want %q", got, tc.want)
+			}
+			if err := checkUsernameCharset(got); err != nil {
+				t.Fatalf("派生的用户名 %q 进不了 users.username: %v", got, err)
+			}
+			// 同一个身份再算一次必须得到同一个名字:名字变了就等于换人,
+			// 下次登录会按 (provider, external_id) 命中这个账号,派生口径必须稳定。
+			if again := suggestUsername(tc.id); again != got {
+				t.Fatalf("派生不稳定: %q vs %q", got, again)
+			}
+		})
+	}
+}
+
+// checkUsernameCharset 复刻 internal/users.validateUsername 的字符集与长度规则。
+// 刻意抄一份而不调用它:users 那个函数未导出,而且这里要的是「两边口径一致」这条约束本身 ——
+// 哪天 users 放宽或收紧,单靠编译期引用发现不了,派生名照样会撞库。
+func checkUsernameCharset(u string) error {
+	if len(u) < 2 || len(u) > 64 {
+		return fmt.Errorf("需 2~64 字符,得到 %d", len(u))
+	}
+	for _, r := range u {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '.' || r == '_' || r == '-'
+		if !ok {
+			return fmt.Errorf("非法字符 %q", r)
+		}
+	}
+	return nil
 }
 
 // TestDomainWhitelistRequiresEmail:白名单非空时「拿不到邮箱」必须拒,
