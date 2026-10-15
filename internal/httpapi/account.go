@@ -18,8 +18,8 @@ type accountService interface {
 	ChangePassword(current, newPassword, currentToken string) error
 	// ChangeUserPassword 改 users 表账号(普通用户 / 额外管理员)自己的口令。
 	ChangeUserPassword(userID, current, newPassword, currentToken string) error
-	ListSessions(currentToken string) ([]auth.SessionMeta, error)
-	RevokeSession(id string) error
+	ListSessions(userID, currentToken string) ([]auth.SessionMeta, error)
+	RevokeSession(userID, id string) error
 }
 
 // sessionDTO 是活跃会话对外响应体(冻结契约;**绝不含原始 token**)。
@@ -50,6 +50,15 @@ func toSessionDTO(m auth.SessionMeta) sessionDTO {
 func currentSessionToken(r *http.Request) string {
 	if c, err := r.Cookie(cookieSession); err == nil {
 		return c.Value
+	}
+	return ""
+}
+
+// currentUserIDFromRequest 取 requireAuth 注入的会话所属用户 id。
+// 迁移 0053 之前签发的旧会话没有 user_id,此时回空串,由 auth 层按「看不见别人」处理。
+func currentUserIDFromRequest(r *http.Request) string {
+	if sess, ok := sessionFromContext(r.Context()); ok && sess != nil {
+		return sess.UserID
 	}
 	return ""
 }
@@ -114,15 +123,14 @@ func makeChangePasswordHandler(svc accountService, aud audit.Recorder) http.Hand
 }
 
 // makeListSessionsHandler 返回 GET /api/account/sessions handler(认证保护;只读)。
-// 返回所有未过期会话元数据;**绝不回传原 token**;current 标识本请求所属会话。
+// 只返回**当前登录用户自己**的未过期会话;**绝不回传原 token**;current 标识本请求所属会话。
 func makeListSessionsHandler(svc accountService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_auth", "认证服务未初始化")
 			return
 		}
-		token := currentSessionToken(r)
-		metas, err := svc.ListSessions(token)
+		metas, err := svc.ListSessions(currentUserIDFromRequest(r), currentSessionToken(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return
@@ -136,7 +144,7 @@ func makeListSessionsHandler(svc accountService) http.HandlerFunc {
 }
 
 // makeRevokeSessionHandler 返回 DELETE /api/account/sessions/{id} handler(认证 + CSRF)。
-// 按 id(sha256 前缀)定位并删除;不存在 → 404 session_not_found;
+// 在**当前用户自己名下**按 id(sha256 前缀)定位并删除;别人的会话与不存在同样回 404;
 // 撤销当前会话亦允许(返回 204,前端随后 401 跳登录)。成功后追加 session_revoke 审计。
 func makeRevokeSessionHandler(svc accountService, aud audit.Recorder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +153,7 @@ func makeRevokeSessionHandler(svc accountService, aud audit.Recorder) http.Handl
 			return
 		}
 		id := chi.URLParam(r, "id")
-		err := svc.RevokeSession(id)
+		err := svc.RevokeSession(currentUserIDFromRequest(r), id)
 		switch {
 		case err == nil:
 			// continue

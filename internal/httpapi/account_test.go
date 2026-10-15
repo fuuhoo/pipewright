@@ -216,6 +216,53 @@ func TestRevokeSession(t *testing.T) {
 	}
 }
 
+// TestSessionListHidesOtherUsers 别人名下的会话既不该出现在列表里,也不该被撤销。
+// (新 JIT 账号第一次登录就该只看见一条,而不是整台实例的全部会话。)
+func TestSessionListHidesOtherUsers(t *testing.T) {
+	srv, client, csrf, st := setupAccountServer(t)
+
+	other := newTestClient(t)
+	loginWithClient(t, other, srv.URL)
+	var otherToken string
+	for _, c := range other.Jar.Cookies(mustURL(t, srv.URL)) {
+		if c.Name == cookieSession {
+			otherToken = c.Value
+		}
+	}
+	if otherToken == "" {
+		t.Fatal("setup: 第二个会话 cookie 缺失")
+	}
+	// 把这条会话改挂到另一个用户名下,模拟「别人的会话」。
+	if _, err := st.DB.Exec(`UPDATE sessions SET user_id = ? WHERE token = ?`,
+		"99999999-9999-9999-9999-999999999999", otherToken); err != nil {
+		t.Fatalf("reassign session: %v", err)
+	}
+
+	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/account/sessions", "", "")
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if strings.Contains(string(raw), auth.SessionID(otherToken)) {
+		t.Fatalf("列表泄露了别人的会话: %s", raw)
+	}
+
+	del := doJSON(t, client, http.MethodDelete,
+		srv.URL+"/api/account/sessions/"+auth.SessionID(otherToken), csrf, "")
+	defer del.Body.Close()
+	if del.StatusCode != http.StatusNotFound {
+		t.Fatalf("撤销别人的会话 status = %d, want 404", del.StatusCode)
+	}
+	var still int
+	if err := st.DB.QueryRow(`SELECT COUNT(1) FROM sessions WHERE token = ?`, otherToken).Scan(&still); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if still != 1 {
+		t.Fatalf("别人的会话被删掉了")
+	}
+}
+
 // errorCode 解析 { "error": { "code": ... } } 的 code。
 func errorCode(t *testing.T, resp *http.Response) string {
 	t.Helper()

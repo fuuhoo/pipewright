@@ -455,14 +455,16 @@ func (s *Service) ChangeUserPassword(userID, current, newPassword, currentToken 
 	return nil
 }
 
-// ListSessions 返回所有未过期会话元数据(不含原 token);currentToken 标识 current。
-func (s *Service) ListSessions(currentToken string) ([]SessionMeta, error) {
-	return s.sessions.List(currentToken)
+// ListSessions 返回 userID 名下未过期会话元数据(不含原 token);currentToken 标识 current。
+// 账户页只能看见自己的会话:别人的 token 摘要与登录时间都是信息泄露。
+func (s *Service) ListSessions(userID, currentToken string) ([]SessionMeta, error) {
+	return s.sessions.ListForUser(userID, currentToken)
 }
 
-// RevokeSession 按 id(sha256 前缀)删除会话;无匹配 → ErrSessionNotFound。
-func (s *Service) RevokeSession(id string) error {
-	n, err := s.sessions.DeleteByIDPrefix(id)
+// RevokeSession 在 userID 名下按 id(sha256 前缀)删除会话;无匹配 → ErrSessionNotFound。
+// 别人的会话 id 一律匹配不到(回 404),不能让别人被这条请求踢下线。
+func (s *Service) RevokeSession(userID, id string) error {
+	n, err := s.sessions.DeleteByIDForUser(id, userID)
 	if err != nil {
 		return err
 	}

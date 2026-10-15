@@ -164,6 +164,113 @@ func TestLogin_AsRegularUser(t *testing.T) {
 	}
 }
 
+// TestSessionStore_ListAndDeleteAreUserScoped 会话列表与撤销都必须锁在自己的 user_id 里。
+//
+// 账户页把会话 id(sha256 前缀)显示给用户,若查询/删除不带 user 条件,
+// 任何人既能看见别人的登录时间,也能凭一个前缀把别人踢下线。
+func TestSessionStore_ListAndDeleteAreUserScoped(t *testing.T) {
+	db := storetest.OpenDB(t)
+	ss := NewSessionStore(db)
+
+	const (
+		userA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		userB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	)
+	a1, err := ss.Create(userA, "user")
+	if err != nil {
+		t.Fatalf("create a1: %v", err)
+	}
+	a2, err := ss.Create(userA, "user")
+	if err != nil {
+		t.Fatalf("create a2: %v", err)
+	}
+	b1, err := ss.Create(userB, "user")
+	if err != nil {
+		t.Fatalf("create b1: %v", err)
+	}
+	// 迁移 0053 之前的形态:user_id 为空串的无主旧会话。
+	legacy, err := ss.Create("", "")
+	if err != nil {
+		t.Fatalf("create legacy: %v", err)
+	}
+
+	ids := func(metas []SessionMeta) map[string]bool {
+		set := make(map[string]bool, len(metas))
+		for _, m := range metas {
+			set[m.ID] = true
+		}
+		return set
+	}
+
+	// A 只看见自己两条,a2 被标 current;B 与旧会话都不出现。
+	got, err := ss.ListForUser(userA, a2.Token)
+	if err != nil {
+		t.Fatalf("list for A: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("A 名下应有 2 条会话, got %d", len(got))
+	}
+	set := ids(got)
+	if !set[SessionID(a1.Token)] || !set[SessionID(a2.Token)] {
+		t.Fatalf("A 的会话没列全: %+v", set)
+	}
+	if set[SessionID(b1.Token)] || set[SessionID(legacy.Token)] {
+		t.Fatalf("越界看见了别人的会话: %+v", set)
+	}
+	for _, m := range got {
+		if m.Current != (m.ID == SessionID(a2.Token)) {
+			t.Fatalf("current 标识错位: %+v", got)
+		}
+	}
+
+	// 无主旧会话只看得见自己那一条(空 user_id 不能退化成匹配全部无主行)。
+	legacyGot, err := ss.ListForUser("", legacy.Token)
+	if err != nil {
+		t.Fatalf("list for legacy: %v", err)
+	}
+	if len(legacyGot) != 1 || legacyGot[0].ID != SessionID(legacy.Token) {
+		t.Fatalf("无主旧会话应只回自己, got %+v", legacyGot)
+	}
+
+	// B 的 id 交给 A 去删 = 0 行,且 B 的会话还在。
+	n, err := ss.DeleteByIDForUser(SessionID(b1.Token), userA)
+	if err != nil {
+		t.Fatalf("delete B as A: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("跨用户撤销不该命中, deleted %d", n)
+	}
+	if _, err := ss.Get(b1.Token); err != nil {
+		t.Fatalf("B 的会话应完好: %v", err)
+	}
+	// 同样拒删无主旧会话。
+	if n, err := ss.DeleteByIDForUser(SessionID(legacy.Token), userA); err != nil || n != 0 {
+		t.Fatalf("不该删掉无主旧会话: n=%d err=%v", n, err)
+	}
+	// A 删自己的 a1 正常生效。
+	if n, err := ss.DeleteByIDForUser(SessionID(a1.Token), userA); err != nil || n != 1 {
+		t.Fatalf("A 撤销自己会话失败: n=%d err=%v", n, err)
+	}
+}
+
+// TestService_RevokeSessionScopedToOwner 验证 Service 层同样不透传越权撤销:
+// 拿别人的会话 id 只能得到 ErrSessionNotFound(→ HTTP 404),而不是 204。
+func TestService_RevokeSessionScopedToOwner(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db, nil, nil)
+
+	sessA, err := svc.sessions.Create("user-a", "user")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.RevokeSession("user-b", SessionID(sessA.Token)); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("跨用户撤销应 ErrSessionNotFound, got %v", err)
+	}
+	if err := svc.RevokeSession("user-a", SessionID(sessA.Token)); err != nil {
+		t.Fatalf("撤销自己的会话: %v", err)
+	}
+}
+
 // TestLogin_DisabledUser 验证 enabled=0 的用户无法登录。
 func TestLogin_DisabledUser(t *testing.T) {
 	db := storetest.OpenDB(t)

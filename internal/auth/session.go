@@ -203,14 +203,21 @@ type SessionMeta struct {
 	Current    bool // 是否为当前请求所属会话
 }
 
-// List 返回所有未过期会话的元数据(不含原 token)。currentToken 用于标识 current。
-// 按 created_at DESC 排序(最新在前)。
-func (ss *SessionStore) List(currentToken string) ([]SessionMeta, error) {
+// ListForUser 返回 userID 名下所有未过期会话的元数据(不含原 token)。
+// currentToken 用于标识 current;按 created_at DESC 排序(最新在前)。
+//
+// userID 为空 = 迁移 0053 之前签发的旧会话,它证明不了任何归属,所以**不能**退化成
+// 按空 user_id 匹配全部无主旧行,只回自己这一条。
+func (ss *SessionStore) ListForUser(userID, currentToken string) ([]SessionMeta, error) {
+	clause, arg := "user_id = ?", userID
+	if userID == "" {
+		clause, arg = "token = ?", currentToken
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := ss.db.Query(
 		`SELECT token, created_at, last_seen_at, expires_at
-		 FROM sessions WHERE expires_at >= ? ORDER BY created_at DESC`,
-		now,
+		 FROM sessions WHERE expires_at >= ? AND `+clause+` ORDER BY created_at DESC`,
+		now, arg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("auth: list sessions: %w", err)
@@ -243,10 +250,16 @@ func (ss *SessionStore) List(currentToken string) ([]SessionMeta, error) {
 	return out, nil
 }
 
-// DeleteByIDPrefix 删除 sha256 前缀匹配 id 的会话。返回删除行数。
+// DeleteByIDForUser 删除 userID 名下 sha256 前缀匹配 id 的会话。返回删除行数。
 // 因 id 为 token 自身 sha256 即时算(未存库),逐行比对 token 的 sha256 定位。
-func (ss *SessionStore) DeleteByIDPrefix(id string) (int64, error) {
-	rows, err := ss.db.Query(`SELECT token FROM sessions`)
+//
+// **必须带 user_id 条件**:否则任何登录用户拿到一条 sha256 前缀就能踢掉别人的会话。
+// userID 为空(迁移 0053 前的无主旧会话)直接匹配不到,与 ListForUser 的口径一致。
+func (ss *SessionStore) DeleteByIDForUser(id, userID string) (int64, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	rows, err := ss.db.Query(`SELECT token FROM sessions WHERE user_id = ?`, userID)
 	if err != nil {
 		return 0, fmt.Errorf("auth: scan tokens: %w", err)
 	}
