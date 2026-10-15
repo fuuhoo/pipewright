@@ -79,8 +79,8 @@ export default {
     errNetwork: '无法连接到服务器,请检查后端是否运行后重试',
     errGeneric: '登录失败({status})',
     errUnknown: '未知错误,请重试',
-    oauthDivider: '或用 git 平台账号登录',
-    oauthGroupAria: '用 git 平台账号登录',
+    oauthDivider: '或用外部账号登录',
+    oauthGroupAria: '用外部账号登录',
     oauthLoginWith: '使用 {provider} 登录',
   },
 
@@ -98,6 +98,7 @@ export default {
     exchangeFailed: '授权码换取令牌失败,请重新发起登录。',
     identityUnavailable: '读不到该平台上的账号信息,请重新发起登录。',
     domainNotAllowed: '这个邮箱域名不在实例允许的登录范围内。',
+    oidcConfigInvalid: '这个登录入口的端点配置有问题(发现文档拉不到,或端点没填全),请联系管理员修正。',
     nameTaken: '该平台用户名在本实例已被占用,请让管理员把你的账号和它做绑定。',
     accountUnavailable: '绑定的账号已不可用,请联系管理员。',
     roleUnavailable: '实例还没配置新账号的默认角色,请联系管理员。',

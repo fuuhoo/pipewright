@@ -79,8 +79,8 @@ const zhTW: typeof zhCN = {
     errNetwork: '無法連線至伺服器,請確認後端是否執行後再試',
     errGeneric: '登入失敗({status})',
     errUnknown: '未知錯誤,請重試',
-    oauthDivider: '或以 git 平台帳號登入',
-    oauthGroupAria: '以 git 平台帳號登入',
+    oauthDivider: '或以外部帳號登入',
+    oauthGroupAria: '以外部帳號登入',
     oauthLoginWith: '使用 {provider} 登入',
   },
 
@@ -98,6 +98,7 @@ const zhTW: typeof zhCN = {
     exchangeFailed: '授權碼換取憑證失敗,請重新發起登入。',
     identityUnavailable: '讀不到該平台上的帳號資訊,請重新發起登入。',
     domainNotAllowed: '這個郵件網域不在實例允許的登入範圍內。',
+    oidcConfigInvalid: '這個登入入口的端點設定有問題(發現文件拉不到,或端點沒填齊),請聯絡管理員修正。',
     nameTaken: '該平台使用者名稱在本實例已被佔用,請讓管理員把你的帳號和它做綁定。',
     accountUnavailable: '綁定的帳號已不可用,請聯絡管理員。',
     roleUnavailable: '實例還沒配置新帳號的預設角色,請聯絡管理員。',

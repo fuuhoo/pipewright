@@ -79,8 +79,8 @@ const es: typeof zhCN = {
     errNetwork: 'No se puede conectar con el servidor. Comprueba que el backend esté en marcha e inténtalo de nuevo.',
     errGeneric: 'Error de inicio de sesión ({status})',
     errUnknown: 'Error desconocido, inténtalo de nuevo',
-    oauthDivider: 'O inicia sesión con una cuenta de git',
-    oauthGroupAria: 'Iniciar sesión con una cuenta de git',
+    oauthDivider: 'O inicia sesión con una cuenta externa',
+    oauthGroupAria: 'Iniciar sesión con una cuenta externa',
     oauthLoginWith: 'Continuar con {provider}',
   },
 
@@ -98,6 +98,7 @@ const es: typeof zhCN = {
     exchangeFailed: 'Falló el canje del código de autorización. Inténtalo otra vez.',
     identityUnavailable: 'No se pudo leer tu cuenta en esa plataforma. Inténtalo otra vez.',
     domainNotAllowed: 'Ese dominio de correo no tiene permiso para iniciar sesión en esta instancia.',
+    oidcConfigInvalid: 'La configuración de endpoints de este acceso no es válida (no se puede leer el discovery o faltan endpoints). Contacta con un administrador.',
     nameTaken: 'Ese nombre de usuario ya existe en esta instancia. Pide a un administrador que vincule las cuentas.',
     accountUnavailable: 'La cuenta vinculada ya no está disponible. Contacta con un administrador.',
     roleUnavailable: 'La instancia no tiene un rol predeterminado para cuentas nuevas. Contacta con un administrador.',

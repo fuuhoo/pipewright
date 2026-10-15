@@ -2,14 +2,19 @@
 /**
  * SettingsOAuth — OAuth application configuration for git providers.
  *
- * 四个平台(Gitee / GitHub / GitLab / 自建)是**并列的同构配置**,不是要对比着看的东西,
+ * 四个 git 平台(Gitee / GitHub / GitLab / 自建)是**并列的同构配置**,不是要对比着看的东西,
  * 所以走 tab 一次只摊开一个:四张卡片竖排时,页面要滚近两屏才能填完一个平台,
  * 而「哪个平台启用了」这件事在 tab 的状态点上比在四张卡头上更集中。
+ *
+ * 「平台登录」用途下还多一档 **OIDC**(通用 SSO):discovery 地址或手填三个端点、
+ * 可配主键声明与 scope。它只在登录档出现 —— OIDC 服务器给不了 git token,
+ * 「仓库凭据」那条路压根不支持它(后端同样拦,见 internal/oauth/provider.go 的两套枚举)。
  *
  *   - clientId text input
  *   - clientSecret password input — WRITE-ONLY, never echoed; placeholder
  *     hints "留空保留已存" when a secret is already configured
  *   - baseUrl (only the self-hosted `custom` provider)
+ *   - oidc 独有:Discovery / 三个端点覆盖 / ID claim / Scopes
  *   - enabled toggle
  *   - Save (PUT) → toast "OAuth 应用已保存" + masked secret echo (mirrors SettingsAI)
  *
@@ -39,6 +44,7 @@ import {
   saveOAuthLoginApp,
   type OAuthApp,
   type OAuthLoginApp,
+  type OAuthLoginProvider,
   type OAuthProvider,
   type SaveOAuthAppInput,
   type SaveOAuthLoginAppInput,
@@ -58,13 +64,15 @@ type LoadState = 'loading' | 'ready' | 'error'
 type Purpose = 'vault' | 'login'
 
 interface ProviderMeta {
-  id: OAuthProvider
+  id: OAuthLoginProvider
   label: string
   desc: string
   logoText: string
   logoStyle: string
   /** Self-hosted provider exposes a base URL field. */
   hasBaseUrl: boolean
+  /** OIDC 档暴露端点/主键声明配置;git 档位为 false。 */
+  isOidc: boolean
 }
 
 /** Per-provider editable form + saved snapshot(两种用途共用同一张表单壳)。 */
@@ -78,9 +86,24 @@ interface CardState {
   allowedDomains: string
   /** login 用途:要在平台侧登记的回调地址(服务端按当前 origin 现算,只读回显)。 */
   callbackUrl: string
+  /**
+   * 仅 OIDC:端点组 + 主键声明 + scope。保存是**整份覆盖**语义(后端对 git 档位一律落空),
+   * 所以登录档每次保存都把这六项原样发出,不能省略。
+   */
+  discoveryUrl: string
+  authorizeUrl: string
+  tokenUrl: string
+  userinfoUrl: string
+  idClaim: string
+  scopes: string
   enabled: boolean
-  errors: { clientId: string; baseUrl: string; allowedDomains: string }
+  errors: { clientId: string; baseUrl: string; allowedDomains: string; oidc: string }
   saving: boolean
+}
+
+/** 清空字段错误要用新对象:四个 tab 共用一份卡片,原地改会把别的档一起改掉。 */
+function noErrors(): CardState['errors'] {
+  return { clientId: '', baseUrl: '', allowedDomains: '', oidc: '' }
 }
 
 // ─── provider metadata ───────────────────────────────────────────────────────
@@ -94,6 +117,7 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: 'G',
     logoStyle: 'background:#c71d23;color:#fff',
     hasBaseUrl: false,
+    isOidc: false,
   },
   {
     id: 'github',
@@ -102,6 +126,7 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: '',
     logoStyle: 'background:#1f2328;color:#fff',
     hasBaseUrl: false,
+    isOidc: false,
   },
   {
     id: 'gitlab',
@@ -110,6 +135,7 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: '',
     logoStyle: 'background:#fc6d26;color:#fff',
     hasBaseUrl: false,
+    isOidc: false,
   },
   {
     id: 'custom',
@@ -118,8 +144,27 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: '⚙',
     logoStyle: 'background:var(--color-inset);color:var(--color-dim)',
     hasBaseUrl: true,
+    isOidc: false,
   },
 ]
+
+/**
+ * OIDC 只出现在「平台登录」档,所以不进 PROVIDERS 数组(那样「仓库凭据」会渲染出一张
+ * 存不出东西的卡),单独作为一档追加在登录档的 tab 尾巴上。
+ */
+const OIDC_META: ProviderMeta = {
+  id: 'oidc',
+  label: 'OIDC',
+  desc: '',
+  logoText: 'S',
+  logoStyle: 'background:#2d6cdf;color:#fff',
+  hasBaseUrl: false,
+  isOidc: true,
+}
+
+/** 「仓库凭据」档的 tab 清单(四个 git 平台)与「平台登录」档的(再加 OIDC)。 */
+const VAULT_IDS: OAuthLoginProvider[] = PROVIDERS.map((m) => m.id)
+const ALL_IDS: OAuthLoginProvider[] = [...VAULT_IDS, OIDC_META.id]
 
 // ─── i18n + toast ──────────────────────────────────────────────────────────────
 
@@ -127,14 +172,15 @@ const { t } = useI18n()
 const toast = useToast()
 
 /** Provider display label — brand names kept verbatim, `custom` localized. */
-function labelFor(id: OAuthProvider): string {
+function labelFor(id: OAuthLoginProvider): string {
   return id === 'custom' ? t('settingsOAuth.providerCustomLabel') : cards[id].meta.label
 }
 
-/** Provider sub-description — `gitee` / `custom` localized, others verbatim. */
-function descFor(id: OAuthProvider): string {
+/** Provider sub-description — `gitee` / `custom` / `oidc` localized, others verbatim. */
+function descFor(id: OAuthLoginProvider): string {
   if (id === 'gitee') return t('settingsOAuth.providerGiteeDesc')
   if (id === 'custom') return t('settingsOAuth.providerCustomDesc')
+  if (id === 'oidc') return t('settingsOAuth.providerOidcDesc')
   return cards[id].meta.desc
 }
 
@@ -154,29 +200,39 @@ function newCard(meta: ProviderMeta): CardState {
     baseUrl: '',
     allowedDomains: '',
     callbackUrl: '',
+    discoveryUrl: '',
+    authorizeUrl: '',
+    tokenUrl: '',
+    userinfoUrl: '',
+    idClaim: '',
+    scopes: '',
     enabled: false,
-    errors: { clientId: '', baseUrl: '', allowedDomains: '' },
+    errors: noErrors(),
     saving: false,
   }
 }
 
-function newCardSet(): Record<OAuthProvider, CardState> {
-  return Object.fromEntries(PROVIDERS.map((meta) => [meta.id, newCard(meta)])) as Record<
-    OAuthProvider,
-    CardState
-  >
+/** 两套卡片都含 OIDC 档:保险库那套只是不渲染它,数据位留着免得类型收窄。 */
+function newCardSet(): CardSet {
+  return Object.fromEntries([...PROVIDERS, OIDC_META].map((meta) => [meta.id, newCard(meta)])) as CardSet
 }
+
+type CardSet = Record<OAuthLoginProvider, CardState>
 
 const cards = reactive<CardSet>(newCardSet())
 const loginCards = reactive<CardSet>(newCardSet())
-
-type CardSet = Record<OAuthProvider, CardState>
 
 /** 当前用途对应的那套卡片:tab 共用,面板与状态点跟着用途走。 */
 const forms = computed<CardSet>(() => (purpose.value === 'login' ? loginCards : cards))
 const form = computed<CardState>(() => forms.value[active.value])
 
-const cardList = PROVIDERS.map((m) => m.id)
+/**
+ * tab 清单跟着用途走:OIDC 只在「平台登录」出现。
+ * 「仓库凭据」给它一张卡毫无意义 —— OIDC 服务器换不出 git token,后端也会拒收。
+ */
+const cardList = computed<OAuthLoginProvider[]>(() =>
+  purpose.value === 'login' ? ALL_IDS : VAULT_IDS,
+)
 
 /**
  * 「仓库凭据」的回调地址:后端契约里没有,但管理员要在平台侧登记它 ——
@@ -209,14 +265,19 @@ function selectCallback(event: Event): void {
 /** 当前编辑的用途。默认「仓库凭据」——它是这个页面原本唯一的用途。 */
 const purpose = ref<Purpose>('vault')
 
-/** 换用途时清掉两边的字段错误:留着会让另一档的面板显示上一条错误的红字。 */
+/**
+ * 换用途时清掉两边的字段错误:留着会让另一档的面板显示上一条错误的红字。
+ * 另外 OIDC 只在登录档有 tab —— 停在 OIDC 上切回「仓库凭据」会摊开一张没有 tab 的面板,
+ * 所以先把档位退回第一个平台。
+ */
 function setPurpose(p: Purpose): void {
   if (purpose.value === p) return
   purpose.value = p
-  for (const id of cardList) {
-    cards[id].errors = { clientId: '', baseUrl: '', allowedDomains: '' }
-    loginCards[id].errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+  for (const id of ALL_IDS) {
+    cards[id].errors = noErrors()
+    loginCards[id].errors = noErrors()
   }
+  if (p === 'vault' && active.value === OIDC_META.id) active.value = PROVIDERS[0].id
 }
 
 function purposeTitle(p: Purpose): string {
@@ -228,17 +289,17 @@ function purposeHint(p: Purpose): string {
 }
 
 /** 当前摊开的平台。默认第一个,不做「跳到已配置的那个」——那会让每次进来位置都不一样。 */
-const active = ref<OAuthProvider>(cardList[0])
+const active = ref<OAuthLoginProvider>(PROVIDERS[0].id)
 
 type ProviderStatus = 'on' | 'idle' | 'off'
 
-function statusOf(pid: OAuthProvider): ProviderStatus {
+function statusOf(pid: OAuthLoginProvider): ProviderStatus {
   const card = forms.value[pid]
   if (!card.saved?.configured) return 'off'
   return card.enabled ? 'on' : 'idle'
 }
 
-function statusLabel(pid: OAuthProvider): string {
+function statusLabel(pid: OAuthLoginProvider): string {
   const s = statusOf(pid)
   if (s === 'on') return t('settingsOAuth.statusEnabled')
   if (s === 'idle') return t('settingsOAuth.statusConfiguredIdle')
@@ -262,7 +323,7 @@ function onTabKeydown(event: KeyboardEvent): void {
   else if (event.key === 'End') next = tabs.length - 1
   if (next < 0) return
   event.preventDefault()
-  const pid = tabs[next].dataset.provider as OAuthProvider
+  const pid = tabs[next].dataset.provider as OAuthLoginProvider
   active.value = pid
   tabs[next].focus()
 }
@@ -307,7 +368,7 @@ function applyApp(card: CardState, app: OAuthApp): void {
   card.clientSecret = '' // never pre-fill the secret
   card.baseUrl = app.baseUrl
   card.enabled = app.enabled
-  card.errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+  card.errors = noErrors()
 }
 
 function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
@@ -317,18 +378,26 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.baseUrl = app.baseUrl
   card.allowedDomains = joinOAuthDomains(app.allowedDomains ?? [])
   card.callbackUrl = app.callbackUrl
+  // OIDC 六项:git 档位服务端一律返回空串,所以直接覆盖回来即可(不会串味)。
+  // idClaim / scopes 为空时后端已按默认值(sub、openid profile email)落库并回显。
+  card.discoveryUrl = app.discoveryUrl
+  card.authorizeUrl = app.authorizeUrl
+  card.tokenUrl = app.tokenUrl
+  card.userinfoUrl = app.userinfoUrl
+  card.idClaim = app.idClaim
+  card.scopes = app.scopes
   card.enabled = app.enabled
-  card.errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+  card.errors = noErrors()
 }
 
 onMounted(loadApps)
 
 // ─── save ─────────────────────────────────────────────────────────────────────
 
-async function handleSave(provider: OAuthProvider): Promise<void> {
+async function handleSave(provider: OAuthLoginProvider): Promise<void> {
   const isLogin = purpose.value === 'login'
   const card = forms.value[provider]
-  card.errors = { clientId: '', baseUrl: '', allowedDomains: '' }
+  card.errors = noErrors()
 
   // Client-side validation: an enabled provider must have a clientId, and a
   // secret must exist (either already configured or freshly entered).
@@ -356,6 +425,16 @@ async function handleSave(provider: OAuthProvider): Promise<void> {
     card.errors.allowedDomains = t('settingsOAuth.errDomainsInvalid')
     return
   }
+  // OIDC:启用时至少要能凑出三个端点(整份 discovery,或三个都手填)。
+  // 后端在保存时真的去解析(拿不到就 422),这里只是把「明显没填全」当场拦下,
+  // 省一次往返,也不让管理员以为存上了。
+  if (isLogin && card.meta.isOidc && card.enabled) {
+    const filled = [card.authorizeUrl, card.tokenUrl, card.userinfoUrl].filter((v) => v.trim()).length
+    if (!card.discoveryUrl.trim() && filled !== 3) {
+      card.errors.oidc = t('settingsOAuth.errOidcEndpointsIncomplete')
+      return
+    }
+  }
 
   card.saving = true
   try {
@@ -366,6 +445,12 @@ async function handleSave(provider: OAuthProvider): Promise<void> {
         ...(card.meta.hasBaseUrl ? { baseUrl } : {}),
         allowedDomains: domains,
         enabled: card.enabled,
+        discoveryUrl: card.discoveryUrl.trim(),
+        authorizeUrl: card.authorizeUrl.trim(),
+        tokenUrl: card.tokenUrl.trim(),
+        userinfoUrl: card.userinfoUrl.trim(),
+        idClaim: card.idClaim.trim(),
+        scopes: card.scopes.trim(),
       }
       applyLoginApp(card, await saveOAuthLoginApp(provider, payload))
     } else {
@@ -375,7 +460,8 @@ async function handleSave(provider: OAuthProvider): Promise<void> {
         ...(card.meta.hasBaseUrl ? { baseUrl } : {}),
         enabled: card.enabled,
       }
-      applyApp(card, await saveOAuthApp(provider, payload))
+      // 仓库凭据的 tab 清单里压根没有 OIDC(见 cardList),这里只是给类型收窄一个落点。
+      applyApp(card, await saveOAuthApp(provider as OAuthProvider, payload))
     }
     toast.success(t('settingsOAuth.toastSaved'), { detail: labelFor(provider) })
   } catch (err) {
@@ -388,6 +474,8 @@ async function handleSave(provider: OAuthProvider): Promise<void> {
           card.errors.baseUrl = t('settingsOAuth.errBaseUrlRequired')
         } else if (code === 'invalid_domain') {
           card.errors.allowedDomains = t('settingsOAuth.errDomainsInvalid')
+        } else if (code === 'oidc_config_invalid') {
+          card.errors.oidc = t('settingsOAuth.errOidcConfigInvalid')
         } else {
           toast.error(t('settingsOAuth.toastSaveFailed'), { detail: err.apiError.message })
         }
@@ -612,6 +700,123 @@ function relativeTime(iso: string | null): string {
                 {{ form.errors.baseUrl }}
               </span>
             </div>
+
+            <!-- OIDC 端点组 — 仅「平台登录」用途下的 OIDC 档(git 平台用不到) -->
+            <template v-if="purpose === 'login' && form.meta.isOidc">
+              <div class="field">
+                <label class="field-label" :for="`oauth-discovery-${active}`">
+                  {{ t('settingsOAuth.oidcDiscoveryLabel') }}
+                  <span class="field-optional">{{ t('settingsOAuth.oidcDiscoveryOptional') }}</span>
+                </label>
+                <input
+                  :id="`oauth-discovery-${active}`"
+                  v-model="form.discoveryUrl"
+                  type="url"
+                  class="field-input field-input--mono"
+                  :class="{ 'field-input--error': form.errors.oidc }"
+                  :placeholder="t('settingsOAuth.oidcDiscoveryPlaceholder')"
+                  autocomplete="off"
+                  :aria-invalid="!!form.errors.oidc || undefined"
+                  :disabled="form.saving"
+                  @input="form.errors.oidc = ''"
+                />
+                <span class="field-hint">{{ t('settingsOAuth.oidcDiscoveryHint') }}</span>
+                <!-- 端点凑不齐 / discovery 拉不到都由服务端在保存时判,红字统一显示在 discovery 这栏下面 -->
+                <span v-if="form.errors.oidc" class="field-error" role="alert">
+                  {{ form.errors.oidc }}
+                </span>
+              </div>
+
+              <div class="field">
+                <label class="field-label" :for="`oauth-oidc-authorize-${active}`">
+                  {{ t('settingsOAuth.oidcAuthorizeLabel') }}
+                  <span class="field-optional">{{ t('settingsOAuth.oidcOverrideOptional') }}</span>
+                </label>
+                <input
+                  :id="`oauth-oidc-authorize-${active}`"
+                  v-model="form.authorizeUrl"
+                  type="url"
+                  class="field-input field-input--mono"
+                  :placeholder="t('settingsOAuth.oidcEndpointPlaceholder')"
+                  autocomplete="off"
+                  :disabled="form.saving"
+                  @input="form.errors.oidc = ''"
+                />
+              </div>
+
+              <div class="field">
+                <label class="field-label" :for="`oauth-oidc-token-${active}`">
+                  {{ t('settingsOAuth.oidcTokenLabel') }}
+                  <span class="field-optional">{{ t('settingsOAuth.oidcOverrideOptional') }}</span>
+                </label>
+                <input
+                  :id="`oauth-oidc-token-${active}`"
+                  v-model="form.tokenUrl"
+                  type="url"
+                  class="field-input field-input--mono"
+                  :placeholder="t('settingsOAuth.oidcEndpointPlaceholder')"
+                  autocomplete="off"
+                  :disabled="form.saving"
+                  @input="form.errors.oidc = ''"
+                />
+              </div>
+
+              <div class="field">
+                <label class="field-label" :for="`oauth-oidc-userinfo-${active}`">
+                  {{ t('settingsOAuth.oidcUserinfoLabel') }}
+                  <span class="field-optional">{{ t('settingsOAuth.oidcOverrideOptional') }}</span>
+                </label>
+                <input
+                  :id="`oauth-oidc-userinfo-${active}`"
+                  v-model="form.userinfoUrl"
+                  type="url"
+                  class="field-input field-input--mono"
+                  :placeholder="t('settingsOAuth.oidcEndpointPlaceholder')"
+                  autocomplete="off"
+                  :disabled="form.saving"
+                  @input="form.errors.oidc = ''"
+                />
+                <span class="field-hint">{{ t('settingsOAuth.oidcEndpointsHint') }}</span>
+              </div>
+
+              <div class="field">
+                <label class="field-label" :for="`oauth-oidc-idclaim-${active}`">
+                  {{ t('settingsOAuth.oidcIdClaimLabel') }}
+                  <span class="field-optional">{{ t('settingsOAuth.oidcIdClaimOptional') }}</span>
+                </label>
+                <input
+                  :id="`oauth-oidc-idclaim-${active}`"
+                  v-model="form.idClaim"
+                  type="text"
+                  class="field-input field-input--mono"
+                  placeholder="sub"
+                  autocomplete="off"
+                  :disabled="form.saving"
+                  @input="form.errors.oidc = ''"
+                />
+                <span class="field-hint">{{ t('settingsOAuth.oidcIdClaimHint') }}</span>
+              </div>
+
+              <div class="field">
+                <label class="field-label" :for="`oauth-oidc-scopes-${active}`">
+                  {{ t('settingsOAuth.oidcScopesLabel') }}
+                  <span class="field-optional">{{ t('settingsOAuth.oidcScopesOptional') }}</span>
+                </label>
+                <input
+                  :id="`oauth-oidc-scopes-${active}`"
+                  v-model="form.scopes"
+                  type="text"
+                  class="field-input field-input--mono"
+                  placeholder="openid profile email"
+                  autocomplete="off"
+                  :disabled="form.saving"
+                  @input="form.errors.oidc = ''"
+                />
+                <span class="field-hint">{{ t('settingsOAuth.oidcScopesHint') }}</span>
+              </div>
+
+              <p class="purpose-note">{{ t('settingsOAuth.oidcUserinfoNote') }}</p>
+            </template>
 
             <!-- 邮箱域名白名单 — 仅「平台登录」用途 -->
             <div v-if="purpose === 'login'" class="field">

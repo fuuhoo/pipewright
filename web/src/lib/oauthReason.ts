@@ -24,6 +24,7 @@ const REASON_KEYS: Record<string, string> = {
   exchange_failed: 'exchangeFailed',
   identity_unavailable: 'identityUnavailable',
   domain_not_allowed: 'domainNotAllowed',
+  oidc_config_invalid: 'oidcConfigInvalid',
   name_taken: 'nameTaken',
   account_unavailable: 'accountUnavailable',
   role_unavailable: 'roleUnavailable',

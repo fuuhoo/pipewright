@@ -79,8 +79,8 @@ const de: typeof zhCN = {
     errNetwork: 'Server nicht erreichbar. Prüfen Sie, ob das Backend läuft, und versuchen Sie es erneut.',
     errGeneric: 'Anmeldung fehlgeschlagen ({status})',
     errUnknown: 'Unbekannter Fehler, bitte erneut versuchen',
-    oauthDivider: 'Oder mit einem Git-Plattform-Konto anmelden',
-    oauthGroupAria: 'Mit einem Git-Plattform-Konto anmelden',
+    oauthDivider: 'Oder mit einem externen Konto anmelden',
+    oauthGroupAria: 'Mit einem externen Konto anmelden',
     oauthLoginWith: 'Weiter mit {provider}',
   },
 
@@ -98,6 +98,8 @@ const de: typeof zhCN = {
     exchangeFailed: 'Der Autorisierungscode konnte nicht getauscht werden. Bitte neu starten.',
     identityUnavailable: 'Dein Konto auf der Plattform konnte nicht gelesen werden. Bitte neu starten.',
     domainNotAllowed: 'Diese E-Mail-Domain darf auf dieser Instanz nicht angemeldet werden.',
+    oidcConfigInvalid:
+      'Die Endpunkt-Konfiguration dieses Login-Eintrags ist ungültig (Discovery nicht erreichbar oder Endpunkte unvollständig). Bitte einen Administrator kontaktieren.',
     nameTaken: 'Dieser Benutzername ist in dieser Instanz bereits vergeben. Bitte einen Administrator, die Konten zu verknüpfen.',
     accountUnavailable: 'Das verknüpfte Konto ist nicht mehr verfügbar. Bitte einen Administrator kontaktieren.',
     roleUnavailable: 'Die Instanz hat keine Standardrolle für neue Konten. Bitte einen Administrator kontaktieren.',

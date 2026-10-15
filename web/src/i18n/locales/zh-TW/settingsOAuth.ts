@@ -69,4 +69,30 @@ export default {
     'Email 網域白名單含非法項:只填網域本身(如 corp.example.com),不要附協議、路徑或空白',
   toggleTitleLogin: '啟用登入',
   toggleDescLogin: '啟用後登入頁出現「用該平台帳號登入」按鈕',
+
+  // ─── OIDC 身分來源(只在「平台登入」檔出現)──────────────────────────────
+  // 端點由服務端在儲存時真的解析一次:配錯的代價是「授權頁一切正常,回來就報錯」,
+  // 所以寧可儲存在即失敗,也不要管理員帶著壞設定去登入頁試。
+  providerOidcDesc: '通用 OIDC / SSO(Keycloak、Authentik 等)',
+  oidcDiscoveryLabel: 'Discovery 網址',
+  oidcDiscoveryOptional: '(與下面三個端點二選一)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint: '填了它,授權 / 權杖 / 使用者資訊三個端點就從文件裡取;儲存時會真的拉一次,拉不到當場報錯。',
+  oidcOverrideOptional: '(留空則取文件裡的)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint: '文件拉不到(內網隔離、閘道擋住)時把這三個都手填;填了的手填值優先於文件。',
+  oidcIdClaimLabel: '主鍵宣告',
+  oidcIdClaimOptional: '(留空 = sub)',
+  oidcIdClaimHint:
+    '用哪個宣告當帳號唯一識別。預設 sub:規範要求它不可變。改成信箱或登入名,對方日後改名或換信箱就會撞上別人的帳號。',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(留空 = openid profile email)',
+  oidcScopesHint: '空格分隔。至少要 openid;拿不到信箱時,信箱域名白名單會直接擋下登入。',
+  oidcUserinfoNote:
+    '身分取自 userinfo 介面:這一版不驗證 id_token 的簽名與 audience,建議只接內網或 HTTPS 的身分提供者。',
+  errOidcEndpointsIncomplete: '啟用 OIDC 要嘛填 Discovery 網址,要嘛把授權 / 權杖 / 使用者資訊三個端點都填上',
+  errOidcConfigInvalid: '端點解析失敗:網址寫錯、discovery 拉不到,或三個端點沒湊齊(已儲存的設定沒動)',
 }

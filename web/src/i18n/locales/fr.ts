@@ -79,8 +79,8 @@ const fr: typeof zhCN = {
     errNetwork: 'Impossible de joindre le serveur. Vérifiez que le backend est lancé et réessayez.',
     errGeneric: 'Échec de la connexion ({status})',
     errUnknown: 'Erreur inconnue, veuillez réessayer',
-    oauthDivider: 'Ou connexion avec un compte de plateforme Git',
-    oauthGroupAria: 'Se connecter avec un compte de plateforme Git',
+    oauthDivider: 'Ou connexion avec un compte externe',
+    oauthGroupAria: 'Se connecter avec un compte externe',
     oauthLoginWith: 'Continuer avec {provider}',
   },
 
@@ -98,6 +98,8 @@ const fr: typeof zhCN = {
     exchangeFailed: "L'échange du code d'autorisation a échoué. Veuillez recommencer.",
     identityUnavailable: "Impossible de lire votre compte sur cette plateforme. Veuillez recommencer.",
     domainNotAllowed: "Ce domaine d'e-mail n'est pas autorisé à se connecter sur cette instance.",
+    oidcConfigInvalid:
+      "La configuration des points d'accès de cette entrée de connexion est invalide (discovery injoignable ou points d'accès incomplets). Contactez un administrateur.",
     nameTaken: "Ce nom d'utilisateur est déjà pris dans cette instance. Demandez à un administrateur de lier les comptes.",
     accountUnavailable: "Le compte lié n'est plus disponible. Contactez un administrateur.",
     roleUnavailable: "L'instance n'a pas de rôle par défaut pour les nouveaux comptes. Contactez un administrateur.",

@@ -69,4 +69,33 @@ export default {
     '邮箱域名白名单含非法项:只填域名本身(如 corp.example.com),不要带协议、路径或空格',
   toggleTitleLogin: '启用登录',
   toggleDescLogin: '启用后登录页出现「用该平台账号登录」按钮',
+
+  // ─── OIDC 身份源(只在「平台登录」档出现)────────────────────────────────
+  // 端点由服务端在保存时真解析一次:配错的代价是「授权页一切正常,回来就报错」,
+  // 所以宁可保存在即失败,也不让管理员带着坏配置去登录页试。
+  providerOidcDesc: '通用 OIDC / SSO(Keycloak、Authentik 等)',
+  oidcDiscoveryLabel: 'Discovery 地址',
+  oidcDiscoveryOptional: '(与下面三个端点二选一)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    '填了它,授权 / 令牌 / 用户信息三个端点就从文档里取;保存时会真的拉一次,拉不到当场报错。',
+  oidcOverrideOptional: '(留空则取文档里的)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    '文档拉不到(内网隔离、网关挡住)时把这三个都手填;填了的手填值优先于文档。',
+  oidcIdClaimLabel: '主键声明',
+  oidcIdClaimOptional: '(留空 = sub)',
+  oidcIdClaimHint:
+    '用哪个声明当账号唯一标识。默认 sub:规范要求它不可变。换成邮箱或登录名,以后对方改名或换邮箱就会撞上别人的账号。',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(留空 = openid profile email)',
+  oidcScopesHint: '空格分隔。至少要 openid;拿不到邮箱时,邮箱域名白名单会直接拦下登录。',
+  oidcUserinfoNote:
+    '身份取自 userinfo 接口:这一版不校验 id_token 的签名与 audience,建议只接内网或 HTTPS 的身份提供方。',
+  errOidcEndpointsIncomplete:
+    '启用 OIDC 要么填 Discovery 地址,要么把授权 / 令牌 / 用户信息三个端点都填上',
+  errOidcConfigInvalid: '端点解析失败:地址写错、discovery 拉不到,或三个端点没凑齐(已存的配置没动)',
 }

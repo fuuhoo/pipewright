@@ -62,8 +62,28 @@ function makeLoginApp(over: Partial<import('../../api/oauth').OAuthLoginApp> = {
     configured: true,
     updatedAt: null,
     callbackUrl: 'http://localhost:3000/api/auth/oauth/github/callback',
+    // OIDC 六项:git 档位服务端回空串,契约里它们是必填字段。
+    discoveryUrl: '',
+    authorizeUrl: '',
+    tokenUrl: '',
+    userinfoUrl: '',
+    idClaim: '',
+    scopes: '',
     ...over,
   }
+}
+
+/** 登录档的 OIDC 应用:端点走 discovery,主键声明与 scope 由服务端补默认值。 */
+function makeOidcApp(over: Partial<import('../../api/oauth').OAuthLoginApp> = {}) {
+  return makeLoginApp({
+    provider: 'oidc',
+    clientId: 'oidc-client-id',
+    callbackUrl: 'http://localhost:3000/api/auth/oauth/oidc/callback',
+    discoveryUrl: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+    idClaim: 'sub',
+    scopes: 'openid profile email',
+    ...over,
+  })
 }
 
 describe('SettingsOAuth', () => {
@@ -364,5 +384,176 @@ describe('SettingsOAuth', () => {
     expect(wrapper.get('.toggle-label').text()).toContain('启用连接')
     await openPurpose(wrapper, 'login')
     expect(wrapper.get('.toggle-label').text()).toContain('启用登录')
+  })
+
+  // ─── OIDC 身份源(只挂在「平台登录」档)──────────────────────────────────
+
+  it('offers the OIDC tab only under the login purpose', async () => {
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+
+    // 仓库凭据复用的是 git 平台的 token 流程,OIDC 在那边没有意义,tab 都不该出现
+    expect(wrapper.find('[data-provider="oidc"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-provider]')).toHaveLength(4)
+
+    await openPurpose(wrapper, 'login')
+    expect(wrapper.findAll('[data-provider]')).toHaveLength(5)
+    expect(wrapper.get('[data-provider="oidc"]').text()).toContain('OIDC')
+  })
+
+  it('renders the endpoint group only for OIDC, and says what this version does not verify', async () => {
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+
+    expect(wrapper.find('#oauth-discovery-gitee').exists()).toBe(false)
+    await openTab(wrapper, 'oidc')
+
+    const panel = wrapper.get('[data-panel="oidc"]')
+    for (const id of [
+      '#oauth-discovery-oidc',
+      '#oauth-oidc-authorize-oidc',
+      '#oauth-oidc-token-oidc',
+      '#oauth-oidc-userinfo-oidc',
+      '#oauth-oidc-idclaim-oidc',
+      '#oauth-oidc-scopes-oidc',
+    ]) {
+      expect(panel.find(id).exists(), `OIDC 面板缺少字段 ${id}`).toBe(true)
+    }
+    // 只读 userinfo、不验 id_token 是这一期的真实边界,得让管理员在保存前就看到
+    expect(panel.text()).toContain('这一版不校验 id_token 的签名与 audience')
+    expect(wrapper.get('[data-panel]').attributes('data-panel')).toBe('oidc')
+  })
+
+  it('falls back to the first git tab when leaving the login purpose with OIDC open', async () => {
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    await openPurpose(wrapper, 'vault')
+    // active 停在 oidc 会渲染一张 vault 档根本不存在的卡:面板得回到 git 平台
+    expect(wrapper.get('[data-panel]').attributes('data-panel')).toBe('gitee')
+  })
+
+  it('echoes back the endpoints and defaults the server resolved', async () => {
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp()])
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    const value = (id: string) => (wrapper.get(id).element as HTMLInputElement).value
+    expect(value('#oauth-discovery-oidc')).toBe(
+      'https://sso.example.com/realms/my/.well-known/openid-configuration',
+    )
+    expect(value('#oauth-oidc-idclaim-oidc')).toBe('sub')
+    expect(value('#oauth-oidc-scopes-oidc')).toBe('openid profile email')
+    expect(value('#oauth-callback-oidc')).toContain('/api/auth/oauth/oidc/callback')
+  })
+
+  it('sends all six OIDC fields on every login save so an override can be cleared', async () => {
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp()])
+    saveOAuthLoginApp.mockResolvedValue(makeOidcApp({ discoveryUrl: '' }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    await wrapper.get('#oauth-discovery-oidc').setValue('')
+    await wrapper.get('#oauth-oidc-authorize-oidc').setValue('  https://sso.local/authorize  ')
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthApp).not.toHaveBeenCalled()
+    const [provider, payload] = saveOAuthLoginApp.mock.calls[0]
+    expect(provider).toBe('oidc')
+    // 整份覆盖:留空即清空,所以清空 discovery 必须显式传空串,漏传会把旧值留下
+    expect(payload).toMatchObject({
+      discoveryUrl: '',
+      authorizeUrl: 'https://sso.local/authorize',
+      idClaim: 'sub',
+      scopes: 'openid profile email',
+    })
+  })
+
+  it('sends the OIDC fields empty for a git app so a stray value cannot survive', async () => {
+    saveOAuthLoginApp.mockResolvedValue(makeLoginApp({ provider: 'gitee' }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+
+    await wrapper.get('[data-panel="gitee"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({
+      discoveryUrl: '',
+      idClaim: '',
+      scopes: '',
+    })
+  })
+
+  it('blocks enabling OIDC without a discovery URL or all three hand-filled endpoints', async () => {
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp()])
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    await wrapper.get('#oauth-discovery-oidc').setValue('')
+    await wrapper.get('#oauth-oidc-authorize-oidc').setValue('https://sso.local/authorize')
+    await wrapper.get('[data-panel="oidc"]').get('[role="switch"]').trigger('click')
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    // 后端保存时真去解析,但明显没凑齐的不必浪费一次往返,也别让管理员以为存上了
+    expect(saveOAuthLoginApp).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-panel="oidc"]').text()).toContain(
+      '要么把授权 / 令牌 / 用户信息三个端点都填上',
+    )
+  })
+
+  it('accepts three hand-filled endpoints with no discovery URL (isolated IdP)', async () => {
+    saveOAuthLoginApp.mockResolvedValue(makeOidcApp({ discoveryUrl: '' }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    await wrapper.get('#oauth-clientid-oidc').setValue('oidc-client-id')
+    await wrapper.get('#oauth-secret-oidc').setValue('oidc-client-secret')
+    await wrapper.get('#oauth-oidc-authorize-oidc').setValue('https://sso.local/authorize')
+    await wrapper.get('#oauth-oidc-token-oidc').setValue('https://sso.local/token')
+    await wrapper.get('#oauth-oidc-userinfo-oidc').setValue('https://sso.local/userinfo')
+    await wrapper.get('[data-panel="oidc"]').get('[role="switch"]').trigger('click')
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthLoginApp).toHaveBeenCalledTimes(1)
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({
+      enabled: true,
+      userinfoUrl: 'https://sso.local/userinfo',
+    })
+    expect(toastSuccess).toHaveBeenCalled()
+  })
+
+  it('maps the backend oidc_config_invalid onto the endpoint group instead of a toast', async () => {
+    saveOAuthLoginApp.mockRejectedValue(
+      new HttpError(422, { code: 'oidc_config_invalid', message: 'discovery unreachable' }, 'unprocessable'),
+    )
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    await wrapper.get('#oauth-discovery-oidc').setValue('https://sso.local/nope')
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[data-panel="oidc"] .field-error').text()).toContain('已存的配置没动')
+    expect(toastError).not.toHaveBeenCalled()
+
+    await wrapper.get('#oauth-discovery-oidc').setValue('https://sso.local/real')
+    expect(wrapper.find('.field-error').exists()).toBe(false)
   })
 })

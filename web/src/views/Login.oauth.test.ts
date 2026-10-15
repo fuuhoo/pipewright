@@ -68,6 +68,17 @@ describe('Login — OAuth 登录入口', () => {
     expect(labels).toEqual(['使用 GitLab 登录', '使用 git.example.com 登录'])
   })
 
+  it('OIDC 身份源与 git 平台共用同一个入口和同一条导航', async () => {
+    // 按钮名来自服务端的 label(OIDC 没有品牌名可借),登录页不该自己按平台拼名字
+    getPublicOAuthProviders.mockResolvedValue([{ provider: 'oidc', label: 'OIDC' }])
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    expect(wrapper.get('.oauth__btn').text()).toBe('使用 OIDC 登录')
+    await wrapper.get('.oauth__btn').trigger('click')
+    expect(location.href).toBe('/api/auth/oauth/oidc/authorize')
+  })
+
   it('入口拉不到就当没配:登录页照常可用,不能白屏', async () => {
     getPublicOAuthProviders.mockRejectedValue(new Error('boom'))
     const wrapper = mountLogin()

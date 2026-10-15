@@ -65,9 +65,41 @@ export default {
   domainsOptional: '(vacío = cualquier dominio)',
   domainsPlaceholder: 'corp.example.com, hr.example.com',
   domainsHint:
-    'Solo pueden entrar las cuentas cuyo correo esté en alguno de estos dominios. Con la lista vacía cualquier correo obtiene una cuenta automática (siempre con el rol mínimo).',
+    'Solo pueden entrar las cuentas cuyo correo esté en alguno de estos dominios. Con la lista vacía cualquier correo obtiene KEEP.',
   errDomainsInvalid:
     'La allowlist de correos contiene un elemento no válido: escribe solo el dominio (p. ej. corp.example.com), sin protocolo, ruta ni espacios',
   toggleTitleLogin: 'Activar inicio de sesión',
   toggleDescLogin: 'Al activarlo, la página de inicio de sesión muestra un botón «Entrar con esta plataforma»',
+
+  // ─── Proveedor de identidad OIDC (solo aparece bajo «Inicio de sesión») ─────
+  // El backend resuelve los endpoints al guardar: con una mala configuración el
+  // fallo se vería como «la pantalla de consentimiento fue bien y al volver rompió»,
+  // así que es mejor que falle en el guardado.
+  providerOidcDesc: 'OIDC / SSO genérico (Keycloak, Authentik…)',
+  oidcDiscoveryLabel: 'URL de Discovery',
+  oidcDiscoveryOptional: '(esta o los tres endpoints de abajo)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    'Si la rellenas, los endpoints de autorización / token / userinfo salen del documento; al guardar se consulta de verdad y falla si no es accesible.',
+  oidcOverrideOptional: '(vacío = usa el documento)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    'Si el documento no es accesible (red aislada, un gateway lo bloquea), rellena los tres a mano; lo escrito a mano gana al documento.',
+  oidcIdClaimLabel: 'Claim identificador',
+  oidcIdClaimOptional: '(vacío = sub)',
+  oidcIdClaimHint:
+    'Qué claim identifica la cuenta de forma única. Por defecto sub, que la especificación exige inmutable. Usar el correo o el nombre de usuario hace que un cambio futuro acabe en la cuenta de otra persona.',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(vacío = openid profile email)',
+  oidcScopesHint:
+    'Separados por espacios; openid es obligatorio. Si no llega un correo, la allowlist de dominios bloquea el acceso.',
+  oidcUserinfoNote:
+    'La identidad se lee del endpoint userinfo: esta versión no valida la firma ni el audience de id_token, así que conecta solo un proveedor interno o por HTTPS.',
+  errOidcEndpointsIncomplete:
+    'Para activar OIDC indica una URL de Discovery o rellena los tres endpoints de autorización / token / userinfo',
+  errOidcConfigInvalid:
+    'No se han podido resolver los endpoints: URL incorrecta, discovery inaccesible o los tres endpoints están incompletos (la configuración guardada no se ha tocado)',
 }

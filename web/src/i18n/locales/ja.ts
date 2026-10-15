@@ -79,8 +79,8 @@ const ja: typeof zhCN = {
     errNetwork: 'サーバーに接続できません。バックエンドが稼働しているか確認して再試行してください',
     errGeneric: 'ログインに失敗しました({status})',
     errUnknown: '不明なエラーです。再試行してください',
-    oauthDivider: 'または Git プラットフォームのアカウントでログイン',
-    oauthGroupAria: 'Git プラットフォームのアカウントでログイン',
+    oauthDivider: 'または外部アカウントでログイン',
+    oauthGroupAria: '外部アカウントでログイン',
     oauthLoginWith: '{provider} でログイン',
   },
 
@@ -98,6 +98,7 @@ const ja: typeof zhCN = {
     exchangeFailed: '認可コードの交換に失敗しました。もう一度やり直してください。',
     identityUnavailable: 'プラットフォーム上のアカウント情報を読み取れませんでした。もう一度やり直してください。',
     domainNotAllowed: 'このメールドメインでのログインは、このインスタンスで許可されていません。',
+    oidcConfigInvalid: 'このログイン口のエンドポイント設定に問題があります (Discovery が取得できないか、入力が揃っていません)。管理者にお問い合わせください。',
     nameTaken: 'このユーザー名はすでに使用中です。管理者にアカウントの紐付けを依頼してください。',
     accountUnavailable: '紐付けられたアカウントは利用できません。管理者にお問い合わせください。',
     roleUnavailable: '新規アカウントのデフォルトロールが設定されていません。管理者にお問い合わせください。',

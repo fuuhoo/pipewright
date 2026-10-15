@@ -22,6 +22,13 @@ import { http } from './http'
 
 export type OAuthProvider = 'gitee' | 'github' | 'gitlab' | 'custom'
 
+/**
+ * 「登录用」身份源的枚举 = git 四档 + OIDC。
+ * 与后端 `normalizeProvider` / `normalizeLoginProvider` 两套枚举一一对应:
+ * OIDC 服务器给不了 git token,所以它只出现在登录这一侧,永远不进保险库/仓库凭据。
+ */
+export type OAuthLoginProvider = OAuthProvider | 'oidc'
+
 /** GET /api/oauth/apps element — never contains plaintext clientSecret. */
 export interface OAuthApp {
   provider: OAuthProvider
@@ -83,13 +90,14 @@ export function authorizeUrl(provider: OAuthProvider): string {
 
 /** GET /api/auth/oauth/providers 元素(公开;不含任何配置细节)。 */
 export interface PublicOAuthProvider {
-  provider: OAuthProvider
+  provider: OAuthLoginProvider
+  /** 服务端给的显示名(Gitee/GitHub/GitLab/实例主机名/OIDC),前端不自己拼。 */
   label: string
 }
 
 /** GET /api/admin/oauth/login-apps 元素。 */
 export interface OAuthLoginApp {
-  provider: OAuthProvider
+  provider: OAuthLoginProvider
   clientId: string
   baseUrl: string
   /** 邮箱域名白名单;空数组 = 不限域名(自动建号仍只给最小角色)。 */
@@ -100,6 +108,17 @@ export interface OAuthLoginApp {
   updatedAt: string | null
   /** 要在 git 平台应用里登记的回调地址(服务端按当前访问 origin 现算)。 */
   callbackUrl: string
+  /**
+   * 以下六项只对 provider=oidc 有值,git 平台永远返回空串:
+   * 发现文档地址、三个可覆盖的端点、主键声明名、scope 串。
+   * 前端据此决定这组字段显不显示,不必自己再判一遍枚举。
+   */
+  discoveryUrl: string
+  authorizeUrl: string
+  tokenUrl: string
+  userinfoUrl: string
+  idClaim: string
+  scopes: string
 }
 
 /** PUT /api/admin/oauth/login-apps/{provider} 请求体。 */
@@ -114,6 +133,16 @@ export interface SaveOAuthLoginAppInput {
    */
   allowedDomains?: string[]
   enabled: boolean
+  /**
+   * OIDC 六项是**整份覆盖**语义(与 secret/白名单的「省略即保留」相反):
+   * 每次保存都以这几个值为准,省略即清空。只对 provider=oidc 生效。
+   */
+  discoveryUrl?: string
+  authorizeUrl?: string
+  tokenUrl?: string
+  userinfoUrl?: string
+  idClaim?: string
+  scopes?: string
 }
 
 export async function getPublicOAuthProviders(): Promise<PublicOAuthProvider[]> {
@@ -125,7 +154,7 @@ export async function getOAuthLoginApps(): Promise<OAuthLoginApp[]> {
 }
 
 export async function saveOAuthLoginApp(
-  provider: OAuthProvider,
+  provider: OAuthLoginProvider,
   input: SaveOAuthLoginAppInput,
 ): Promise<OAuthLoginApp> {
   return http.put<OAuthLoginApp>(`/api/admin/oauth/login-apps/${provider}`, input)
@@ -136,7 +165,7 @@ export async function saveOAuthLoginApp(
  * 后端 302 到平台授权页,还要在响应里种一次性浏览器 nonce cookie,fetch 会把这两步都打断。
  * `redirect` 是登录成功后的站内落地路径,服务端会过滤掉协议相对 URL 等开放重定向形态。
  */
-export function loginAuthorizeUrl(provider: OAuthProvider, redirect?: string): string {
+export function loginAuthorizeUrl(provider: OAuthLoginProvider, redirect?: string): string {
   const base = `/api/auth/oauth/${provider}/authorize`
   return redirect ? `${base}?redirect=${encodeURIComponent(redirect)}` : base
 }

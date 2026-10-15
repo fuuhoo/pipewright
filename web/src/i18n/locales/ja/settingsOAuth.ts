@@ -70,4 +70,34 @@ export default {
     'メールドメイン許可リストに不正な項目があります。ドメイン単体(例 corp.example.com)を、スキーム・パス・空白なしで入力してください',
   toggleTitleLogin: 'ログインを有効化',
   toggleDescLogin: '有効にすると、ログイン画面に「このプラットフォームでログイン」ボタンが表示されます',
+
+  // ─── OIDC 身分源(「プラットフォームログイン」にのみ表示)───────────────
+  // 保存時にサーバー側がエンドポイントを実際に解決します。設定を誤ると
+  // 「認可画面は通ったのに戻るとエラー」となるため、保存時点で失敗させます。
+  providerOidcDesc: '汎用 OIDC / SSO(Keycloak、Authentik など)',
+  oidcDiscoveryLabel: 'Discovery URL',
+  oidcDiscoveryOptional: '(下の3エンドポイントとどちらか)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    '入力すると認可 / トークン / ユーザー情報の各エンドポイントをドキュメントから取得します。保存時に実際に取得し、取得できなければその場でエラーになります。',
+  oidcOverrideOptional: '(空ならドキュメントの値)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    'ドキュメントに届かない場合(隔離ネットワーク、ゲートウェイに遮られる)は3つとも手入力してください。手入力した値が優先されます。',
+  oidcIdClaimLabel: '主キーのクレーム',
+  oidcIdClaimOptional: '(空 = sub)',
+  oidcIdClaimHint:
+    'アカウントの唯一の識別に使うクレーム。既定は sub(仕様で不変が求められます)。メールやログイン名にすると、後の名前変更やメール変更で他人のアカウントに衝突します。',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(空 = openid profile email)',
+  oidcScopesHint: 'スペース区切り。openid は必須です。メールを取得できない場合、メールドメイン許可リストがログインを拒否します。',
+  oidcUserinfoNote:
+    '身元は userinfo エンドポイントから取得します。このバージョンは id_token の署名と audience を検証しないため、社内または HTTPS のプロバイダのみ接続してください。',
+  errOidcEndpointsIncomplete:
+    'OIDC を有効にするには Discovery URL を入力するか、認可 / トークン / ユーザー情報の3つすべてを入力してください',
+  errOidcConfigInvalid:
+    'エンドポイントを解決できません: URL の誤り、discovery の取得失敗、または3つの入力が揃っていません(保存済みの設定は変更されていません)',
 }

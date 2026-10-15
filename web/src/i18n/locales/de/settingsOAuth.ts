@@ -70,4 +70,36 @@ export default {
     'Die E-Mail-Allowlist enthält einen ungültigen Eintrag: gib nur die Domain selbst an (z. B. corp.example.com), ohne Protokoll, Pfad oder Leerzeichen',
   toggleTitleLogin: 'Anmeldung aktivieren',
   toggleDescLogin: 'Nach der Aktivierung zeigt die Anmeldeseite eine Schaltfläche „Mit diesem Plattform-Konto anmelden“',
+
+  // ─── OIDC-Identitätsquelle (erscheint nur unter „Plattform-Anmeldung“) ──────
+  // Beim Speichern löst das Backend die Endpunkte tatsächlich auf: eine kaputte
+  // Konfiguration würde sich sonst erst als „Consent-Seite lief, beim Rückweg
+  // kippte es“ zeigen — am Speichern zu scheitern ist der freundlichere Ort.
+  providerOidcDesc: 'Generisches OIDC / SSO (Keycloak, Authentik …)',
+  oidcDiscoveryLabel: 'Discovery-URL',
+  oidcDiscoveryOptional: '(entweder diese oder die drei Endpunkte unten)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    'Ausgefüllt, stammen die Endpunkte für Autorisierung / Token / Nutzerinfo aus dem Dokument; beim Speichern wird es tatsächlich abgerufen, sonst kommt sofort ein Fehler.',
+  oidcOverrideOptional: '(leer = Dokumentwert verwenden)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    'Ist das Dokument unerreichbar (abgeschirmtes Netz, Gateway blockiert), alle drei per Hand ausfüllen — der per Hand eingetragene Wert gewinnt.',
+  oidcIdClaimLabel: 'ID-Claim',
+  oidcIdClaimOptional: '(leer = sub)',
+  oidcIdClaimHint:
+    'Welcher Claim das Konto eindeutig kennzeichnet. Standard ist sub, das laut Spezifikation unveränderlich sein muss. E-Mail oder Benutzername führt dazu, dass eine spätere Umbenennung auf ein fremdes Konto fällt.',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(leer = openid profile email)',
+  oidcScopesHint:
+    'Leerzeichengetrennt; openid ist Pflicht. Kommt keine E-Mail zurück, blockiert die E-Mail-Domain-Allowlist die Anmeldung.',
+  oidcUserinfoNote:
+    'Die Identität kommt vom userinfo-Endpunkt: Diese Version prüft weder Signatur noch Audience des id_token, daher nur interne oder HTTPS-Anbieter anbinden.',
+  errOidcEndpointsIncomplete:
+    'Zum Aktivieren von OIDC eine Discovery-URL angeben oder alle drei Endpunkte für Autorisierung / Token / Nutzerinfo ausfüllen',
+  errOidcConfigInvalid:
+    'Endpunkte konnten nicht aufgelöst werden: falsche URL, Discovery nicht erreichbar oder die drei Endpunkte unvollständig (die gespeicherte Konfiguration blieb unberührt)',
 }

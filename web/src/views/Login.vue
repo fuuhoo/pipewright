@@ -7,7 +7,7 @@ import { HttpError } from '../api/http'
 import {
   getPublicOAuthProviders,
   loginAuthorizeUrl,
-  type OAuthProvider,
+  type OAuthLoginProvider,
   type PublicOAuthProvider,
 } from '../api/oauth'
 import { listProjects } from '../api/projects'
@@ -118,7 +118,7 @@ async function handleSubmit(): Promise<void> {
 
 const canSubmit = computed(() => !loading.value && !isLockedOut.value)
 
-// ─── 「用 git 平台账号登录」入口 ─────────────────────────────────────────────
+// ─── 「用外部账号登录」入口(git 平台 + OIDC)────────────────────────────────
 // 清单来自公开端点,只列「已配全且已启用」的登录应用;拉不到就当作没配 —— 登录页不能因为
 // 领域故障白屏,那样连口令都登不进去了。
 const oauthProviders = ref<PublicOAuthProvider[]>([])
@@ -135,7 +135,7 @@ const safeRedirect = computed(() => {
   return raw.startsWith('/') && !raw.startsWith('//') ? raw : ''
 })
 
-function startOAuthLogin(provider: OAuthProvider): void {
+function startOAuthLogin(provider: OAuthLoginProvider): void {
   if (oauthDiverting.value) return
   oauthDiverting.value = provider
   // 整页导航而非 fetch:后端要 302 到平台授权页,并在同一响应里种一次性浏览器 nonce,

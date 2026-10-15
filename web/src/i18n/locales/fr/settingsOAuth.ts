@@ -70,4 +70,36 @@ export default {
     'L’allowlist de domaines contient un élément invalide : indiquez le domaine seul (ex. corp.example.com), sans protocole, chemin ni espace',
   toggleTitleLogin: 'Activer la connexion',
   toggleDescLogin: 'Une fois activé, la page de connexion affiche un bouton « Se connecter avec cette plateforme »',
+
+  // ─── Source d’identité OIDC (uniquement sous « Connexion à la plateforme ») ──
+  // Le backend résout réellement les points d’accès à l’enregistrement : une
+  // mauvaise configuration sinon se verrait comme « l’écran de consentement passe,
+  // puis ça casse au retour ». Mieux vaut échouer au moment de sauvegarder.
+  providerOidcDesc: 'OIDC / SSO générique (Keycloak, Authentik…)',
+  oidcDiscoveryLabel: 'URL de Discovery',
+  oidcDiscoveryOptional: '(celle-ci ou les trois points d’accès ci-dessous)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    'Renseignée, les points d’accès autorisation / jeton / userinfo viennent du document ; l’enregistrement va le chercher pour de vrai et échoue sur place sinon.',
+  oidcOverrideOptional: '(vide = reprendre le document)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    'Si le document est injoignable (réseau isolé, passerelle qui bloque), renseignez les trois à la main ; la valeur saisie prime sur le document.',
+  oidcIdClaimLabel: 'Claim identifiant',
+  oidcIdClaimOptional: '(vide = sub)',
+  oidcIdClaimHint:
+    'Quel claim identifie le compte de façon unique. Par défaut sub, que la spécification veut immuable. Prendre l’e-mail ou le nom d’utilisateur, c’est laisser un changement futur atterrir sur le compte de quelqu’un d’autre.',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(vide = openid profile email)',
+  oidcScopesHint:
+    'Séparés par des espaces ; openid est obligatoire. Sans e-mail renvoyé, l’allowlist de domaines bloque la connexion.',
+  oidcUserinfoNote:
+    'L’identité est lue sur le point d’accès userinfo : cette version ne vérifie ni la signature ni l’audience de id_token, donc ne branchez qu’un fournisseur interne ou en HTTPS.',
+  errOidcEndpointsIncomplete:
+    'Pour activer OIDC, donnez une URL de Discovery ou renseignez les trois points d’accès autorisation / jeton / userinfo',
+  errOidcConfigInvalid:
+    'Points d’accès non résolus : URL incorrecte, discovery injoignable ou les trois points d’accès sont incomplets (la configuration enregistrée est restée intacte)',
 }

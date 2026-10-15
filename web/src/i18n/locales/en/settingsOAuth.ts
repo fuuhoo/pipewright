@@ -70,4 +70,36 @@ export default {
     'The email allowlist contains an invalid entry: give the domain alone (e.g. corp.example.com), without scheme, path or spaces',
   toggleTitleLogin: 'Enable sign-in',
   toggleDescLogin: 'Once enabled, the sign-in page shows a "sign in with this platform" button',
+
+  // ─── OIDC identity source (only ever listed under "Platform sign-in") ──────
+  // The backend resolves the endpoints for real when you save: a wrong config
+  // would otherwise surface as "the consent page was fine, then it broke on the
+  // way back", so failing at save is the kinder place.
+  providerOidcDesc: 'Generic OIDC / SSO (Keycloak, Authentik, …)',
+  oidcDiscoveryLabel: 'Discovery URL',
+  oidcDiscoveryOptional: '(either this or the three endpoints below)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    'Given, and the authorize / token / userinfo endpoints come from the document. Saving fetches it for real and fails loudly if it cannot.',
+  oidcOverrideOptional: '(blank = use the document)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    'If the document is unreachable (isolated network, gateway blocks it), fill all three by hand — an explicit value wins over the document.',
+  oidcIdClaimLabel: 'ID claim',
+  oidcIdClaimOptional: '(blank = sub)',
+  oidcIdClaimHint:
+    'Which claim identifies the account. Defaults to sub, which the spec requires to be immutable. Use email or username and a later rename or address change lands on somebody else’s account.',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(blank = openid profile email)',
+  oidcScopesHint:
+    'Space-separated; openid is mandatory. If no email comes back, the email domain allowlist blocks the sign-in.',
+  oidcUserinfoNote:
+    'Identity is read from the userinfo endpoint: this build verifies neither the id_token signature nor its audience, so connect an internal or HTTPS-only provider.',
+  errOidcEndpointsIncomplete:
+    'To enable OIDC, give a Discovery URL or fill all three of authorize / token / userinfo',
+  errOidcConfigInvalid:
+    'Endpoints could not be resolved: wrong URL, unreachable discovery document, or the three endpoints are incomplete (the stored config was left untouched)',
 }

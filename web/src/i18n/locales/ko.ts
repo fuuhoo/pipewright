@@ -79,8 +79,8 @@ const ko: typeof zhCN = {
     errNetwork: '서버에 연결할 수 없습니다. 백엔드 실행 여부를 확인하고 다시 시도하세요',
     errGeneric: '로그인 실패 ({status})',
     errUnknown: '알 수 없는 오류입니다. 다시 시도하세요',
-    oauthDivider: '또는 Git 플랫폼 계정으로 로그인',
-    oauthGroupAria: 'Git 플랫폼 계정으로 로그인',
+    oauthDivider: '또는 외부 계정으로 로그인',
+    oauthGroupAria: '외부 계정으로 로그인',
     oauthLoginWith: '{provider} 계정으로 로그인',
   },
 
@@ -98,6 +98,7 @@ const ko: typeof zhCN = {
     exchangeFailed: '인증 코드 교환에 실패했습니다. 다시 시도해 주세요.',
     identityUnavailable: '해당 플랫폼의 계정 정보를 읽을 수 없습니다. 다시 시도해 주세요.',
     domainNotAllowed: '이 메일 도메인은 이 인스턴스의 로그인 허용 범위에 없습니다.',
+    oidcConfigInvalid: '이 로그인 항목의 엔드포인트 설정에 문제가 있습니다(discovery를 불러오지 못하거나 엔드포인트가 부족합니다). 관리자에게 문의하세요.',
     nameTaken: '이 사용자 이름은 이미 사용 중입니다. 관리자에게 계정 연동을 요청하세요.',
     accountUnavailable: '연동된 계정을 더 이상 사용할 수 없습니다. 관리자에게 문의하세요.',
     roleUnavailable: '이 인스턴스에 새 계정의 기본 역할이 설정되지 않았습니다. 관리자에게 문의하세요.',

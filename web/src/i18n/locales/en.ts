@@ -79,8 +79,8 @@ const en: typeof zhCN = {
     errNetwork: 'Cannot reach the server. Check that the backend is running and retry.',
     errGeneric: 'Login failed ({status})',
     errUnknown: 'Unknown error, please retry',
-    oauthDivider: 'Or sign in with a git platform account',
-    oauthGroupAria: 'Sign in with a git platform account',
+    oauthDivider: 'Or sign in with an external account',
+    oauthGroupAria: 'Sign in with an external account',
     oauthLoginWith: 'Continue with {provider}',
   },
 
@@ -99,6 +99,7 @@ const en: typeof zhCN = {
     exchangeFailed: 'Exchanging the authorization code failed. Please start again.',
     identityUnavailable: "Couldn't read your account on that platform. Please start again.",
     domainNotAllowed: 'That email domain is not allowed to sign in on this instance.',
+    oidcConfigInvalid: 'This sign-in entry has a broken endpoint configuration (the discovery document is unreachable or the endpoints are incomplete). Contact an administrator.',
     nameTaken: 'That username is already taken here. Ask an administrator to bind the accounts instead.',
     accountUnavailable: 'The bound account is no longer available. Contact an administrator.',
     roleUnavailable: 'The instance has no default role for new accounts. Contact an administrator.',

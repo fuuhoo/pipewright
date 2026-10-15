@@ -70,4 +70,34 @@ export default {
     '허용 목록에 잘못된 항목이 있습니다. 도메인만 입력하세요(예: corp.example.com). 프로토콜·경로·공백은 넣지 마세요',
   toggleTitleLogin: '로그인 활성화',
   toggleDescLogin: '활성화하면 로그인 화면에 "이 플랫폼 계정으로 로그인" 단추가 나타납니다',
+
+  // ─── OIDC 신원 출처(「플랫폼 로그인」에서만 나타남)──────────────────────
+  // 저장할 때 서버가 엔드포인트를 실제로 해석합니다. 설정을 틀리면
+  // "인증 화면은 통과했는데 돌아와서 오류"가 되므로 저장 시점에 실패시킵니다.
+  providerOidcDesc: '범용 OIDC / SSO(Keycloak, Authentik 등)',
+  oidcDiscoveryLabel: 'Discovery 주소',
+  oidcDiscoveryOptional: '(아래 세 엔드포인트와 둘 중 하나)',
+  oidcDiscoveryPlaceholder: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
+  oidcDiscoveryHint:
+    '입력하면 인증 / 토큰 / 사용자 정보 엔드포인트를 문서에서 가져옵니다. 저장 시 실제로 불러오고, 실패하면 그 자리에서 오류를 알려줍니다.',
+  oidcOverrideOptional: '(비우면 문서 값 사용)',
+  oidcAuthorizeLabel: 'Authorization Endpoint',
+  oidcTokenLabel: 'Token Endpoint',
+  oidcUserinfoLabel: 'Userinfo Endpoint',
+  oidcEndpointPlaceholder: 'https://sso.example.com/…',
+  oidcEndpointsHint:
+    '문서에 닿지 않으면(격리된 네트워크, 게이트웨이에 막힘) 세 개를 모두 직접 입력하세요. 직접 입력한 값이 우선합니다.',
+  oidcIdClaimLabel: '기본 키 클레임',
+  oidcIdClaimOptional: '(비우면 sub)',
+  oidcIdClaimHint:
+    '계정을 고유하게 식별하는 데 쓰는 클레임. 기본값은 sub(규약에 따라 바뀌면 안 됩니다). 이메일이나 로그인 이름으로 바꾸면 나중에 이름이나 이메일이 바뀐 사람이 남의 계정을 잡아타게 됩니다.',
+  oidcScopesLabel: 'Scopes',
+  oidcScopesOptional: '(비우면 openid profile email)',
+  oidcScopesHint: '공백으로 구분. openid는 필수. 이메일을 받지 못하면 이메일 도메인 허용 목록이 로그인을 막습니다.',
+  oidcUserinfoNote:
+    '신원은 userinfo 엔드포인트에서 가져옵니다. 이 버전은 id_token 서명과 audience를 검증하지 않으므로 사내 네트워크나 HTTPS 공급자만 연결하세요.',
+  errOidcEndpointsIncomplete:
+    'OIDC를 활성화하려면 Discovery 주소를 입력하거나 인증 / 토큰 / 사용자 정보 세 엔드포인트를 모두 채우세요',
+  errOidcConfigInvalid:
+    '엔드포인트를 해석할 수 없습니다: 주소 오류, discovery 불러오기 실패, 또는 세 엔드포인트가 부족합니다(저장된 설정은 그대로입니다)',
 }
