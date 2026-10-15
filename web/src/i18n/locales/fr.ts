@@ -44,9 +44,8 @@ const fr: typeof zhCN = {
   },
 
   shell: {
-    // Identité en bas du rail : nom accessible et infobulle au survol.
+    // Puce d’identité en haut à droite : nom accessible du compte.
     identityAria: 'Compte actuel, ouvrir les paramètres du compte',
-    identityTitle: 'Paramètres du compte',
     logoutTitle: 'Se déconnecter ?',
     logoutBody: 'Après la déconnexion, vous devrez saisir à nouveau votre identifiant et votre mot de passe pour revenir à la console.',
     logoutLocalTitle: 'Déconnecté localement',

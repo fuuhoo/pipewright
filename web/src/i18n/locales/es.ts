@@ -44,9 +44,8 @@ const es: typeof zhCN = {
   },
 
   shell: {
-    // Identidad en la parte baja del menú: nombre accesible y aviso al pasar el cursor.
+    // Distintivo de identidad arriba a la derecha: nombre accesible de la cuenta.
     identityAria: 'Cuenta actual, abrir ajustes de cuenta',
-    identityTitle: 'Ajustes de cuenta',
     logoutTitle: '¿Cerrar sesión?',
     logoutBody: 'Tras cerrar sesión, deberás introducir de nuevo tu usuario y contraseña para volver a la consola.',
     logoutLocalTitle: 'Sesión cerrada localmente',

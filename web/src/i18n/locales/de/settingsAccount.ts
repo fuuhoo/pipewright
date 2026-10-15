@@ -8,7 +8,7 @@ export default {
   profileTitle: 'Lokales Profil',
   profileSub: 'Anzeigename und E-Mail gehören zu diesem Konto. Sie wurden beim ersten Anmelden über eine Plattformidentität übernommen; danach pflegst du sie hier, und weiteres Anmelden überschreibt sie nicht.',
   displayNameLabel: 'Anzeigename',
-  displayNameHint: 'Der Name in der Seitenleiste und in Benutzerlisten. Mehrfache Leerzeichen werden zu einem; maximal {n} Zeichen. Leer gelassen zeigt deinen Anmeldenamen.',
+  displayNameHint: 'Der Name oben rechts und in Benutzerlisten. Mehrfache Leerzeichen werden zu einem; maximal {n} Zeichen. Leer gelassen zeigt deinen Anmeldenamen.',
   emailLabel: 'E-Mail',
   emailHint: 'Dient nur dazu, dich auf dieser Instanz zu identifizieren; es wird nichts versendet. Darf leer bleiben.',
   identityNoEmailSet: 'keine E-Mail hinterlegt',
@@ -17,7 +17,7 @@ export default {
   errEmailFormat: "Das ist keine gültige E-Mail; sie sollte wie name{'@'}example.com aussehen",
   errEmailTooLong: 'Diese E-Mail ist zu lang',
   toastProfileSaved: 'Profil gespeichert',
-  toastProfileSavedDetail: 'Seitenleiste und diese Seite verwenden jetzt das neue Profil',
+  toastProfileSavedDetail: 'Das Kürzel oben rechts und diese Seite verwenden jetzt das neue Profil',
   toastProfileFailed: 'Profil konnte nicht gespeichert werden',
 
   changePwTitle: 'Passwort ändern',

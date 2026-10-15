@@ -8,7 +8,7 @@ export default {
   profileTitle: 'Perfil local',
   profileSub: 'Tu nombre visible y tu correo se guardan en esta cuenta. Se copiaron la primera vez que entraste con una identidad de plataforma; tú los mantienes aquí y volver a entrar no los sobrescribirá.',
   displayNameLabel: 'Nombre visible',
-  displayNameHint: 'El nombre que se muestra en el menú y en las listas de usuarios. Los espacios seguidos se unen en uno; hasta {n} caracteres. Si lo dejas vacío se muestra tu cuenta de acceso.',
+  displayNameHint: 'El nombre que se muestra arriba a la derecha y en las listas de usuarios. Los espacios seguidos se unen en uno; hasta {n} caracteres. Si lo dejas vacío se muestra tu cuenta de acceso.',
   emailLabel: 'Correo',
   emailHint: 'Solo sirve para identificarte dentro de esta instancia; nunca se envía nada. Puede quedar vacío.',
   identityNoEmailSet: 'sin correo asignado',
@@ -17,7 +17,7 @@ export default {
   errEmailFormat: "Ese correo no es válido; debería tener la forma name{'@'}example.com",
   errEmailTooLong: 'El correo es demasiado largo',
   toastProfileSaved: 'Perfil guardado',
-  toastProfileSavedDetail: 'El menú y esta página ya usan el perfil nuevo',
+  toastProfileSavedDetail: 'La marca de arriba a la derecha y esta página ya usan el perfil nuevo',
   toastProfileFailed: 'No se pudo guardar el perfil',
 
   changePwTitle: 'Cambiar contraseña',

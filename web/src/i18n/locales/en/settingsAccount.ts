@@ -8,7 +8,7 @@ export default {
   profileTitle: 'Local profile',
   profileSub: 'Your display name and email live on this account. They were copied in the first time you signed in with a platform identity; you maintain them here, and later sign-ins will not overwrite them.',
   displayNameLabel: 'Display name',
-  displayNameHint: 'The name shown in the rail and in user lists. Runs of whitespace collapse into one; up to {n} characters. Leave it empty to show your login name.',
+  displayNameHint: 'The name shown in the top-right corner and in user lists. Runs of whitespace collapse into one; up to {n} characters. Leave it empty to show your login name.',
   emailLabel: 'Email',
   emailHint: 'Only identifies you inside this instance; nothing is ever sent to it. Empty is fine.',
   identityNoEmailSet: 'no email set',
@@ -17,7 +17,7 @@ export default {
   errEmailFormat: "That is not a valid email, it should look like name{'@'}example.com",
   errEmailTooLong: 'That email is too long',
   toastProfileSaved: 'Profile saved',
-  toastProfileSavedDetail: 'The rail and this page now use the new profile',
+  toastProfileSavedDetail: 'The top-right chip and this page now use the new profile',
   toastProfileFailed: 'Could not save the profile',
 
   changePwTitle: 'Change password',

@@ -8,7 +8,7 @@ export default {
   profileTitle: 'ローカルプロフィール',
   profileSub: '表示名とメールはこのアカウントに保存されます。プラットフォームの身分で初めてログインしたときに代入され、以降はご自身が管理します。側で変わっても上書きしません。',
   displayNameLabel: '表示名',
-  displayNameHint: '左メニューとユーザー一覧に表示される名前です。連続した空白は1つにまとめ、最大 {n} 文字。空欄ならログインアカウント名を表示します。',
+  displayNameHint: '右上とユーザー一覧に表示される名前です。連続した空白は1つにまとめ、最大 {n} 文字。空欄ならログインアカウント名を表示します。',
   emailLabel: 'メール',
   emailHint: '本インスタンス内であなたを識別するためだけのもので、送信は行いません。空欄でも構いません。',
   identityNoEmailSet: 'メール未設定',
@@ -17,7 +17,7 @@ export default {
   errEmailFormat: "メールの形式が正しくありません。name{'@'}example.com のように入力してください",
   errEmailTooLong: 'メールが長すぎます',
   toastProfileSaved: 'プロフィールを保存しました',
-  toastProfileSavedDetail: '左メニューとこのページが新しいプロフィールになりました',
+  toastProfileSavedDetail: '右上の表示とこのページが新しいプロフィールになりました',
   toastProfileFailed: 'プロフィールを保存できませんでした',
 
   changePwTitle: 'パスワード変更',

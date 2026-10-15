@@ -8,7 +8,7 @@ export default {
   profileTitle: '로컬 프로필',
   profileSub: '표시 이름과 이메일은 이 계정에 저장됩니다. 플랫폼 신원으로 처음 로그인할 때 채워지고, 이후에는 본인이 관리합니다. 바깥에서 바뀌어도 덮어쓰지 않습니다.',
   displayNameLabel: '표시 이름',
-  displayNameHint: '왼쪽 메뉴와 사용자 목록에 보여 주는 이름입니다. 연속 공백은 하나로 합치고 최대 {n}자입니다. 비워 두면 로그인 계정을 보여 줍니다.',
+  displayNameHint: '오른쪽 위와 사용자 목록에 보여 주는 이름입니다. 연속 공백은 하나로 합치고 최대 {n}자입니다. 비워 두면 로그인 계정을 보여 줍니다.',
   emailLabel: '이메일',
   emailHint: '이 인스턴스에서 당신을 구분하기만 하며 메일은 보내지 않습니다. 비워 두어도 됩니다.',
   identityNoEmailSet: '이메일 미설정',
@@ -17,7 +17,7 @@ export default {
   errEmailFormat: "이메일 형식이 올바르지 않습니다. name{'@'}example.com 모양이어야 합니다",
   errEmailTooLong: '이메일이 너무 깁니다',
   toastProfileSaved: '프로필을 저장했습니다',
-  toastProfileSavedDetail: '왼쪽 메뉴와 이 페이지가 새 프로필을 사용합니다',
+  toastProfileSavedDetail: '오른쪽 위 표시와 이 페이지가 새 프로필을 사용합니다',
   toastProfileFailed: '프로필을 저장하지 못했습니다',
 
   changePwTitle: '비밀번호 변경',

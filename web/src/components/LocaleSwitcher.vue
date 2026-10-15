@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * 语言选择器。固定在右上角的「Change Language」下拉:地球图标 + 当前语言母语名,
- * 点开列出全部受支持语言(当前项打勾)。全局挂载(App.vue),登录页也可切换。
+ * 语言选择器。「Change Language」下拉:地球图标 + 当前语言母语名,点开列出全部受支持语言
+ * (当前项打勾)。位置由 App.vue 的右上角托盘统管;全局挂载,登录页也可切换。
  */
 import { computed, h } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -52,10 +52,6 @@ function onSelect(key: string): void {
 
 <style scoped>
 .locale-switcher {
-  position: fixed;
-  top: 16px;
-  right: 20px;
-  z-index: 300;
   display: inline-flex;
   align-items: center;
   gap: 6px;

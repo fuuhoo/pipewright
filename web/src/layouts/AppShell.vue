@@ -28,7 +28,6 @@ import ThemeToggle from '../components/ThemeToggle.vue'
 import { logout } from '../api/auth'
 import { useSessionStore } from '../stores/session'
 import type { AccessRequires } from '../lib/roles'
-import { contactOf, initialsOf, primaryNameOf } from '../lib/userDisplay'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 
@@ -128,16 +127,6 @@ function isActive(item: NavItem): boolean {
   return route.path.startsWith(item.to)
 }
 
-/**
- * 身份区三选一的主/次行:昵称→登录名、邮箱→@登录名 的回落都由 userDisplay 定口径,
- * 与账户页、用户管理同一套。会话尚未取到(或已登出)时返回 null,模板整块不渲染。
- */
-const me = computed(() => {
-  const u = sessionStore.user
-  if (!u) return null
-  return { initials: initialsOf(u), name: primaryNameOf(u), contact: contactOf(u) }
-})
-
 // 侧栏展开/收起:固定按钮切换,状态持久化到 localStorage(刷新/重开保持)。
 const STORAGE_KEY = 'pipewright_sidebar_expanded'
 const expanded = ref(localStorage.getItem(STORAGE_KEY) === '1')
@@ -177,23 +166,6 @@ function toggleExpanded(): void {
 
       <!-- Spacer -->
       <div class="rail-spacer" aria-hidden="true" />
-
-      <!-- 身份区:昵称(没有则回登录名)+ 邮箱(没有则回 @登录名)。点它进「账户设置」改本地档案 ——
-           这三样是同一件事:我在平台上叫什么、在本机怎么登录、怎么联系我。
-           会话还没取到时整块不渲染,免得亮出一个空头像让人以为登录态坏了。 -->
-      <router-link
-        v-if="me"
-        to="/settings/account"
-        class="nav-item nav-item--me"
-        :aria-label="t('shell.identityAria')"
-        :title="t('shell.identityTitle')"
-      >
-        <span class="me-avatar mono" aria-hidden="true">{{ me.initials }}</span>
-        <span class="me-text">
-          <span class="me-name">{{ me.name }}</span>
-          <span class="me-contact">{{ me.contact }}</span>
-        </span>
-      </router-link>
 
       <!-- Settings (bottom) -->
       <router-link
@@ -391,54 +363,6 @@ function toggleExpanded(): void {
 .nav-item:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-}
-
-/* 身份区:贴在「设置 / 退出」上方的一条。收起态只留头像圆点,展开态补两行文字。
-   与 .nav-item 共用 hover/focus/尺寸,这里只覆盖:内容需要纵向排两行,所以展开态高度自适应。 */
-.nav-item--me {
-  height: auto;
-  padding: 4px;
-  margin-bottom: 2px;
-}
-.is-expanded .nav-item--me {
-  padding: 6px 10px;
-}
-.me-avatar {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  font-weight: 700;
-  font-size: 0.82rem;
-}
-.me-text {
-  /* 收起态隐藏两行(整块的可访问名仍由 aria-label 提供)。 */
-  display: none;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.is-expanded .me-text {
-  display: flex;
-}
-.me-name,
-.me-contact {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.me-name {
-  font-size: var(--text-label);
-  font-weight: 600;
-  color: var(--color-text);
-}
-.me-contact {
-  font-size: 0.72rem;
-  color: var(--color-faint);
 }
 
 /* 退出登录:button 而非 link,补 font 继承;hover 转危险色与设置项区分。 */

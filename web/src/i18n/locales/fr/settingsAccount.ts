@@ -8,7 +8,7 @@ export default {
   profileTitle: 'Profil local',
   profileSub: 'Votre nom affiché et votre e-mail sont enregistrés sur ce compte. Ils ont été repris à votre première connexion avec une identité externe ; vous les gérez ici, et les connexions suivantes ne les écraseront plus.',
   displayNameLabel: 'Nom affiché',
-  displayNameHint: 'Le nom montré dans le menu et les listes d’utilisateurs. Les espaces consécutifs sont fusionnés ; {n} caractères au maximum. Laissez vide pour afficher votre identifiant de connexion.',
+  displayNameHint: 'Le nom montré en haut à droite et dans les listes d’utilisateurs. Les espaces consécutifs sont fusionnés ; {n} caractères au maximum. Laissez vide pour afficher votre identifiant de connexion.',
   emailLabel: 'E-mail',
   emailHint: 'Sert uniquement à vous identifier dans cette instance ; rien n’est envoyé. Peut rester vide.',
   identityNoEmailSet: 'aucun e-mail défini',
@@ -17,7 +17,7 @@ export default {
   errEmailFormat: "Cet e-mail est invalide ; il devrait ressembler à name{'@'}example.com",
   errEmailTooLong: 'Cet e-mail est trop long',
   toastProfileSaved: 'Profil enregistré',
-  toastProfileSavedDetail: 'Le menu et cette page utilisent désormais le nouveau profil',
+  toastProfileSavedDetail: 'La vignette en haut à droite et cette page utilisent désormais le nouveau profil',
   toastProfileFailed: 'Échec de l’enregistrement du profil',
 
   changePwTitle: 'Changer le mot de passe',
