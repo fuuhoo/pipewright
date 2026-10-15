@@ -35,6 +35,15 @@ import type { Group } from '../../api/groups'
 import { HttpError } from '../../api/http'
 import { ROLE_TAG_CLASS } from '../../lib/roles'
 import { labelForRoleId } from '../../lib/roleEditor'
+import {
+  PROFILE_EMAIL_MAX,
+  PROFILE_NAME_MAX,
+  emailProblem,
+  handleOf,
+  nicknameOf,
+  primaryNameOf,
+  type EmailProblem,
+} from '../../lib/userDisplay'
 import AppModal from '../../components/ui/AppModal.vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import FormField from '../../components/ui/FormField.vue'
@@ -120,12 +129,13 @@ const createOpen = ref(false)
 const createBusy = ref(false)
 const createBanner = ref('')
 // 默认档取内置 user(与后端建号路径的降级同档);自定义角色的 UUID 也在同一份名单里选。
-const createForm = ref({ username: '', password: '', role: 'user', description: '' })
-const createErrors = ref({ username: '', password: '' })
+// 显示名/邮箱可留空:留空就是「让本人自己在账户设置里填」,昵称缺失时页面回落到登录名。
+const createForm = ref({ username: '', password: '', role: 'user', description: '', displayName: '', email: '' })
+const createErrors = ref({ username: '', password: '', email: '' })
 
 function openCreate(): void {
-  createForm.value = { username: '', password: '', role: 'user', description: '' }
-  createErrors.value = { username: '', password: '' }
+  createForm.value = { username: '', password: '', role: 'user', description: '', displayName: '', email: '' }
+  createErrors.value = { username: '', password: '', email: '' }
   createBanner.value = ''
   createOpen.value = true
 }
@@ -135,8 +145,16 @@ function closeCreate(): void {
   createOpen.value = false
 }
 
+/** 邮箱的三条判据(与后端 normalizeEmail 同集合),'' 表示这条没问题。 */
+function emailErrorKey(problem: EmailProblem): string {
+  if (problem === 'space') return 'adminUsers.errEmailSpace'
+  if (problem === 'format') return 'adminUsers.errEmailFormat'
+  if (problem === 'tooLong') return 'adminUsers.errEmailTooLong'
+  return ''
+}
+
 function validateCreate(): boolean {
-  createErrors.value = { username: '', password: '' }
+  createErrors.value = { username: '', password: '', email: '' }
   let ok = true
   if (!createForm.value.username.trim()) {
     createErrors.value.username = t('adminUsers.errUsernameRequired')
@@ -144,6 +162,11 @@ function validateCreate(): boolean {
   }
   if (createForm.value.password.length < MIN_PASSWORD_LEN) {
     createErrors.value.password = t('adminUsers.errPasswordShort', { n: MIN_PASSWORD_LEN })
+    ok = false
+  }
+  const emailErr = emailErrorKey(emailProblem(createForm.value.email))
+  if (emailErr) {
+    createErrors.value.email = t(emailErr)
     ok = false
   }
   return ok
@@ -159,6 +182,8 @@ async function submitCreate(): Promise<void> {
       password: createForm.value.password,
       role: createForm.value.role,
       description: createForm.value.description.trim(),
+      displayName: createForm.value.displayName,
+      email: createForm.value.email.trim(),
     })
     users.value = [...users.value, u].sort((a, b) => a.username.localeCompare(b.username))
     createOpen.value = false
@@ -333,6 +358,58 @@ async function submitGroups(): Promise<void> {
     groupsBusy.value = false
   }
 }
+
+// ─── 本地档案(昵称 + 邮箱)───────────────────────────────────────────────────
+
+/**
+ * 管理员也能改别人的昵称/邮箱 —— 但这是**本地档案**,不是平台那边的人:平台侧改名不会同步进来,
+ * 首次建号时抄进来的那份从此归这里管。所以弹窗里把这话写明,免得有人以为改的是「平台名字」。
+ * 后端一行 UPDATE 同时写两列,所以两个字段一起提交;当场生效(每次请求重读 users 行),
+ * 不用等对方重新登录 —— 与改角色那条快照轴不同。
+ */
+const profileOpen = ref(false)
+const profileTarget = ref<User | null>(null)
+const profileBusy = ref(false)
+const profileBanner = ref('')
+const profileDraft = ref({ displayName: '', email: '' })
+const profileEmailError = ref('')
+
+function openProfile(u: User): void {
+  profileTarget.value = u
+  profileDraft.value = { displayName: nicknameOf(u), email: u.email }
+  profileEmailError.value = ''
+  profileBanner.value = ''
+  profileOpen.value = true
+}
+
+function closeProfile(): void {
+  if (profileBusy.value) return
+  profileOpen.value = false
+  profileTarget.value = null
+}
+
+async function submitProfile(): Promise<void> {
+  const target = profileTarget.value
+  if (!target) return
+  const problem = emailErrorKey(emailProblem(profileDraft.value.email))
+  profileEmailError.value = problem ? t(problem) : ''
+  if (problem) return
+  profileBusy.value = true
+  profileBanner.value = ''
+  try {
+    const fresh = await updateUser(target.id, {
+      displayName: profileDraft.value.displayName,
+      email: profileDraft.value.email.trim(),
+    })
+    users.value = users.value.map((x) => (x.id === fresh.id ? fresh : x))
+    profileOpen.value = false
+    profileTarget.value = null
+  } catch (err) {
+    profileBanner.value = errText(err, 'adminUsers.errProfileUpdate')
+  } finally {
+    profileBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -368,7 +445,7 @@ async function submitGroups(): Promise<void> {
       <table class="grid">
         <thead>
           <tr>
-            <th>{{ t('adminUsers.colUsername') }}</th>
+            <th>{{ t('adminUsers.colAccount') }}</th>
             <th>{{ t('adminUsers.colRole') }}</th>
             <th>{{ t('adminUsers.colGroups') }}</th>
             <th>{{ t('adminUsers.colEnabled') }}</th>
@@ -380,7 +457,11 @@ async function submitGroups(): Promise<void> {
         <tbody>
           <tr v-for="u in users" :key="u.id">
             <td>
-              <div class="cell-strong">{{ u.username }}</div>
+              <!-- 三行同属「这是谁」:昵称(没有则回登录名)、登录名、邮箱。
+                   后两行只在有内容时出现,免得昵称就是登录名时重复一版。 -->
+              <div class="cell-strong">{{ primaryNameOf(u) }}</div>
+              <div v-if="nicknameOf(u)" class="cell-dim mono">{{ handleOf(u) }}</div>
+              <div v-if="u.email" class="cell-dim mono">{{ u.email }}</div>
               <input
                 v-if="!isBootstrapAdmin(u)"
                 class="desc-input"
@@ -431,6 +512,15 @@ async function submitGroups(): Promise<void> {
                   size="sm"
                   :disabled="isBootstrapAdmin(u)"
                   :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
+                  @click="openProfile(u)"
+                >
+                  {{ t('adminUsers.editProfile') }}
+                </AppButton>
+                <AppButton
+                  variant="ghost"
+                  size="sm"
+                  :disabled="isBootstrapAdmin(u)"
+                  :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : ''"
                   @click="openReset(u)"
                 >
                   {{ t('adminUsers.resetPassword') }}
@@ -474,6 +564,44 @@ async function submitGroups(): Promise<void> {
               v-model="createForm.username"
               class="ui-input"
               type="text"
+              autocomplete="off"
+              :aria-describedby="ariaDescribedby"
+              :disabled="createBusy"
+            />
+          </template>
+        </FormField>
+        <FormField
+          :label="t('adminUsers.fieldDisplayName')"
+          field-id="user-create-nick"
+          :hint="t('adminUsers.displayNameHint', { n: PROFILE_NAME_MAX })"
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <input
+              :id="fieldId"
+              v-model="createForm.displayName"
+              class="ui-input"
+              type="text"
+              :maxlength="PROFILE_NAME_MAX"
+              autocomplete="off"
+              :aria-describedby="ariaDescribedby"
+              :disabled="createBusy"
+            />
+          </template>
+        </FormField>
+        <FormField
+          :label="t('adminUsers.fieldEmail')"
+          field-id="user-create-email"
+          :error="createErrors.email"
+          :hint="t('adminUsers.emailHint')"
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <input
+              :id="fieldId"
+              v-model="createForm.email"
+              class="ui-input"
+              type="text"
+              inputmode="email"
+              :maxlength="PROFILE_EMAIL_MAX"
               autocomplete="off"
               :aria-describedby="ariaDescribedby"
               :disabled="createBusy"
@@ -597,6 +725,64 @@ async function submitGroups(): Promise<void> {
       <template #actions>
         <AppButton :disabled="groupsBusy" @click="closeGroups">{{ t('adminUsers.cancel') }}</AppButton>
         <AppButton variant="primary" type="submit" :loading="groupsBusy">
+          {{ t('adminUsers.save') }}
+        </AppButton>
+      </template>
+    </AppModal>
+
+    <!-- ─── 本地档案(昵称 + 邮箱)─── -->
+    <AppModal
+      v-if="profileOpen"
+      :title="t('adminUsers.profileTitle', { name: profileTarget?.username })"
+      width="sm"
+      :busy="profileBusy"
+      @close="closeProfile"
+      @submit="submitProfile"
+    >
+      <p v-if="profileBanner" class="banner banner--err" role="alert">{{ profileBanner }}</p>
+      <p class="modal-desc">{{ t('adminUsers.profileDesc') }}</p>
+      <FormField
+        :label="t('adminUsers.fieldDisplayName')"
+        field-id="user-profile-nick"
+        :hint="t('adminUsers.displayNameHint', { n: PROFILE_NAME_MAX })"
+      >
+        <template #default="{ fieldId, ariaDescribedby }">
+          <input
+            :id="fieldId"
+            v-model="profileDraft.displayName"
+            class="ui-input"
+            type="text"
+            :maxlength="PROFILE_NAME_MAX"
+            autocomplete="off"
+            :aria-describedby="ariaDescribedby"
+            :disabled="profileBusy"
+          />
+        </template>
+      </FormField>
+      <FormField
+        :label="t('adminUsers.fieldEmail')"
+        field-id="user-profile-email"
+        :error="profileEmailError"
+        :hint="t('adminUsers.emailHint')"
+      >
+        <template #default="{ fieldId, ariaDescribedby }">
+          <input
+            :id="fieldId"
+            v-model="profileDraft.email"
+            class="ui-input"
+            type="text"
+            inputmode="email"
+            :maxlength="PROFILE_EMAIL_MAX"
+            autocomplete="off"
+            :aria-describedby="ariaDescribedby"
+            :disabled="profileBusy"
+          />
+        </template>
+      </FormField>
+
+      <template #actions>
+        <AppButton :disabled="profileBusy" @click="closeProfile">{{ t('adminUsers.cancel') }}</AppButton>
+        <AppButton variant="primary" type="submit" :loading="profileBusy">
           {{ t('adminUsers.save') }}
         </AppButton>
       </template>

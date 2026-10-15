@@ -35,6 +35,10 @@ export interface User {
   role: RoleId
   enabled: boolean
   description: string
+  /** 本地档案:显示名(昵称)。平台身份首次建号写入,之后由本人/管理员编辑,登录不再覆盖。 */
+  displayName: string
+  /** 本地档案:邮箱。同上,可与平台快照不同。 */
+  email: string
   createdAt: string
   updatedAt: string
   /** RFC3339;从未登录为 null。 */
@@ -56,6 +60,8 @@ export interface CreateUserInput {
   password: string
   role: RoleId
   description?: string
+  displayName?: string
+  email?: string
 }
 
 export interface UpdateUserInput {
@@ -63,6 +69,12 @@ export interface UpdateUserInput {
   enabled?: boolean
   /** 改角色(内置档 id 或自定义角色 UUID)。未知名后端回 400(不会静默降级成 user,那是建号路径的取舍)。 */
   role?: RoleId
+  /**
+   * 本地档案两列。后端是**一行 UPDATE 同时写两列**,所以只改一个时要把另一个的现值一起提交
+   * —— 省略即「不改」,传空串才是「清空」。
+   */
+  displayName?: string
+  email?: string
 }
 
 export async function listUsers(params: ListUsersParams = {}): Promise<User[]> {
