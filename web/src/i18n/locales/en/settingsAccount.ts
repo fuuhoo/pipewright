@@ -21,7 +21,7 @@ export default {
   unknownError: 'Unknown error',
 
   sessionsTitle: 'Active sessions',
-  sessionsSub: 'Server-side sessions (7-day sliding expiry). Revoke any session to sign out the corresponding device immediately.',
+  sessionsSub: 'Server-side sessions for this account (7-day sliding expiry). Revoking one signs out that device immediately.',
   errLoadSessions: 'Unable to load sessions',
   retry: 'Retry',
   emptyTitle: 'No active sessions',

@@ -21,7 +21,7 @@ export default {
   unknownError: 'Error desconocido',
 
   sessionsTitle: 'Sesiones activas',
-  sessionsSub: 'Sesiones del lado del servidor (caducidad deslizante de 7 días). Revoca cualquier sesión para cerrar la del dispositivo correspondiente al instante.',
+  sessionsSub: 'Sesiones del lado del servidor de esta cuenta (caducidad deslizante de 7 días). Al revocar una, su dispositivo cierra la sesión al instante.',
   errLoadSessions: 'No se pueden cargar las sesiones',
   retry: 'Reintentar',
   emptyTitle: 'No hay sesiones activas',

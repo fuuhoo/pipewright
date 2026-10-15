@@ -21,7 +21,7 @@ export default {
   unknownError: '未知錯誤',
 
   sessionsTitle: '活躍工作階段',
-  sessionsSub: '伺服器端工作階段(7 天滑動過期)。可中斷任意工作階段立即登出對應裝置。',
+  sessionsSub: '伺服器端工作階段(7 天滑動過期)。這裡只列出你這個帳號的工作階段,中斷一條即立即登出對應裝置。',
   errLoadSessions: '無法載入工作階段',
   retry: '重試',
   emptyTitle: '尚無活躍工作階段',

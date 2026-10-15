@@ -21,7 +21,7 @@ export default {
   unknownError: 'Erreur inconnue',
 
   sessionsTitle: 'Sessions actives',
-  sessionsSub: 'Sessions côté serveur (expiration glissante de 7 jours). Révoquez toute session pour déconnecter immédiatement l’appareil correspondant.',
+  sessionsSub: 'Sessions côté serveur de ce compte (expiration glissante de 7 jours). Révoquer une session déconnecte immédiatement son appareil.',
   errLoadSessions: 'Impossible de charger les sessions',
   retry: 'Réessayer',
   emptyTitle: 'Aucune session active',

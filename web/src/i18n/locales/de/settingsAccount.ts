@@ -21,7 +21,7 @@ export default {
   unknownError: 'Unbekannter Fehler',
 
   sessionsTitle: 'Aktive Sitzungen',
-  sessionsSub: 'Serverseitige Sitzungen (7-tägiger gleitender Ablauf). Widerrufe eine Sitzung, um das entsprechende Gerät sofort abzumelden.',
+  sessionsSub: 'Serverseitige Sitzungen dieses Kontos (7-tägiger gleitender Ablauf). Widerrufen meldet das jeweilige Gerät sofort ab.',
   errLoadSessions: 'Sitzungen können nicht geladen werden',
   retry: 'Erneut versuchen',
   emptyTitle: 'Keine aktiven Sitzungen',

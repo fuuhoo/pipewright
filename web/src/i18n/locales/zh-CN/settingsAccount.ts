@@ -21,7 +21,7 @@ export default {
   unknownError: '未知错误',
 
   sessionsTitle: '活跃会话',
-  sessionsSub: '服务端会话(7 天滑动过期)。可注销任意会话立即登出对应设备。',
+  sessionsSub: '服务端会话(7 天滑动过期)。这里只列出你这个账号的会话,注销一条就立即登出对应设备。',
   errLoadSessions: '无法加载会话',
   retry: '重试',
   emptyTitle: '暂无活跃会话',
