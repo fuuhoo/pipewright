@@ -50,9 +50,9 @@ export default {
   // ─── Verknüpfte git-Konten (Anmeldung mit Plattform-Konto) ───
   // Eine Verknüpfung ist nur die Zuordnung „(Plattform, stabile Plattform-ID) ↔ dieses
   // Konto“: Sie ändert keine Rolle, und das Lösen meldet die aktuelle Sitzung nicht ab.
-  identitiesTitle: 'Verknüpfte git-Konten',
+  identitiesTitle: 'Verknüpfte externe Konten',
   identitiesSub: 'Die Verknüpfung entscheidet nur, welches Plattform-Konto sich bei dieser Instanz anmelden darf; sie ändert keine Rolle, und das Lösen meldet diese Sitzung nicht ab.',
-  identitiesEmpty: 'Noch kein git-Plattform-Konto verknüpft',
+  identitiesEmpty: 'Noch kein externes Konto verknüpft',
   identitiesEmptyDesc: 'Nach der Verknüpfung meldest du dich bei dieser Instanz mit dem Plattform-Konto statt mit einem Passwort an.',
   errLoadIdentities: 'Verknüpfungsliste konnte nicht geladen werden',
   identityMeta: 'E-Mail {email} · Plattform-ID {externalId}',

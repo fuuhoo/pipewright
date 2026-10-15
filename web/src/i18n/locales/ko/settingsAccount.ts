@@ -50,9 +50,9 @@ export default {
   // ─── 외부 git 계정 연결(플랫폼 계정으로 로그인)───
   // 연결은 "(플랫폼, 플랫폼 안정 ID) ↔ 이 계정" 대응일 뿐입니다. 권한은 바뀌지 않고,
   // 연결을 해제해도 현재 세션은 로그아웃되지 않습니다.
-  identitiesTitle: '연결한 git 계정',
+  identitiesTitle: '연결한 외부 계정',
   identitiesSub: '연결은 "어느 플랫폼 계정으로 이 인스턴스에 로그인할 수 있는가"만 결정합니다. 권한은 바뀌지 않고, 해체해도 현재 세션은 유지됩니다.',
-  identitiesEmpty: '연결한 git 플랫폼 계정이 없습니다',
+  identitiesEmpty: '연결한 외부 계정이 없습니다',
   identitiesEmptyDesc: '연결하면 비밀번호 대신 그 플랫폼 계정으로 이 인스턴스에 로그인할 수 있습니다.',
   errLoadIdentities: '연결 목록을 불러올 수 없습니다',
   identityMeta: '이메일 {email} · 플랫폼 ID {externalId}',

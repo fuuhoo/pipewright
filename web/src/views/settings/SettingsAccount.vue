@@ -185,7 +185,12 @@ const PROVIDER_LABELS = computed<Record<OAuthProvider, string>>(() => ({
   custom: t('settingsAccount.providerCustom'),
 }))
 
+/**
+ * 列表里的平台名。绑定入口只对 git 平台开放(它复用「仓库凭据」那套应用与回调),
+ * 但用 OIDC 登录自动建的账号也会在这张表里留一条 provider=oidc 的映射,所以这里得认得它。
+ */
 function providerLabel(provider: string): string {
+  if (provider === 'oidc') return 'OIDC'
   return PROVIDER_LABELS.value[provider as OAuthProvider] ?? provider
 }
 

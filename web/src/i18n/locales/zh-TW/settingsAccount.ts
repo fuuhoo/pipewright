@@ -49,9 +49,9 @@ export default {
 
   // ─── 外部 git 帳號綁定(用平台帳號登入本實例)───────────────────────────────
   // 綁定只是「(平台, 平台穩定 ID) ↔ 本帳號」的對應:不改角色,解綁也不撤銷目前工作階段。
-  identitiesTitle: '已綁定的 git 帳號',
+  identitiesTitle: '已綁定的外部帳號',
   identitiesSub: '綁定只決定「哪個平台帳號能登進這個實例」,不改角色;解綁也不會把目前的工作階段踢下線。',
-  identitiesEmpty: '尚未綁定任何 git 平台帳號',
+  identitiesEmpty: '尚未綁定任何外部帳號',
   identitiesEmptyDesc: '綁定後即可用該平台帳號直接登入本實例,不必再輸密碼。',
   errLoadIdentities: '無法載入綁定清單',
   identityMeta: 'Email {email} · 平台 ID {externalId}',

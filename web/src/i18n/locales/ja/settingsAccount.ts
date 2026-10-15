@@ -50,9 +50,9 @@ export default {
   // ─── 外部 git アカウントの紐付け(プラットフォームアカウントでログイン)───
   // 紐付けは「(プラットフォーム, 安定 ID) ↔ このアカウント」の対応だけです。
   // 権限は変わらず、解除しても現在のセッションはログアウトしません。
-  identitiesTitle: '紐付けた git アカウント',
+  identitiesTitle: '紐付けた外部アカウント',
   identitiesSub: '紐付けは「どのプラットフォームアカウントで本インスタンスにログインできるか」だけを決定します。権限は変わらず、解除しても現在のセッションは残ります。',
-  identitiesEmpty: '紐付けた git プラットフォームアカウントはありません',
+  identitiesEmpty: '紐付けた外部アカウントはありません',
   identitiesEmptyDesc: '紐付けると、パスワードの代わりにそのプラットフォームのアカウントでログインできます。',
   errLoadIdentities: '紐付け一覧を取得できません',
   identityMeta: 'メール {email} · プラットフォーム ID {externalId}',

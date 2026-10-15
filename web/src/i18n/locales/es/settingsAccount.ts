@@ -50,9 +50,9 @@ export default {
   // ─── cuentas git vinculadas (entrar con la cuenta de la plataforma) ───
   // Un vínculo es solo la correspondencia «(plataforma, ID estable) ↔ esta cuenta»:
   // no cambia el rol y desvincular nunca cierra la sesión actual.
-  identitiesTitle: 'Cuentas git vinculadas',
+  identitiesTitle: 'Cuentas externas vinculadas',
   identitiesSub: 'El vínculo solo decide qué cuenta de la plataforma puede entrar en esta instancia; no cambia tu rol, y desvincular no cierra esta sesión.',
-  identitiesEmpty: 'Aún no hay ninguna cuenta de plataforma git vinculada',
+  identitiesEmpty: 'Aún no hay ninguna cuenta externa vinculada',
   identitiesEmptyDesc: 'Al vincularla puedes entrar en esta instancia con esa cuenta de plataforma en lugar de una contraseña.',
   errLoadIdentities: 'No se pudo cargar la lista de vínculos',
   identityMeta: 'Correo {email} · ID de plataforma {externalId}',

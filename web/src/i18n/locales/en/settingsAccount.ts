@@ -50,9 +50,9 @@ export default {
   // ─── linked git identities (sign in with a platform account) ───
   // A link is only a "(provider, stable platform ID) ↔ this account" mapping:
   // it never changes your role, and unlinking does not revoke the current session.
-  identitiesTitle: 'Linked git accounts',
+  identitiesTitle: 'Linked external accounts',
   identitiesSub: 'A link only decides which platform account may sign into this instance; it does not change your role, and unlinking never signs this session out.',
-  identitiesEmpty: 'No git platform account linked yet',
+  identitiesEmpty: 'No external account linked yet',
   identitiesEmptyDesc: 'Once linked, you can sign into this instance with that platform account instead of a password.',
   errLoadIdentities: 'Unable to load the link list',
   identityMeta: 'Email {email} · Platform ID {externalId}',

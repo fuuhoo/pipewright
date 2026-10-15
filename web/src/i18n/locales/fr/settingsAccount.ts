@@ -50,9 +50,9 @@ export default {
   // ─── comptes git reliés (connexion avec le compte de la plateforme) ───
   // Un lien n’est que l’association « (plateforme, ID stable) ↔ ce compte » :
   // il ne change pas le rôle, et rompre le lien ne déconnecte pas la session en cours.
-  identitiesTitle: 'Comptes git reliés',
+  identitiesTitle: 'Comptes externes reliés',
   identitiesSub: 'Le lien décide seulement quel compte de la plateforme peut se connecter à cette instance ; il ne change pas votre rôle, et le rompre ne déconnecte pas cette session.',
-  identitiesEmpty: 'Aucun compte de plateforme git relié',
+  identitiesEmpty: 'Aucun compte externe relié',
   identitiesEmptyDesc: 'Une fois relié, vous pouvez vous connecter à cette instance avec ce compte de plateforme au lieu d’un mot de passe.',
   errLoadIdentities: 'Impossible de charger la liste des liens',
   identityMeta: 'E-mail {email} · ID plateforme {externalId}',

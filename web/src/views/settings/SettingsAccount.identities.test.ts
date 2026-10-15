@@ -105,7 +105,7 @@ describe('SettingsAccount — 外部 git 账号绑定', () => {
     await flushPromises()
 
     expect(wrapper.get('[aria-labelledby="acct-ids-h"]').text()).toContain(
-      '还没有绑定任何 git 平台账号',
+      '还没有绑定任何外部账号',
     )
   })
 

@@ -49,9 +49,9 @@ export default {
 
   // ─── 外部 git 账号绑定(用平台账号登录本实例)───────────────────────────────
   // 绑定只是「(平台, 平台稳定 ID) ↔ 本账号」的映射:不改角色,解绑不撤销当前会话。
-  identitiesTitle: '已绑定的 git 账号',
+  identitiesTitle: '已绑定的外部账号',
   identitiesSub: '绑定只决定「哪个平台账号能登进这个实例」,不改角色;解绑也不会把当前会话踢下线。',
-  identitiesEmpty: '还没有绑定任何 git 平台账号',
+  identitiesEmpty: '还没有绑定任何外部账号',
   identitiesEmptyDesc: '绑定后即可用该平台账号直接登录本实例,不必再输密码。',
   errLoadIdentities: '无法加载绑定列表',
   identityMeta: '邮箱 {email} · 平台 ID {externalId}',
