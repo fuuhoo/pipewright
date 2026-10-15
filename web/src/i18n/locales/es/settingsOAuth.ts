@@ -1,7 +1,7 @@
 export default {
   title: 'Aplicaciones OAuth',
   sectionDesc:
-    'Registra una aplicación OAuth (Client ID / Secret) para cada plataforma git para que los usuarios puedan «Conectar» su cuenta con un clic desde la bóveda de credenciales y obtener un token automáticamente, sin pegar manualmente un PAT. El secreto se enmascara al guardarlo y no puede leerse de nuevo tras escribirlo. La misma plataforma también puede registrarse para un segundo uso: que los visitantes entren en esta instancia con su cuenta de la plataforma.',
+    'Registra una aplicación OAuth (Client ID / Secret) para cada plataforma git para que los usuarios puedan «Conectar» su cuenta con un clic desde la bóveda de credenciales y obtener un token automáticamente, sin pegar manualmente un PAT. El secreto se enmascara al guardarlo y no puede leerse de nuevo tras escribirlo. La misma plataforma también puede registrarse para un segundo uso: que los visitantes entren en esta instancia con su cuenta de la plataforma. DingTalk, Feishu, WeCom y OIDC genérico solo existen para ese segundo uso: nunca entran en la bóveda de credenciales.',
   tabsAria: 'Proveedores de OAuth',
   retry: 'Reintentar',
 
@@ -104,4 +104,32 @@ export default {
     'Para activar OIDC indica una URL de Discovery o rellena los tres endpoints de autorización / token / userinfo',
   errOidcConfigInvalid:
     'No se han podido resolver los endpoints: URL incorrecta, discovery inaccesible o los tres endpoints están incompletos (la configuración guardada no se ha tocado)',
+
+  // ─── DingTalk / Feishu / WeCom (solo bajo «Inicio de sesión de plataforma») ─
+  // Los endpoints oficiales van quemados en el preajuste del backend; la página
+  // solo ofrece sustituciones, para un proxy interno o un despliegue privado.
+  providerDingTalkDesc: 'Inicio de sesión por código QR de DingTalk',
+  providerFeishuDesc: 'Inicio de sesión por código QR de Feishu',
+  providerWecomDesc: 'Inicio de sesión por código QR de WeCom (app propia)',
+  clientIdPlaceholderPlatform:
+    'El Client ID de la ficha de la app en la plataforma abierta (en WeCom, el ID de empresa / corpid)',
+  callbackHintPlatform:
+    'Pega esta URL en el campo «callback / redirect URL» de la app de la plataforma abierta; WeCom además exige registrar el dominio de esta instancia como dominio de confianza.',
+  oidcScopesPlaceholder: 'openid profile email',
+  platformOverrideOptional: '(vacío = la URL oficial de la plataforma)',
+  platformEndpointPlaceholder: 'https://… (solo para proxy interno o despliegue privado)',
+  platformEndpointsHint:
+    'Las direcciones de autorización / canje / identidad ya traen los valores oficiales y suelen dejarse vacías; cúbrelas solo para un proxy interno o un despliegue privado, y el valor manual tiene prioridad.',
+  agentIdPlaceholder: 'El AgentId de los detalles de la app de WeCom, p. ej. 1000002',
+  agentIdHint:
+    'La URL de escaneo lo necesita (el parámetro se llama agentid) para resolver la identidad del miembro; en el campo Client ID va el ID de la empresa (corpid), no este número.',
+  platformScopesOptional: '(vacío = el predeterminado)',
+  platformScopesPlaceholder: 'separados por espacio, p. ej. contact:user.base:readonly',
+  platformScopesHint:
+    'DingTalk usa openid por defecto; Feishu no solicita ningún scope por defecto, porque pedir un permiso que la app no tiene se rechaza de inmediato. Para filtrar con la lista de dominios de correo, la plataforma debe devolver un correo.',
+  platformIdentityNote:
+    'Las cuentas se emparejan solo con el identificador estable que emite la plataforma (DingTalk / Feishu usan unionId y, si no, openId; WeCom usa el ID de empresa más el userid del miembro). El apodo y el correo nunca identifican una cuenta, así que cambiar de nombre no puede acabar en la cuenta de otra persona.',
+  errAgentIdRequired: 'WeCom necesita un AgentId (en los detalles de la app)',
+  errPlatformConfigInvalid:
+    'Las URLs de sustitución deben ser http(s) y sin credenciales incrustadas; déjalas vacías para usar la dirección oficial (la configuración guardada no se ha tocado)',
 }

@@ -23,11 +23,11 @@ import { http } from './http'
 export type OAuthProvider = 'gitee' | 'github' | 'gitlab' | 'custom'
 
 /**
- * 「登录用」身份源的枚举 = git 四档 + OIDC。
+ * 「登录用」身份源的枚举 = git 四档 + OIDC + 钉钉 / 飞书 / 企业微信。
  * 与后端 `normalizeProvider` / `normalizeLoginProvider` 两套枚举一一对应:
- * OIDC 服务器给不了 git token,所以它只出现在登录这一侧,永远不进保险库/仓库凭据。
+ * 后四档都给不了 git token,所以它们只出现在登录这一侧,永远不进保险库/仓库凭据。
  */
-export type OAuthLoginProvider = OAuthProvider | 'oidc'
+export type OAuthLoginProvider = OAuthProvider | 'oidc' | 'dingtalk' | 'feishu' | 'wecom'
 
 /** GET /api/oauth/apps element — never contains plaintext clientSecret. */
 export interface OAuthApp {
@@ -109,8 +109,8 @@ export interface OAuthLoginApp {
   /** 要在 git 平台应用里登记的回调地址(服务端按当前访问 origin 现算)。 */
   callbackUrl: string
   /**
-   * 以下六项只对 provider=oidc 有值,git 平台永远返回空串:
-   * 发现文档地址、三个可覆盖的端点、主键声明名、scope 串。
+   * 以下七项只对非 git 身份源有值,git 平台永远返回空串:
+   * 发现文档地址、三个可覆盖的端点、主键声明名、scope 串、企业微信的 AgentId。
    * 前端据此决定这组字段显不显示,不必自己再判一遍枚举。
    */
   discoveryUrl: string
@@ -119,6 +119,7 @@ export interface OAuthLoginApp {
   userinfoUrl: string
   idClaim: string
   scopes: string
+  agentId: string
 }
 
 /** PUT /api/admin/oauth/login-apps/{provider} 请求体。 */
@@ -134,8 +135,9 @@ export interface SaveOAuthLoginAppInput {
   allowedDomains?: string[]
   enabled: boolean
   /**
-   * OIDC 六项是**整份覆盖**语义(与 secret/白名单的「省略即保留」相反):
-   * 每次保存都以这几个值为准,省略即清空。只对 provider=oidc 生效。
+   * 端点 / scope / 主键声明 / AgentId 是**整份覆盖**语义(与 secret/白名单的「省略即保留」相反):
+   * 每次保存都以这几个值为准,省略即清空。
+   * 只有非 git 身份源用得上 —— git 档位服务端一律落空串,多发几个空字段不会串味。
    */
   discoveryUrl?: string
   authorizeUrl?: string
@@ -143,6 +145,8 @@ export interface SaveOAuthLoginAppInput {
   userinfoUrl?: string
   idClaim?: string
   scopes?: string
+  /** 企业微信自建应用的 AgentId;其余身份源服务端一律清空。 */
+  agentId?: string
 }
 
 export async function getPublicOAuthProviders(): Promise<PublicOAuthProvider[]> {

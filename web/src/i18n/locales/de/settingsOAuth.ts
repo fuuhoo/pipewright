@@ -1,7 +1,7 @@
 export default {
   title: 'OAuth-Apps',
   sectionDesc:
-    'Registriere für jede git-Plattform eine OAuth-App (Client ID / Secret), damit Benutzer ihr Konto im Anmeldedaten-Tresor mit einem Klick „Verbinden“ und automatisch ein Token erhalten können, ohne manuell ein PAT einzufügen. Das Secret wird beim Speichern maskiert und kann nach dem Schreiben nicht mehr gelesen werden. Dieselbe Plattform lässt sich für einen zweiten Zweck registrieren: Besucher sollen sich mit ihrem Plattform-Konto bei dieser Instanz anmelden.',
+    'Registriere für jede git-Plattform eine OAuth-App (Client ID / Secret), damit Benutzer ihr Konto im Anmeldedaten-Tresor mit einem Klick „Verbinden“ und automatisch ein Token erhalten können, ohne manuell ein PAT einzufügen. Das Secret wird beim Speichern maskiert und kann nach dem Schreiben nicht mehr gelesen werden. Dieselbe Plattform lässt sich für einen zweiten Zweck registrieren: Besucher sollen sich mit ihrem Plattform-Konto bei dieser Instanz anmelden. DingTalk, Feishu, WeCom und generisches OIDC gibt es nur für diesen zweiten Zweck — sie erscheinen nie im Anmeldedaten-Tresor.',
   tabsAria: 'OAuth-Anbieter',
   retry: 'Erneut versuchen',
 
@@ -104,4 +104,32 @@ export default {
     'Zum Aktivieren von OIDC eine Discovery-URL angeben oder alle drei Endpunkte für Autorisierung / Token / Nutzerinfo ausfüllen',
   errOidcConfigInvalid:
     'Endpunkte konnten nicht aufgelöst werden: falsche URL, Discovery nicht erreichbar oder die drei Endpunkte unvollständig (die gespeicherte Konfiguration blieb unberührt)',
+
+  // ─── DingTalk / Feishu / WeCom (nur unter „Plattform-Anmeldung“) ────────────
+  // Die offiziellen Endpunkte stecken im Backend-Preset; die Seite bietet nur
+  // Überschreibungen an – für einen internen Proxy oder eine private Installation.
+  providerDingTalkDesc: 'DingTalk-Anmeldung per QR-Code',
+  providerFeishuDesc: 'Feishu-Anmeldung per QR-Code',
+  providerWecomDesc: 'WeCom-Anmeldung per QR-Code (selbst erstellte App)',
+  clientIdPlaceholderPlatform:
+    'Client ID aus dem App-Eintrag der Open-Plattform (bei WeCom die Corp-ID)',
+  callbackHintPlatform:
+    'Trage diese URL bei der App auf der Open-Plattform als „Callback / Redirect-URL“ ein; bei WeCom muss zusätzlich die Domain dieser Instanz als vertrauenswürdige Domain eingetragen sein.',
+  oidcScopesPlaceholder: 'openid profile email',
+  platformOverrideOptional: '(leer = Standardadresse der Plattform)',
+  platformEndpointPlaceholder: 'https://… (nur für Proxy oder private Installation nötig)',
+  platformEndpointsHint:
+    'Autorisierungs-, Token- und Nutzerinfo-Adresse sind schon mit den offiziellen Werten hinterlegt und bleiben normalerweise leer; überschreibe sie nur für einen internen Proxy oder eine private Installation – der manuelle Wert gewinnt.',
+  agentIdPlaceholder: 'Die AgentId aus den WeCom-App-Details, z. B. 1000002',
+  agentIdHint:
+    'Die QR-Autorisierungs-URL braucht sie (Parametername agentid), um eine Identität aufzulösen; ins Client-ID-Feld gehört die Corp-ID, nicht diese Nummer.',
+  platformScopesOptional: '(leer = Standardwert)',
+  platformScopesPlaceholder: 'leerzeichengetrennt, z. B. contact:user.base:readonly',
+  platformScopesHint:
+    'DingTalk nutzt standardmäßig openid; Feishu fordert standardmäßig gar keinen Scope an, weil ein Scope, den die App nicht hat, sofort abgelehnt wird. Damit die E-Mail-Allowlist greift, muss die Plattform eine E-Mail zurückgeben.',
+  platformIdentityNote:
+    'Konten werden nur über die stabile ID der Plattform zugeordnet (DingTalk / Feishu: unionId, sonst openId; WeCom: Corp-ID plus Member-userid). Anzeigename und E-Mail identifizieren kein Konto, daher kann eine Umbenennung nicht auf ein fremdes Konto treffen.',
+  errAgentIdRequired: 'WeCom benötigt eine AgentId (aus den App-Details)',
+  errPlatformConfigInvalid:
+    'Endpunkt-Überschreibungen müssen http(s)-URLs ohne Zugangsdaten sein; leer gelassen gelten die Standardwerte der Plattform (die gespeicherte Konfiguration blieb unberührt)',
 }

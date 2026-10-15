@@ -1,7 +1,7 @@
 export default {
   title: 'OAuth 應用',
   sectionDesc:
-    '為每個 git 平台登記 OAuth 應用(Client ID / Secret),使用者即可在憑證保險庫一鍵「連接」帳號自動換取權杖,無需手動貼上 PAT。Secret 入庫即遮罩,寫入後不可讀出。同一平台還能登記第二種用途:讓訪客直接用平台帳號登入本實例。',
+    '為每個 git 平台登記 OAuth 應用(Client ID / Secret),使用者即可在憑證保險庫一鍵「連接」帳號自動換取權杖,無需手動貼上 PAT。Secret 入庫即遮罩,寫入後不可讀出。同一平台還能登記第二種用途:讓訪客直接用平台帳號登入本實例。釘釘、飛書、企業微信和通用 OIDC 只有「平台登入」這一檔,不進憑證保險庫。',
   tabsAria: 'OAuth 平台切換',
   retry: '重試',
 
@@ -97,4 +97,30 @@ export default {
     '身分取自 userinfo 介面:這一版不驗證 id_token 的簽名與 audience,建議只接內網或 HTTPS 的身分提供者。',
   errOidcEndpointsIncomplete: '啟用 OIDC 要嘛填 Discovery 網址,要嘛把授權 / 權杖 / 使用者資訊三個端點都填上',
   errOidcConfigInvalid: '端點解析失敗:網址寫錯、discovery 拉不到,或三個端點沒湊齊(已儲存的設定沒動)',
+
+  // ─── 釘釘 / 飛書 / 企業微信(只在「平台登入」檔出現)──────────────────────
+  // 官方端點寫死在服務端預設裡,設定頁只給覆蓋項:內網代理或自建部署才需要填。
+  providerDingTalkDesc: '釘釘掃描登入',
+  providerFeishuDesc: '飛書掃描登入',
+  providerWecomDesc: '企業微信掃描登入(自建應用)',
+  clientIdPlaceholderPlatform: '開放平台應用詳情裡的 Client ID(企業微信填企業 ID / corpid)',
+  callbackHintPlatform:
+    '在開放平台應用裡把這個網址填進「回呼 / 導向 URL」;企業微信還要把本實例網域加進「可信網域」。',
+  oidcScopesPlaceholder: 'openid profile email',
+  platformOverrideOptional: '(留空即用平台預設網址)',
+  platformEndpointPlaceholder: 'https://…(僅內網代理或自建部署需要填)',
+  platformEndpointsHint:
+    '授權 / 兌換 / 身分三個網址已內嵌官方值,一般不用動;要走內網代理或自建部署才覆蓋,填了的手填值優先。',
+  agentIdPlaceholder: '企業微信應用詳情裡的 AgentId,如 1000002',
+  agentIdHint:
+    '掃描網址要帶它才換得出成員身分(參數名 agentid);Client ID 那欄填的是企業 ID(corpID),別寫混。',
+  platformScopesOptional: '(留空即用預設)',
+  platformScopesPlaceholder: '空格分隔,如 contact:user.base:readonly',
+  platformScopesHint:
+    '釘釘預設 openid;飛書預設不申請任何 scope——申請應用沒開通的權限會被直接打回。要按信箱網域白名單擋人,就得讓平台回信箱。',
+  platformIdentityNote:
+    '只認平台發的穩定主鍵認人(釘釘 / 飛書取 unionId,拿不到才退 openId;企業微信取企業 ID + 成員 userid),暱稱和信箱都不參與,所以對方改名不會串到別人的帳號。',
+  errAgentIdRequired: '企業微信需要填 AgentId(在應用詳情裡)',
+  errPlatformConfigInvalid:
+    '端點覆蓋必須是 http(s) 網址,且不能附帳號密碼;留空即用平台預設網址(已儲存的設定沒動)',
 }

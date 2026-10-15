@@ -1,7 +1,7 @@
 export default {
   title: 'OAuth 应用',
   sectionDesc:
-    '为每个 git 平台登记 OAuth 应用(Client ID / Secret),用户即可在凭据保险库一键「连接」账号自动换取令牌,无需手动粘贴 PAT。Secret 落库即掩码,写入后不可读出。同一平台还能登记第二种用途:让访客直接用平台账号登录本实例。',
+    '为每个 git 平台登记 OAuth 应用(Client ID / Secret),用户即可在凭据保险库一键「连接」账号自动换取令牌,无需手动粘贴 PAT。Secret 落库即掩码,写入后不可读出。同一平台还能登记第二种用途:让访客直接用平台账号登录本实例。钉钉、飞书、企业微信和通用 OIDC 只有「平台登录」这一档,不进凭据保险库。',
   tabsAria: 'OAuth 平台切换',
   retry: '重试',
 
@@ -15,6 +15,7 @@ export default {
 
   clientIdPlaceholder: '在 git 平台 OAuth 应用页获取',
   clientIdPlaceholderOidc: '在身份提供方注册 OIDC 客户端后拿到',
+  clientIdPlaceholderPlatform: '开放平台应用详情里的 Client ID(企业微信填企业 ID / corpid)',
   secretOptional: '(写入后仅显示掩码)',
   secretPlaceholderKeep: '留空保留已存 Secret',
   secretPlaceholderNew: '粘贴 Client Secret…',
@@ -61,6 +62,8 @@ export default {
     '启用后登录页出现这个平台的按钮。两种用途要各登记一个 OAuth 应用——一个应用只能填一个回调地址。',
   callbackHint: '在 git 平台的 OAuth 应用里,把这个地址填进「回调 / Redirect URI」',
   callbackHintOidc: '在身份提供方的 OIDC 客户端里,把这个地址填进「回调 / Redirect URI」',
+  callbackHintPlatform:
+    '在开放平台应用详情里把这个地址填进「回调 / 重定向 URL」;企业微信还要把本实例域名配进「可信域名」。',
   callbackCopy: '点一下即全选,复制后去平台侧登记',
   domainsLabel: '邮箱域名白名单',
   domainsOptional: '(留空 = 不限域名)',
@@ -94,10 +97,33 @@ export default {
     '用哪个声明当账号唯一标识。默认 sub:规范要求它不可变。换成邮箱或登录名,以后对方改名或换邮箱就会撞上别人的账号。',
   oidcScopesLabel: 'Scopes',
   oidcScopesOptional: '(留空 = openid profile email)',
+  oidcScopesPlaceholder: 'openid profile email',
   oidcScopesHint: '空格分隔。至少要 openid;拿不到邮箱时,邮箱域名白名单会直接拦下登录。',
   oidcUserinfoNote:
     '身份取自 userinfo 接口:这一版不校验 id_token 的签名与 audience,建议只接内网或 HTTPS 的身份提供方。',
   errOidcEndpointsIncomplete:
     '启用 OIDC 要么填 Discovery 地址,要么把授权 / 令牌 / 用户信息三个端点都填上',
   errOidcConfigInvalid: '端点解析失败:地址写错、discovery 拉不到,或三个端点没凑齐(已存的配置没动)',
+
+  // ─── 钉钉 / 飞书 / 企业微信(只在「平台登录」档出现)───────────────────────
+  // 官方端点写死在后端预设里,配置页只给覆盖项:内网代理、私有部署才需要填。
+  providerDingTalkDesc: '钉钉扫码登录',
+  providerFeishuDesc: '飞书扫码登录',
+  providerWecomDesc: '企业微信扫码登录(自建应用)',
+  platformOverrideOptional: '(留空即用平台默认地址)',
+  platformEndpointPlaceholder: 'https://…(仅内网代理或私有部署需要填)',
+  platformEndpointsHint:
+    '授权 / 兑换 / 身份三个地址已内置官方值,一般不用动;要走内网代理或私有部署才覆盖,填了的手填值优先。',
+  agentIdPlaceholder: '企业微信应用详情里的 AgentId,如 1000002',
+  agentIdHint:
+    '扫码地址要带它才换得出成员身份(参数名 agentid);Client ID 那栏填的是企业 ID(corpID),别写混。',
+  platformScopesOptional: '(留空即用默认)',
+  platformScopesPlaceholder: '空格分隔,如 contact:user.base:readonly',
+  platformScopesHint:
+    '钉钉默认 openid;飞书默认不申请任何 scope——申请应用没开通的权限会被直接打回。要按邮箱域名白名单拦人,就得让平台回邮箱。',
+  platformIdentityNote:
+    '只认平台发的稳定主键认人(钉钉 / 飞书取 unionId,拿不到才退 openId;企业微信取企业 ID + 成员 userid),昵称和邮箱都不参与,所以对方改名不会串到别人的账号。',
+  errAgentIdRequired: '企业微信需要填 AgentId(在应用详情里)',
+  errPlatformConfigInvalid:
+    '端点覆盖必须是 http(s) 地址,且不能带账号密码;留空即用平台默认地址(已存的配置没动)',
 }

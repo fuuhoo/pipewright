@@ -1,7 +1,7 @@
 export default {
   title: 'Applications OAuth',
   sectionDesc:
-    'Enregistrez une application OAuth (Client ID / Secret) pour chaque plateforme git afin que les utilisateurs puissent « Connecter » leur compte en un clic depuis le coffre-fort d’identifiants et obtenir automatiquement un jeton, sans coller manuellement un PAT. Le secret est masqué dès son enregistrement et ne peut plus être lu après son écriture. La même plateforme peut aussi servir un second usage : laisser les visiteurs se connecter à cette instance avec leur compte plateforme.',
+    'Enregistrez une application OAuth (Client ID / Secret) pour chaque plateforme git afin que les utilisateurs puissent « Connecter » leur compte en un clic depuis le coffre-fort d’identifiants et obtenir automatiquement un jeton, sans coller manuellement un PAT. Le secret est masqué dès son enregistrement et ne peut plus être lu après son écriture. La même plateforme peut aussi servir un second usage : laisser les visiteurs se connecter à cette instance avec leur compte plateforme. DingTalk, Feishu, WeCom et OIDC générique n’existent que pour ce second usage — ils n’entrent jamais dans le coffre-fort d’identifiants.',
   tabsAria: 'Fournisseurs OAuth',
   retry: 'Réessayer',
 
@@ -104,4 +104,32 @@ export default {
     'Pour activer OIDC, donnez une URL de Discovery ou renseignez les trois points d’accès autorisation / jeton / userinfo',
   errOidcConfigInvalid:
     'Points d’accès non résolus : URL incorrecte, discovery injoignable ou les trois points d’accès sont incomplets (la configuration enregistrée est restée intacte)',
+
+  // ─── DingTalk / Feishu / WeCom (uniquement sous « Connexion plateforme ») ───
+  // Les points d’accès officiels sont préchargés côté serveur ; la page ne propose
+  // que des remplacements, utiles pour un proxy interne ou une installation privée.
+  providerDingTalkDesc: 'Connexion par QR code DingTalk',
+  providerFeishuDesc: 'Connexion par QR code Feishu',
+  providerWecomDesc: 'Connexion par QR code WeCom (application créée par vous)',
+  clientIdPlaceholderPlatform:
+    'Le Client ID indiqué dans la fiche de l’application (pour WeCom, l’ID d’entreprise / corpid)',
+  callbackHintPlatform:
+    'Saisissez cette URL dans le champ « callback / URL de redirection » de l’application ; WeCom exige aussi que le domaine de cette instance soit déclaré comme domaine de confiance.',
+  oidcScopesPlaceholder: 'openid profile email',
+  platformOverrideOptional: '(vide = l’adresse officielle)',
+  platformEndpointPlaceholder: 'https://… (utile seulement pour un proxy interne ou une installation privée)',
+  platformEndpointsHint:
+    'Les adresses autorisation / jeton / identité sont déjà préchargées avec les valeurs officielles et restent vides en général ; ne les remplacez que pour un proxy interne ou une installation privée, la valeur saisie prime alors.',
+  agentIdPlaceholder: 'L’AgentId visible dans les détails de l’application WeCom, par ex. 1000002',
+  agentIdHint:
+    'L’URL de scan en a besoin (le paramètre s’appelle agentid) pour résoudre l’identité du membre ; le champ Client ID reçoit l’ID d’entreprise (corpid), pas ce numéro.',
+  platformScopesOptional: '(vide = la valeur par défaut)',
+  platformScopesPlaceholder: 'séparés par des espaces, par ex. contact:user.base:readonly',
+  platformScopesHint:
+    'DingTalk demande openid par défaut ; Feishu ne demande aucun scope par défaut, car une permission non activée pour l’application est refusée immédiatement. Pour filtrer sur la liste de domaines e-mail, la plateforme doit renvoyer un e-mail.',
+  platformIdentityNote:
+    'Les comptes sont appariés uniquement sur l’identifiant stable émis par la plateforme (DingTalk / Feishu : unionId, à défaut openId ; WeCom : ID d’entreprise plus userid du membre). Le pseudonyme et l’e-mail n’identifient jamais un compte, donc un changement de nom ne peut pas atterrir sur le compte de quelqu’un d’autre.',
+  errAgentIdRequired: 'WeCom nécessite un AgentId (dans les détails de l’application)',
+  errPlatformConfigInvalid:
+    'Les remplacements de points d’accès doivent être des URL http(s) sans identifiants intégrés ; laissez vide pour utiliser les adresses officielles (la configuration enregistrée est restée intacte)',
 }

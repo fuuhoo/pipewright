@@ -1,7 +1,7 @@
 export default {
   title: 'OAuth 앱',
   sectionDesc:
-    '각 git 플랫폼에 OAuth 앱(Client ID / Secret)을 등록하면 사용자는 자격 증명 보관소에서 원클릭으로 계정을 "연결"하여 PAT를 수동으로 붙여넣지 않고도 토큰을 자동으로 발급받을 수 있습니다. Secret은 저장 시 마스킹되며 작성 후에는 다시 읽을 수 없습니다. 같은 플랫폼은 두 번째 용도로도 등록할 수 있습니다. 방문자가 플랫폼 계정으로 이 인스턴스에 로그인하게 하는 것입니다.',
+    '각 git 플랫폼에 OAuth 앱(Client ID / Secret)을 등록하면 사용자는 자격 증명 보관소에서 원클릭으로 계정을 "연결"하여 PAT를 수동으로 붙여넣지 않고도 토큰을 자동으로 발급받을 수 있습니다. Secret은 저장 시 마스킹되며 작성 후에는 다시 읽을 수 없습니다. 같은 플랫폼은 두 번째 용도로도 등록할 수 있습니다. 방문자가 플랫폼 계정으로 이 인스턴스에 로그인하게 하는 것입니다. 딩톡, 페이슈, 기업위챗, 범용 OIDC는 두 번째 용도로만 존재하며 자격 증명 보관소에는 나타나지 않습니다.',
   tabsAria: 'OAuth 제공자',
   retry: '다시 시도',
 
@@ -102,4 +102,32 @@ export default {
     'OIDC를 활성화하려면 Discovery 주소를 입력하거나 인증 / 토큰 / 사용자 정보 세 엔드포인트를 모두 채우세요',
   errOidcConfigInvalid:
     '엔드포인트를 해석할 수 없습니다: 주소 오류, discovery 불러오기 실패, 또는 세 엔드포인트가 부족합니다(저장된 설정은 그대로입니다)',
+
+  // ─── 딩톡 / 페이슈 / 기업위챗(「플랫폼 로그인」에만 나타남)─────────────────
+  // 공식 엔드포인트는 서버 프리셋에 내장되어 있고, 설정 페이지에는 덮어쓸 항목만
+  // 나옵니다. 내부 프록시나 자체 구축을 이용할 때만 채우세요.
+  providerDingTalkDesc: '딩톡 QR 코드 로그인',
+  providerFeishuDesc: '페이슈 QR 코드 로그인',
+  providerWecomDesc: '기업위챗 QR 코드 로그인(직접 만든 앱)',
+  clientIdPlaceholderPlatform:
+    '오픈플랫폼 앱 상세의 Client ID(기업위챗은 기업 ID / corpid)',
+  callbackHintPlatform:
+    '오픈플랫폼 앱의 "callback / 리다이렉트 URL"에 이 주소를 입력하세요. 기업위챗은 이 인스턴스의 도메인을 "신뢰 가능한 도메인"에도 등록해야 합니다.',
+  oidcScopesPlaceholder: 'openid profile email',
+  platformOverrideOptional: '(비우면 플랫폼 기본 주소)',
+  platformEndpointPlaceholder: 'https://…(내부 프록시·자체 구축에만 필요)',
+  platformEndpointsHint:
+    '인증 / 교환 / 신원 세 주소는 공식 값이 내장되어 있으니 보통은 비워 둡니다. 내부 프록시나 자체 구축을 이용할 때만 덮어쓰고, 입력한 값이 우선됩니다.',
+  agentIdPlaceholder: '기업위챗 앱 상세의 AgentId(예: 1000002)',
+  agentIdHint:
+    'QR 인증 주소에 꼭 필요합니다(매개변수 이름은 agentid). Client ID 칸에는 AgentId가 아니라 기업 ID(corpid)를 넣습니다.',
+  platformScopesOptional: '(비우면 기본값)',
+  platformScopesPlaceholder: '공백 구분, 예: contact:user.base:readonly',
+  platformScopesHint:
+    '딩톡은 기본으로 openid, 페이슈는 기본으로 scope를 요청하지 않습니다(앱에 열리지 않은 권한을 요청하면 바로 거절됩니다). 메일 도메인 허용 목록으로 제한하려면 플랫폼이 메일 주소를 돌려주어야 합니다.',
+  platformIdentityNote:
+    '계정 조회는 플랫폼이 발급한 안정적 ID로만 합니다(딩톡 / 페이슈는 unionId, 없으면 openId. 기업위챗은 기업 ID + 구성원 userid). 별명이나 메일은 계정을 식별하지 않으니, 이름 변경이 다른 사람 계정으로 이어지지 않습니다.',
+  errAgentIdRequired: '기업위챗은 AgentId가 필요합니다(앱 상세에 있음)',
+  errPlatformConfigInvalid:
+    '엔드포인트 덮어쓰기는 자격 증명을 포함하지 않은 http(s) 주소여야 하며, 비워 두면 플랫폼 기본 주소가 사용됩니다(저장된 설정은 그대로입니다)',
 }

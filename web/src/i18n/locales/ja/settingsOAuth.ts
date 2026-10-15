@@ -1,7 +1,7 @@
 export default {
   title: 'OAuth アプリ',
   sectionDesc:
-    '各 git プラットフォームに OAuth アプリ(Client ID / Secret)を登録すると、ユーザーは認証情報ボールトからワンクリックでアカウントを「接続」し、PAT を手動で貼り付けることなくトークンを自動取得できます。Secret は保存時にマスクされ、書き込み後は読み出せません。同じプラットフォームはもう一つの用途にも登録できます。訪問者がプラットフォームのアカウントで本インスタンスにログインさせることです。',
+    '各 git プラットフォームに OAuth アプリ(Client ID / Secret)を登録すると、ユーザーは認証情報ボールトからワンクリックでアカウントを「接続」し、PAT を手動で貼り付けることなくトークンを自動取得できます。Secret は保存時にマスクされ、書き込み後は読み出せません。同じプラットフォームはもう一つの用途にも登録できます。訪問者がプラットフォームのアカウントで本インスタンスにログインさせることです。DingTalk、Feishu、企業微信、汎用 OIDC はこの第二の用途のみで、認証情報ボールトには現れません。',
   tabsAria: 'OAuth プロバイダー',
   retry: '再試行',
 
@@ -102,4 +102,32 @@ export default {
     'OIDC を有効にするには Discovery URL を入力するか、認可 / トークン / ユーザー情報の3つすべてを入力してください',
   errOidcConfigInvalid:
     'エンドポイントを解決できません: URL の誤り、discovery の取得失敗、または3つの入力が揃っていません(保存済みの設定は変更されていません)',
+
+  // ─── DingTalk / Feishu / 企業微信(「プラットフォームログイン」にのみ出現)───
+  // 公式エンドポイントはサーバー側のプリセットに組み込み済み。設定ページは上書き
+  // 項目だけ出し、社内プロキシや独自デプロイに使う。
+  providerDingTalkDesc: 'DingTalk の QR コードログイン',
+  providerFeishuDesc: 'Feishu の QR コードログイン',
+  providerWecomDesc: '企業微信の QR コードログイン(自作アプリ)',
+  clientIdPlaceholderPlatform:
+    'オープンプラットフォームのアプリ詳細にある Client ID(企業微信は企業 ID / corpid)',
+  callbackHintPlatform:
+    'オープンプラットフォームのアプリでこの URL を「callback / リダイレクト URL」に入力してください。企業微信では本インスタンスのドメインを「信頼済みドメイン」にも登録する必要があります。',
+  oidcScopesPlaceholder: 'openid profile email',
+  platformOverrideOptional: '(空 = プラットフォーム既定の URL)',
+  platformEndpointPlaceholder: 'https://…(社内プロキシや独自デプロイのみ)',
+  platformEndpointsHint:
+    '認可 / 交換 / 身分の 3 つの URL は公式値を組み込み済みなので、通常は空のままにします。社内プロキシや独自デプロイ経由のときだけ上書きし、入力した値が優先されます。',
+  agentIdPlaceholder: '企業微信のアプリ詳細にある AgentId(例: 1000002)',
+  agentIdHint:
+    'QR コードの認可 URL に必要です(パラメータ名は agentid)。Client ID 欄に入れるのは AgentId ではなく企業 ID(corpid)です。',
+  platformScopesOptional: '(空 = 既定値)',
+  platformScopesPlaceholder: 'スペース区切り(例: contact:user.base:readonly)',
+  platformScopesHint:
+    'DingTalk は既定で openid、Feishu は既定で scope を要求しません(アプリが有効化していない権限を要求すると即座に拒否されます)。メールドメイン許可リストで締めたい場合は、プラットフォームにメールアドレスを返させる必要があります。',
+  platformIdentityNote:
+    'アカウント照合はプラットフォームが発行する安定 ID のみ(DingTalk / Feishu は unionId、取れなければ openId。企業微信は企業 ID + メンバー userid)。ニックネームやメールでは照合しないので、名前の変更が他人のアカウントに繋がることはありません。',
+  errAgentIdRequired: '企業微信は AgentId が必要です(アプリ詳細に記載)',
+  errPlatformConfigInvalid:
+    'エンドポイントの上書きは認証情報を含めない http(s) URL にしてください。空欄ならプラットフォーム既定の URL(保存済みの設定は変更されていません)',
 }

@@ -71,8 +71,17 @@ interface ProviderMeta {
   logoStyle: string
   /** Self-hosted provider exposes a base URL field. */
   hasBaseUrl: boolean
-  /** OIDC 档暴露端点/主键声明配置;git 档位为 false。 */
-  isOidc: boolean
+  /**
+   * 端点组长什么样:
+   *   none     —— git 四家,地址写死在代码里,不给配;
+   *   oidc     —— 发现文档 + 三项覆盖 + 主键声明 + scope;
+   *   platform —— 钉钉/飞书/企业微信:官方地址本就已内置,只给三项覆盖(和 scope)。
+   */
+  endpoints: 'none' | 'oidc' | 'platform'
+  /** 企业微信的扫码地址要 AgentId(自建应用的 AgentId),没有它换不出成员身份。 */
+  needsAgentId: boolean
+  /** 这一档有没有 scope 可填:企业微信的扫码地址压根不带 scope 参数。 */
+  hasScopes: boolean
 }
 
 /** Per-provider editable form + saved snapshot(两种用途共用同一张表单壳)。 */
@@ -87,8 +96,8 @@ interface CardState {
   /** login 用途:要在平台侧登记的回调地址(服务端按当前 origin 现算,只读回显)。 */
   callbackUrl: string
   /**
-   * 仅 OIDC:端点组 + 主键声明 + scope。保存是**整份覆盖**语义(后端对 git 档位一律落空),
-   * 所以登录档每次保存都把这六项原样发出,不能省略。
+   * 仅非 git 身份源:端点组 + 主键声明 + scope + AgentId。
+   * 保存是**整份覆盖**语义(后端对 git 档位一律落空),所以登录档每次保存都把这些原样发出,不能省略。
    */
   discoveryUrl: string
   authorizeUrl: string
@@ -96,14 +105,16 @@ interface CardState {
   userinfoUrl: string
   idClaim: string
   scopes: string
+  /** 企业微信自建应用的 AgentId;其余身份源后端一律清空。 */
+  agentId: string
   enabled: boolean
-  errors: { clientId: string; baseUrl: string; allowedDomains: string; oidc: string }
+  errors: { clientId: string; baseUrl: string; allowedDomains: string; endpoints: string; agentId: string }
   saving: boolean
 }
 
 /** 清空字段错误要用新对象:四个 tab 共用一份卡片,原地改会把别的档一起改掉。 */
 function noErrors(): CardState['errors'] {
-  return { clientId: '', baseUrl: '', allowedDomains: '', oidc: '' }
+  return { clientId: '', baseUrl: '', allowedDomains: '', endpoints: '', agentId: '' }
 }
 
 // ─── provider metadata ───────────────────────────────────────────────────────
@@ -117,7 +128,9 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: 'G',
     logoStyle: 'background:#c71d23;color:#fff',
     hasBaseUrl: false,
-    isOidc: false,
+    endpoints: 'none',
+    needsAgentId: false,
+    hasScopes: false,
   },
   {
     id: 'github',
@@ -126,7 +139,9 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: '',
     logoStyle: 'background:#1f2328;color:#fff',
     hasBaseUrl: false,
-    isOidc: false,
+    endpoints: 'none',
+    needsAgentId: false,
+    hasScopes: false,
   },
   {
     id: 'gitlab',
@@ -135,7 +150,9 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: '',
     logoStyle: 'background:#fc6d26;color:#fff',
     hasBaseUrl: false,
-    isOidc: false,
+    endpoints: 'none',
+    needsAgentId: false,
+    hasScopes: false,
   },
   {
     id: 'custom',
@@ -144,13 +161,19 @@ const PROVIDERS: ProviderMeta[] = [
     logoText: '⚙',
     logoStyle: 'background:var(--color-inset);color:var(--color-dim)',
     hasBaseUrl: true,
-    isOidc: false,
+    endpoints: 'none',
+    needsAgentId: false,
+    hasScopes: false,
   },
 ]
 
 /**
- * OIDC 只出现在「平台登录」档,所以不进 PROVIDERS 数组(那样「仓库凭据」会渲染出一张
- * 存不出东西的卡),单独作为一档追加在登录档的 tab 尾巴上。
+ * 只出现在「平台登录」档的几档身份源,不进 PROVIDERS 数组(那样「仓库凭据」会渲染出
+ * 一张存不出东西的卡),单独追加在登录档的 tab 尾巴上。
+ *
+ * OIDC 的端点必须问服务器自己(discovery);钉钉/飞书/企业微信的官方地址写死在后端预设里,
+ * 配置页只给「端点覆盖」——留空即用默认值,填了才走代理/内网入口。
+ * 企业微信额外要 AgentId,且扫码地址压根没有 scope 参数(可见范围由企业微信侧决定)。
  */
 const OIDC_META: ProviderMeta = {
   id: 'oidc',
@@ -159,29 +182,80 @@ const OIDC_META: ProviderMeta = {
   logoText: 'S',
   logoStyle: 'background:#2d6cdf;color:#fff',
   hasBaseUrl: false,
-  isOidc: true,
+  endpoints: 'oidc',
+  needsAgentId: false,
+  hasScopes: true,
 }
 
-/** 「仓库凭据」档的 tab 清单(四个 git 平台)与「平台登录」档的(再加 OIDC)。 */
+const PLATFORM_METAS: ProviderMeta[] = [
+  {
+    id: 'dingtalk',
+    label: '钉钉',
+    desc: '',
+    logoText: '钉',
+    logoStyle: 'background:#1e7cf5;color:#fff',
+    hasBaseUrl: false,
+    endpoints: 'platform',
+    needsAgentId: false,
+    hasScopes: true,
+  },
+  {
+    id: 'feishu',
+    label: '飞书',
+    desc: '',
+    logoText: '飞',
+    logoStyle: 'background:#456fff;color:#fff',
+    hasBaseUrl: false,
+    endpoints: 'platform',
+    needsAgentId: false,
+    hasScopes: true,
+  },
+  {
+    id: 'wecom',
+    label: '企业微信',
+    desc: '',
+    logoText: '微',
+    logoStyle: 'background:#07c160;color:#fff',
+    hasBaseUrl: false,
+    endpoints: 'platform',
+    needsAgentId: true,
+    // 企业微信的扫码授权地址压根不带 scope 这一参数,填了也会被后端忽略。
+    hasScopes: false,
+  },
+]
+
+/** 登录档独有的身份源(OIDC + 三家国内平台):「仓库凭据」那套 tab 里不出现。 */
+const LOGIN_ONLY_METAS: ProviderMeta[] = [OIDC_META, ...PLATFORM_METAS]
+
+/** 「仓库凭据」档的 tab 清单(四个 git 平台)与「平台登录」档的(再加五档身份源)。 */
 const VAULT_IDS: OAuthLoginProvider[] = PROVIDERS.map((m) => m.id)
-const ALL_IDS: OAuthLoginProvider[] = [...VAULT_IDS, OIDC_META.id]
+const ALL_IDS: OAuthLoginProvider[] = [...VAULT_IDS, ...LOGIN_ONLY_METAS.map((m) => m.id)]
 
 // ─── i18n + toast ──────────────────────────────────────────────────────────────
 
 const { t } = useI18n()
 const toast = useToast()
 
-/** Provider display label — brand names kept verbatim, `custom` localized. */
-function labelFor(id: OAuthLoginProvider): string {
-  return id === 'custom' ? t('settingsOAuth.providerCustomLabel') : cards[id].meta.label
+/** 需要在界面里翻译的副说明(品牌名本身不翻:登录页按钮用的是服务端给的 label)。 */
+const DESC_KEYS: Partial<Record<OAuthLoginProvider, string>> = {
+  gitee: 'settingsOAuth.providerGiteeDesc',
+  custom: 'settingsOAuth.providerCustomDesc',
+  oidc: 'settingsOAuth.providerOidcDesc',
+  dingtalk: 'settingsOAuth.providerDingTalkDesc',
+  feishu: 'settingsOAuth.providerFeishuDesc',
+  wecom: 'settingsOAuth.providerWecomDesc',
 }
 
-/** Provider sub-description — `gitee` / `custom` / `oidc` localized, others verbatim. */
+/** Provider display label — 品牌名一律照字面,只有自建档翻成界面语。 */
+function labelFor(id: OAuthLoginProvider): string {
+  if (id === 'custom') return t('settingsOAuth.providerCustomLabel')
+  return cards[id].meta.label
+}
+
+/** Provider sub-description — 有文案位的走 i18n,其余(github/gitlab)用官方域名。 */
 function descFor(id: OAuthLoginProvider): string {
-  if (id === 'gitee') return t('settingsOAuth.providerGiteeDesc')
-  if (id === 'custom') return t('settingsOAuth.providerCustomDesc')
-  if (id === 'oidc') return t('settingsOAuth.providerOidcDesc')
-  return cards[id].meta.desc
+  const key = DESC_KEYS[id]
+  return key ? t(key) : cards[id].meta.desc
 }
 
 // ─── load state ───────────────────────────────────────────────────────────────
@@ -206,6 +280,7 @@ function newCard(meta: ProviderMeta): CardState {
     userinfoUrl: '',
     idClaim: '',
     scopes: '',
+    agentId: '',
     enabled: false,
     errors: noErrors(),
     saving: false,
@@ -214,7 +289,7 @@ function newCard(meta: ProviderMeta): CardState {
 
 /** 两套卡片都含 OIDC 档:保险库那套只是不渲染它,数据位留着免得类型收窄。 */
 function newCardSet(): CardSet {
-  return Object.fromEntries([...PROVIDERS, OIDC_META].map((meta) => [meta.id, newCard(meta)])) as CardSet
+  return Object.fromEntries([...PROVIDERS, ...LOGIN_ONLY_METAS].map((meta) => [meta.id, newCard(meta)])) as CardSet
 }
 
 type CardSet = Record<OAuthLoginProvider, CardState>
@@ -255,6 +330,25 @@ const currentCallbackUrl = computed<string>(() => {
   )
 })
 
+/**
+ * 回调地址与 Client ID 的提示语按身份源分三套:git 平台去 OAuth 应用里登记,
+ * OIDC 去身份提供方的客户端里登记,钉钉/飞书/企业微信去各自开放平台的应用详情里拿。
+ * 说错地方是配置页最容易把人绕进去的一件事,所以宁可各写一句。
+ */
+const callbackHintKey = computed<string>(() => {
+  const kind = form.value.meta.endpoints
+  if (kind === 'oidc') return 'settingsOAuth.callbackHintOidc'
+  if (kind === 'platform') return 'settingsOAuth.callbackHintPlatform'
+  return 'settingsOAuth.callbackHint'
+})
+
+const clientIdPlaceholderKey = computed<string>(() => {
+  const kind = form.value.meta.endpoints
+  if (kind === 'oidc') return 'settingsOAuth.clientIdPlaceholderOidc'
+  if (kind === 'platform') return 'settingsOAuth.clientIdPlaceholderPlatform'
+  return 'settingsOAuth.clientIdPlaceholder'
+})
+
 /** 只读框点一下就全选:管理员要的是复制到平台侧的应用里登记。 */
 function selectCallback(event: Event): void {
   ;(event.target as HTMLInputElement).select()
@@ -267,7 +361,7 @@ const purpose = ref<Purpose>('vault')
 
 /**
  * 换用途时清掉两边的字段错误:留着会让另一档的面板显示上一条错误的红字。
- * 另外 OIDC 只在登录档有 tab —— 停在 OIDC 上切回「仓库凭据」会摊开一张没有 tab 的面板,
+ * 另外 OIDC 与三家国内平台只在登录档有 tab —— 停在它们上面切回「仓库凭据」会摊开一张没有 tab 的面板,
  * 所以先把档位退回第一个平台。
  */
 function setPurpose(p: Purpose): void {
@@ -277,7 +371,7 @@ function setPurpose(p: Purpose): void {
     cards[id].errors = noErrors()
     loginCards[id].errors = noErrors()
   }
-  if (p === 'vault' && active.value === OIDC_META.id) active.value = PROVIDERS[0].id
+  if (p === 'vault' && !VAULT_IDS.includes(active.value)) active.value = PROVIDERS[0].id
 }
 
 function purposeTitle(p: Purpose): string {
@@ -378,7 +472,7 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.baseUrl = app.baseUrl
   card.allowedDomains = joinOAuthDomains(app.allowedDomains ?? [])
   card.callbackUrl = app.callbackUrl
-  // OIDC 六项:git 档位服务端一律返回空串,所以直接覆盖回来即可(不会串味)。
+  // 非 git 身份源那几项:git 档位服务端一律返回空串,所以直接覆盖回来即可(不会串味)。
   // idClaim / scopes 为空时后端已按默认值(sub、openid profile email)落库并回显。
   card.discoveryUrl = app.discoveryUrl
   card.authorizeUrl = app.authorizeUrl
@@ -386,6 +480,7 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.userinfoUrl = app.userinfoUrl
   card.idClaim = app.idClaim
   card.scopes = app.scopes
+  card.agentId = app.agentId
   card.enabled = app.enabled
   card.errors = noErrors()
 }
@@ -428,12 +523,18 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
   // OIDC:启用时至少要能凑出三个端点(整份 discovery,或三个都手填)。
   // 后端在保存时真的去解析(拿不到就 422),这里只是把「明显没填全」当场拦下,
   // 省一次往返,也不让管理员以为存上了。
-  if (isLogin && card.meta.isOidc && card.enabled) {
+  if (isLogin && card.meta.endpoints === 'oidc' && card.enabled) {
     const filled = [card.authorizeUrl, card.tokenUrl, card.userinfoUrl].filter((v) => v.trim()).length
     if (!card.discoveryUrl.trim() && filled !== 3) {
-      card.errors.oidc = t('settingsOAuth.errOidcEndpointsIncomplete')
+      card.errors.endpoints = t('settingsOAuth.errOidcEndpointsIncomplete')
       return
     }
+  }
+  // 企业微信:没有 AgentId 连扫码地址都拼不出来(参数名是 agentid,值就是它)。
+  // 后端同样会在保存期拒,这一处先拦是为了把红字钉在 AgentId 那一栏上。
+  if (isLogin && card.meta.needsAgentId && card.enabled && !card.agentId.trim()) {
+    card.errors.agentId = t('settingsOAuth.errAgentIdRequired')
+    return
   }
 
   card.saving = true
@@ -451,6 +552,7 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
         userinfoUrl: card.userinfoUrl.trim(),
         idClaim: card.idClaim.trim(),
         scopes: card.scopes.trim(),
+        agentId: card.agentId.trim(),
       }
       applyLoginApp(card, await saveOAuthLoginApp(provider, payload))
     } else {
@@ -475,7 +577,11 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
         } else if (code === 'invalid_domain') {
           card.errors.allowedDomains = t('settingsOAuth.errDomainsInvalid')
         } else if (code === 'oidc_config_invalid') {
-          card.errors.oidc = t('settingsOAuth.errOidcConfigInvalid')
+          card.errors.endpoints = t('settingsOAuth.errOidcConfigInvalid')
+        } else if (code === 'platform_config_invalid') {
+          card.errors.endpoints = t('settingsOAuth.errPlatformConfigInvalid')
+        } else if (code === 'agent_id_required') {
+          card.errors.agentId = t('settingsOAuth.errAgentIdRequired')
         } else {
           toast.error(t('settingsOAuth.toastSaveFailed'), { detail: err.apiError.message })
         }
@@ -533,7 +639,7 @@ function relativeTime(iso: string | null): string {
     <!-- ─── loading skeleton ────────────────────────────────────────────────── -->
     <template v-if="loadState === 'loading'">
       <div class="oauth-tabs" aria-hidden="true">
-        <span v-for="i in 4" :key="i" class="skel skel--tab" />
+        <span v-for="id in cardList" :key="id" class="skel skel--tab" />
       </div>
       <div class="panel">
         <div class="panel-head">
@@ -635,7 +741,7 @@ function relativeTime(iso: string | null): string {
                 :title="t('settingsOAuth.callbackCopy')"
                 @click="selectCallback"
               />
-              <span class="field-hint">{{ t(form.meta.isOidc ? 'settingsOAuth.callbackHintOidc' : 'settingsOAuth.callbackHint') }}</span>
+              <span class="field-hint">{{ t(callbackHintKey) }}</span>
             </div>
 
             <!-- Client ID -->
@@ -647,7 +753,7 @@ function relativeTime(iso: string | null): string {
                 type="text"
                 class="field-input field-input--mono"
                 :class="{ 'field-input--error': form.errors.clientId }"
-                :placeholder="t(form.meta.isOidc ? 'settingsOAuth.clientIdPlaceholderOidc' : 'settingsOAuth.clientIdPlaceholder')"
+                :placeholder="t(clientIdPlaceholderKey)"
                 autocomplete="off"
                 :aria-invalid="!!form.errors.clientId || undefined"
                 :disabled="form.saving"
@@ -701,9 +807,10 @@ function relativeTime(iso: string | null): string {
               </span>
             </div>
 
-            <!-- OIDC 端点组 — 仅「平台登录」用途下的 OIDC 档(git 平台用不到) -->
-            <template v-if="purpose === 'login' && form.meta.isOidc">
-              <div class="field">
+            <!-- 端点组 — 只出现在「平台登录」档。OIDC 的端点必须问服务器自己(discovery),
+                 钉钉/飞书/企业微信的官方地址后端已内置,这里只给「覆盖」(走代理/内网入口时才填)。 -->
+            <template v-if="purpose === 'login' && form.meta.endpoints !== 'none'">
+              <div v-if="form.meta.endpoints === 'oidc'" class="field">
                 <label class="field-label" :for="`oauth-discovery-${active}`">
                   {{ t('settingsOAuth.oidcDiscoveryLabel') }}
                   <span class="field-optional">{{ t('settingsOAuth.oidcDiscoveryOptional') }}</span>
@@ -713,73 +820,100 @@ function relativeTime(iso: string | null): string {
                   v-model="form.discoveryUrl"
                   type="url"
                   class="field-input field-input--mono"
-                  :class="{ 'field-input--error': form.errors.oidc }"
+                  :class="{ 'field-input--error': form.errors.endpoints }"
                   :placeholder="t('settingsOAuth.oidcDiscoveryPlaceholder')"
                   autocomplete="off"
-                  :aria-invalid="!!form.errors.oidc || undefined"
+                  :aria-invalid="!!form.errors.endpoints || undefined"
                   :disabled="form.saving"
-                  @input="form.errors.oidc = ''"
+                  @input="form.errors.endpoints = ''"
                 />
                 <span class="field-hint">{{ t('settingsOAuth.oidcDiscoveryHint') }}</span>
                 <!-- 端点凑不齐 / discovery 拉不到都由服务端在保存时判,红字统一显示在 discovery 这栏下面 -->
-                <span v-if="form.errors.oidc" class="field-error" role="alert">
-                  {{ form.errors.oidc }}
+                <span v-if="form.errors.endpoints" class="field-error" role="alert">
+                  {{ form.errors.endpoints }}
                 </span>
+              </div>
+
+              <!-- 端点覆盖凑不齐地址时,红字仍归到上面那组(discovery 栏缺席时由提示语兜住) -->
+              <div v-else-if="form.errors.endpoints" class="field">
+                <span class="field-error" role="alert">{{ form.errors.endpoints }}</span>
               </div>
 
               <div class="field">
                 <label class="field-label" :for="`oauth-oidc-authorize-${active}`">
                   {{ t('settingsOAuth.oidcAuthorizeLabel') }}
-                  <span class="field-optional">{{ t('settingsOAuth.oidcOverrideOptional') }}</span>
+                  <span class="field-optional">{{
+                    t(form.meta.endpoints === 'oidc'
+                      ? 'settingsOAuth.oidcOverrideOptional'
+                      : 'settingsOAuth.platformOverrideOptional')
+                  }}</span>
                 </label>
                 <input
                   :id="`oauth-oidc-authorize-${active}`"
                   v-model="form.authorizeUrl"
                   type="url"
                   class="field-input field-input--mono"
-                  :placeholder="t('settingsOAuth.oidcEndpointPlaceholder')"
+                  :placeholder="t(form.meta.endpoints === 'oidc'
+                    ? 'settingsOAuth.oidcEndpointPlaceholder'
+                    : 'settingsOAuth.platformEndpointPlaceholder')"
                   autocomplete="off"
                   :disabled="form.saving"
-                  @input="form.errors.oidc = ''"
+                  @input="form.errors.endpoints = ''"
                 />
               </div>
 
               <div class="field">
                 <label class="field-label" :for="`oauth-oidc-token-${active}`">
                   {{ t('settingsOAuth.oidcTokenLabel') }}
-                  <span class="field-optional">{{ t('settingsOAuth.oidcOverrideOptional') }}</span>
+                  <span class="field-optional">{{
+                    t(form.meta.endpoints === 'oidc'
+                      ? 'settingsOAuth.oidcOverrideOptional'
+                      : 'settingsOAuth.platformOverrideOptional')
+                  }}</span>
                 </label>
                 <input
                   :id="`oauth-oidc-token-${active}`"
                   v-model="form.tokenUrl"
                   type="url"
                   class="field-input field-input--mono"
-                  :placeholder="t('settingsOAuth.oidcEndpointPlaceholder')"
+                  :placeholder="t(form.meta.endpoints === 'oidc'
+                    ? 'settingsOAuth.oidcEndpointPlaceholder'
+                    : 'settingsOAuth.platformEndpointPlaceholder')"
                   autocomplete="off"
                   :disabled="form.saving"
-                  @input="form.errors.oidc = ''"
+                  @input="form.errors.endpoints = ''"
                 />
               </div>
 
               <div class="field">
                 <label class="field-label" :for="`oauth-oidc-userinfo-${active}`">
                   {{ t('settingsOAuth.oidcUserinfoLabel') }}
-                  <span class="field-optional">{{ t('settingsOAuth.oidcOverrideOptional') }}</span>
+                  <span class="field-optional">{{
+                    t(form.meta.endpoints === 'oidc'
+                      ? 'settingsOAuth.oidcOverrideOptional'
+                      : 'settingsOAuth.platformOverrideOptional')
+                  }}</span>
                 </label>
                 <input
                   :id="`oauth-oidc-userinfo-${active}`"
                   v-model="form.userinfoUrl"
                   type="url"
                   class="field-input field-input--mono"
-                  :placeholder="t('settingsOAuth.oidcEndpointPlaceholder')"
+                  :placeholder="t(form.meta.endpoints === 'oidc'
+                    ? 'settingsOAuth.oidcEndpointPlaceholder'
+                    : 'settingsOAuth.platformEndpointPlaceholder')"
                   autocomplete="off"
                   :disabled="form.saving"
-                  @input="form.errors.oidc = ''"
+                  @input="form.errors.endpoints = ''"
                 />
-                <span class="field-hint">{{ t('settingsOAuth.oidcEndpointsHint') }}</span>
+                <span class="field-hint">{{
+                  t(form.meta.endpoints === 'oidc'
+                    ? 'settingsOAuth.oidcEndpointsHint'
+                    : 'settingsOAuth.platformEndpointsHint')
+                }}</span>
               </div>
 
-              <div class="field">
+              <div v-if="form.meta.endpoints === 'oidc'" class="field">
                 <label class="field-label" :for="`oauth-oidc-idclaim-${active}`">
                   {{ t('settingsOAuth.oidcIdClaimLabel') }}
                   <span class="field-optional">{{ t('settingsOAuth.oidcIdClaimOptional') }}</span>
@@ -792,30 +926,67 @@ function relativeTime(iso: string | null): string {
                   placeholder="sub"
                   autocomplete="off"
                   :disabled="form.saving"
-                  @input="form.errors.oidc = ''"
+                  @input="form.errors.endpoints = ''"
                 />
                 <span class="field-hint">{{ t('settingsOAuth.oidcIdClaimHint') }}</span>
               </div>
 
-              <div class="field">
+              <!-- AgentId 只有企业微信有:扫码地址的参数名就是 agentid,值取应用详情里的 AgentId -->
+              <div v-if="form.meta.needsAgentId" class="field">
+                <label class="field-label" :for="`oauth-agentid-${active}`">
+                  AgentId
+                  <span class="field-required">*</span>
+                </label>
+                <input
+                  :id="`oauth-agentid-${active}`"
+                  v-model="form.agentId"
+                  type="text"
+                  class="field-input field-input--mono"
+                  :class="{ 'field-input--error': form.errors.agentId }"
+                  :placeholder="t('settingsOAuth.agentIdPlaceholder')"
+                  autocomplete="off"
+                  :aria-invalid="!!form.errors.agentId || undefined"
+                  :disabled="form.saving"
+                  @input="form.errors.agentId = ''"
+                />
+                <span class="field-hint">{{ t('settingsOAuth.agentIdHint') }}</span>
+                <span v-if="form.errors.agentId" class="field-error" role="alert">
+                  {{ form.errors.agentId }}
+                </span>
+              </div>
+
+              <div v-if="form.meta.hasScopes" class="field">
                 <label class="field-label" :for="`oauth-oidc-scopes-${active}`">
                   {{ t('settingsOAuth.oidcScopesLabel') }}
-                  <span class="field-optional">{{ t('settingsOAuth.oidcScopesOptional') }}</span>
+                  <span class="field-optional">{{
+                    t(form.meta.endpoints === 'oidc'
+                      ? 'settingsOAuth.oidcScopesOptional'
+                      : 'settingsOAuth.platformScopesOptional')
+                  }}</span>
                 </label>
                 <input
                   :id="`oauth-oidc-scopes-${active}`"
                   v-model="form.scopes"
                   type="text"
                   class="field-input field-input--mono"
-                  placeholder="openid profile email"
+                  :placeholder="t(form.meta.endpoints === 'oidc'
+                    ? 'settingsOAuth.oidcScopesPlaceholder'
+                    : 'settingsOAuth.platformScopesPlaceholder')"
                   autocomplete="off"
                   :disabled="form.saving"
-                  @input="form.errors.oidc = ''"
+                  @input="form.errors.endpoints = ''"
                 />
-                <span class="field-hint">{{ t('settingsOAuth.oidcScopesHint') }}</span>
+                <span class="field-hint">{{
+                  t(form.meta.endpoints === 'oidc'
+                    ? 'settingsOAuth.oidcScopesHint'
+                    : 'settingsOAuth.platformScopesHint')
+                }}</span>
               </div>
 
-              <p class="purpose-note">{{ t('settingsOAuth.oidcUserinfoNote') }}</p>
+              <p v-if="form.meta.endpoints === 'oidc'" class="purpose-note">
+                {{ t('settingsOAuth.oidcUserinfoNote') }}
+              </p>
+              <p v-else class="purpose-note">{{ t('settingsOAuth.platformIdentityNote') }}</p>
             </template>
 
             <!-- 邮箱域名白名单 — 仅「平台登录」用途 -->
@@ -1214,6 +1385,7 @@ function relativeTime(iso: string | null): string {
   color: var(--color-dim);
 }
 
+.field-required,
 .field-optional {
   font-weight: 400;
   color: var(--color-faint);

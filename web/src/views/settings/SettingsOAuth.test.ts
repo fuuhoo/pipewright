@@ -69,6 +69,8 @@ function makeLoginApp(over: Partial<import('../../api/oauth').OAuthLoginApp> = {
     userinfoUrl: '',
     idClaim: '',
     scopes: '',
+    // AgentId 同理:只有企业微信有值,其余档位服务端一律回空串。
+    agentId: '',
     ...over,
   }
 }
@@ -82,6 +84,23 @@ function makeOidcApp(over: Partial<import('../../api/oauth').OAuthLoginApp> = {}
     discoveryUrl: 'https://sso.example.com/realms/my/.well-known/openid-configuration',
     idClaim: 'sub',
     scopes: 'openid profile email',
+    ...over,
+  })
+}
+
+/**
+ * 钉钉 / 飞书 / 企业微信:官方端点写死在后端预设里,配置页只给覆盖项,
+ * 所以 discovery 与主键声明这两栏压根不出现;企微另外要 AgentId。
+ */
+function makePlatformApp(
+  provider: 'dingtalk' | 'feishu' | 'wecom',
+  over: Partial<import('../../api/oauth').OAuthLoginApp> = {},
+) {
+  return makeLoginApp({
+    provider,
+    clientId: provider === 'wecom' ? 'ww1234567890abcdef' : 'platform-client-id',
+    callbackUrl: `http://localhost:3000/api/auth/oauth/${provider}/callback`,
+    agentId: provider === 'wecom' ? '1000002' : '',
     ...over,
   })
 }
@@ -397,7 +416,7 @@ describe('SettingsOAuth', () => {
     expect(wrapper.findAll('[data-provider]')).toHaveLength(4)
 
     await openPurpose(wrapper, 'login')
-    expect(wrapper.findAll('[data-provider]')).toHaveLength(5)
+    expect(wrapper.findAll('[data-provider]')).toHaveLength(8)
     expect(wrapper.get('[data-provider="oidc"]').text()).toContain('OIDC')
   })
 
@@ -570,5 +589,172 @@ describe('SettingsOAuth', () => {
 
     await wrapper.get('#oauth-discovery-oidc').setValue('https://sso.local/real')
     expect(wrapper.find('.field-error').exists()).toBe(false)
+  })
+
+  // ─── 钉钉 / 飞书 / 企业微信(登录档另加三张卡)───────────────────────────
+
+  it('lists the three platform sources under the login purpose only', async () => {
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+
+    for (const pid of ['dingtalk', 'feishu', 'wecom']) {
+      expect(wrapper.find(`[data-provider="${pid}"]`).exists(), `${pid} 不该出现在仓库凭据档`).toBe(false)
+    }
+
+    await openPurpose(wrapper, 'login')
+    expect(wrapper.get('[data-provider="dingtalk"]').text()).toContain('钉钉')
+    expect(wrapper.get('[data-provider="feishu"]').text()).toContain('飞书')
+    // tab 状态点也得跟着新档位走:三家全都没配过
+    expect(wrapper.get('[data-provider="wecom"]').find('.tab-dot--off').exists()).toBe(true)
+    expect(wrapper.get('[data-provider="wecom"]').text()).toContain('企业微信')
+  })
+
+  it('gives the platform cards endpoint overrides without the OIDC-only discovery and ID claim', async () => {
+    getOAuthLoginApps.mockResolvedValue([makePlatformApp('dingtalk')])
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'dingtalk')
+
+    const panel = wrapper.get('[data-panel="dingtalk"]')
+    for (const id of [
+      '#oauth-oidc-authorize-dingtalk',
+      '#oauth-oidc-token-dingtalk',
+      '#oauth-oidc-userinfo-dingtalk',
+      '#oauth-oidc-scopes-dingtalk',
+    ]) {
+      expect(panel.find(id).exists(), `钉钉面板缺少字段 ${id}`).toBe(true)
+    }
+    // discovery 与主键声明是 OIDC 独有的:钉钉的地址由后端预设,主键由平台决定
+    expect(panel.find('#oauth-discovery-dingtalk').exists()).toBe(false)
+    expect(panel.find('#oauth-oidc-idclaim-dingtalk').exists()).toBe(false)
+    expect(panel.find('#oauth-agentid-dingtalk').exists()).toBe(false)
+    // 认人只认平台发的稳定主键,这句得让管理员在保存前就看到
+    expect(panel.text()).toContain('只认平台发的稳定主键')
+    expect((panel.get('#oauth-clientid-dingtalk').element as HTMLInputElement).placeholder).toContain(
+      '开放平台',
+    )
+  })
+
+  it('asks the enterprise-WeChat card for an AgentId and hides the scope field', async () => {
+    getOAuthLoginApps.mockResolvedValue([makePlatformApp('wecom')])
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'wecom')
+
+    const panel = wrapper.get('[data-panel="wecom"]')
+    // 扫码地址的参数名是 agentid,值取应用详情里的 AgentId
+    expect((panel.get('#oauth-agentid-wecom').element as HTMLInputElement).value).toBe('1000002')
+    // 企业微信的扫码授权地址压根不带 scope 这一参数,给了栏位只会误导
+    expect(panel.find('#oauth-oidc-scopes-wecom').exists()).toBe(false)
+    // Client ID 那栏填的是企业 ID,不是应用 ID
+    expect((panel.get('#oauth-clientid-wecom').element as HTMLInputElement).placeholder).toContain('corpid')
+  })
+
+  it('blocks enabling WeCom without an AgentId before the round trip', async () => {
+    getOAuthLoginApps.mockResolvedValue([makePlatformApp('wecom', { agentId: '', enabled: false })])
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'wecom')
+
+    await wrapper.get('[data-panel="wecom"]').get('[role="switch"]').trigger('click')
+    await wrapper.get('[data-panel="wecom"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthLoginApp).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-panel="wecom"] .field-error').text()).toContain('AgentId')
+  })
+
+  it('sends the AgentId and clears it explicitly when the field is emptied', async () => {
+    getOAuthLoginApps.mockResolvedValue([makePlatformApp('wecom')])
+    saveOAuthLoginApp.mockResolvedValue(makePlatformApp('wecom', { agentId: '' }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'wecom')
+
+    await wrapper.get('#oauth-agentid-wecom').setValue(' 1000002 ')
+    await wrapper.get('[data-panel="wecom"] form').trigger('submit')
+    await flushPromises()
+
+    // 整份覆盖:七项每次都传,漏传等于清空
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({
+      agentId: '1000002',
+      discoveryUrl: '',
+      idClaim: '',
+    })
+    expect(saveOAuthLoginApp.mock.calls[0][0]).toBe('wecom')
+
+    await wrapper.get('#oauth-agentid-wecom').setValue('')
+    await wrapper.get('[data-panel="wecom"] form').trigger('submit')
+    await flushPromises()
+    expect(saveOAuthLoginApp.mock.calls[1][1].agentId).toBe('')
+  })
+
+  it('keeps a git card free of the platform fields and sends them empty', async () => {
+    saveOAuthLoginApp.mockResolvedValue(makeLoginApp({ provider: 'gitee' }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+
+    const panel = wrapper.get('[data-panel="gitee"]')
+    for (const id of ['discovery', 'oidc-authorize', 'oidc-scopes', 'agentid']) {
+      expect(panel.find(`#oauth-${id}-gitee`).exists()).toBe(false)
+    }
+    await wrapper.get('[data-panel="gitee"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({ agentId: '', scopes: '' })
+    expect(panel.text()).toContain('git 平台')
+  })
+
+  it('maps the backend platform_config_invalid onto the endpoint group', async () => {
+    saveOAuthLoginApp.mockRejectedValue(
+      new HttpError(422, { code: 'platform_config_invalid', message: 'bad override' }, 'unprocessable'),
+    )
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'feishu')
+
+    await wrapper.get('#oauth-clientid-feishu').setValue('platform-client-id')
+    await wrapper.get('#oauth-secret-feishu').setValue('a-secret')
+    await wrapper.get('#oauth-oidc-authorize-feishu').setValue('ftp://accounts.feishu.cn/authorize')
+    await wrapper.get('[data-panel="feishu"] form').trigger('submit')
+    await flushPromises()
+
+    // 没有 discovery 栏时红字单独成一行,但仍然归在端点这组里
+    expect(wrapper.get('[data-panel="feishu"] .field-error').text()).toContain('已存的配置没动')
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('maps the backend agent_id_required onto the AgentId field, not the toast', async () => {
+    saveOAuthLoginApp.mockRejectedValue(
+      new HttpError(422, { code: 'agent_id_required', message: 'missing agent id' }, 'unprocessable'),
+    )
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'wecom')
+
+    await wrapper.get('#oauth-agentid-wecom').setValue('')
+    await wrapper.get('[data-panel="wecom"] form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[data-panel="wecom"] .field-error').text()).toContain('企业微信需要填 AgentId')
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a git tab when leaving the login purpose with WeCom open', async () => {
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'wecom')
+
+    await openPurpose(wrapper, 'vault')
+    // 企微在仓库凭据档没有对应的卡:active 停在那里会渲染一张存不了的表单
+    expect(wrapper.get('[data-panel]').attributes('data-panel')).toBe('gitee')
   })
 })
