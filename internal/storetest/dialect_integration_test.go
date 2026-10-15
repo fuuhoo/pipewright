@@ -21,8 +21,8 @@ func TestMigrationsApplied(t *testing.T) {
 			t.Fatalf("count migrations: %v", err)
 		}
 		// 与 migrations/{sqlite,mysql} 下的 .sql 文件数一致;新增迁移需同步改此值。
-		if n != 66 {
-			t.Fatalf("应用迁移数 = %d, 期望 66", n)
+		if n != 67 {
+			t.Fatalf("应用迁移数 = %d, 期望 67", n)
 		}
 		// 核心领域表存在(随手验一张)。
 		if _, err := st.DB.ExecContext(ctx, `SELECT 1 FROM audit_log WHERE 1=0`); err != nil {
@@ -45,6 +45,11 @@ func TestMigrationsApplied(t *testing.T) {
 		if _, err := st.DB.ExecContext(ctx,
 			`SELECT agent_id FROM oauth_login_apps WHERE 1=0`); err != nil {
 			t.Fatalf("oauth_login_apps 缺 agent_id 列: %v", err)
+		}
+		// 0069 本地档案两列:会话载荷与改档端点都按列名读写,某一方言漏列会在运行期才炸。
+		if _, err := st.DB.ExecContext(ctx,
+			`SELECT display_name, email FROM users WHERE 1=0`); err != nil {
+			t.Fatalf("users 缺本地档案列: %v", err)
 		}
 	})
 }
