@@ -88,6 +88,14 @@ type oauthLoginAppDTO struct {
 	Configured     bool     `json:"configured"`
 	UpdatedAt      *string  `json:"updatedAt"`
 	CallbackURL    string   `json:"callbackUrl"`
+	// 下面六项只对 provider=oidc 有值:端点(发现文档 + 三项覆盖)、主键声明、scope 串。
+	// git 平台永远返回空串 —— 前端据此决定这组字段显不显示,不用自己再判一遍枚举。
+	DiscoveryURL string `json:"discoveryUrl"`
+	AuthorizeURL string `json:"authorizeUrl"`
+	TokenURL     string `json:"tokenUrl"`
+	UserinfoURL  string `json:"userinfoUrl"`
+	IDClaim      string `json:"idClaim"`
+	Scopes       string `json:"scopes"`
 }
 
 // identityBindingDTO 是一条外部身份映射(账户页;camelCase;无 token、无口令)。
@@ -119,6 +127,9 @@ func loginProviderLabel(cfg oauth.LoginAppConfig) string {
 		return "GitHub"
 	case oauth.ProviderGitLab:
 		return "GitLab"
+	case oauth.ProviderOIDC:
+		// OIDC 没有品牌名可借,也不该拿 baseURL 当名字(它压根不用 baseURL)。
+		return "OIDC"
 	}
 	if u, err := url.Parse(cfg.BaseURL); err == nil && u.Host != "" {
 		return u.Host
@@ -458,6 +469,14 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			ClientSecret   *string   `json:"clientSecret"`
 			AllowedDomains *[]string `json:"allowedDomains"`
 			Enabled        bool      `json:"enabled"`
+			// OIDC 端点是「整份覆盖」语义:每次保存都以这几个值为准,省略即清空。
+			// 只有 provider=oidc 会用到,git 档位服务端一律忽略并落空串。
+			DiscoveryURL string `json:"discoveryUrl"`
+			AuthorizeURL string `json:"authorizeUrl"`
+			TokenURL     string `json:"tokenUrl"`
+			UserinfoURL  string `json:"userinfoUrl"`
+			IDClaim      string `json:"idClaim"`
+			Scopes       string `json:"scopes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -470,6 +489,12 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			ClientSecret:   req.ClientSecret,
 			AllowedDomains: req.AllowedDomains,
 			Enabled:        req.Enabled,
+			DiscoveryURL:   req.DiscoveryURL,
+			AuthorizeURL:   req.AuthorizeURL,
+			TokenURL:       req.TokenURL,
+			UserinfoURL:    req.UserinfoURL,
+			IDClaim:        req.IDClaim,
+			Scopes:         req.Scopes,
 		})
 		if err != nil {
 			// 白名单项非法是保存期校验,报错带原文(哪一项写错了,配的人一眼能看到)。
@@ -496,6 +521,12 @@ func toLoginAppDTO(c oauth.LoginAppConfig, r *http.Request) oauthLoginAppDTO {
 		MaskedSecret:   c.MaskedSecret,
 		Configured:     c.Configured,
 		CallbackURL:    oauthLoginCallbackURL(r, c.Provider),
+		DiscoveryURL:   c.DiscoveryURL,
+		AuthorizeURL:   c.AuthorizeURL,
+		TokenURL:       c.TokenURL,
+		UserinfoURL:    c.UserinfoURL,
+		IDClaim:        c.IDClaim,
+		Scopes:         c.Scopes,
 	}
 	if c.UpdatedAt != nil {
 		s := c.UpdatedAt.UTC().Format(time.RFC3339)
@@ -591,6 +622,8 @@ func loginStartErrorReason(err error) string {
 		return "invalid_provider"
 	case errors.Is(err, oauth.ErrVaultUnconfigured):
 		return "vault_unavailable"
+	case errors.Is(err, oauth.ErrOidcConfigInvalid):
+		return "oidc_config_invalid"
 	default:
 		return "authorize_failed"
 	}

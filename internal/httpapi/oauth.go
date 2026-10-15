@@ -57,6 +57,9 @@ func writeOAuthError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "client_secret_required", "该 provider 需要配置 client secret")
 	case errors.Is(err, oauth.ErrAppNotConfigured):
 		writeError(w, http.StatusUnprocessableEntity, "app_not_configured", "该 provider 的 OAuth 应用未配置或未启用")
+	case errors.Is(err, oauth.ErrOidcConfigInvalid):
+		writeError(w, http.StatusUnprocessableEntity, "oidc_config_invalid",
+			"OIDC 端点没解析齐:填发现文档地址,或把授权/兑换/身份三个端点都填上(必须是 http(s) 地址)")
 	case errors.Is(err, oauth.ErrVaultUnconfigured):
 		writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key,无法加密或读取 client secret")
 	default:
@@ -271,6 +274,8 @@ func oauthErrorReason(err error) string {
 		return "vault_unavailable"
 	case errors.Is(err, oauth.ErrInvalidProvider):
 		return "invalid_provider"
+	case errors.Is(err, oauth.ErrOidcConfigInvalid):
+		return "oidc_config_invalid"
 	default:
 		return "exchange_failed"
 	}

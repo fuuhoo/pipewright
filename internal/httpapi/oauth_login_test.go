@@ -68,10 +68,10 @@ type loginTestEnv struct {
 	v       vault.Vault
 }
 
-// newLoginTestEnv 装配并登记一个启用的 custom 登录应用。allowedDomains 为 nil = 不设白名单。
-func newLoginTestEnv(t *testing.T, userBody string, allowedDomains []string) *loginTestEnv {
+// buildLoginEnv 装配登录流的全部真件,只把「配哪一档登录应用」交给调用方:
+// git 档用 mock 的 GitLab 形态,OIDC 档用 mock 的发现文档,两者共用这套骨架。
+func buildLoginEnv(t *testing.T, client *http.Client, configure func(oauth.Service)) *loginTestEnv {
 	t.Helper()
-	stub := newStubGitProvider(t, userBody)
 	st := testStoreAuth(t)
 	usersSvc := users.NewService(st.DB)
 	// 会话角色是从 users 行带进 sessions 的:userSyncer 不接上,口令登录签出的会话
@@ -90,22 +90,8 @@ func newLoginTestEnv(t *testing.T, userBody string, allowedDomains []string) *lo
 	t.Cleanup(func() { access.SetRoleStore(nil) })
 
 	v := vault.New(st.DB, testMasterKey())
-	oauthSvc := oauth.New(st.DB, v, stub.srv.Client())
-	if _, err := oauthSvc.SaveLoginApp(context.Background(), oauth.SaveLoginAppInput{
-		Provider: oauth.ProviderCustom, BaseURL: stub.srv.URL,
-		ClientID: "login-cid", ClientSecret: sp("login-secret"),
-		AllowedDomains: sps(allowedDomains), Enabled: true,
-	}); err != nil {
-		t.Fatalf("SaveLoginApp: %v", err)
-	}
-	// 「已登录」的两条流(连接凭据 / 绑定账号)读的是 oauth_apps,与登录应用是两张表:
-	// 只配登录应用时它们必然 422,那与要测的行为无关,所以这里也配一份。
-	if _, err := oauthSvc.SaveApp(context.Background(), oauth.SaveAppInput{
-		Provider: oauth.ProviderCustom, BaseURL: stub.srv.URL,
-		ClientID: "app-cid", ClientSecret: sp("app-secret"), Enabled: true,
-	}); err != nil {
-		t.Fatalf("SaveApp: %v", err)
-	}
+	oauthSvc := oauth.New(st.DB, v, client)
+	configure(oauthSvc)
 	ident := identity.NewService(st.DB, usersSvc, oauthSvc)
 	rec := audit.New(st.DB, mask.NewMasker(), nil)
 
@@ -114,9 +100,34 @@ func newLoginTestEnv(t *testing.T, userBody string, allowedDomains []string) *lo
 		WithOAuthLogin(ident, authSvc), WithAudit(rec)))
 	t.Cleanup(srv.Close)
 	return &loginTestEnv{
-		srv: srv, db: st.DB, stub: stub, oauth: oauthSvc,
+		srv: srv, db: st.DB, oauth: oauthSvc,
 		ident: ident, authSvc: authSvc, users: usersSvc, rec: rec, v: v,
 	}
+}
+
+// newLoginTestEnv 装配并登记一个启用的 custom 登录应用。allowedDomains 为 nil = 不设白名单。
+func newLoginTestEnv(t *testing.T, userBody string, allowedDomains []string) *loginTestEnv {
+	t.Helper()
+	stub := newStubGitProvider(t, userBody)
+	e := buildLoginEnv(t, stub.srv.Client(), func(oauthSvc oauth.Service) {
+		if _, err := oauthSvc.SaveLoginApp(context.Background(), oauth.SaveLoginAppInput{
+			Provider: oauth.ProviderCustom, BaseURL: stub.srv.URL,
+			ClientID: "login-cid", ClientSecret: sp("login-secret"),
+			AllowedDomains: sps(allowedDomains), Enabled: true,
+		}); err != nil {
+			t.Fatalf("SaveLoginApp: %v", err)
+		}
+		// 「已登录」的两条流(连接凭据 / 绑定账号)读的是 oauth_apps,与登录应用是两张表:
+		// 只配登录应用时它们必然 422,那与要测的行为无关,所以这里也配一份。
+		if _, err := oauthSvc.SaveApp(context.Background(), oauth.SaveAppInput{
+			Provider: oauth.ProviderCustom, BaseURL: stub.srv.URL,
+			ClientID: "app-cid", ClientSecret: sp("app-secret"), Enabled: true,
+		}); err != nil {
+			t.Fatalf("SaveApp: %v", err)
+		}
+	})
+	e.stub = stub
+	return e
 }
 
 // ---- helpers ----
