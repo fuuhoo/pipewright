@@ -7,6 +7,7 @@
 //	POST   /api/admin/users                  → 建号(用户名 + 初始口令 + 角色,可带显示名/邮箱)
 //	POST   /api/admin/users/{id}/password    → 重置口令
 //	PATCH  /api/admin/users/{id}             → 改描述 / 显示名 / 邮箱 / 启用禁用 / 改角色
+//	DELETE /api/admin/users/{id}             → 删号(不可逆;牵连清点见 users.Service.Delete)
 //
 // 不在这里的:内置管理员(bootstrap admin)那一行——它的口令与启用状态由
 // admin_user + 「账户设置」管,上述写端点对它一律 409,理由见 isBootstrapAdminRow。
@@ -119,6 +120,15 @@ func writeUsersError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, users.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	// 删号的三档阻断都是 409:请求没错,是删下去的代价不对。前两条的 message 来自
+	// users.DeleteBlocked,带计数(管理员据此知道要先移交几个组、先清几条凭据);
+	// 最后一条没有可变信息,文案就固定在这一层写。
+	case errors.Is(err, users.ErrHasGroups):
+		writeError(w, http.StatusConflict, "user_has_groups", err.Error())
+	case errors.Is(err, users.ErrHasPersonalCredentials):
+		writeError(w, http.StatusConflict, "user_has_credentials", err.Error())
+	case errors.Is(err, users.ErrLastAdmin):
+		writeError(w, http.StatusConflict, "last_admin", "这是最后一个启用的管理员账号,删掉后再没人能进用户管理")
 	default:
 		// 领域校验错误文案是中文可操作提示(可直接回传);其余(SQL/驱动)细节不外泄。
 		if errors.Is(err, users.ErrValidation) {
@@ -360,5 +370,56 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusOK, toUserDTO(fresh))
+	}
+}
+
+// makeDeleteUserHandler 返回 DELETE /api/admin/users/{id} handler(永久删号)。
+//
+// 与「禁用」的分工:禁用是可撤销的开关,删除会把账号连同会话、外部身份绑定和分组名册
+// 一起抹掉。所以这里先挡两类目标,再交给 users.Service.Delete 做牵连清点:
+//   - 内置管理员行:auth.Login 按 admin_user 优先,删了 users 这行既不阻止管理员登录,
+//     又让 personal 凭据的归属(BootstrapAdminRegularUserID)悬空。
+//   - 自己:与 self_disable 同一理由 —— 把唯一的入口删掉之后没人能恢复。
+//
+// 审计必须在删除**前**取到 username:这一行删掉后就再也读不回来了,而「谁在什么时候
+// 删了哪个账号」正是事后最可能要查的一条。
+func makeDeleteUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if us == nil {
+			writeError(w, http.StatusServiceUnavailable, "users_unavailable", "用户服务未初始化")
+			return
+		}
+		id := chi.URLParam(r, "id")
+		if isBootstrapAdminRow(id) {
+			writeError(w, http.StatusConflict, "bootstrap_admin_row",
+				"内置管理员不可删除(它是登录与「账户设置」的锚点)")
+			return
+		}
+		if id == sessionUserID(r) {
+			writeError(w, http.StatusConflict, "self_delete", "不能删除自己的账号")
+			return
+		}
+		target, err := us.GetByID(id)
+		if err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		if err := us.Delete(id); err != nil {
+			writeUsersError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionUserDelete,
+			TargetType: audit.TargetUser,
+			TargetID:   target.ID,
+			Detail: map[string]any{
+				"username":    target.Username,
+				"role":        target.Role,
+				"displayName": target.DisplayName,
+				"email":       target.Email,
+			},
+			IP: clientIP(r),
+		})
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

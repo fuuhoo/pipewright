@@ -116,6 +116,9 @@ const (
 	ActionUserPasswordReset = "user_password_reset"
 	ActionUserDisabled      = "user_disabled"
 	ActionUserEnabled       = "user_enabled"
+	// 删号单列一个 action,而不是复用 user_disabled:禁用随时能撤销,删除则连同会话
+	// 一起抹掉,而且被删的那行再也读不回来 —— 审计里的 username 是事后唯一的凭据。
+	ActionUserDelete = "user_delete"
 
 	// v6.2 分组权限:分组本身 + 「项目/服务器归到哪个组」都要留痕。
 	// 归组动作单独一个(而非并进 project_update),因为它是权限边界的变化,

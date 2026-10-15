@@ -11,6 +11,7 @@
 //   - SyncAdminPasswordChange:admin_user 改口令后同步到 users.role='admin' 行
 //   - Create / SetPassword / SetEnabled:管理员建号与重置口令(/api/admin/users/*)
 //   - SetProfile / FillProfileIfEmpty:本地档案(显示名 + 邮箱)的改写与「仅空则回填」
+//   - Delete:删号(先清点牵连,再在一个事务里清引用行 + 删账号)
 //   - GetByUsername / GetByID / List:查询
 //
 // 后续 story:邀请注册(邀请 token + URL)。
@@ -52,7 +53,43 @@ var (
 	// ErrValidation 标记「入参不合规则」这类可直接回传给用户的错误;HTTP 层据此
 	// 回 400 而不是 500(SQL 细节一律不外泄)。
 	ErrValidation = errors.New("users: invalid input")
+	// 下面三条是删号前的阻断,语义都是「请求没错,但删下去会毁掉真数据或把管理员
+	// 锁在门外」,HTTP 层一律回 409。前两条由 DeleteBlocked 携带计数(见该类型),
+	// 它的 Error() 会直接进 UI,所以是中文可操作提示而不是内部标识。
+	ErrHasGroups              = errors.New("users: still owns resource groups")
+	ErrHasPersonalCredentials = errors.New("users: still owns personal credentials")
+	ErrLastAdmin              = errors.New("users: last enabled admin")
 )
+
+// DeleteBlocked 表示「这个账号还有真数据挂在名下,先处置再删」。
+//
+// 为什么要带计数而不是只回一个哨兵:阻断的价值在于告诉管理员**去哪几条**动手。
+// 「还是组长」这种话他看完仍然要自己去数,而数错一次的代价是删掉一个无主组。
+// Error() 是给人读的(UI 直接回显这段),故用中文;errors.Is 靠下面的 Is 方法
+// 仍能命中 ErrHasGroups / ErrHasPersonalCredentials,HTTP 层按档分错误码。
+type DeleteBlocked struct {
+	OwnedGroups         int
+	PersonalCredentials int
+}
+
+func (b DeleteBlocked) Error() string {
+	if b.OwnedGroups > 0 {
+		return fmt.Sprintf("%d 个分组的组长仍是该账号,请先在「分组与权限」移交组长", b.OwnedGroups)
+	}
+	return fmt.Sprintf("%d 条个人凭据仍归属该账号,请先删除这些凭据", b.PersonalCredentials)
+}
+
+// Is 让 errors.Is(err, ErrHasGroups / ErrHasPersonalCredentials) 成立。
+// 两类同时存在时 OwnedGroups 优先(组长要先移交,否则凭据删完仍删不掉账号)。
+func (b DeleteBlocked) Is(target error) bool {
+	switch target {
+	case ErrHasGroups:
+		return b.OwnedGroups > 0
+	case ErrHasPersonalCredentials:
+		return b.OwnedGroups == 0 && b.PersonalCredentials > 0
+	}
+	return false
+}
 
 // User 是对外可见的用户视图(不含 password_hash;敏感字段不暴露)。
 type User struct {
@@ -386,6 +423,89 @@ func (s *Service) FillProfileIfEmpty(id, displayName, email string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("users: fill profile: %w", err)
+	}
+	return nil
+}
+
+// Delete 永久删除账号,并在同一个事务里清掉三类纯引用行。
+//
+// 删前先挡三件事,挡的都是「删下去会静默毁掉真数据」而不是「入参写错了」:
+//   - 组长身份:resource_groups.owner_id NOT NULL 且没有外键,账号删了组不会消失,
+//     只是变成谁都不认识的孤儿组;移交组长是管理员的一次明确改派,不该由删号代做。
+//   - personal 凭据:密文一删不可恢复,而当前没有转移 owner 的端点。
+//   - 最后一个启用的 admin:删掉就没人能再进「用户管理」把账号建回来。
+//     (内置管理员行本来就由 HTTP 层的 isBootstrapAdminRow 挡在门外,这条是给手工
+//     改过库、或从旧备份恢复出来的实例兜底。)
+//
+// 事务里清三张表:sessions.user_id 与 resource_group_members.user_id 都没有外键,
+// 不显式删就会留下「账号已不存在但会话还能用」的活会话(这是安全边界,不是整洁问题)
+// 和名册脏行;user_identities 虽然有 ON DELETE CASCADE,MySQL 与 SQLite 的外键开关
+// 时机不同,这里照 role.Delete 的先例再显式删一次,保证两个方言清得一样干净。
+//
+// 刻意不动的历史:audit_log.actor、pipeline_runs.trigger_actor 与各表的 created_by。
+// 那些记的是「当初谁干的」,账号没了也要查得出来;把它们改写成占位串等于烧掉线索。
+func (s *Service) Delete(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("users: begin delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var role string
+	var enabled int
+	err = tx.QueryRow(`SELECT role, enabled FROM users WHERE id = ?`, id).Scan(&role, &enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("users: read account: %w", err)
+	}
+
+	var ownedGroups int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM resource_groups WHERE owner_id = ?`, id).Scan(&ownedGroups); err != nil {
+		return fmt.Errorf("users: count owned groups: %w", err)
+	}
+	var personalCreds int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM credentials WHERE scope = 'personal' AND owner_id = ?`, id).Scan(&personalCreds); err != nil {
+		return fmt.Errorf("users: count personal credentials: %w", err)
+	}
+	if ownedGroups > 0 || personalCreds > 0 {
+		return DeleteBlocked{OwnedGroups: ownedGroups, PersonalCredentials: personalCreds}
+	}
+
+	if role == RoleAdmin && enabled != 0 {
+		var otherAdmins int
+		if err := tx.QueryRow(
+			`SELECT COUNT(1) FROM users WHERE role = ? AND enabled = 1 AND id <> ?`, RoleAdmin, id,
+		).Scan(&otherAdmins); err != nil {
+			return fmt.Errorf("users: count other admins: %w", err)
+		}
+		if otherAdmins == 0 {
+			return ErrLastAdmin
+		}
+	}
+
+	for _, q := range []string{
+		`DELETE FROM sessions WHERE user_id = ?`,
+		`DELETE FROM user_identities WHERE user_id = ?`,
+		`DELETE FROM resource_group_members WHERE user_id = ?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return fmt.Errorf("users: clear references: %w", err)
+		}
+	}
+	res, err := tx.Exec(`DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("users: delete account: %w", err)
+	}
+	// 上面已按 id 读过这一行,0 行只会是并发删除;照样兜住并回 ErrNotFound。
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("users: rows affected: %w", err)
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("users: commit delete: %w", err)
 	}
 	return nil
 }

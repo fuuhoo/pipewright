@@ -632,12 +632,13 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			// 给已有配置重新上传文件(覆盖磁盘权威副本)
 			adminR.Post("/config-profiles/{id}/upload", makeReplaceConfigProfileFileHandler(cpSvc, aud, authn))
 
-			// users 管理(建号 / 重置口令 / 改描述与启停;完整邀请注册留到后续 story)
+			// users 管理(建号 / 重置口令 / 改描述、档案与启停 / 删号;完整邀请注册留到后续 story)
 			adminR.Get("/users", makeListUsersHandler(o.usersSvc))
 			adminR.Get("/users/{id}", makeGetUserHandler(o.usersSvc))
 			adminR.Post("/users", makeCreateUserHandler(o.usersSvc, aud, authn))
 			adminR.Post("/users/{id}/password", makeResetUserPasswordHandler(o.usersSvc, aud, authn))
 			adminR.Patch("/users/{id}", makePatchUserHandler(o.usersSvc, aud, authn))
+			adminR.Delete("/users/{id}", makeDeleteUserHandler(o.usersSvc, aud, authn))
 
 			// 角色(P4 可配置角色):内置只剩 admin 一档当模板只读;四档预置(0063 起在库里)
 			// 与自建角色同样可增删改。
