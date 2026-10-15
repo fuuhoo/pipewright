@@ -44,6 +44,9 @@ const de: typeof zhCN = {
   },
 
   shell: {
+    // Identitätsbereich unten in der Seitenleiste: Barrierefreie Bezeichnung und Tooltip.
+    identityAria: 'Aktuelles Konto, Kontoeinstellungen öffnen',
+    identityTitle: 'Kontoeinstellungen',
     logoutTitle: 'Abmelden?',
     logoutBody: 'Nach dem Abmelden müssen Sie Benutzername und Passwort erneut eingeben, um zur Konsole zurückzukehren.',
     logoutLocalTitle: 'Lokal abgemeldet',

@@ -44,6 +44,9 @@ export default {
   },
 
   shell: {
+    // 左栏底部身份区(昵称 + 邮箱):可访问名与悬停提示。
+    identityAria: '当前账号,点击进入账户设置',
+    identityTitle: '账户设置',
     logoutTitle: '退出登录?',
     logoutBody: '退出后需重新输入账号口令才能再次进入控制台。',
     logoutLocalTitle: '已在本地退出',

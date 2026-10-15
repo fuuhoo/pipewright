@@ -2,6 +2,24 @@ export default {
   identityTitle: 'アイデンティティ',
   identitySub: 'これは本インスタンス上のローカルアカウントです。ロールによって入れるページが決まり、管理者がユーザー管理で指定します。',
 
+  // ─── ローカルプロフィール(表示名 + メール)────────────────────────────────
+  // 両項目は users 行に保存。初回ログイン時にプラットフォームの身分から引き継ぎ、
+  // その後は本人が管理し、再ログインでも上書きしません。
+  profileTitle: 'ローカルプロフィール',
+  profileSub: '表示名とメールはこのアカウントに保存されます。プラットフォームの身分で初めてログインしたときに代入され、以降はご自身が管理します。側で変わっても上書きしません。',
+  displayNameLabel: '表示名',
+  displayNameHint: '左メニューとユーザー一覧に表示される名前です。連続した空白は1つにまとめ、最大 {n} 文字。空欄ならログインアカウント名を表示します。',
+  emailLabel: 'メール',
+  emailHint: '本インスタンス内であなたを識別するためだけのもので、送信は行いません。空欄でも構いません。',
+  identityNoEmailSet: 'メール未設定',
+  profileSaveBtn: 'プロフィールを保存',
+  errEmailSpace: 'メールに空白は使えません',
+  errEmailFormat: "メールの形式が正しくありません。name{'@'}example.com のように入力してください",
+  errEmailTooLong: 'メールが長すぎます',
+  toastProfileSaved: 'プロフィールを保存しました',
+  toastProfileSavedDetail: '左メニューとこのページが新しいプロフィールになりました',
+  toastProfileFailed: 'プロフィールを保存できませんでした',
+
   changePwTitle: 'パスワード変更',
   changePwSub: '更新後、他のセッションは無効化され、現在のセッションはログインを維持します。',
   currentPwLabel: '現在のパスワード',

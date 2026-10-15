@@ -2,6 +2,23 @@ export default {
   identityTitle: '身份',
   identitySub: '这是你在这台实例上的本机账号。角色决定能进哪些页面,由管理员在「用户管理」里指定。',
 
+  // ─── 本地档案(显示名 + 邮箱)───────────────────────────────────────────────
+  // 两列记在 users 行上:首次用平台身份登录时代入,之后归本人编辑,后续登录不再覆盖。
+  profileTitle: '本地档案',
+  profileSub: '显示名和邮箱记在这个账号上。第一次用平台身份登录时代进来,之后由你自己维护,平台那边再改也不会覆盖。',
+  displayNameLabel: '显示名',
+  displayNameHint: '左栏与用户列表里展示的名字;连续空白会并成一个,最多 {n} 个字。留空则显示登录账号。',
+  emailLabel: '邮箱',
+  emailHint: '只用于在本实例里标识你,不会发信;留空也可以。',
+  identityNoEmailSet: '还没填写邮箱',
+  profileSaveBtn: '保存档案',
+  errEmailSpace: '邮箱里不能有空格',
+  errEmailFormat: "邮箱格式不对,应形如 name{'@'}example.com",
+  errEmailTooLong: '邮箱太长了',
+  toastProfileSaved: '档案已保存',
+  toastProfileSavedDetail: '左栏与账户页已改用新档案',
+  toastProfileFailed: '档案保存失败',
+
   changePwTitle: '修改密码',
   changePwSub: '更新后其它会话将被注销,当前会话保持登录。',
   currentPwLabel: '当前密码',

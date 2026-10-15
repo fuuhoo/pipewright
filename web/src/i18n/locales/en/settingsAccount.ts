@@ -2,6 +2,24 @@ export default {
   identityTitle: 'Identity',
   identitySub: 'This is your local account on this instance. Your role decides which pages you can open and is assigned by an administrator under User management.',
 
+  // ─── Local profile (display name + email) ─────────────────────────────────
+  // Both columns live on the users row: seeded from the platform identity on first
+  // sign-in, then owned by the user — later logins never overwrite them.
+  profileTitle: 'Local profile',
+  profileSub: 'Your display name and email live on this account. They were copied in the first time you signed in with a platform identity; you maintain them here, and later sign-ins will not overwrite them.',
+  displayNameLabel: 'Display name',
+  displayNameHint: 'The name shown in the rail and in user lists. Runs of whitespace collapse into one; up to {n} characters. Leave it empty to show your login name.',
+  emailLabel: 'Email',
+  emailHint: 'Only identifies you inside this instance; nothing is ever sent to it. Empty is fine.',
+  identityNoEmailSet: 'no email set',
+  profileSaveBtn: 'Save profile',
+  errEmailSpace: 'Email cannot contain whitespace',
+  errEmailFormat: "That is not a valid email, it should look like name{'@'}example.com",
+  errEmailTooLong: 'That email is too long',
+  toastProfileSaved: 'Profile saved',
+  toastProfileSavedDetail: 'The rail and this page now use the new profile',
+  toastProfileFailed: 'Could not save the profile',
+
   changePwTitle: 'Change password',
   changePwSub: 'After updating, other sessions are revoked while the current session stays signed in.',
   currentPwLabel: 'Current password',

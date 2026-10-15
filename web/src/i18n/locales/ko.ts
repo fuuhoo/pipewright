@@ -44,6 +44,9 @@ const ko: typeof zhCN = {
   },
 
   shell: {
+    // 레일 하단 신원 표시(닉네임 + 이메일): 접근성 이름과 호버 안내.
+    identityAria: '현재 계정, 계정 설정 열기',
+    identityTitle: '계정 설정',
     logoutTitle: '로그아웃하시겠어요?',
     logoutBody: '로그아웃하면 콘솔에 다시 들어가기 위해 아이디와 비밀번호를 다시 입력해야 합니다.',
     logoutLocalTitle: '로컬에서 로그아웃됨',

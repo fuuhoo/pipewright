@@ -2,6 +2,24 @@ export default {
   identityTitle: 'Identité',
   identitySub: 'Ceci est votre compte local sur cette instance. Le rôle décide des pages accessibles ; il est attribué par un administrateur dans la gestion des utilisateurs.',
 
+  // ─── Profil local (nom affiché + e-mail) ───────────────────────────────────
+  // Ces deux champs vivent sur la ligne users : copiés à la première connexion via une
+  // identité externe, puis gérés par vous ; les connexions suivantes n’écrasent plus rien.
+  profileTitle: 'Profil local',
+  profileSub: 'Votre nom affiché et votre e-mail sont enregistrés sur ce compte. Ils ont été repris à votre première connexion avec une identité externe ; vous les gérez ici, et les connexions suivantes ne les écraseront plus.',
+  displayNameLabel: 'Nom affiché',
+  displayNameHint: 'Le nom montré dans le menu et les listes d’utilisateurs. Les espaces consécutifs sont fusionnés ; {n} caractères au maximum. Laissez vide pour afficher votre identifiant de connexion.',
+  emailLabel: 'E-mail',
+  emailHint: 'Sert uniquement à vous identifier dans cette instance ; rien n’est envoyé. Peut rester vide.',
+  identityNoEmailSet: 'aucun e-mail défini',
+  profileSaveBtn: 'Enregistrer le profil',
+  errEmailSpace: 'L’e-mail ne peut pas contenir d’espace',
+  errEmailFormat: "Cet e-mail est invalide ; il devrait ressembler à name{'@'}example.com",
+  errEmailTooLong: 'Cet e-mail est trop long',
+  toastProfileSaved: 'Profil enregistré',
+  toastProfileSavedDetail: 'Le menu et cette page utilisent désormais le nouveau profil',
+  toastProfileFailed: 'Échec de l’enregistrement du profil',
+
   changePwTitle: 'Changer le mot de passe',
   changePwSub: 'Après la mise à jour, les autres sessions sont révoquées tandis que la session actuelle reste connectée.',
   currentPwLabel: 'Mot de passe actuel',

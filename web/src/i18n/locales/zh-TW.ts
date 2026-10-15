@@ -44,6 +44,9 @@ const zhTW: typeof zhCN = {
   },
 
   shell: {
+    // 左欄底部身份區(暱稱 + 信箱):無障礙名稱與懸停提示。
+    identityAria: '目前帳號,點進入帳戶設定',
+    identityTitle: '帳戶設定',
     logoutTitle: '登出?',
     logoutBody: '登出後需重新輸入帳號密碼才能再次進入主控台。',
     logoutLocalTitle: '已在本機登出',

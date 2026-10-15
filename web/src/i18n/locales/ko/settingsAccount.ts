@@ -2,6 +2,24 @@ export default {
   identityTitle: '신원',
   identitySub: '이것은 이 인스턴스의 로컬 계정입니다. 역할에 따라 열 수 있는 페이지가 정해지며, 관리자가 사용자 관리에서 지정합니다.',
 
+  // ─── 로컬 프로필(표시 이름 + 이메일)──────────────────────────────────────
+  // 두 값은 users 행에 저장합니다. 첫 플랫폼 로그인 때 끌어오고, 이후에는 본인이
+  // 관리하며 다시 로그인해도 덮어쓰지 않습니다.
+  profileTitle: '로컬 프로필',
+  profileSub: '표시 이름과 이메일은 이 계정에 저장됩니다. 플랫폼 신원으로 처음 로그인할 때 채워지고, 이후에는 본인이 관리합니다. 바깥에서 바뀌어도 덮어쓰지 않습니다.',
+  displayNameLabel: '표시 이름',
+  displayNameHint: '왼쪽 메뉴와 사용자 목록에 보여 주는 이름입니다. 연속 공백은 하나로 합치고 최대 {n}자입니다. 비워 두면 로그인 계정을 보여 줍니다.',
+  emailLabel: '이메일',
+  emailHint: '이 인스턴스에서 당신을 구분하기만 하며 메일은 보내지 않습니다. 비워 두어도 됩니다.',
+  identityNoEmailSet: '이메일 미설정',
+  profileSaveBtn: '프로필 저장',
+  errEmailSpace: '이메일에는 공백을 쓸 수 없습니다',
+  errEmailFormat: "이메일 형식이 올바르지 않습니다. name{'@'}example.com 모양이어야 합니다",
+  errEmailTooLong: '이메일이 너무 깁니다',
+  toastProfileSaved: '프로필을 저장했습니다',
+  toastProfileSavedDetail: '왼쪽 메뉴와 이 페이지가 새 프로필을 사용합니다',
+  toastProfileFailed: '프로필을 저장하지 못했습니다',
+
   changePwTitle: '비밀번호 변경',
   changePwSub: '변경 후 다른 세션은 해지되며 현재 세션은 로그인 상태를 유지합니다.',
   currentPwLabel: '현재 비밀번호',

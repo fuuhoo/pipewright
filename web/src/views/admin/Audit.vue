@@ -55,6 +55,7 @@ const ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'identity_bind', label: 'identity_bind' },
   { value: 'identity_unbind', label: 'identity_unbind' },
   { value: 'password_change', label: 'password_change' },
+  { value: 'profile_update', label: 'profile_update' },
   { value: 'session_revoke', label: 'session_revoke' },
 ]
 

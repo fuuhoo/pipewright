@@ -2,6 +2,23 @@ export default {
   identityTitle: '身分',
   identitySub: '這是你在這台實例上的本機帳號。角色決定能進哪些頁面,由管理員在「使用者管理」裡指定。',
 
+  // ─── 本機檔案(顯示名 + 信箱)─────────────────────────────────────────────
+  // 兩欄記在 users 列上:首次以平台身分登入時代入,之後歸本人編輯,後續登入不再覆蓋。
+  profileTitle: '本機檔案',
+  profileSub: '顯示名與信箱記在這個帳號上。第一次以平台身分登入時代入,之後由你自己維護,平台那邊再改也不會覆蓋。',
+  displayNameLabel: '顯示名',
+  displayNameHint: '左欄與使用者清單裡顯示的名字;連續空白會併成一個,最多 {n} 個字。留空則顯示登入帳號。',
+  emailLabel: '信箱',
+  emailHint: '只用在這個實例裡辨識你,不會發信;留空也可以。',
+  identityNoEmailSet: '還沒填寫信箱',
+  profileSaveBtn: '儲存檔案',
+  errEmailSpace: '信箱裡不能有空格',
+  errEmailFormat: "信箱格式不對,應形如 name{'@'}example.com",
+  errEmailTooLong: '信箱太長了',
+  toastProfileSaved: '檔案已儲存',
+  toastProfileSavedDetail: '左欄與帳戶頁已改用新檔案',
+  toastProfileFailed: '檔案儲存失敗',
+
   changePwTitle: '修改密碼',
   changePwSub: '更新後其它工作階段將被中斷,目前工作階段保持登入。',
   currentPwLabel: '目前密碼',

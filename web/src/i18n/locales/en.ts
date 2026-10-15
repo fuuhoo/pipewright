@@ -44,6 +44,9 @@ const en: typeof zhCN = {
   },
 
   shell: {
+    // Rail identity footer: accessible name + tooltip for the account chip.
+    identityAria: 'Current account, open account settings',
+    identityTitle: 'Account settings',
     logoutTitle: 'Log out?',
     logoutBody: 'You will need to enter your username and password again to return to the console.',
     logoutLocalTitle: 'Logged out locally',

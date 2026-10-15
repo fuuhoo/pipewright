@@ -2,6 +2,24 @@ export default {
   identityTitle: 'Identität',
   identitySub: 'Das ist dein lokales Konto auf dieser Instanz. Deine Rolle entscheidet, welche Seiten du öffnen kannst; sie wird im Benutzermanagement vergeben.',
 
+  // ─── Lokales Profil (Anzeigename + E-Mail) ────────────────────────────────
+  // Beide Felder stehen auf der users-Zeile: beim ersten Login über eine Plattformidentität
+  // übernommen, danach gehören sie dir — spätere Logins überschreiben sie nicht mehr.
+  profileTitle: 'Lokales Profil',
+  profileSub: 'Anzeigename und E-Mail gehören zu diesem Konto. Sie wurden beim ersten Anmelden über eine Plattformidentität übernommen; danach pflegst du sie hier, und weiteres Anmelden überschreibt sie nicht.',
+  displayNameLabel: 'Anzeigename',
+  displayNameHint: 'Der Name in der Seitenleiste und in Benutzerlisten. Mehrfache Leerzeichen werden zu einem; maximal {n} Zeichen. Leer gelassen zeigt deinen Anmeldenamen.',
+  emailLabel: 'E-Mail',
+  emailHint: 'Dient nur dazu, dich auf dieser Instanz zu identifizieren; es wird nichts versendet. Darf leer bleiben.',
+  identityNoEmailSet: 'keine E-Mail hinterlegt',
+  profileSaveBtn: 'Profil speichern',
+  errEmailSpace: 'Die E-Mail darf keine Leerzeichen enthalten',
+  errEmailFormat: "Das ist keine gültige E-Mail; sie sollte wie name{'@'}example.com aussehen",
+  errEmailTooLong: 'Diese E-Mail ist zu lang',
+  toastProfileSaved: 'Profil gespeichert',
+  toastProfileSavedDetail: 'Seitenleiste und diese Seite verwenden jetzt das neue Profil',
+  toastProfileFailed: 'Profil konnte nicht gespeichert werden',
+
   changePwTitle: 'Passwort ändern',
   changePwSub: 'Nach der Aktualisierung werden andere Sitzungen widerrufen, während die aktuelle Sitzung angemeldet bleibt.',
   currentPwLabel: 'Aktuelles Passwort',

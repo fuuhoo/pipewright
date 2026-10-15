@@ -2,6 +2,24 @@ export default {
   identityTitle: 'Identidad',
   identitySub: 'Esta es tu cuenta local en esta instancia. El rol decide qué páginas puedes abrir y lo asigna un administrador en la gestión de usuarios.',
 
+  // ─── Perfil local (nombre visible + correo) ───────────────────────────────
+  // Ambos datos viven en la fila de users: se copian la primera vez que entras con una
+  // identidad de plataforma y desde entonces son tuyos; los siguientes accesos no los pisan.
+  profileTitle: 'Perfil local',
+  profileSub: 'Tu nombre visible y tu correo se guardan en esta cuenta. Se copiaron la primera vez que entraste con una identidad de plataforma; tú los mantienes aquí y volver a entrar no los sobrescribirá.',
+  displayNameLabel: 'Nombre visible',
+  displayNameHint: 'El nombre que se muestra en el menú y en las listas de usuarios. Los espacios seguidos se unen en uno; hasta {n} caracteres. Si lo dejas vacío se muestra tu cuenta de acceso.',
+  emailLabel: 'Correo',
+  emailHint: 'Solo sirve para identificarte dentro de esta instancia; nunca se envía nada. Puede quedar vacío.',
+  identityNoEmailSet: 'sin correo asignado',
+  profileSaveBtn: 'Guardar perfil',
+  errEmailSpace: 'El correo no puede tener espacios',
+  errEmailFormat: "Ese correo no es válido; debería tener la forma name{'@'}example.com",
+  errEmailTooLong: 'El correo es demasiado largo',
+  toastProfileSaved: 'Perfil guardado',
+  toastProfileSavedDetail: 'El menú y esta página ya usan el perfil nuevo',
+  toastProfileFailed: 'No se pudo guardar el perfil',
+
   changePwTitle: 'Cambiar contraseña',
   changePwSub: 'Tras actualizar, las demás sesiones se revocan mientras la sesión actual permanece conectada.',
   currentPwLabel: 'Contraseña actual',

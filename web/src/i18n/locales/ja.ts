@@ -44,6 +44,9 @@ const ja: typeof zhCN = {
   },
 
   shell: {
+    // レール下部のアイデンティティ表示(ニックネーム + メール):アクセシブル名とホバーヒント。
+    identityAria: '現在のアカウント、アカウント設定を開く',
+    identityTitle: 'アカウント設定',
     logoutTitle: 'ログアウトしますか?',
     logoutBody: 'ログアウト後、再度コンソールに入るにはユーザー名とパスワードの再入力が必要です。',
     logoutLocalTitle: 'ローカルでログアウトしました',

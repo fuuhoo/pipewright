@@ -3,6 +3,7 @@
  * SettingsAccount (Story 1.7) — account settings.
  *
  *   - identity display (this instance's own account name + its role)
+ *   - 本地档案:显示名(昵称)+ 邮箱,本人可改
  *   - change-password form (current / new / confirm) — 422 weak / 401 wrong-current mapped inline
  *   - active session list (current marked) + revoke (ConfirmDialog second-confirm)
  *   - 外部身份绑定:列出这条账号绑过哪些身份源(含 OIDC / 钉钉 / 飞书 / 企业微信)、解绑,以及「去绑定」入口
@@ -11,6 +12,10 @@
  * 绑定走的是「仓库凭据」那套 OAuth 应用与 /api/oauth/{p}/callback(state 里记的意图不同),
  * 所以可绑定的平台来自 getOAuthApps,不是登录应用那张表。
  * 绑定只写映射:不改角色,解绑也不撤销当前会话 —— 掉线不该是解绑的副作用。
+ *
+ * 本地档案与平台快照是两份东西:昵称/邮箱在**首次建号**时从平台身份抄一份进 users 表,之后
+ * 再登录不再覆盖(空列才回填),所以这里改完就是最终值;想比对平台侧现在叫什么,看下面那张
+ * 「外部身份绑定」列表 —— 它随平台变。保存后只更新本地会话缓存,不必重新登录。
  *
  * Reuses 1-6 components: FormField / AppButton / ConfirmDialog / EmptyState / StatusBadge-free.
  */
@@ -26,6 +31,15 @@ import { useConfirm } from '../../composables/useConfirm'
 import { resetOnboarding } from '../../composables/useOnboarding'
 import { useSessionStore } from '../../stores/session'
 import { labelForRoleId } from '../../lib/roleEditor'
+import {
+  PROFILE_EMAIL_MAX,
+  PROFILE_NAME_MAX,
+  emailProblem,
+  handleOf,
+  initialsOf,
+  nicknameOf,
+  primaryNameOf,
+} from '../../lib/userDisplay'
 import { HttpError } from '../../api/http'
 import {
   changePassword,
@@ -33,6 +47,7 @@ import {
   listSessions,
   revokeSession,
   unbindIdentity,
+  updateProfile,
   type IdentityBinding,
   type Session,
 } from '../../api/account'
@@ -49,12 +64,79 @@ const sessionStore = useSessionStore()
 const username = computed(() => sessionStore.user?.username ?? '')
 
 /**
+ * 三件套(登录名 / 昵称 / 邮箱)的展示口径全部走 lib/userDisplay —— 与左栏身份区、
+ * 用户管理列表同一套回落规则:没昵称用登录名,没邮箱用 @登录名。
+ */
+const nickname = computed(() => nicknameOf(sessionStore.user ?? { username: username.value }))
+const primaryName = computed(() => primaryNameOf(sessionStore.user ?? { username: username.value }))
+const handle = computed(() => handleOf({ username: username.value }))
+const email = computed(() => (sessionStore.user?.email ?? '').trim())
+const avatarChar = computed(() => initialsOf(sessionStore.user ?? { username: username.value }))
+
+/**
  * 角色展示名。会话里带的是角色 id(登录快照),这里的目录是空的 ——
  * 已知档位走 i18n,查不到的按 roleEditor 的口径回「普通用户」。
  * 自建角色的名字要 /api/admin/roles(管理员才能读),普通账号拿不到,
  * 所以宁可回档位标签,也不写死一个「管理员」。
  */
 const roleLabel = computed(() => labelForRoleId(sessionStore.user?.role ?? '', {}, t))
+
+// ——— 本地档案(显示名 + 邮箱)———
+// 初值取自会话缓存里那份档案;保存成功后用**服务端回的值**回填 —— 后端会折叠空白,
+// 拿输入框的原值当结果会让「我到底存成了什么」和页面显示不一致。
+const profileName = ref(nickname.value)
+const profileEmail = ref(email.value)
+const profileNameError = ref('')
+const profileEmailError = ref('')
+const profileSubmitting = ref(false)
+
+const profileDirty = computed(() => profileName.value !== nickname.value || profileEmail.value !== email.value)
+
+function clearProfileErrors(): void {
+  profileNameError.value = ''
+  profileEmailError.value = ''
+}
+
+/** 前端只拦后端会**报错**的那几条(邮箱);显示名后端是静默截断,所以输入框用 maxlength 提前拦住。 */
+function validateProfile(): boolean {
+  clearProfileErrors()
+  let ok = true
+  const problem = emailProblem(profileEmail.value)
+  if (problem === 'space') {
+    profileEmailError.value = t('settingsAccount.errEmailSpace')
+    ok = false
+  } else if (problem === 'format') {
+    profileEmailError.value = t('settingsAccount.errEmailFormat')
+    ok = false
+  } else if (problem === 'tooLong') {
+    profileEmailError.value = t('settingsAccount.errEmailTooLong')
+    ok = false
+  }
+  return ok
+}
+
+async function onSubmitProfile(): Promise<void> {
+  if (!validateProfile()) return
+  profileSubmitting.value = true
+  try {
+    const saved = await updateProfile({
+      displayName: profileName.value,
+      email: profileEmail.value,
+    })
+    const me = sessionStore.user
+    if (me) sessionStore.setUser({ ...me, displayName: saved.displayName, email: saved.email })
+    profileName.value = saved.displayName
+    profileEmail.value = saved.email
+    clearProfileErrors()
+    toast.success(t('settingsAccount.toastProfileSaved'), { detail: t('settingsAccount.toastProfileSavedDetail') })
+  } catch (err) {
+    toast.error(t('settingsAccount.toastProfileFailed'), {
+      detail: err instanceof Error ? err.message : t('settingsAccount.unknownError'),
+    })
+  } finally {
+    profileSubmitting.value = false
+  }
+}
 
 // ——— change-password form ———
 const currentPassword = ref('')
@@ -326,12 +408,75 @@ onMounted(async () => {
         <p class="acct-card__sub">{{ t('settingsAccount.identitySub') }}</p>
       </header>
       <div class="acct-identity">
-        <div class="acct-avatar mono" aria-hidden="true">{{ username.slice(0, 1).toUpperCase() }}</div>
-        <div>
-          <div class="acct-identity__name">{{ username }}</div>
+        <div class="acct-avatar mono" aria-hidden="true">{{ avatarChar }}</div>
+        <div class="acct-identity__rows">
+          <div class="acct-identity__name">{{ primaryName }}</div>
+          <!-- 登录名与邮箱各占一行:三样都是「我是谁」,只是来源不同(前一个是本机账号,后两个是本地档案)。 -->
+          <div class="acct-identity__line mono">{{ handle }}</div>
+          <div class="acct-identity__line mono">{{ email || t('settingsAccount.identityNoEmailSet') }}</div>
           <div class="acct-identity__role">{{ roleLabel }}</div>
         </div>
       </div>
+    </section>
+
+    <!-- Local profile (display name + email) -->
+    <section class="acct-card" aria-labelledby="acct-profile-h">
+      <header class="acct-card__h">
+        <h2 id="acct-profile-h" class="acct-card__title">{{ t('settingsAccount.profileTitle') }}</h2>
+        <p class="acct-card__sub">{{ t('settingsAccount.profileSub') }}</p>
+      </header>
+      <form class="acct-form" @submit.prevent="onSubmitProfile">
+        <FormField
+          :label="t('settingsAccount.displayNameLabel')"
+          field-id="acct-name"
+          :error="profileNameError"
+          :hint="t('settingsAccount.displayNameHint', { n: PROFILE_NAME_MAX })"
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <input
+              :id="fieldId"
+              v-model="profileName"
+              class="field-input"
+              :class="{ 'field-input--error': profileNameError }"
+              type="text"
+              :maxlength="PROFILE_NAME_MAX"
+              autocomplete="name"
+              :aria-invalid="!!profileNameError || undefined"
+              :aria-describedby="ariaDescribedby"
+              :disabled="profileSubmitting"
+            />
+          </template>
+        </FormField>
+
+        <FormField
+          :label="t('settingsAccount.emailLabel')"
+          field-id="acct-email"
+          :error="profileEmailError"
+          :hint="t('settingsAccount.emailHint')"
+        >
+          <template #default="{ fieldId, ariaDescribedby }">
+            <input
+              :id="fieldId"
+              v-model="profileEmail"
+              class="field-input"
+              :class="{ 'field-input--error': profileEmailError }"
+              type="text"
+              inputmode="email"
+              :maxlength="PROFILE_EMAIL_MAX"
+              autocomplete="email"
+              :aria-invalid="!!profileEmailError || undefined"
+              :aria-describedby="ariaDescribedby"
+              :disabled="profileSubmitting"
+            />
+          </template>
+        </FormField>
+
+        <div class="acct-form__actions">
+          <AppButton variant="primary" type="submit" :loading="profileSubmitting" :disabled="!profileDirty">
+            {{ t('settingsAccount.profileSaveBtn') }}
+          </AppButton>
+        </div>
+      </form>
     </section>
 
     <!-- Change password -->
@@ -576,15 +721,26 @@ onMounted(async () => {
   font-size: 1.1rem;
   flex: none;
 }
+/* 显示名/登录名/邮箱/角色四行共用一个 flex 子项;min-width:0 才允许长邮箱在卡片里换行。 */
+.acct-identity__rows {
+  min-width: 0;
+}
 .acct-identity__name {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text);
 }
+/* 登录名与邮箱各一行:三者同属「我是谁」,但来源不同,所以分行列出不混成一行。 */
+.acct-identity__line {
+  font-size: 0.8rem;
+  color: var(--color-dim, var(--color-faint));
+  margin-top: 2px;
+  word-break: break-all;
+}
 .acct-identity__role {
   font-size: 0.78rem;
   color: var(--color-faint);
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 /* form */
