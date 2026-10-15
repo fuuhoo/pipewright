@@ -24,6 +24,7 @@ import {
   createUser,
   updateUser,
   resetUserPassword,
+  deleteUser,
   BOOTSTRAP_ADMIN_ID,
   MIN_PASSWORD_LEN,
 } from '../../api/users'
@@ -260,6 +261,33 @@ async function askToggle(u: User): Promise<void> {
     }
   } catch (err) {
     toast.error(errText(err, 'adminUsers.errToggle'))
+  }
+}
+
+// ─── 删除账号 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 这一页唯一不可逆的操作,所以确认框要把「和禁用的区别」写在脸上:会话、外部身份绑定、
+ * 分组名册一起清掉,用户名随后释放(同名可重建)。
+ * 后端还有两类 409 —— 该账号仍是 N 个分组的组长、或名下仍有 N 条个人凭据。这两档不在这里
+ * 预先判断(要另拉两份数据才数得准),直接回显服务端带计数的原因,让管理员照着去移交/清理。
+ */
+async function askDelete(u: User): Promise<void> {
+  const ok = await confirm.open({
+    title: t('adminUsers.deleteTitle'),
+    body: `${t('adminUsers.deleteBody', { name: primaryNameOf(u) })} ${t('adminUsers.deleteEffect')}`,
+    confirmLabel: t('adminUsers.delete'),
+    variant: 'danger',
+  })
+  if (!ok) return
+  try {
+    await deleteUser(u.id)
+    // 整页重取而不是本地过滤:分组名册里也有这个人,只删列表那一行会让「关联分组」弹窗
+    // 继续显示一个已经不存在于 users 的成员。
+    await load()
+    toast.success(t('adminUsers.deletedToast', { name: u.username }))
+  } catch (err) {
+    toast.error(errText(err, 'adminUsers.errDelete'))
   }
 }
 
@@ -533,6 +561,15 @@ async function submitProfile(): Promise<void> {
                   @click="askToggle(u)"
                 >
                   {{ u.enabled ? t('adminUsers.disable') : t('adminUsers.enable') }}
+                </AppButton>
+                <AppButton
+                  variant="danger"
+                  size="sm"
+                  :disabled="isBootstrapAdmin(u)"
+                  :title="isBootstrapAdmin(u) ? t('adminUsers.bootstrapAdminHint') : t('adminUsers.deleteHint')"
+                  @click="askDelete(u)"
+                >
+                  {{ t('adminUsers.delete') }}
                 </AppButton>
               </div>
             </td>

@@ -6,6 +6,7 @@
  *   POST   /api/admin/users              → User   建号(用户名 + 初始口令 + 角色)
  *   POST   /api/admin/users/:id/password → 204    重置口令
  *   PATCH  /api/admin/users/:id          → User   改描述 / 启用禁用 / 改角色
+ *   DELETE /api/admin/users/:id          → 204    删号(不可逆)
  *
  * 响应体绝不含 password_hash;口令只在请求里出现一次。
  *
@@ -101,6 +102,18 @@ export async function resetUserPassword(id: string, password: string): Promise<v
 
 export async function updateUser(id: string, input: UpdateUserInput): Promise<User> {
   return http.patch<User>(`/api/admin/users/${id}`, input)
+}
+
+/**
+ * 永久删除账号(204)。与「禁用」不是一回事:这一条会把该账号的会话、外部身份绑定、
+ * 分组名册一起清掉,删完用户名就释放了(同名可重建)。
+ *
+ * 后端在两件事上会回 409 而不是删:该账号还是 N 个分组的组长、或名下还有 N 条个人凭据
+ * —— 两者都会真删数据,所以要先移交/先清。message 里带计数,直接回显给管理员看。
+ * 另外「内置管理员行」与「自己的账号」也一律 409。
+ */
+export async function deleteUser(id: string): Promise<void> {
+  return http.delete<void>(`/api/admin/users/${id}`)
 }
 
 /** 后端 users.MinPasswordLen;前端据此提前拦下过短口令。 */
