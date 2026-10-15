@@ -1,7 +1,6 @@
 export default {
   identityTitle: 'Identität',
-  identitySub: 'Instanz mit einem einzigen Administrator (Mehrbenutzer und RBAC sind für spätere Versionen geplant).',
-  roleAdmin: 'Administrator',
+  identitySub: 'Das ist dein lokales Konto auf dieser Instanz. Deine Rolle entscheidet, welche Seiten du öffnen kannst; sie wird im Benutzermanagement vergeben.',
 
   changePwTitle: 'Passwort ändern',
   changePwSub: 'Nach der Aktualisierung werden andere Sitzungen widerrufen, während die aktuelle Sitzung angemeldet bleibt.',

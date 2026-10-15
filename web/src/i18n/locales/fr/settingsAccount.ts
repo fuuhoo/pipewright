@@ -1,7 +1,6 @@
 export default {
   identityTitle: 'Identité',
-  identitySub: 'Instance à administrateur unique (le multi-utilisateur et le RBAC sont prévus pour des versions ultérieures).',
-  roleAdmin: 'Administrateur',
+  identitySub: 'Ceci est votre compte local sur cette instance. Le rôle décide des pages accessibles ; il est attribué par un administrateur dans la gestion des utilisateurs.',
 
   changePwTitle: 'Changer le mot de passe',
   changePwSub: 'Après la mise à jour, les autres sessions sont révoquées tandis que la session actuelle reste connectée.',

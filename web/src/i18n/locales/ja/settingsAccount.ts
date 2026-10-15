@@ -1,7 +1,6 @@
 export default {
   identityTitle: 'アイデンティティ',
-  identitySub: '単一管理者インスタンス(マルチユーザーと RBAC は今後のバージョンで対応)。',
-  roleAdmin: '管理者',
+  identitySub: 'これは本インスタンス上のローカルアカウントです。ロールによって入れるページが決まり、管理者がユーザー管理で指定します。',
 
   changePwTitle: 'パスワード変更',
   changePwSub: '更新後、他のセッションは無効化され、現在のセッションはログインを維持します。',

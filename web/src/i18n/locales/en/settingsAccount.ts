@@ -1,7 +1,6 @@
 export default {
   identityTitle: 'Identity',
-  identitySub: 'Single-administrator instance (multi-user and RBAC are planned for later versions).',
-  roleAdmin: 'Administrator',
+  identitySub: 'This is your local account on this instance. Your role decides which pages you can open and is assigned by an administrator under User management.',
 
   changePwTitle: 'Change password',
   changePwSub: 'After updating, other sessions are revoked while the current session stays signed in.',

@@ -1,7 +1,6 @@
 export default {
   identityTitle: 'Identidad',
-  identitySub: 'Instancia de administrador único (la multiusuario y RBAC se planean para versiones posteriores).',
-  roleAdmin: 'Administrador',
+  identitySub: 'Esta es tu cuenta local en esta instancia. El rol decide qué páginas puedes abrir y lo asigna un administrador en la gestión de usuarios.',
 
   changePwTitle: 'Cambiar contraseña',
   changePwSub: 'Tras actualizar, las demás sesiones se revocan mientras la sesión actual permanece conectada.',

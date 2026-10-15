@@ -1,7 +1,6 @@
 export default {
   identityTitle: '身份',
-  identitySub: '单管理员实例(多用户与 RBAC 为后续版本)。',
-  roleAdmin: '管理员',
+  identitySub: '这是你在这台实例上的本机账号。角色决定能进哪些页面,由管理员在「用户管理」里指定。',
 
   changePwTitle: '修改密码',
   changePwSub: '更新后其它会话将被注销,当前会话保持登录。',

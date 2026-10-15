@@ -1,7 +1,6 @@
 export default {
   identityTitle: '신원',
-  identitySub: '단일 관리자 인스턴스(다중 사용자 및 RBAC는 향후 버전에서 지원).',
-  roleAdmin: '관리자',
+  identitySub: '이것은 이 인스턴스의 로컬 계정입니다. 역할에 따라 열 수 있는 페이지가 정해지며, 관리자가 사용자 관리에서 지정합니다.',
 
   changePwTitle: '비밀번호 변경',
   changePwSub: '변경 후 다른 세션은 해지되며 현재 세션은 로그인 상태를 유지합니다.',

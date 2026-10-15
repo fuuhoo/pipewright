@@ -2,10 +2,10 @@
 /**
  * SettingsAccount (Story 1.7) — account settings.
  *
- *   - identity display (admin username, read-only this version)
+ *   - identity display (this instance's own account name + its role)
  *   - change-password form (current / new / confirm) — 422 weak / 401 wrong-current mapped inline
  *   - active session list (current marked) + revoke (ConfirmDialog second-confirm)
- *   - 外部 git 账号绑定:列出这条账号绑过哪些平台身份、解绑,以及「去绑定」入口
+ *   - 外部身份绑定:列出这条账号绑过哪些身份源(含 OIDC / 钉钉 / 飞书 / 企业微信)、解绑,以及「去绑定」入口
  *   - "重新引导" button — clears localStorage(onboarding_dismissed)
  *
  * 绑定走的是「仓库凭据」那套 OAuth 应用与 /api/oauth/{p}/callback(state 里记的意图不同),
@@ -25,6 +25,7 @@ import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { resetOnboarding } from '../../composables/useOnboarding'
 import { useSessionStore } from '../../stores/session'
+import { labelForRoleId } from '../../lib/roleEditor'
 import { HttpError } from '../../api/http'
 import {
   changePassword,
@@ -45,7 +46,15 @@ const router = useRouter()
 const route = useRoute()
 const sessionStore = useSessionStore()
 
-const username = computed(() => sessionStore.user?.username ?? 'admin')
+const username = computed(() => sessionStore.user?.username ?? '')
+
+/**
+ * 角色展示名。会话里带的是角色 id(登录快照),这里的目录是空的 ——
+ * 已知档位走 i18n,查不到的按 roleEditor 的口径回「普通用户」。
+ * 自建角色的名字要 /api/admin/roles(管理员才能读),普通账号拿不到,
+ * 所以宁可回档位标签,也不写死一个「管理员」。
+ */
+const roleLabel = computed(() => labelForRoleId(sessionStore.user?.role ?? '', {}, t))
 
 // ——— change-password form ———
 const currentPassword = ref('')
@@ -187,10 +196,19 @@ const PROVIDER_LABELS = computed<Record<OAuthProvider, string>>(() => ({
 
 /**
  * 列表里的平台名。绑定入口只对 git 平台开放(它复用「仓库凭据」那套应用与回调),
- * 但用 OIDC 登录自动建的账号也会在这张表里留一条 provider=oidc 的映射,所以这里得认得它。
+ * 但用 OIDC / 钉钉 / 飞书 / 企业微信登录自动建的账号也会在这张表里留一条映射,所以这些
+ * 身份源也得认得 —— 品牌名不翻,和登录页按钮、设置页 tab 同一口径(都由服务端给)。
  */
+const IDENTITY_SOURCE_LABELS: Record<string, string> = {
+  oidc: 'OIDC',
+  dingtalk: '钉钉',
+  feishu: '飞书',
+  wecom: '企业微信',
+}
+
 function providerLabel(provider: string): string {
-  if (provider === 'oidc') return 'OIDC'
+  const brand = IDENTITY_SOURCE_LABELS[provider]
+  if (brand) return brand
   return PROVIDER_LABELS.value[provider as OAuthProvider] ?? provider
 }
 
@@ -311,7 +329,7 @@ onMounted(async () => {
         <div class="acct-avatar mono" aria-hidden="true">{{ username.slice(0, 1).toUpperCase() }}</div>
         <div>
           <div class="acct-identity__name">{{ username }}</div>
-          <div class="acct-identity__role">{{ t('settingsAccount.roleAdmin') }}</div>
+          <div class="acct-identity__role">{{ roleLabel }}</div>
         </div>
       </div>
     </section>

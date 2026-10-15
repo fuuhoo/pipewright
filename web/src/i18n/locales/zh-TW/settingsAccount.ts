@@ -1,7 +1,6 @@
 export default {
   identityTitle: '身分',
-  identitySub: '單管理員實例(多使用者與 RBAC 為後續版本)。',
-  roleAdmin: '管理員',
+  identitySub: '這是你在這台實例上的本機帳號。角色決定能進哪些頁面,由管理員在「使用者管理」裡指定。',
 
   changePwTitle: '修改密碼',
   changePwSub: '更新後其它工作階段將被中斷,目前工作階段保持登入。',
