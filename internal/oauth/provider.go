@@ -26,6 +26,9 @@ const (
 	ProviderGitLab = "gitlab"
 	// ProviderCustom 表示自建实例(据 base_url 推导 GitLab/Gitea 风格端点)。
 	ProviderCustom = "custom"
+	// ProviderOIDC 是通用 OIDC 身份源。**只属于登录流**:OIDC 服务器给不了 git token,
+	// 仓库凭据那条流继续只认上面四家(见 normalizeProvider 与 normalizeLoginProvider)。
+	ProviderOIDC = "oidc"
 )
 
 // 领域错误。错误体永不含 client_secret / access_token 明文。
@@ -154,7 +157,8 @@ func firstStringField(m map[string]any, fields ...string) string {
 	return ""
 }
 
-// normalizeProvider 校验并归一 provider 枚举(空串非法)。
+// normalizeProvider 校验并归一 **git** provider 枚举(空串非法)。
+// 仓库凭据流(oauth_apps)只认这四家 —— 只有它们能换出可用的 git 令牌。
 func normalizeProvider(p string) (string, error) {
 	switch strings.TrimSpace(p) {
 	case ProviderGitee:
@@ -168,6 +172,16 @@ func normalizeProvider(p string) (string, error) {
 	default:
 		return "", ErrInvalidProvider
 	}
+}
+
+// normalizeLoginProvider 校验并归一「登录用」身份源枚举:git 四家 + OIDC。
+// 两条流刻意用不同枚举:把 oidc 塞进 oauth_apps 会得到一个「能配但永远换不出 git token」
+// 的死条目,而登录侧需要的是「任意能证明身份的提供方」。
+func normalizeLoginProvider(p string) (string, error) {
+	if strings.TrimSpace(p) == ProviderOIDC {
+		return ProviderOIDC, nil
+	}
+	return normalizeProvider(p)
 }
 
 // resolveProvider 据 provider 名 + 配置的 baseURL 返回可用的 Provider 端点模板。

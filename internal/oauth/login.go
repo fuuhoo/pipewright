@@ -29,7 +29,8 @@ var ErrIdentityUnavailable = errors.New("oauth: provider returned no stable user
 // 保存期就报错而不是清洗掉:白名单静默失效等于没白名单,而配错的人并不会知道自己失算了。
 var ErrInvalidDomain = errors.New("oauth: invalid allowed domain")
 
-// LoginAppConfig 是「登录用」OAuth 应用的对外视图:client_secret 仅掩码,绝无明文。
+// LoginAppConfig 是「登录用」身份源的对外视图:client_secret 仅掩码,绝无明文。
+// 后六个字段只对 provider=oidc 有意义(端点/主键声明/scope),git 平台一律为空。
 type LoginAppConfig struct {
 	Provider       string
 	ClientID       string
@@ -39,11 +40,18 @@ type LoginAppConfig struct {
 	MaskedSecret   string
 	Configured     bool
 	UpdatedAt      *time.Time
+	DiscoveryURL   string
+	AuthorizeURL   string
+	TokenURL       string
+	UserinfoURL    string
+	IDClaim        string
+	Scopes         string
 }
 
 // SaveLoginAppInput 是 upsert 登录应用配置的入参。
 // ClientSecret 只写:nil/空串 = 保留既有 secret;非空 = 轮换。
 // AllowedDomains 为 nil 时保留既有白名单(与 secret 同语义,避免前端漏传即清空)。
+// OIDC 六个字段是**整份覆盖**语义(provider=oidc 才生效;git 平台保存时一律清空)。
 type SaveLoginAppInput struct {
 	Provider       string
 	ClientID       string
@@ -51,6 +59,12 @@ type SaveLoginAppInput struct {
 	ClientSecret   *string
 	AllowedDomains *[]string
 	Enabled        bool
+	DiscoveryURL   string
+	AuthorizeURL   string
+	TokenURL       string
+	UserinfoURL    string
+	IDClaim        string
+	Scopes         string
 }
 
 // loginAppRow 是 oauth_login_apps 的一行内存镜像(secret 为密文)。
@@ -62,6 +76,34 @@ type loginAppRow struct {
 	allowedDomains []string
 	enabled        bool
 	updatedAt      string
+	discoveryURL   string
+	authorizeURL   string
+	tokenURL       string
+	userinfoURL    string
+	idClaim        string
+	scopes         string
+}
+
+// loginAppColumns 是读一行的列序(与 scanLoginApp 严格对应;两处 SELECT 共用,防漂移)。
+const loginAppColumns = `provider, client_id, client_secret_ciphertext, base_url, allowed_domains,
+ enabled, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes`
+
+// scanLoginApp 把一行结果扫成 loginAppRow。
+func scanLoginApp(scan func(dest ...any) error) (loginAppRow, error) {
+	var (
+		row        loginAppRow
+		domainsRaw string
+		enabledInt int
+	)
+	err := scan(&row.provider, &row.clientID, &row.sealed, &row.baseURL, &domainsRaw,
+		&enabledInt, &row.updatedAt, &row.discoveryURL, &row.authorizeURL,
+		&row.tokenURL, &row.userinfoURL, &row.idClaim, &row.scopes)
+	if err != nil {
+		return loginAppRow{}, err
+	}
+	row.enabled = enabledInt != 0
+	row.allowedDomains = splitDomains(domainsRaw)
+	return row, nil
 }
 
 // LoginService 是登录流的领域接口(由同一个 service 实现,经 Service 门面暴露)。
@@ -94,8 +136,7 @@ func NewBindKey() (string, error) {
 
 func (s *service) ListLoginApps(ctx context.Context) ([]LoginAppConfig, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT provider, client_id, client_secret_ciphertext, base_url, allowed_domains, enabled, updated_at
-		 FROM oauth_login_apps ORDER BY provider`)
+		`SELECT `+loginAppColumns+` FROM oauth_login_apps ORDER BY provider`)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: list login apps: %w", err)
 	}
@@ -103,28 +144,11 @@ func (s *service) ListLoginApps(ctx context.Context) ([]LoginAppConfig, error) {
 
 	apps := make([]LoginAppConfig, 0)
 	for rows.Next() {
-		var (
-			provider   string
-			clientID   string
-			sealed     []byte
-			baseURL    string
-			domainsRaw string
-			enabledInt int
-			updatedStr string
-		)
-		if err := rows.Scan(&provider, &clientID, &sealed, &baseURL,
-			&domainsRaw, &enabledInt, &updatedStr); err != nil {
+		row, err := scanLoginApp(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("oauth: scan login app: %w", err)
 		}
-		apps = append(apps, toLoginAppConfig(loginAppRow{
-			provider:       provider,
-			clientID:       clientID,
-			sealed:         sealed,
-			baseURL:        baseURL,
-			allowedDomains: splitDomains(domainsRaw),
-			enabled:        enabledInt != 0,
-			updatedAt:      updatedStr,
-		}))
+		apps = append(apps, toLoginAppConfig(row))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("oauth: iterate login apps: %w", err)
@@ -142,7 +166,7 @@ func (s *service) LoginApp(ctx context.Context, provider string) (*LoginAppConfi
 }
 
 func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*LoginAppConfig, error) {
-	provider, err := normalizeProvider(in.Provider)
+	provider, err := normalizeLoginProvider(in.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +179,32 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		if _, derr := customProvider(baseURL); derr != nil {
 			return nil, derr
 		}
+	}
+	// OIDC 那一组字段:git 平台一律清空(否则配置页会残留一组永远不生效的端点),
+	// provider=oidc 则先把端点解析一遍再落库 —— 发现文档填错、地址不是 http(s)、
+	// 三个端点凑不齐,都该在「保存」这一刀就说清楚,而不是等访客点登录被跳回来说不明原因。
+	discoveryURL := strings.TrimSpace(in.DiscoveryURL)
+	authorizeURL := strings.TrimSpace(in.AuthorizeURL)
+	tokenURL := strings.TrimSpace(in.TokenURL)
+	userinfoURL := strings.TrimSpace(in.UserinfoURL)
+	idClaim := strings.TrimSpace(in.IDClaim)
+	scopes := strings.TrimSpace(in.Scopes)
+	if provider == ProviderOIDC {
+		probe := loginAppRow{
+			discoveryURL: discoveryURL, authorizeURL: authorizeURL,
+			tokenURL: tokenURL, userinfoURL: userinfoURL,
+		}
+		if _, eerr := resolveOidcEndpoints(ctx, s.client, probe); eerr != nil {
+			return nil, eerr
+		}
+		if idClaim == "" {
+			idClaim = defaultOidcIDClaim
+		}
+		if scopes == "" {
+			scopes = defaultOidcScopes
+		}
+	} else {
+		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes = "", "", "", "", "", ""
 	}
 	domains, err := normalizeDomains(in.AllowedDomains)
 	if err != nil {
@@ -195,11 +245,14 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO oauth_login_apps
-		   (provider, client_id, client_secret_ciphertext, base_url, allowed_domains, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?) `+
+		   (provider, client_id, client_secret_ciphertext, base_url, allowed_domains, enabled,
+		    created_at, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `+
 			store.UpsertSuffix(store.DialectOf(s.db), []string{"provider"},
-				[]string{"client_id", "client_secret_ciphertext", "base_url", "allowed_domains", "enabled", "updated_at"}),
+				[]string{"client_id", "client_secret_ciphertext", "base_url", "allowed_domains", "enabled",
+					"updated_at", "discovery_url", "authorize_url", "token_url", "userinfo_url", "id_claim", "scopes"}),
 		provider, clientID, sealed, baseURL, joinDomains(domains), enabled, now, now,
+		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: upsert login app: %w", err)
@@ -208,6 +261,8 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 	cfg := toLoginAppConfig(loginAppRow{
 		provider: provider, clientID: clientID, sealed: sealed, baseURL: baseURL,
 		allowedDomains: domains, enabled: in.Enabled, updatedAt: now,
+		discoveryURL: discoveryURL, authorizeURL: authorizeURL, tokenURL: tokenURL,
+		userinfoURL: userinfoURL, idClaim: idClaim, scopes: scopes,
 	})
 	return &cfg, nil
 }
@@ -220,7 +275,7 @@ func (s *service) LoginAuthorizeURL(ctx context.Context, provider, state, redire
 	if row.clientID == "" || len(row.sealed) == 0 || !row.enabled {
 		return "", ErrAppNotConfigured
 	}
-	endpoints, err := resolveProvider(row.provider, row.baseURL)
+	endpoints, err := s.loginProvider(ctx, *row)
 	if err != nil {
 		return "", err
 	}
@@ -238,7 +293,7 @@ func (s *service) ExchangeIdentity(ctx context.Context, provider, code, redirect
 	if strings.TrimSpace(code) == "" {
 		return nil, ErrExchangeFailed
 	}
-	endpoints, err := resolveProvider(row.provider, row.baseURL)
+	endpoints, err := s.loginProvider(ctx, *row)
 	if err != nil {
 		return nil, err
 	}
@@ -267,19 +322,12 @@ func (s *service) ExchangeIdentity(ctx context.Context, provider, code, redirect
 
 // loadLoginApp 读单个登录应用行;无行返回零值行(provider 已归一),无错误。
 func (s *service) loadLoginApp(ctx context.Context, provider string) (*loginAppRow, error) {
-	prov, err := normalizeProvider(provider)
+	prov, err := normalizeLoginProvider(provider)
 	if err != nil {
 		return nil, err
 	}
-	var (
-		domainsRaw string
-		enabledInt int
-		row        loginAppRow
-	)
-	err = s.db.QueryRowContext(ctx,
-		`SELECT client_id, client_secret_ciphertext, base_url, allowed_domains, enabled, updated_at
-		 FROM oauth_login_apps WHERE provider = ?`, prov,
-	).Scan(&row.clientID, &row.sealed, &row.baseURL, &domainsRaw, &enabledInt, &row.updatedAt)
+	row, err := scanLoginApp(s.db.QueryRowContext(ctx,
+		`SELECT `+loginAppColumns+` FROM oauth_login_apps WHERE provider = ?`, prov).Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return &loginAppRow{provider: prov}, nil
@@ -287,9 +335,21 @@ func (s *service) loadLoginApp(ctx context.Context, provider string) (*loginAppR
 		return nil, fmt.Errorf("oauth: load login app: %w", err)
 	}
 	row.provider = prov
-	row.enabled = enabledInt != 0
-	row.allowedDomains = splitDomains(domainsRaw)
 	return &row, nil
+}
+
+// loginProvider 据登录应用行解析出可用的端点模板。
+//   - git 四家:沿用 presets / base_url 推导,与「取仓库凭据」那条流同一套地址。
+//   - oidc:端点只能问服务器自己(发现文档 + 显式覆盖),所以这里要 ctx 与 http.Client。
+func (s *service) loginProvider(ctx context.Context, row loginAppRow) (Provider, error) {
+	if row.provider != ProviderOIDC {
+		return resolveProvider(row.provider, row.baseURL)
+	}
+	endpoints, err := resolveOidcEndpoints(ctx, s.client, row)
+	if err != nil {
+		return Provider{}, err
+	}
+	return oidcProvider(endpoints, row.scopes, row.idClaim), nil
 }
 
 // toLoginAppConfig 组装对外视图:密文只以固定掩码呈现(不解密)。
@@ -301,6 +361,12 @@ func toLoginAppConfig(r loginAppRow) LoginAppConfig {
 		AllowedDomains: append([]string(nil), r.allowedDomains...),
 		Enabled:        r.enabled,
 		Configured:     r.clientID != "" && len(r.sealed) > 0,
+		DiscoveryURL:   r.discoveryURL,
+		AuthorizeURL:   r.authorizeURL,
+		TokenURL:       r.tokenURL,
+		UserinfoURL:    r.userinfoURL,
+		IDClaim:        r.idClaim,
+		Scopes:         r.scopes,
 	}
 	if len(r.sealed) > 0 {
 		cfg.MaskedSecret = "••••••"
