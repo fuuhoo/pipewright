@@ -14,6 +14,7 @@ export default {
   statusUnconfigured: 'Not configured',
 
   clientIdPlaceholder: 'Get it from the OAuth app page of the git platform',
+  clientIdPlaceholderOidc: 'Issued when you register an OIDC client at your identity provider',
   secretOptional: '(only the mask is shown after writing)',
   secretPlaceholderKeep: 'Leave blank to keep the existing secret',
   secretPlaceholderNew: 'Paste Client Secret…',
@@ -60,6 +61,7 @@ export default {
   purposeLoginNote:
     'Once enabled, this provider appears on the sign-in page. Each purpose needs its own OAuth app — one app accepts only one callback URL.',
   callbackHint: 'Paste this into the "callback / Redirect URI" field of the OAuth app on your git platform',
+  callbackHintOidc: 'Paste this into the "callback / Redirect URI" field of the OIDC client at your identity provider',
   callbackCopy: 'Click to select all, then copy it to the platform side',
   domainsLabel: 'Email domain allowlist',
   domainsOptional: '(blank = any domain)',

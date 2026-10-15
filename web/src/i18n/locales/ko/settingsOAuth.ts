@@ -14,6 +14,7 @@ export default {
   statusUnconfigured: '구성 안 됨',
 
   clientIdPlaceholder: 'git 플랫폼의 OAuth 앱 페이지에서 가져오기',
+  clientIdPlaceholderOidc: 'ID 공급자에 OIDC 클라이언트를 등록하면 발급됩니다',
   secretOptional: '(작성 후에는 마스크만 표시)',
   secretPlaceholderKeep: '비워 두면 기존 Secret을 유지합니다',
   secretPlaceholderNew: 'Client Secret 붙여넣기…',
@@ -60,6 +61,7 @@ export default {
   purposeLoginNote:
     '활성화하면 이 제공자가 로그인 화면에 나타납니다. 용도별로 OAuth 앱을 따로 만드세요. 앱 하나에는 callback URL 한 개만 등록할 수 있습니다.',
   callbackHint: 'git 플랫폼의 OAuth 앱에서 이 URL을 "callback / Redirect URI"에 붙여넣으세요',
+  callbackHintOidc: 'ID 공급자의 OIDC 클라이언트에서 이 URL을 "callback / Redirect URI"에 붙여넣으세요',
   callbackCopy: '클릭하면 전체 선택, 복사 후 플랫폼 쪽에 등록하세요',
   domainsLabel: '이메일 도메인 허용 목록',
   domainsOptional: '(비우면 도메인 제한 없음)',

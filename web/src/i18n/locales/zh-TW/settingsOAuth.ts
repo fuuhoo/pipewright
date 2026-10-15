@@ -14,6 +14,7 @@ export default {
   statusUnconfigured: '未設定',
 
   clientIdPlaceholder: '在 git 平台 OAuth 應用頁取得',
+  clientIdPlaceholderOidc: '在身分提供方註冊 OIDC 用戶端後取得',
   secretOptional: '(寫入後僅顯示遮罩)',
   secretPlaceholderKeep: '留空保留已存 Secret',
   secretPlaceholderNew: '貼上 Client Secret…',
@@ -59,6 +60,7 @@ export default {
   purposeLoginNote:
     '啟用後登入頁會出現這個平台的按鈕。兩種用途要各登記一個 OAuth 應用——一個應用只能填一個回呼網址。',
   callbackHint: '在 git 平台的 OAuth 應用裡,把這個網址填進「回呼 / Redirect URI」',
+  callbackHintOidc: '在身分提供方的 OIDC 用戶端裡,把這個網址填進「回呼 / Redirect URI」',
   callbackCopy: '點一下即全選,複製後到平台側登記',
   domainsLabel: 'Email 網域白名單',
   domainsOptional: '(留空 = 不限網域)',

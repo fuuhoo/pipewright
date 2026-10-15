@@ -635,7 +635,7 @@ function relativeTime(iso: string | null): string {
                 :title="t('settingsOAuth.callbackCopy')"
                 @click="selectCallback"
               />
-              <span class="field-hint">{{ t('settingsOAuth.callbackHint') }}</span>
+              <span class="field-hint">{{ t(form.meta.isOidc ? 'settingsOAuth.callbackHintOidc' : 'settingsOAuth.callbackHint') }}</span>
             </div>
 
             <!-- Client ID -->
@@ -647,7 +647,7 @@ function relativeTime(iso: string | null): string {
                 type="text"
                 class="field-input field-input--mono"
                 :class="{ 'field-input--error': form.errors.clientId }"
-                :placeholder="t('settingsOAuth.clientIdPlaceholder')"
+                :placeholder="t(form.meta.isOidc ? 'settingsOAuth.clientIdPlaceholderOidc' : 'settingsOAuth.clientIdPlaceholder')"
                 autocomplete="off"
                 :aria-invalid="!!form.errors.clientId || undefined"
                 :disabled="form.saving"

@@ -452,6 +452,21 @@ describe('SettingsOAuth', () => {
     expect(value('#oauth-callback-oidc')).toContain('/api/auth/oauth/oidc/callback')
   })
 
+  it('tells the admin to register at the identity provider, not at a git platform, on the OIDC card', async () => {
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp()])
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    // 两处提示都指向「去哪登记」,写着 git 平台会把人支到错的那个应用页
+    expect(wrapper.get('[data-panel="oidc"]').text()).toContain('身份提供方')
+    expect((wrapper.get('#oauth-clientid-oidc').element as HTMLInputElement).placeholder).toContain('OIDC 客户端')
+
+    await openTab(wrapper, 'gitee')
+    expect(wrapper.get('[data-panel="gitee"]').text()).toContain('git 平台')
+  })
+
   it('sends all six OIDC fields on every login save so an override can be cleared', async () => {
     getOAuthLoginApps.mockResolvedValue([makeOidcApp()])
     saveOAuthLoginApp.mockResolvedValue(makeOidcApp({ discoveryUrl: '' }))

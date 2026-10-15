@@ -14,6 +14,7 @@ export default {
   statusUnconfigured: '未配置',
 
   clientIdPlaceholder: '在 git 平台 OAuth 应用页获取',
+  clientIdPlaceholderOidc: '在身份提供方注册 OIDC 客户端后拿到',
   secretOptional: '(写入后仅显示掩码)',
   secretPlaceholderKeep: '留空保留已存 Secret',
   secretPlaceholderNew: '粘贴 Client Secret…',
@@ -59,6 +60,7 @@ export default {
   purposeLoginNote:
     '启用后登录页出现这个平台的按钮。两种用途要各登记一个 OAuth 应用——一个应用只能填一个回调地址。',
   callbackHint: '在 git 平台的 OAuth 应用里,把这个地址填进「回调 / Redirect URI」',
+  callbackHintOidc: '在身份提供方的 OIDC 客户端里,把这个地址填进「回调 / Redirect URI」',
   callbackCopy: '点一下即全选,复制后去平台侧登记',
   domainsLabel: '邮箱域名白名单',
   domainsOptional: '(留空 = 不限域名)',

@@ -14,6 +14,7 @@ export default {
   statusUnconfigured: 'Sin configurar',
 
   clientIdPlaceholder: 'Obténlo en la página de la aplicación OAuth de la plataforma git',
+  clientIdPlaceholderOidc: 'Se emite al registrar un cliente OIDC en tu proveedor de identidad',
   secretOptional: '(tras escribirlo solo se muestra la máscara)',
   secretPlaceholderKeep: 'Déjalo en blanco para conservar el secreto existente',
   secretPlaceholderNew: 'Pega el Client Secret…',
@@ -60,6 +61,7 @@ export default {
   purposeLoginNote:
     'Al activarlo, este proveedor aparece en la página de inicio de sesión. Cada uso necesita su propia aplicación OAuth: una aplicación solo admite una URL de callback.',
   callbackHint: 'Pega esta URL en el campo «callback / Redirect URI» de la aplicación OAuth de tu plataforma git',
+  callbackHintOidc: 'Pega esta URL en el campo «callback / Redirect URI» del cliente OIDC de tu proveedor de identidad',
   callbackCopy: 'Haz clic para seleccionarlo todo y cópialo a la plataforma',
   domainsLabel: 'Allowlist de dominios de correo',
   domainsOptional: '(vacío = cualquier dominio)',

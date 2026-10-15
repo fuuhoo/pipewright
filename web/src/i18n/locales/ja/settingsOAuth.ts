@@ -14,6 +14,7 @@ export default {
   statusUnconfigured: '未設定',
 
   clientIdPlaceholder: 'git プラットフォームの OAuth アプリページで取得',
+  clientIdPlaceholderOidc: 'ID プロバイダーで OIDC クライアントを登録すると発行されます',
   secretOptional: '(書き込み後はマスクのみ表示)',
   secretPlaceholderKeep: '空欄のままにすると既存の Secret を保持します',
   secretPlaceholderNew: 'Client Secret を貼り付け…',
@@ -60,6 +61,7 @@ export default {
   purposeLoginNote:
     '有効にするとこのプロバイダーがログイン画面に出ます。用途ごとに OAuth アプリを分けてください。1 アプリに登録できる callback URL は 1 本です。',
   callbackHint: 'git プラットフォームの OAuth アプリで、この URL を「callback / Redirect URI」に入力してください',
+  callbackHintOidc: 'ID プロバイダーの OIDC クライアントで、この URL を「callback / Redirect URI」に入力してください',
   callbackCopy: 'クリックで全選択。コピーしてプラットフォーム側に登録します',
   domainsLabel: 'メールドメイン許可リスト',
   domainsOptional: '(空欄 = ドメイン制限なし)',
