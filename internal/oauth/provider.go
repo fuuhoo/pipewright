@@ -29,6 +29,15 @@ const (
 	// ProviderOIDC 是通用 OIDC 身份源。**只属于登录流**:OIDC 服务器给不了 git token,
 	// 仓库凭据那条流继续只认上面四家(见 normalizeProvider 与 normalizeLoginProvider)。
 	ProviderOIDC = "oidc"
+	// 下面三家同样是「只属于登录流」的身份源,取值与 internal/notify 的渠道名保持一致
+	// (wecom / dingtalk / feishu),让同一套词汇在通知与登录两处不产生第二个拼法。
+	// 它们都给不了 git token,且报文形态各家异形 —— 见 platform.go。
+	// ProviderDingTalk 表示钉钉扫码登录。
+	ProviderDingTalk = "dingtalk"
+	// ProviderFeishu 表示飞书登录。
+	ProviderFeishu = "feishu"
+	// ProviderWeCom 表示企业微信扫码登录。
+	ProviderWeCom = "wecom"
 )
 
 // 领域错误。错误体永不含 client_secret / access_token 明文。
@@ -71,6 +80,13 @@ type Provider struct {
 	// LoginScopes 是「登录」申请的最小权限,只碰身份,不碰仓库内容。
 	// 为空则回退 DefaultScopes。
 	LoginScopes []string
+	// AgentID 只有企业微信用得上(自建应用的 AgentId:扫码地址与可见范围判定都要它);
+	// 其余身份源恒为空。
+	AgentID string
+	// flow 非 nil 表示这个身份源不走标准 OAuth 报文 —— 钉钉/飞书/企业微信各自的参数名、
+	// 请求体编码、令牌头、响应信封、兑换步数都不是一套。git 四家与 OIDC 恒为 nil,
+	// 继续走 buildAuthorizeURL / requestToken / fetchIdentity 那条标准路径。
+	flow platformFlow
 	// parseIdentity 从 user API 的 JSON map 解析身份(各平台字段名不同)。
 	parseIdentity func(m map[string]any) Identity
 }
@@ -174,14 +190,26 @@ func normalizeProvider(p string) (string, error) {
 	}
 }
 
-// normalizeLoginProvider 校验并归一「登录用」身份源枚举:git 四家 + OIDC。
+// normalizeLoginProvider 校验并归一「登录用」身份源枚举:git 四家 + OIDC + 钉钉/飞书/企业微信。
 // 两条流刻意用不同枚举:把 oidc 塞进 oauth_apps 会得到一个「能配但永远换不出 git token」
 // 的死条目,而登录侧需要的是「任意能证明身份的提供方」。
 func normalizeLoginProvider(p string) (string, error) {
-	if strings.TrimSpace(p) == ProviderOIDC {
-		return ProviderOIDC, nil
+	switch strings.TrimSpace(p) {
+	case ProviderOIDC, ProviderDingTalk, ProviderFeishu, ProviderWeCom:
+		return strings.TrimSpace(p), nil
 	}
 	return normalizeProvider(p)
+}
+
+// isPlatformProvider 判断该身份源是否走 platform.go 那套异形报文(钉钉/飞书/企业微信)。
+// 三条流在这里分叉:标准 OAuth 那两条(git 四家、OIDC)继续共用 oauth.go 的兑换实现。
+func isPlatformProvider(name string) bool {
+	switch strings.TrimSpace(name) {
+	case ProviderDingTalk, ProviderFeishu, ProviderWeCom:
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveProvider 据 provider 名 + 配置的 baseURL 返回可用的 Provider 端点模板。

@@ -30,7 +30,8 @@ var ErrIdentityUnavailable = errors.New("oauth: provider returned no stable user
 var ErrInvalidDomain = errors.New("oauth: invalid allowed domain")
 
 // LoginAppConfig 是「登录用」身份源的对外视图:client_secret 仅掩码,绝无明文。
-// 后六个字段只对 provider=oidc 有意义(端点/主键声明/scope),git 平台一律为空。
+// 端点/scope/主键声明那几项只对非 git 身份源有意义:oidc 用全套,
+// 钉钉/飞书用「端点覆盖 + scope 覆盖」,企业微信用 AgentID(其余平台一律为空)。
 type LoginAppConfig struct {
 	Provider       string
 	ClientID       string
@@ -46,12 +47,13 @@ type LoginAppConfig struct {
 	UserinfoURL    string
 	IDClaim        string
 	Scopes         string
+	AgentID        string
 }
 
 // SaveLoginAppInput 是 upsert 登录应用配置的入参。
 // ClientSecret 只写:nil/空串 = 保留既有 secret;非空 = 轮换。
 // AllowedDomains 为 nil 时保留既有白名单(与 secret 同语义,避免前端漏传即清空)。
-// OIDC 六个字段是**整份覆盖**语义(provider=oidc 才生效;git 平台保存时一律清空)。
+// 端点/scope/主键声明/AgentID 是**整份覆盖**语义,且只对非 git 身份源生效(git 档位落空值)。
 type SaveLoginAppInput struct {
 	Provider       string
 	ClientID       string
@@ -65,6 +67,7 @@ type SaveLoginAppInput struct {
 	UserinfoURL    string
 	IDClaim        string
 	Scopes         string
+	AgentID        string
 }
 
 // loginAppRow 是 oauth_login_apps 的一行内存镜像(secret 为密文)。
@@ -82,11 +85,12 @@ type loginAppRow struct {
 	userinfoURL    string
 	idClaim        string
 	scopes         string
+	agentID        string
 }
 
 // loginAppColumns 是读一行的列序(与 scanLoginApp 严格对应;两处 SELECT 共用,防漂移)。
 const loginAppColumns = `provider, client_id, client_secret_ciphertext, base_url, allowed_domains,
- enabled, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes`
+ enabled, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes, agent_id`
 
 // scanLoginApp 把一行结果扫成 loginAppRow。
 func scanLoginApp(scan func(dest ...any) error) (loginAppRow, error) {
@@ -97,7 +101,7 @@ func scanLoginApp(scan func(dest ...any) error) (loginAppRow, error) {
 	)
 	err := scan(&row.provider, &row.clientID, &row.sealed, &row.baseURL, &domainsRaw,
 		&enabledInt, &row.updatedAt, &row.discoveryURL, &row.authorizeURL,
-		&row.tokenURL, &row.userinfoURL, &row.idClaim, &row.scopes)
+		&row.tokenURL, &row.userinfoURL, &row.idClaim, &row.scopes, &row.agentID)
 	if err != nil {
 		return loginAppRow{}, err
 	}
@@ -180,16 +184,19 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 			return nil, derr
 		}
 	}
-	// OIDC 那一组字段:git 平台一律清空(否则配置页会残留一组永远不生效的端点),
+	// 非 git 身份源才有的这组字段:git 平台一律清空(否则配置页会残留一组永远不生效的端点),
 	// provider=oidc 则先把端点解析一遍再落库 —— 发现文档填错、地址不是 http(s)、
 	// 三个端点凑不齐,都该在「保存」这一刀就说清楚,而不是等访客点登录被跳回来说不明原因。
+	// 钉钉/飞书/企业微信同理:覆盖地址形态不对、企微少 AgentId,也都在保存期就报。
 	discoveryURL := strings.TrimSpace(in.DiscoveryURL)
 	authorizeURL := strings.TrimSpace(in.AuthorizeURL)
 	tokenURL := strings.TrimSpace(in.TokenURL)
 	userinfoURL := strings.TrimSpace(in.UserinfoURL)
 	idClaim := strings.TrimSpace(in.IDClaim)
 	scopes := strings.TrimSpace(in.Scopes)
-	if provider == ProviderOIDC {
+	agentID := strings.TrimSpace(in.AgentID)
+	switch {
+	case provider == ProviderOIDC:
 		probe := loginAppRow{
 			discoveryURL: discoveryURL, authorizeURL: authorizeURL,
 			tokenURL: tokenURL, userinfoURL: userinfoURL,
@@ -203,8 +210,26 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		if scopes == "" {
 			scopes = defaultOidcScopes
 		}
-	} else {
-		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes = "", "", "", "", "", ""
+		agentID = ""
+	case isPlatformProvider(provider):
+		// 这三家的地址与主键字段名由平台定死:发现文档、自定义主键声明都用不上,清空别留残渣。
+		// scope 留空 = 用平台默认(见 resolvePlatformProvider),不把默认值写进库里,
+		// 将来改默认才不用洗数据。企业微信的扫码地址压根没有 scope 参数,一并清空。
+		discoveryURL, idClaim = "", ""
+		if provider != ProviderWeCom {
+			agentID = ""
+		} else {
+			scopes = ""
+		}
+		probe := loginAppRow{
+			provider: provider, authorizeURL: authorizeURL, tokenURL: tokenURL,
+			userinfoURL: userinfoURL, agentID: agentID,
+		}
+		if verr := validatePlatformApp(probe); verr != nil {
+			return nil, verr
+		}
+	default:
+		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes, agentID = "", "", "", "", "", "", ""
 	}
 	domains, err := normalizeDomains(in.AllowedDomains)
 	if err != nil {
@@ -246,13 +271,14 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO oauth_login_apps
 		   (provider, client_id, client_secret_ciphertext, base_url, allowed_domains, enabled,
-		    created_at, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `+
+		    created_at, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes, agent_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `+
 			store.UpsertSuffix(store.DialectOf(s.db), []string{"provider"},
 				[]string{"client_id", "client_secret_ciphertext", "base_url", "allowed_domains", "enabled",
-					"updated_at", "discovery_url", "authorize_url", "token_url", "userinfo_url", "id_claim", "scopes"}),
+					"updated_at", "discovery_url", "authorize_url", "token_url", "userinfo_url", "id_claim",
+					"scopes", "agent_id"}),
 		provider, clientID, sealed, baseURL, joinDomains(domains), enabled, now, now,
-		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes,
+		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes, agentID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: upsert login app: %w", err)
@@ -262,7 +288,7 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		provider: provider, clientID: clientID, sealed: sealed, baseURL: baseURL,
 		allowedDomains: domains, enabled: in.Enabled, updatedAt: now,
 		discoveryURL: discoveryURL, authorizeURL: authorizeURL, tokenURL: tokenURL,
-		userinfoURL: userinfoURL, idClaim: idClaim, scopes: scopes,
+		userinfoURL: userinfoURL, idClaim: idClaim, scopes: scopes, agentID: agentID,
 	})
 	return &cfg, nil
 }
@@ -278,6 +304,13 @@ func (s *service) LoginAuthorizeURL(ctx context.Context, provider, state, redire
 	endpoints, err := s.loginProvider(ctx, *row)
 	if err != nil {
 		return "", err
+	}
+	if endpoints.flow != nil {
+		// 平台自己的授权地址:参数名与标准 RFC 6749 那套不一样(企微用 appid/agentid,
+		// 钉钉还要 prompt=consent)。这里刻意不解密 secret —— 跳转地址用不着它。
+		return endpoints.flow.authorizeURL(endpoints, platformCreds{
+			clientID: row.clientID, agentID: endpoints.AgentID,
+		}, state, redirectURI)
 	}
 	return buildAuthorizeURL(endpoints, row.clientID, endpoints.loginScope(), state, redirectURI)
 }
@@ -302,14 +335,25 @@ func (s *service) ExchangeIdentity(ctx context.Context, provider, code, redirect
 	if err != nil {
 		return nil, err
 	}
-	accessToken, err := requestToken(ctx, s.client, endpoints, row.clientID, secret, code, redirectURI)
-	secret = ""
-	if err != nil {
-		return nil, err
+
+	var id Identity
+	if endpoints.flow != nil {
+		// 钉钉/飞书/企业微信:换令牌与取身份都在平台自己的链路里走完(形态各家一套,
+		// 见 platform.go),access_token 只在 flow 调用栈内活着,同样不落库、不回吐。
+		id, err = endpoints.flow.identity(ctx, s.client, endpoints, platformCreds{
+			clientID: row.clientID, clientSecret: secret, agentID: endpoints.AgentID,
+		}, code, redirectURI)
+	} else {
+		var accessToken string
+		accessToken, err = requestToken(ctx, s.client, endpoints, row.clientID, secret, code, redirectURI)
+		if err == nil {
+			// accessToken 到此为止:解完身份就丢,既不返回也不落 vault。
+			id, err = fetchIdentity(ctx, s.client, endpoints, accessToken)
+		}
+		accessToken = ""
 	}
-	// accessToken 到此为止:解完身份就丢,既不返回也不落 vault。
-	id, err := fetchIdentity(ctx, s.client, endpoints, accessToken)
-	accessToken = ""
+	// 明文 secret 用完即弃(防 GC 前残留被 core dump / swap 捕获)。
+	secret = ""
 	if err != nil {
 		return nil, err
 	}
@@ -341,15 +385,20 @@ func (s *service) loadLoginApp(ctx context.Context, provider string) (*loginAppR
 // loginProvider 据登录应用行解析出可用的端点模板。
 //   - git 四家:沿用 presets / base_url 推导,与「取仓库凭据」那条流同一套地址。
 //   - oidc:端点只能问服务器自己(发现文档 + 显式覆盖),所以这里要 ctx 与 http.Client。
+//   - 钉钉/飞书/企业微信:端点用平台预设(配置页可逐项覆盖),并带上各自的异形链路 flow。
 func (s *service) loginProvider(ctx context.Context, row loginAppRow) (Provider, error) {
-	if row.provider != ProviderOIDC {
+	switch {
+	case row.provider == ProviderOIDC:
+		endpoints, err := resolveOidcEndpoints(ctx, s.client, row)
+		if err != nil {
+			return Provider{}, err
+		}
+		return oidcProvider(endpoints, row.scopes, row.idClaim), nil
+	case isPlatformProvider(row.provider):
+		return resolvePlatformProvider(row)
+	default:
 		return resolveProvider(row.provider, row.baseURL)
 	}
-	endpoints, err := resolveOidcEndpoints(ctx, s.client, row)
-	if err != nil {
-		return Provider{}, err
-	}
-	return oidcProvider(endpoints, row.scopes, row.idClaim), nil
 }
 
 // toLoginAppConfig 组装对外视图:密文只以固定掩码呈现(不解密)。
@@ -367,6 +416,7 @@ func toLoginAppConfig(r loginAppRow) LoginAppConfig {
 		UserinfoURL:    r.userinfoURL,
 		IDClaim:        r.idClaim,
 		Scopes:         r.scopes,
+		AgentID:        r.agentID,
 	}
 	if len(r.sealed) > 0 {
 		cfg.MaskedSecret = "••••••"
