@@ -17,7 +17,17 @@ const viewerCaps: Capabilities = {
   settings: false,
   kinds: { project: 'view', run: 'view', server: 'view', kube_cluster: 'view' },
 }
-const admin: SessionUser = { username: 'admin', role: 'admin', capabilities: adminCaps }
+// 本地档案两列(显示名/邮箱)都可能为空 —— 老账号还没回填,展示层负责回退,夹具默认给空串。
+function sessionUser(
+  username: string,
+  role: SessionUser['role'],
+  capabilities: Capabilities,
+  displayName = '',
+  email = '',
+): SessionUser {
+  return { username, role, capabilities, displayName, email }
+}
+const admin: SessionUser = sessionUser('admin', 'admin', adminCaps)
 
 describe('session store', () => {
   beforeEach(() => {
@@ -81,10 +91,12 @@ describe('session store', () => {
   it('setUser primes the cache so a later ensureSession does not fetch', async () => {
     const getSpy = vi.spyOn(http, 'get')
     const store = useSessionStore()
-    store.setUser({ username: 'root', role: 'user', capabilities: userCaps })
+    // 带档案的夹具:setUser 之后缓存里必须仍是同一份(显示名/邮箱不能被这一步丢掉)。
+    const root = sessionUser('root', 'user', userCaps, '傅兵', 'root@example.com')
+    store.setUser(root)
 
     const r = await store.ensureSession()
-    expect(r).toEqual({ kind: 'ok', user: { username: 'root', role: 'user', capabilities: userCaps } })
+    expect(r).toEqual({ kind: 'ok', user: root })
     expect(getSpy).not.toHaveBeenCalled()
   })
 
@@ -107,7 +119,7 @@ describe('session store', () => {
       expect(store.canSettings).toBe(true)
       expect(store.meets({ settings: true })).toBe(true)
 
-      store.setUser({ username: 'dev', role: 'user', capabilities: userCaps })
+      store.setUser(sessionUser('dev', 'user', userCaps))
       expect(store.canSettings).toBe(false)
       expect(store.meets({ settings: true })).toBe(false)
       // 功能轴不封顶 user:四类资源都能 operate
@@ -116,7 +128,7 @@ describe('session store', () => {
 
     it('只读角色过不了 server/operate,所以运维终端的路由门会拦下', () => {
       const store = useSessionStore()
-      store.setUser({ username: 'watch', role: 'viewer', capabilities: viewerCaps })
+      store.setUser(sessionUser('watch', 'viewer', viewerCaps))
       expect(store.can('server', 'operate')).toBe(false)
       expect(store.meets({ kind: 'server', act: 'operate' })).toBe(false)
       expect(store.can('server', 'view')).toBe(true)

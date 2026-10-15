@@ -1,7 +1,7 @@
 /**
  * Auth API — aligns to frozen 1.2 contract.
  *
- * GET  /api/auth/session → { username, role, capabilities } | 401
+ * GET  /api/auth/session → { username, role, capabilities, displayName, email } | 401
  * POST /api/auth/login   → { username, role, capabilities } | 401 | 429
  * POST /api/auth/logout  → 204
  *
@@ -71,10 +71,19 @@ export interface Capabilities {
   perms?: PermId[]
 }
 
+/**
+ * 会话载荷。
+ *
+ * `displayName` / `email` 是**本地档案**(users 表两列):首次由平台身份写入,之后归本人在
+ * 「账户设置」里编辑,后续登录不会覆盖 —— 与 `user_identities` 里那份「平台快照」是两回事,
+ * 那里存的才是平台侧随时可能变的名字/邮箱。两列都可能空(老账号还没回填),展示层据此回退。
+ */
 export interface SessionUser {
   username: string
   role: UserRole
   capabilities: Capabilities
+  displayName: string
+  email: string
 }
 
 /**

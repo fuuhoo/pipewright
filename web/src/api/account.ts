@@ -11,6 +11,8 @@
  *   404 session_not_found
  * GET    /api/account/identities       → IdentityBinding[]      (外部 git 身份绑定)
  * DELETE /api/account/identities/:id   → 204  (needs CSRF;404 = 不是你的绑定)
+ * POST   /api/account/profile          → { displayName, email }  本地档案(需 CSRF)
+ *   两列都可省略,但至少给一个;后端回的是**归一化后**的值(空白折叠 + 按字符截断)。
  */
 
 import { http } from './http'
@@ -69,4 +71,28 @@ export async function listIdentities(): Promise<IdentityBinding[]> {
 
 export async function unbindIdentity(id: string): Promise<void> {
   return http.delete<void>(`/api/account/identities/${id}`)
+}
+
+/**
+ * 本地档案(显示名 + 邮箱)。
+ *
+ * 这两个字段存在 users 表上,归本人编辑:平台身份首次建号时写进来一份,之后登录**不再覆盖**
+ * —— 想改的去「外部身份绑定」那张表看,那才是平台快照。后端会把连续空白折成一个空格并按长度
+ * 截断,所以返回值才是权威,调用方拿它回填本地会话缓存。
+ *
+ * 出错口径:400 输入不合法(邮箱格式/两个字段都没给)、403 缺 CSRF、409 旧会话未绑定账号、
+ * 401 未登录。
+ */
+export interface ProfileInput {
+  displayName?: string
+  email?: string
+}
+
+export interface Profile {
+  displayName: string
+  email: string
+}
+
+export async function updateProfile(input: ProfileInput): Promise<Profile> {
+  return http.post<Profile>('/api/account/profile', input)
 }
