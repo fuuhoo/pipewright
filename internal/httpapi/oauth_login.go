@@ -88,14 +88,16 @@ type oauthLoginAppDTO struct {
 	Configured     bool     `json:"configured"`
 	UpdatedAt      *string  `json:"updatedAt"`
 	CallbackURL    string   `json:"callbackUrl"`
-	// 下面六项只对 provider=oidc 有值:端点(发现文档 + 三项覆盖)、主键声明、scope 串。
-	// git 平台永远返回空串 —— 前端据此决定这组字段显不显示,不用自己再判一遍枚举。
+	// 下面七项只对非 git 身份源有值:端点(发现文档 + 三项覆盖)、主键声明、scope 串、
+	// 企业微信的 AgentId。git 平台永远返回空串 —— 前端据此决定哪组字段显不显示,
+	// 不用自己再判一遍枚举。
 	DiscoveryURL string `json:"discoveryUrl"`
 	AuthorizeURL string `json:"authorizeUrl"`
 	TokenURL     string `json:"tokenUrl"`
 	UserinfoURL  string `json:"userinfoUrl"`
 	IDClaim      string `json:"idClaim"`
 	Scopes       string `json:"scopes"`
+	AgentID      string `json:"agentId"`
 }
 
 // identityBindingDTO 是一条外部身份映射(账户页;camelCase;无 token、无口令)。
@@ -119,6 +121,8 @@ func toIdentityBindingDTO(b *identity.Binding) identityBindingDTO {
 }
 
 // loginProviderLabel 给登录页一个不必前端拼的名字:内置档用官方名,自建档用实例主机名。
+// 三家国内平台用中文官方名 —— 登录按钮上「钉钉」比「dingtalk」好认,
+// 而这三家压根没有自建实例可借主机名命名。
 func loginProviderLabel(cfg oauth.LoginAppConfig) string {
 	switch cfg.Provider {
 	case oauth.ProviderGitee:
@@ -130,6 +134,12 @@ func loginProviderLabel(cfg oauth.LoginAppConfig) string {
 	case oauth.ProviderOIDC:
 		// OIDC 没有品牌名可借,也不该拿 baseURL 当名字(它压根不用 baseURL)。
 		return "OIDC"
+	case oauth.ProviderDingTalk:
+		return "钉钉"
+	case oauth.ProviderFeishu:
+		return "飞书"
+	case oauth.ProviderWeCom:
+		return "企业微信"
 	}
 	if u, err := url.Parse(cfg.BaseURL); err == nil && u.Host != "" {
 		return u.Host
@@ -226,7 +236,7 @@ func makeOAuthLoginCallbackHandler(d oauthLoginDeps) http.HandlerFunc {
 			redirectLoginError(w, r, provider, "invalid_state")
 			return
 		}
-		code := q.Get("code")
+		code := callbackCode(q)
 		if code == "" {
 			// provider 侧「用户拒绝授权」也走这条:带 error 参数回来,但没有任何 code。
 			reason := "missing_code"
@@ -469,14 +479,15 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			ClientSecret   *string   `json:"clientSecret"`
 			AllowedDomains *[]string `json:"allowedDomains"`
 			Enabled        bool      `json:"enabled"`
-			// OIDC 端点是「整份覆盖」语义:每次保存都以这几个值为准,省略即清空。
-			// 只有 provider=oidc 会用到,git 档位服务端一律忽略并落空串。
+			// 非 git 身份源的端点/scope/AgentId 是「整份覆盖」语义:每次保存都以这几个值为准,
+			// 省略即清空。git 档位服务端一律忽略并落空串。
 			DiscoveryURL string `json:"discoveryUrl"`
 			AuthorizeURL string `json:"authorizeUrl"`
 			TokenURL     string `json:"tokenUrl"`
 			UserinfoURL  string `json:"userinfoUrl"`
 			IDClaim      string `json:"idClaim"`
 			Scopes       string `json:"scopes"`
+			AgentID      string `json:"agentId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -495,6 +506,7 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			UserinfoURL:    req.UserinfoURL,
 			IDClaim:        req.IDClaim,
 			Scopes:         req.Scopes,
+			AgentID:        req.AgentID,
 		})
 		if err != nil {
 			// 白名单项非法是保存期校验,报错带原文(哪一项写错了,配的人一眼能看到)。
@@ -527,6 +539,7 @@ func toLoginAppDTO(c oauth.LoginAppConfig, r *http.Request) oauthLoginAppDTO {
 		UserinfoURL:    c.UserinfoURL,
 		IDClaim:        c.IDClaim,
 		Scopes:         c.Scopes,
+		AgentID:        c.AgentID,
 	}
 	if c.UpdatedAt != nil {
 		s := c.UpdatedAt.UTC().Format(time.RFC3339)
@@ -543,6 +556,16 @@ func oauthLoginCallbackURL(r *http.Request, provider string) string {
 // oauthVaultCallbackURL 是「已登录」两条流(连接凭据 / 绑定账号)共用的回调地址。
 func oauthVaultCallbackURL(r *http.Request, provider string) string {
 	return requestOrigin(r) + "/api/oauth/" + url.PathEscape(provider) + "/callback"
+}
+
+// callbackCode 取出回调里的授权码:先认标准的 code,再认钉钉的 authCode。
+// 钉钉新版扫码按官方文档回 authCode(各家实现里也见过 code),两种都接:
+// 只认 code 会让钉钉用户「授权页一切正常,回来报缺少授权码」,而这两串本就是同一个东西。
+func callbackCode(q url.Values) string {
+	if code := strings.TrimSpace(q.Get("code")); code != "" {
+		return code
+	}
+	return strings.TrimSpace(q.Get("authCode"))
 }
 
 // oauthBindKey 取回浏览器上的登录 nonce;没有就现生成一个并写 cookie。

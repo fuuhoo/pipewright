@@ -48,7 +48,8 @@ func toOAuthAppDTO(c oauth.AppConfig) oauthAppDTO {
 func writeOAuthError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, oauth.ErrInvalidProvider):
-		writeError(w, http.StatusUnprocessableEntity, "invalid_provider", "provider 只能为 gitee、github、gitlab 或 custom")
+		writeError(w, http.StatusUnprocessableEntity, "invalid_provider",
+			"provider 不在支持范围内:仓库凭据只认 gitee、github、gitlab、custom;登录身份源另加 oidc、dingtalk、feishu、wecom")
 	case errors.Is(err, oauth.ErrBaseURLRequired):
 		writeError(w, http.StatusUnprocessableEntity, "base_url_required", "自建(custom)provider 必须配置 baseUrl")
 	case errors.Is(err, oauth.ErrClientIDRequired):
@@ -60,6 +61,12 @@ func writeOAuthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, oauth.ErrOidcConfigInvalid):
 		writeError(w, http.StatusUnprocessableEntity, "oidc_config_invalid",
 			"OIDC 端点没解析齐:填发现文档地址,或把授权/兑换/身份三个端点都填上(必须是 http(s) 地址)")
+	case errors.Is(err, oauth.ErrAgentIDRequired):
+		writeError(w, http.StatusUnprocessableEntity, "agent_id_required",
+			"企业微信要填 AgentId(自建应用的 AgentId,在企业微信应用详情里)")
+	case errors.Is(err, oauth.ErrPlatformConfigInvalid):
+		writeError(w, http.StatusUnprocessableEntity, "platform_config_invalid",
+			"端点覆盖必须是 http(s) 地址,不要带账号密码;留空即用平台默认地址")
 	case errors.Is(err, oauth.ErrVaultUnconfigured):
 		writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key,无法加密或读取 client secret")
 	default:
