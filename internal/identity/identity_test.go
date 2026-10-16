@@ -184,6 +184,12 @@ func TestSuggestUsernameStaysInsideTheAllowedCharset(t *testing.T) {
 			id:   &oauth.Identity{Provider: oauth.ProviderGitLab, ExternalID: "42", Login: " Fu Bin "},
 			want: "FuBin",
 		},
+		{
+			// IdP 只回邮箱时的退路:'@' 换成点,别把域名黏到名字后面冒充邮箱。
+			name: "邮箱登录名把 @ 换成点",
+			id:   &oauth.Identity{Provider: oauth.ProviderOIDC, ExternalID: "uuid-1", Login: "fuhongbin@swinfo.com.cn"},
+			want: "fuhongbin.swinfo.com.cn",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

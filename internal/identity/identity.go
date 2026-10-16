@@ -368,6 +368,11 @@ func suggestUsername(id *oauth.Identity) string {
 
 // sanitizeUsernameChars 逐字过滤成 users.username 认的字符集(字母数字与 . _ -),
 // 截到 64 字符 —— 与 validateUsername 同一套规则,免得建号时才被撞回来。
+//
+// '@' 换成 '.' 而不是直接删:平台只给邮箱时(如 IdP 没回 nickname),删字符会把
+// alice@corp.example.com 洗成 alicecorp.example.com —— 一串「看着像邮箱其实不是」的
+// 名字,在列表里和真邮箱并排显示根本分不清。换成点既留得住可读性,也留得住不同域名
+// 之间的区分度。
 func sanitizeUsernameChars(s string) string {
 	var b strings.Builder
 	for _, r := range strings.TrimSpace(s) {
@@ -375,6 +380,8 @@ func sanitizeUsernameChars(s string) string {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
 			r == '.', r == '_', r == '-':
 			b.WriteRune(r)
+		case r == '@':
+			b.WriteRune('.')
 		}
 		if b.Len() >= 64 {
 			break
