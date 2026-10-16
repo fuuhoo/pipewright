@@ -147,11 +147,15 @@ func oidcProvider(endpoints oidcEndpoints, scopes, idClaim string) Provider {
 // oidcIdentity 从 userinfo 的 JSON 解出身份。
 // 主键恒取 idClaim(默认 sub)且**不回退到登录名**:声明缺失就交给调用方的
 // ErrIdentityUnavailable —— 按 preferred_username 认人正是 Jpom 那套的接管面。
+//
+// Login 只是展示名与建号建议,不参与认人,所以各家叫法都得认:OIDC 标准叫
+// preferred_username(Keycloak/Authentik),GitLab 的 claims_supported 里根本没有这一项,
+// 登录名放在 nickname。少了 nickname 就会一路回退到 email,把「邮箱去掉 @」当成账号。
 func oidcIdentity(m map[string]any, idClaim string) Identity {
 	email := firstStringField(m, "email")
 	return Identity{
 		ExternalID: claimString(m, idClaim),
-		Login:      firstStringField(m, "preferred_username", "email", "name"),
+		Login:      firstStringField(m, "preferred_username", "nickname", "email", "name"),
 		Email:      email,
 		Name:       firstStringField(m, "name", "nickname"),
 	}

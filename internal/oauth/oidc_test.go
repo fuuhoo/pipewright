@@ -220,6 +220,45 @@ func TestOidcCustomIDClaim(t *testing.T) {
 	}
 }
 
+// TestOidcGitlabNicknameIsTheLogin:GitLab 的 claims_supported 里没有 preferred_username,
+// 登录名放在 nickname。少了这一档就会回退到 email,把「邮箱去掉 @」当成本地账号名。
+// 主键仍只认 sub —— nickname 可以被本人改,拿它认人才是接管面。
+func TestOidcGitlabNicknameIsTheLogin(t *testing.T) {
+	stub := newStubOidc(t, `{"sub":"gid-77","nickname":"fuuhoo","name":"付洪彬","email":"fuhongbin@swinfo.com.cn"}`)
+	svc, _, _ := newLoginService(t)
+	saveOidcApp(t, svc, SaveLoginAppInput{DiscoveryURL: stub.discoveryURL()})
+
+	id, err := svc.ExchangeIdentity(ctx(), ProviderOIDC, "code-1", oidcCallback)
+	if err != nil {
+		t.Fatalf("ExchangeIdentity: %v", err)
+	}
+	if id.ExternalID != "gid-77" {
+		t.Fatalf("主键应取 sub,得到 %q", id.ExternalID)
+	}
+	if id.Login != "fuuhoo" {
+		t.Fatalf("登录名应取 nickname,得到 %q", id.Login)
+	}
+	if id.Name != "付洪彬" || id.Email != "fuhongbin@swinfo.com.cn" {
+		t.Fatalf("显示名/邮箱不该串档: name=%q email=%q", id.Name, id.Email)
+	}
+}
+
+// TestOidcPreferredUsernameWinsOverNickname:两家都给时按 OIDC 标准声明优先,
+// nickname 只是 GitLab 那一路的补位。
+func TestOidcPreferredUsernameWinsOverNickname(t *testing.T) {
+	stub := newStubOidc(t, `{"sub":"s-9","preferred_username":"std","nickname":"alt","email":"e@corp.example.com"}`)
+	svc, _, _ := newLoginService(t)
+	saveOidcApp(t, svc, SaveLoginAppInput{DiscoveryURL: stub.discoveryURL()})
+
+	id, err := svc.ExchangeIdentity(ctx(), ProviderOIDC, "code-1", oidcCallback)
+	if err != nil {
+		t.Fatalf("ExchangeIdentity: %v", err)
+	}
+	if id.Login != "std" {
+		t.Fatalf("preferred_username 应压过 nickname,得到 %q", id.Login)
+	}
+}
+
 // TestOidcNumericSubNormalized 与 git 档同形:数字型主键归一成字符串,别写出 "1" vs "1.0"。
 func TestOidcNumericSubNormalized(t *testing.T) {
 	stub := newStubOidc(t, `{"sub":12345,"name":"Num"}`)
