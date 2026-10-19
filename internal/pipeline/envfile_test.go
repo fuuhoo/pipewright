@@ -109,6 +109,13 @@ func TestValidateJobEnv(t *testing.T) {
 	script := StepTypeScript
 	buildFile := map[string]any{ConfigKeyArtifactType: ArtifactFile}
 	buildImage := map[string]any{ConfigKeyArtifactType: ArtifactImage}
+	nacosOK := map[string]any{
+		"envSource":               EnvSourceNacos,
+		ConfigKeyNacosBaseURL:     "http://127.0.0.1:8848/nacos",
+		ConfigKeyNacosDataID:      "prod.env",
+		ConfigKeyNacosGroup:       "DEFAULT_GROUP",
+		ConfigKeyNacosNamespaceID: "dev",
+	}
 
 	cases := []struct {
 		name    string
@@ -125,6 +132,18 @@ func TestValidateJobEnv(t *testing.T) {
 		{name: "粘贴空正文", jobType: script, cfg: map[string]any{"envSource": EnvSourcePaste, "envText": "  \n "}, wantErr: true},
 		{name: "正文超限", jobType: script, cfg: map[string]any{"envSource": EnvSourcePaste, "envText": strings.Repeat("A=", EnvMaxBytes+1)}, wantErr: true},
 		{name: "来源不认识", jobType: script, cfg: map[string]any{"envSource": "ftp"}, wantErr: true},
+		{name: "Nacos 坐标齐全", jobType: script, cfg: nacosOK},
+		{name: "Nacos 分组留空也能存(归一成默认分组)", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosGroup: ""})},
+		{name: "Nacos 命名空间留空也能存(public)", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosNamespaceID: ""})},
+		{name: "Nacos 凭据留空也能存(未开鉴权)", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosCredentialID: ""})},
+		{name: "Nacos 没填地址", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosBaseURL: ""}), wantErr: true},
+		{name: "Nacos 地址是元数据段", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosBaseURL: "http://169.254.169.254/nacos"}), wantErr: true},
+		{name: "Nacos 地址把密码写进 URL", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosBaseURL: "http://nacos:pw@127.0.0.1:8848"}), wantErr: true},
+		{name: "Nacos 地址带了查询串", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosBaseURL: "http://127.0.0.1:8848/nacos?a=1"}), wantErr: true},
+		{name: "Nacos 地址不是 http", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosBaseURL: "grpc://127.0.0.1:8848"}), wantErr: true},
+		{name: "Nacos 没填 Data ID", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosDataID: ""}), wantErr: true},
+		{name: "Nacos Data ID 带空白", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosDataID: "prod env"}), wantErr: true},
+		{name: "Nacos 分组超长", jobType: script, cfg: mergeCfg(nacosOK, map[string]any{ConfigKeyNacosGroup: strings.Repeat("G", nacosFieldMaxLen+1)}), wantErr: true},
 		{name: "构建任务产物档按脚本跑,放行", jobType: JobTypeBuild, cfg: mergeCfg(buildFile, map[string]any{"envSource": EnvSourcePaste, "envText": "A=1"})},
 		{name: "构建任务镜像档没有落点", jobType: JobTypeBuild, cfg: mergeCfg(buildImage, map[string]any{"envSource": EnvSourcePaste, "envText": "A=1"}), wantErr: true},
 		{name: "部署节点不是脚本类", jobType: "deploy_host", cfg: map[string]any{"envSource": EnvSourcePaste, "envText": "A=1"}, wantErr: true},
@@ -159,4 +178,86 @@ func mergeCfg(base, extra map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// 归一化只在这里做一次:默认分组若客户端也写一份,表单存空值时两边会读到不同的配置。
+func TestJobEnvRefNacosNormalization(t *testing.T) {
+	got := JobEnvRef(map[string]any{
+		"envSource":                EnvSourceNacos,
+		ConfigKeyNacosBaseURL:      "  http://10.0.0.9:8848/nacos  ",
+		ConfigKeyNacosDataID:       " prod-api.env ",
+		ConfigKeyNacosGroup:        "  ",
+		ConfigKeyNacosNamespaceID:  " dev ",
+		ConfigKeyNacosCredentialID: " c7 ",
+	})
+	if got.Nacos.Group != NacosDefaultGroup {
+		t.Errorf("分组空值归一 = %q,要 %q", got.Nacos.Group, NacosDefaultGroup)
+	}
+	for k, v := range map[string]string{"地址": got.Nacos.BaseURL, "Data ID": got.Nacos.DataID, "命名空间": got.Nacos.NamespaceID, "凭据": got.Nacos.CredentialID} {
+		if v != strings.TrimSpace(v) || strings.Contains(v, "  ") {
+			t.Errorf("%s 没被 trim:%q", k, v)
+		}
+	}
+	if got.Nacos.BaseURL != "http://10.0.0.9:8848/nacos" {
+		t.Errorf("地址 = %q", got.Nacos.BaseURL)
+	}
+	// 非 Nacos 来源也照填坐标:调用方少读一次 cfg,不该出现「只有某来源才填」的分支。
+	if none := JobEnvRef(map[string]any{"envSource": EnvSourceRepo, ConfigKeyNacosGroup: ""}); none.Nacos.Group != NacosDefaultGroup {
+		t.Errorf("repo 来源的分组默认值也该归一,得 %q", none.Nacos.Group)
+	}
+	if JobEnvRef(nil).Source != EnvSourceNone {
+		t.Error("nil config 要当「不导入」")
+	}
+}
+
+func TestNacosBaseURLIssue(t *testing.T) {
+	ok := []string{
+		"http://127.0.0.1:8848/nacos",     // 本机自建:回环必须放行,否则本地自测这条路死掉
+		"http://10.0.0.9:8848",            // 私网:平台本就跑在内网
+		"https://nacos.example.com/nacos", // 公网 + TLS
+		"https://192.168.1.20:8848/base/nacos",
+	}
+	for _, u := range ok {
+		if issue := NacosBaseURLIssue(u); issue != "" {
+			t.Errorf("%q 该放行,得:%s", u, issue)
+		}
+	}
+	bad := map[string]string{
+		"":                         "空",
+		"   ":                      "空白也算空",
+		"nacos:8848":               "没协议",
+		"ftp://127.0.0.1":          "非 http",
+		"http://169.254.169.254":   "云元数据",
+		"http://0.0.0.0:8848":      "未指定地址",
+		"http://nacos:pw@10.0.0.9": "URL 里带凭据",
+		"http://10.0.0.9?a=1":      "带查询串",
+		"http://10.0.0.9#frag":     "带锚点",
+		"http://10.0.0. 9":         "含空白",
+		"http://10.0.0.9/" + strings.Repeat("p", nacosBaseURLMaxLen): "超长",
+	}
+	for u, why := range bad {
+		if issue := NacosBaseURLIssue(u); issue == "" {
+			t.Errorf("%q 该拒(%s),却放行了", u, why)
+		}
+	}
+}
+
+// 配置中心里 YAML/JSON 是常态:读回来一条 KEY=VALUE 都没有就是「构建成功但变量全空」的假绿,必须判出来。
+func TestEnvBodyReadIssue(t *testing.T) {
+	ok := []string{"A=1\n", "export A=1\n", "BAD LINE\nGOOD=1\n"}
+	for _, body := range ok {
+		if issue := EnvBodyReadIssue(body); issue != "" {
+			t.Errorf("%q 能用却报:%s", body, issue)
+		}
+	}
+	bad := []string{"", "  \n\t\n", "# 全是注释,一条变量也没有\n", "server:\n  port: 8080\n", `{"A":"1"}`}
+	for _, body := range bad {
+		if issue := EnvBodyReadIssue(body); issue == "" {
+			t.Errorf("%q 该判成用不了", body)
+		}
+	}
+	// YAML 那条话术要指路:改成 properties 或用粘贴来源。
+	if issue := EnvBodyReadIssue("a:\n  b: 1\n"); !strings.Contains(issue, "properties") {
+		t.Errorf("话术要给出路:%s", issue)
+	}
 }
