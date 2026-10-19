@@ -261,12 +261,18 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 						return ErrBuildFailed
 					}
 					// 注入顺序:运行参数 → 上游 job 输出(carriedEnv)→ 流水线级变量(「变量与缓存」,
-					// 含 secret,vault 即取即用)→ job 自身 env(后者覆盖同名)→ PIPEWRIGHT_ENV(系统,末位防覆盖)。
+					// 含 secret,vault 即取即用)→ job 自身 env → 节点导入的 env(同名覆盖前面所有层)
+					// → PIPEWRIGHT_ENV(系统,末位防覆盖)。
 					base := append(runParamsAsEnv(r.Trigger.Params), carriedEnv...)
 					if settings != nil && len(settings.Build.Vars) > 0 {
 						base = append(base, settings.Build.Vars...)
 					}
 					step.Env = append(base, step.Env...)
+					if err := applyJobEnv(&step, jb, workspace, func(stream, line string) { _ = jrep.Log(ctx, stream, line) }); err != nil {
+						_ = jrep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
+						_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
+						return ErrBuildFailed
+					}
 					step.Env = append(step.Env, pipewrightEnvVar())
 					// 旁挂服务网络:脚本容器加入,按服务名互访。
 					if svcNetwork != "" {
@@ -523,7 +529,7 @@ func (b *Builder) cloneJobWorkspace(ctx context.Context, r *run.Run, proj *proje
 
 // runScriptJobIsolated 在独立工作区内执行单个 script 类 job(DAG 路径用)。返回该 job 写入
 // $PIPEWRIGHT_ENV 的变量(供下游 needs 合并)。env 注入序与既有串行路径一致:
-// 运行参数 → 上游 job 输出 → job 自身 env → PIPEWRIGHT_ENV。产物 + 测试报告逐 job 收集/门禁。
+// 运行参数 → 上游 job 输出 → job 自身 env → 节点导入的 env → PIPEWRIGHT_ENV。产物 + 测试报告逐 job 收集/门禁。
 func (b *Builder) runScriptJobIsolated(
 	ctx context.Context,
 	sink *reporterSink,
@@ -549,13 +555,17 @@ func (b *Builder) runScriptJobIsolated(
 		return nil, ErrBuildFailed
 	}
 	// 注入顺序:运行参数 → 上游 job 输出 → 流水线级变量(「变量与缓存」,含 secret,vault 即取即用)
-	// → job 自身 env(后者覆盖同名)。此前流水线级变量只注入镜像构建路径、不到 script 步骤(漏),
+	// → job 自身 env → 节点导入的 env(同名覆盖前面所有层)。此前流水线级变量只注入镜像构建路径、不到 script 步骤(漏),
 	// 导致脚本节点拿不到「变量与缓存」里配的 secret(如发版的 GITHUB_TOKEN)。本修复补齐。
 	base := append(runParamsAsEnv(r.Trigger.Params), upstreamEnv...)
 	if settings != nil && len(settings.Build.Vars) > 0 {
 		base = append(base, settings.Build.Vars...)
 	}
 	step.Env = append(base, step.Env...)
+	if err := applyJobEnv(&step, jb, ws, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
+		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
+		return nil, ErrBuildFailed
+	}
 	step.Env = append(step.Env, pipewrightEnvVar())
 	if svcNetwork != "" {
 		step.Resource.Network = svcNetwork

@@ -31,7 +31,10 @@ func pipewrightEnvVar() pipeline.BuildVar {
 }
 
 // captureStageEnv 读取并清空工作区根的步骤输出文件,解析 KEY=VALUE 行为 BuildVar(明文,非 secret)。
-// 文件不存在 / 空 → 返回 nil(无输出)。读失败 / 行非法宽松跳过(绝不阻断构建)。
+// 文件不存在 / 空 → 返回 nil(无输出)。行非法宽松跳过(绝不阻断构建)。
+//
+// 解析走 pipeline.ParseEnvBody —— 与「节点导入 env 文件」同一份规则,否则会出现同一份文件
+// 在这里能吃、在节点上不能吃(反之亦然),排查时根本看不出是解析器分了家。
 func captureStageEnv(ctx context.Context, rep dagrun.StageReporter, workspace string) []pipeline.BuildVar {
 	path := filepath.Join(workspace, pipewrightEnvFileName)
 	data, err := os.ReadFile(path)
@@ -39,22 +42,7 @@ func captureStageEnv(ctx context.Context, rep dagrun.StageReporter, workspace st
 		return nil // 不存在 = 本 job 无输出(常态)
 	}
 	_ = os.Remove(path) // 即捕即清,隔离各 job 的写入
-	var out []pipeline.BuildVar
-	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r", ""), "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		i := strings.IndexByte(t, '=')
-		if i <= 0 {
-			continue // 无 = 或 = 在首位 → 非法,跳过
-		}
-		key := strings.TrimSpace(t[:i])
-		if !isEnvKey(key) {
-			continue
-		}
-		out = append(out, pipeline.BuildVar{Key: key, Value: t[i+1:]})
-	}
+	out := pipeline.ParseEnvBody(string(data)).Vars
 	if len(out) > 0 && rep != nil {
 		keys := make([]string, 0, len(out))
 		for _, v := range out {
@@ -63,20 +51,4 @@ func captureStageEnv(ctx context.Context, rep dagrun.StageReporter, workspace st
 		_ = rep.Log(ctx, streamStdout, "· 捕获步骤输出变量供下游 job 使用:"+strings.Join(keys, ", "))
 	}
 	return out
-}
-
-// isEnvKey 校验环境变量名合法(字母/下划线开头,仅字母数字下划线)。
-func isEnvKey(k string) bool {
-	if k == "" {
-		return false
-	}
-	for i, r := range k {
-		switch {
-		case r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
-		case i > 0 && r >= '0' && r <= '9':
-		default:
-			return false
-		}
-	}
-	return true
 }

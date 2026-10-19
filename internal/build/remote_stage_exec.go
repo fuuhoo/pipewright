@@ -128,6 +128,11 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 			return ErrBuildFailed
 		}
 		step.Env = append(runParamsAsEnv(r.Trigger.Params), step.Env...)
+		// 仓库来源的 env 读的是控制机工作区(它刚被整份 tar 上远程),所以远程机上的容器拿到的是同一份内容。
+		if err := applyJobEnv(&step, jb, workspace, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
+			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
+			return ErrBuildFailed
+		}
 		// 配置资源注入是「宿主文件 → 容器」的 bind;远程 runner 的容器在另一台机器上,
 		// 中控机上的配置资源文件对它不可见 → 诚实跳过并说明,不假装注入成功。
 		if n := len(step.Resource.Mounts); n > 0 {
