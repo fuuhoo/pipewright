@@ -2,6 +2,9 @@ package build
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +45,7 @@ func TestApplyJobEnvOverridesSameKeySecret(t *testing.T) {
 		{Key: "KEEP", Value: "keep"},
 	}}
 	jb := pipeline.Job{Name: "构建", Type: pipeline.StepTypeScript, Config: pasteCfg("TOKEN=from-file\n")}
-	if err := applyJobEnv(&step, jb, "", nil); err != nil {
+	if err := (&Builder{}).applyJobEnv(context.Background(), &step, jb, "", nil); err != nil {
 		t.Fatalf("applyJobEnv: %v", err)
 	}
 	if got := countKey(step.Env, "TOKEN"); got != 1 {
@@ -69,7 +72,7 @@ func TestApplyJobEnvOverridesSameKeySecret(t *testing.T) {
 func TestApplyJobEnvReadsLegacyCfg(t *testing.T) {
 	step := pipeline.PipelineStep{}
 	jb := pipeline.Job{Name: "n", Config: map[string]any{"env": `{"Z":"z","A":"a"}`}}
-	if err := applyJobEnv(&step, jb, "", nil); err != nil {
+	if err := (&Builder{}).applyJobEnv(context.Background(), &step, jb, "", nil); err != nil {
 		t.Fatalf("applyJobEnv: %v", err)
 	}
 	if len(step.Env) != 2 || step.Env[0].Key != "A" || step.Env[1].Key != "Z" {
@@ -85,7 +88,7 @@ func TestApplyJobEnvImportedBeatsLegacy(t *testing.T) {
 		pipeline.ConfigKeyEnvSource: pipeline.EnvSourcePaste,
 		pipeline.ConfigKeyEnvText:   "A=new\n",
 	}}
-	if err := applyJobEnv(&step, jb, "", nil); err != nil {
+	if err := (&Builder{}).applyJobEnv(context.Background(), &step, jb, "", nil); err != nil {
 		t.Fatalf("applyJobEnv: %v", err)
 	}
 	if got := countKey(step.Env, "A"); got != 1 {
@@ -99,7 +102,7 @@ func TestApplyJobEnvImportedBeatsLegacy(t *testing.T) {
 func TestApplyJobEnvUnknownSource(t *testing.T) {
 	step := pipeline.PipelineStep{}
 	jb := pipeline.Job{Name: "n", Config: map[string]any{pipeline.ConfigKeyEnvSource: "ftp"}}
-	if err := applyJobEnv(&step, jb, "", nil); err == nil {
+	if err := (&Builder{}).applyJobEnv(context.Background(), &step, jb, "", nil); err == nil {
 		t.Fatal("非法来源该失败,不能静默当成「没导入」")
 	}
 }
@@ -109,7 +112,7 @@ func TestApplyJobEnvLogsKeysOnly(t *testing.T) {
 	var lines []string
 	step := pipeline.PipelineStep{}
 	jb := pipeline.Job{Name: "n", Config: pasteCfg("API_URL=https://api.example\nPASS=s3cr3t-value\n这行不是键值对\n")}
-	if err := applyJobEnv(&step, jb, "", func(_, line string) { lines = append(lines, line) }); err != nil {
+	if err := (&Builder{}).applyJobEnv(context.Background(), &step, jb, "", func(_, line string) { lines = append(lines, line) }); err != nil {
 		t.Fatalf("applyJobEnv: %v", err)
 	}
 	joined := strings.Join(lines, "\n")
@@ -235,5 +238,221 @@ func TestRepoEnvMissingFileFailsRun(t *testing.T) {
 	joined := strings.Join(rep.logs, "\n")
 	if !strings.Contains(joined, ".env.production") {
 		t.Errorf("失败日志要点名那份文件;logs=%v", rep.logs)
+	}
+}
+
+// ── Nacos 来源 ─────────────────────────────────────────────────────────────
+
+// fakeNacos 起一个按 handler 行事的假配置中心;httptest 绑 127.0.0.1,正好走「回环放行」这条判定。
+func fakeNacos(t *testing.T, h http.HandlerFunc) string {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func nacosCfg(base string, extra map[string]any) map[string]any {
+	cfg := map[string]any{
+		pipeline.ConfigKeyEnvSource:        pipeline.EnvSourceNacos,
+		pipeline.ConfigKeyNacosBaseURL:     base,
+		pipeline.ConfigKeyNacosDataID:      "prod.env",
+		pipeline.ConfigKeyNacosGroup:       "G1",
+		pipeline.ConfigKeyNacosNamespaceID: "dev",
+	}
+	for k, v := range extra {
+		cfg[k] = v
+	}
+	return cfg
+}
+
+func nacosJob(base string, extra map[string]any) pipeline.Job {
+	return pipeline.Job{ID: "j1", Name: "构建", Type: pipeline.StepTypeScript, Config: nacosCfg(base, extra)}
+}
+
+// 读到就注入:值进容器参数,日志只有键名;同名项按「导入的盖住更早那层」处理。
+func TestApplyJobEnvNacosInjectsValues(t *testing.T) {
+	srv := fakeNacos(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "API_URL=https://api.example\nPASS=s3cr3t-value\n")
+	})
+	step := pipeline.PipelineStep{Env: []pipeline.BuildVar{{Key: "API_URL", Value: "from-run"}, {Key: "KEEP", Value: "keep"}}}
+	var lines []string
+	jb := nacosJob(srv, nil)
+	if err := (&Builder{}).applyJobEnv(context.Background(), &step, jb, "", func(_, l string) { lines = append(lines, l) }); err != nil {
+		t.Fatalf("applyJobEnv: %v", err)
+	}
+	if got := countKey(step.Env, "API_URL"); got != 1 {
+		t.Fatalf("API_URL 出现 %d 次,同名该只留 Nacos 那条: %+v", got, step.Env)
+	}
+	if v, _ := lastVar(step.Env, "API_URL"); v.Value != "https://api.example" {
+		t.Errorf("API_URL=%q,要 Nacos 读回来的那份", v.Value)
+	}
+	if _, k := lastVar(step.Env, "KEEP"); k < 0 {
+		t.Errorf("没导入的变量被弄丢了: %+v", step.Env)
+	}
+	plain, _ := (&Builder{}).buildArgs(step.Env)
+	if !strings.Contains(strings.Join(plain, " "), "PASS=s3cr3t-value") {
+		t.Errorf("传给容器的参数里没有 Nacos 的值:%v", plain)
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "API_URL") || !strings.Contains(joined, "prod.env") {
+		t.Errorf("日志要列出键名并点名读的是哪份配置:%q", joined)
+	}
+	for _, leak := range []string{"s3cr3t-value", "https://api.example"} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("日志泄露了值 %q", leak)
+		}
+	}
+	// 值只能进容器参数,不能顺手写回节点配置(那等于把配置中心的秘密落进流水线库)。
+	if _, ok := jb.Config[pipeline.ConfigKeyEnvText]; ok {
+		t.Error("Nacos 读回来的正文被写进了节点配置")
+	}
+}
+
+// 选了凭据:先登录再读,而且密码与 token 都不能出现在日志或变量表里。
+func TestApplyJobEnvNacosUsesCredentialWithoutLeak(t *testing.T) {
+	const vaultPW, token = "pw-from-vault", "tok-3f9a1c7e5b"
+	var loginUser, loginPass, bearer string
+	var paths []string
+	srv := fakeNacos(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/auth/login":
+			_ = r.ParseForm()
+			loginUser, loginPass = r.FormValue("username"), r.FormValue("password")
+			fmt.Fprintf(w, `{"accessToken":%q,"tokenTtl":18000}`, token)
+		case "/v1/cs/configs":
+			bearer = r.URL.Query().Get("accessToken")
+			fmt.Fprint(w, "DSN=user:pwd@tcp(db)/app\n")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	b := &Builder{vault: fakeVault{
+		secrets: map[string]string{"nc-1": vaultPW},
+		users:   map[string]string{"nc-1": "nacos-user"},
+	}}
+	step := pipeline.PipelineStep{}
+	var lines []string
+	jb := nacosJob(srv, map[string]any{pipeline.ConfigKeyNacosCredentialID: "nc-1"})
+	if err := b.applyJobEnv(context.Background(), &step, jb, "", func(_, l string) { lines = append(lines, l) }); err != nil {
+		t.Fatalf("applyJobEnv: %v", err)
+	}
+	if loginUser != "nacos-user" || loginPass != vaultPW {
+		t.Errorf("登录表单 = %q/%q,用户名与密码都该来自凭据仓库", loginUser, loginPass)
+	}
+	if bearer != token {
+		t.Errorf("读取没带上 accessToken(got %q);paths=%v", bearer, paths)
+	}
+	if v, _ := lastVar(step.Env, "DSN"); v.Value == "" {
+		t.Errorf("值没进变量表: %+v", step.Env)
+	}
+	joined := strings.Join(lines, "\n") + "\n" + fmt.Sprint(step.Env)
+	for _, secret := range []string{vaultPW, token} {
+		if strings.Contains(joined, secret) {
+			t.Errorf("凭据/token %q 泄露进了日志或变量表", secret)
+		}
+	}
+}
+
+// 读不到就是失败,而且要点名读的是哪一份:静默少几个变量会让人一路查到底层才发现。
+func TestApplyJobEnvNacosHardFails(t *testing.T) {
+	cases := []struct {
+		name      string
+		handler   http.HandlerFunc
+		extra     map[string]any
+		wantInErr string
+	}{
+		{"配置不存在要点名坐标", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }, nil, "命名空间 dev"},
+		{"服务端开了鉴权但没选凭据", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }, nil, "凭据"},
+		{"YAML 配置读回来一条键值都没有", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "server:\n  port: 8080\n") }, nil, "properties"},
+		{"空配置", func(w http.ResponseWriter, _ *http.Request) {}, nil, "用不了"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeNacos(t, tc.handler)
+			step := pipeline.PipelineStep{Env: []pipeline.BuildVar{{Key: "KEEP", Value: "keep"}}}
+			err := (&Builder{}).applyJobEnv(context.Background(), &step, nacosJob(srv, tc.extra), "", nil)
+			if err == nil {
+				t.Fatal("读不出来却跑成功了 = 假绿")
+			}
+			if !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Errorf("错误要点名「%s」:%v", tc.wantInErr, err)
+			}
+			if strings.Contains(err.Error(), "s3cr3t") {
+				t.Errorf("错误里带出了值:%v", err)
+			}
+			if len(step.Env) != 1 || step.Env[0].Key != "KEEP" {
+				t.Errorf("失败时不该改动变量表: %+v", step.Env)
+			}
+		})
+	}
+}
+
+// 凭据这一侧的三种「拿不到」:各自说清原因,而不是笼统一句「读取失败」。
+func TestApplyJobEnvNacosCredentialReasons(t *testing.T) {
+	srv := fakeNacos(t, func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "A=1\n") })
+	cfgWithCred := nacosCfg(srv, map[string]any{pipeline.ConfigKeyNacosCredentialID: "nc-1"})
+	jb := pipeline.Job{ID: "j1", Name: "构建", Type: pipeline.StepTypeScript, Config: cfgWithCred}
+
+	cases := []struct {
+		name      string
+		builder   *Builder
+		wantInErr string
+	}{
+		{"保险库没装配(启动没给 master key)", &Builder{}, "master key"},
+		{"凭据被删了", &Builder{vault: fakeVault{secrets: map[string]string{}}}, "不存在"},
+		{"凭据是空的", &Builder{vault: fakeVault{secrets: map[string]string{"nc-1": ""}, users: map[string]string{"nc-1": ""}}}, "没开鉴权"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			step := pipeline.PipelineStep{}
+			err := tc.builder.applyJobEnv(context.Background(), &step, jb, "", nil)
+			if err == nil {
+				t.Fatal("该失败")
+			}
+			if !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Errorf("错误要说「%s」:%v", tc.wantInErr, err)
+			}
+		})
+	}
+}
+
+// 端到端(执行器 → 容器参数):Nacos 那份配置要真的变成 docker run 的 -e。
+func TestNacosEnvReachesContainerArgs(t *testing.T) {
+	srv := fakeNacos(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "API_URL=https://api.example\nPASS=s3cr3t-value\n")
+	})
+	drv := &recordingDriver{code: 0}
+	b := newDAGTestBuilder(drv, &markerCloner{})
+	exec := NewStageExecutor(b, nil)
+	rep := &fakeReporter{}
+
+	jb := nacosJob(srv, map[string]any{"image": "busybox", "commands": "true"})
+	if err := exec(context.Background(), &run.Run{ProjectID: "p1"}, scriptStage(jb), rep); err != nil {
+		t.Fatalf("exec: %v (logs=%v)", err, rep.logs)
+	}
+	joined := strings.Join(drv.gotEnv, " ")
+	for _, want := range []string{"API_URL=https://api.example", "PASS=s3cr3t-value"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("容器参数里没有 %q;env=%v", want, drv.gotEnv)
+		}
+	}
+	for _, l := range rep.logs {
+		if strings.Contains(l, "s3cr3t-value") || strings.Contains(l, "https://api.example") {
+			t.Errorf("日志行泄露了 env 值:%s", l)
+		}
+	}
+}
+
+// 配置中心只在中控机侧可达:地址被出网收口拒了(云元数据)就不该发出请求。
+func TestApplyJobEnvNacosRefusesMetadataAddress(t *testing.T) {
+	step := pipeline.PipelineStep{}
+	err := (&Builder{}).applyJobEnv(context.Background(), &step,
+		nacosJob("http://169.254.169.254/nacos", nil), "", nil)
+	if err == nil {
+		t.Fatal("云元数据地址该被拒")
+	}
+	if !strings.Contains(err.Error(), "出网收口") {
+		t.Errorf("要说清是被出网收口拒的,否则人会去查网络:%v", err)
 	}
 }

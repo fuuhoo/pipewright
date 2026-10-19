@@ -66,6 +66,14 @@ func (f fakeVault) GetRegistryAuth(id string) (vault.RegistryAuth, error) {
 	return vault.ResolveRegistryAuth(f.users[id], secret), nil
 }
 
+func (f fakeVault) GetNacosAuth(id string) (vault.NacosAuth, error) {
+	secret, err := f.Reveal(id)
+	if err != nil {
+		return vault.NacosAuth{}, err
+	}
+	return vault.ResolveNacosAuth(f.users[id], secret), nil
+}
+
 // recordedLog 是一条被 sink 记录的日志行。
 type recordedLog struct {
 	stream  string

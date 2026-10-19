@@ -268,7 +268,7 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 						base = append(base, settings.Build.Vars...)
 					}
 					step.Env = append(base, step.Env...)
-					if err := applyJobEnv(&step, jb, workspace, func(stream, line string) { _ = jrep.Log(ctx, stream, line) }); err != nil {
+					if err := b.applyJobEnv(ctx, &step, jb, workspace, func(stream, line string) { _ = jrep.Log(ctx, stream, line) }); err != nil {
 						_ = jrep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
 						_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
 						return ErrBuildFailed
@@ -562,7 +562,7 @@ func (b *Builder) runScriptJobIsolated(
 		base = append(base, settings.Build.Vars...)
 	}
 	step.Env = append(base, step.Env...)
-	if err := applyJobEnv(&step, jb, ws, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
+	if err := b.applyJobEnv(ctx, &step, jb, ws, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
 		_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
 		return nil, ErrBuildFailed
 	}

@@ -128,8 +128,10 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 			return ErrBuildFailed
 		}
 		step.Env = append(runParamsAsEnv(r.Trigger.Params), step.Env...)
-		// 仓库来源的 env 读的是控制机工作区(它刚被整份 tar 上远程),所以远程机上的容器拿到的是同一份内容。
-		if err := applyJobEnv(&step, jb, workspace, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
+		// 仓库来源的 env 读的是控制机工作区(它刚被整份 tar 上远程),Nacos 来源同样由控制机出网去取,
+		// 所以远程机上的容器拿到的是同一份内容 —— 代价是「能不能访问配置中心」按控制机的网络算,
+		// 只有远程机可达的 Nacos 会在这一步连不上(错误话术里点名主机:端口)。
+		if err := b.applyJobEnv(ctx, &step, jb, workspace, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
 			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
 			return ErrBuildFailed
 		}
