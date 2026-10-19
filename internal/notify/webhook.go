@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"github.com/fuuhoo/pipewright/internal/netguard"
 )
 
 // maxWebhookRespBytes 限制 webhook 响应体读取量(防恶意/巨大响应撑爆内存)。
@@ -80,39 +80,10 @@ func mapWebhookTransportError(err error) error {
 	return fmt.Errorf("webhook 连接失败:无法连接到接收端")
 }
 
-// validWebhookURL 对 webhook 目标 URL 做 SSRF 收口:scheme 仅 http/https;**恒拒云元数据
-// (169.254.169.254,链路本地)/链路本地/未指定地址**(最高价值 SSRF 目标)。
-// 私网放行(自托管内网接收器,如运维内网告警网关)——与仓库既定「放行私网」自托管姿态一致
-// (单管理员对内网本就有访问,不构成提权);回环亦放行(本机起接收器自测)。
+// validWebhookURL 对 webhook 目标 URL 做 SSRF 收口:判定本身住在 internal/netguard(构建时去
+// Nacos 拉环境变量用的是同一套口径),这里只固定通知侧的选择:**回环放行** —— 本机起一个接收器
+// 自测告警是常态,拒回环会把它打死;私网同样放行(自托管接收器就在内网)。
+// 恒拒的是云元数据/链路本地/未指定地址 —— 那是这类「地址由用户填」的通路最高价值的 SSRF 目标。
 func validWebhookURL(raw string) bool {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-	default:
-		return false
-	}
-	host := u.Hostname()
-	if host == "" {
-		return false
-	}
-	blocked := func(ip net.IP) bool {
-		// 云元数据 169.254.169.254 / 链路本地 / 未指定:恒拒(回环、私网放行)。
-		return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return !blocked(ip)
-	}
-	addrs, lerr := net.LookupIP(host)
-	if lerr != nil || len(addrs) == 0 {
-		return true // DNS 抖动不误拒;投递自身会自然失败
-	}
-	for _, ip := range addrs {
-		if blocked(ip) {
-			return false
-		}
-	}
-	return true
+	return netguard.Check(raw, true) == nil
 }
