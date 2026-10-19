@@ -513,6 +513,10 @@ func normalizeSpec(in Spec) (Spec, error) {
 			if err := validateBuildTask(name, jobName, jobType, cfg); err != nil {
 				return Spec{}, err
 			}
+			// 节点导入的 env:来源认得、必填项配齐、正文没超限 —— 半截配置跑到容器里就是「变量凭空少了」。
+			if err := validateJobEnv(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
+			}
 			// docker 部署节点同理:单容器与 compose 在目标机上做的事不同,方式与正文不能靠猜。
 			if err := validateDeployDocker(name, jobName, jobType, cfg); err != nil {
 				return Spec{}, err
