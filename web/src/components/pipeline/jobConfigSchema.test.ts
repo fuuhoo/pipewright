@@ -22,6 +22,7 @@ import {
   droppedKeys,
   managedKeys,
 } from './jobConfigSchema'
+import type { JobField } from './jobConfigSchema'
 
 describe('jobConfigSchema', () => {
   it('exposes a typed spec for every dropdown option', () => {
@@ -472,6 +473,57 @@ describe('jobConfigSchema', () => {
       expect(keys).toContain('buildEnvId')
       expect(keys).toContain('buildCommand')
       expect(keys).not.toContain('dockerfilePath')
+    })
+  })
+
+  // 这几个 config 键是前后端唯一的接头,拼错一边不会有任何编译或接口报错,
+  // 只会在构建日志里变成「地址是空的」。这里把前端写出的名字钉住,改名时至少这一层会红。
+  describe('env source: Nacos fields', () => {
+    const fields = JOB_TYPE_SPECS.script.fields
+    const NACOS_KEYS = ['nacosBaseUrl', 'nacosDataId', 'nacosGroup', 'nacosNamespaceId', 'nacosCredentialId']
+
+    function visible(config: Record<string, string>): string[] {
+      return fields.filter((f) => !f.when || f.when(config)).map((f) => f.key)
+    }
+    function field(key: string): JobField {
+      const f = fields.find((x) => x.key === key)
+      if (!f) throw new Error('missing field ' + key)
+      return f
+    }
+    function issueOf(key: string, config: Record<string, string>): string {
+      // validate 返回 t() 出来的文案:这里只断言「有没有错」,不锁具体语种。
+      return field(key).validate?.(config) ?? ''
+    }
+
+    it('offers nacos as a source and only shows its fields for that source', () => {
+      const source = field('envSource')
+      expect((source.options ?? []).map((o) => o.value)).toEqual(['none', 'repo', 'paste', 'upload', 'nacos'])
+      expect(visible({})).not.toContain('nacosDataId')
+      expect(visible({ envSource: 'nacos' })).toEqual(expect.arrayContaining(NACOS_KEYS))
+      // 切到 Nacos 后就不该再看到正文框与仓库路径框。
+      const keys = visible({ envSource: 'nacos' })
+      expect(keys).not.toContain('envText')
+      expect(keys).not.toContain('envFile')
+    })
+
+    it('only asks for the address and Data ID; group, namespace and credential may stay empty', () => {
+      const cfg = { envSource: 'nacos', nacosBaseUrl: 'http://127.0.0.1:8848/nacos', nacosDataId: 'app.env' }
+      for (const k of NACOS_KEYS) expect(issueOf(k, cfg), k).toBe('')
+      expect(issueOf('nacosBaseUrl', { envSource: 'nacos' })).not.toBe('')
+      expect(issueOf('nacosDataId', { envSource: 'nacos', nacosBaseUrl: 'http://127.0.0.1:8848/nacos' })).not.toBe('')
+    })
+
+    it('rejects the shapes the backend rejects, including the metadata address', () => {
+      const base = { envSource: 'nacos', nacosDataId: 'app.env' }
+      for (const bad of ['', 'nacos:8848', 'http:///v1/cs/configs', 'http://user:pass@nacos/nacos',
+        'http://169.254.169.254/nacos', 'http://nacos/nacos?dataId=x']) {
+        expect(issueOf('nacosBaseUrl', { ...base, nacosBaseUrl: bad }), bad).not.toBe('')
+      }
+      expect(issueOf('nacosGroup', { ...base, nacosBaseUrl: 'http://nacos:8848/nacos', nacosGroup: 'a b' })).not.toBe('')
+    })
+
+    it('binds the credential picker to the nacos credential type', () => {
+      expect(field('nacosCredentialId').credentialType).toBe('nacos')
     })
   })
 

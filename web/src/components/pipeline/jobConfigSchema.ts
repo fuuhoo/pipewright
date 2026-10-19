@@ -16,7 +16,7 @@
 
 import type { CredentialType } from '../../api/credentials'
 import { composeIssue, stackNameIssue } from '../../lib/composePaste'
-import { envBodyIssue, repoEnvPathIssue } from '../../lib/envFileImport'
+import { envBodyIssue, nacosBaseUrlIssue, nacosCoordIssue, repoEnvPathIssue, NACOS_DEFAULT_GROUP } from '../../lib/envFileImport'
 import { t } from '../../i18n'
 
 // ─── Field model ──────────────────────────────────────────────────────────────
@@ -378,17 +378,19 @@ const EXEC_OPTION_FIELDS: JobField[] = [
 ]
 
 // 环境变量导入的来源,值与后端 pipeline.EnvSource* 逐字一致(对不上就是「来源无法识别」的 422)。
-// 三档都只在节点层生效:导入的变量同名时覆盖运行参数、上游步骤输出与「变量与缓存」里的同名项。
+// 四档都只在节点层生效:导入的变量同名时覆盖运行参数、上游步骤输出与「变量与缓存」里的同名项。
 const ENV_SOURCE_NONE    = 'none'
 const ENV_SOURCE_REPO    = 'repo'
 const ENV_SOURCE_PASTE   = 'paste'
 const ENV_SOURCE_UPLOAD  = 'upload'
+const ENV_SOURCE_NACOS   = 'nacos'
 
 const ENV_SOURCE_OPTIONS: SelectOption[] = [
   { value: ENV_SOURCE_NONE, get label() { return t('pipelineJob.envSourceNone') } },
   { value: ENV_SOURCE_REPO, get label() { return t('pipelineJob.envSourceRepo') } },
   { value: ENV_SOURCE_PASTE, get label() { return t('pipelineJob.envSourcePaste') } },
   { value: ENV_SOURCE_UPLOAD, get label() { return t('pipelineJob.envSourceUpload') } },
+  { value: ENV_SOURCE_NACOS, get label() { return t('pipelineJob.envSourceNacos') } },
 ]
 
 const envSourceIs = (v: string) => (c: Record<string, string>) => (c.envSource || ENV_SOURCE_NONE) === v
@@ -413,6 +415,29 @@ function envTextIssue(text: string): string {
     case 'tooLarge': return t('pipelineJob.fieldEnvTextTooLarge')
     default: return ''
   }
+}
+
+// Nacos 地址的形状问题逐条报出(判据见 lib/envFileImport.ts 的 nacosBaseUrlIssue)。
+// 这里只判形状,不判能不能连上 —— 保存时把「今天没连内网」变成「流水线保存不了」是没道理,
+// 那种失败该留在构建日志里说,那里有真原因(与后端 NacosBaseURLIssue 的取舍一致)。
+function nacosUrlIssueText(v: string): string {
+  switch (nacosBaseUrlIssue(v)) {
+    case 'empty': return t('pipelineJob.fieldNacosUrlRequired')
+    case 'tooLong': return t('pipelineJob.fieldNacosUrlTooLong')
+    case 'hasUserInfo': return t('pipelineJob.fieldNacosUrlUserInfo')
+    case 'hasQuery': return t('pipelineJob.fieldNacosUrlQuery')
+    case 'blocked': return t('pipelineJob.fieldNacosUrlBlocked')
+    case 'hasSpace':
+    case 'unparsable':
+    case 'badScheme':
+    case 'noHost': return t('pipelineJob.fieldNacosUrlShape')
+    default: return ''
+  }
+}
+
+/** Data ID / 分组 / 命名空间 ID 共用一段坐标校验;空值由各自字段判是否必填。 */
+function nacosCoordIssueText(v: string): string {
+  return nacosCoordIssue(v) ? t('pipelineJob.fieldNacosCoordBad') : ''
 }
 
 const SCRIPT_FIELDS: JobField[] = [
@@ -476,6 +501,61 @@ const SCRIPT_FIELDS: JobField[] = [
     get hint() { return t('pipelineJob.fieldEnvTextHint') },
     when: envUsesText,
     validate: (c) => envTextIssue(c.envText ?? ''),
+  },
+  // ─── Nacos 配置中心来源(只存读取坐标,值不进节点配置)────────────────────
+  // 切走这一档时旧坐标留在 config 里不清:后端只在 envSource=nacos 时才读它们,
+  // 留着让用户切回来不用重打一遍地址(与 envText 同一处理)。
+  {
+    key: 'nacosBaseUrl',
+    get label() { return t('pipelineJob.fieldNacosUrlLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'http://127.0.0.1:8848/nacos',
+    presets: ['http://127.0.0.1:8848/nacos', 'http://nacos:8848/nacos'],
+    get hint() { return t('pipelineJob.fieldNacosUrlHint') },
+    when: envSourceIs(ENV_SOURCE_NACOS),
+    validate: (c) => nacosUrlIssueText(c.nacosBaseUrl ?? ''),
+  },
+  {
+    key: 'nacosDataId',
+    get label() { return t('pipelineJob.fieldNacosDataIdLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'app.env',
+    presets: ['app.env', 'prod.env'],
+    get hint() { return t('pipelineJob.fieldNacosDataIdHint') },
+    when: envSourceIs(ENV_SOURCE_NACOS),
+    validate: (c) => (c.nacosDataId ?? '').trim()
+      ? nacosCoordIssueText(c.nacosDataId)
+      : t('pipelineJob.fieldNacosDataIdRequired'),
+  },
+  {
+    key: 'nacosGroup',
+    get label() { return t('pipelineJob.fieldNacosGroupLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: NACOS_DEFAULT_GROUP,
+    get hint() { return t('pipelineJob.fieldNacosGroupHint') },
+    when: envSourceIs(ENV_SOURCE_NACOS),
+    validate: (c) => nacosCoordIssueText(c.nacosGroup ?? ''),
+  },
+  {
+    key: 'nacosNamespaceId',
+    get label() { return t('pipelineJob.fieldNacosNamespaceLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: 'public',
+    get hint() { return t('pipelineJob.fieldNacosNamespaceHint') },
+    when: envSourceIs(ENV_SOURCE_NACOS),
+    validate: (c) => nacosCoordIssueText(c.nacosNamespaceId ?? ''),
+  },
+  {
+    key: 'nacosCredentialId',
+    get label() { return t('pipelineJob.fieldNacosCredLabel') },
+    kind: 'credential',
+    credentialType: 'nacos',
+    get hint() { return t('pipelineJob.fieldNacosCredHint') },
+    when: envSourceIs(ENV_SOURCE_NACOS),
   },
   {
     key: 'workDir',

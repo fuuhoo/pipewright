@@ -62,6 +62,7 @@ export default {
   envSourceRepo: 'Datei im Repository',
   envSourcePaste: 'Inhalt einfügen',
   envSourceUpload: 'Lokale Datei auswählen',
+  envSourceNacos: 'Aus Nacos lesen',
   fieldEnvSourceLabel: 'Env-Datei-Import',
   fieldEnvSourceHint:
     'Injiziert eine komplette .env in die Ausführungsumgebung dieses Knotens: gleichnamige importierte Variablen gewinnen und überschreiben Ausführungsparameter, Ausgaben vorgelagerter Jobs und gleichnamige Einträge unter „Variablen und Cache“. Nur Skript-Knoten (ein Build-Task mit Artefaktart = image ist noch nicht unterstützt)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: 'Inhalt überschreitet das Limit von 64 KiB',
   fieldEnvPreviewCount: '{n} Variablen erkannt',
   fieldEnvPreviewSkipped: '{n} Variablen erkannt, {m} Zeile(n) sind nicht KEY=VALUE und wurden übersprungen',
+  fieldNacosUrlLabel: 'Nacos-Adresse',
+  fieldNacosUrlHint: 'Nur bis zum Basispfad angeben, Context-Pfad inklusive; ein Eigenbau sieht meist so aus: http://127.0.0.1:8848/nacos. Zugangsdaten gehören nicht in die Adresse, sondern in die Auswahl unten. Die Plattform-Maschine führt die Anfrage aus, eine Loopback-Adresse meint also genau diese Maschine',
+  fieldNacosUrlRequired: 'Zum Lesen aus Nacos fehlt die Adresse des Konfigurationsservers',
+  fieldNacosUrlTooLong: 'Adresse zu lang: maximal 512 Zeichen',
+  fieldNacosUrlShape: 'Adresse hat die falsche Form: die vollständige Form http://host:port/pfad verwenden, nur http oder https, ohne Leerzeichen',
+  fieldNacosUrlUserInfo: 'Benutzername und Passwort gehören nicht in die Adresse - referenziere unten ein Nacos-Zugangsdatum aus dem Tresor',
+  fieldNacosUrlQuery: 'Die Adresse endet beim Stamm-Pfad (inklusive /nacos Context-Pfad), ohne Query-String und ohne Sprungmarke',
+  fieldNacosUrlBlocked: 'Die Ausgangskontrolle hat diese Adresse abgewiesen: Link-Local- und Cloud-Metadaten-Adressen können kein Konfigurationsserver sein',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: 'Die Konfiguration muss als properties oder text gespeichert sein, eine KEY=VALUE-Zeile pro Variable. Aus YAML oder JSON wird keine einzige Variable gelesen, der Build schlägt sofort fehl',
+  fieldNacosDataIdRequired: 'Zum Lesen aus Nacos fehlt die Data ID',
+  fieldNacosGroupLabel: 'Gruppe',
+  fieldNacosGroupHint: 'Gruppe der Konfiguration; leer bedeutet DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: 'Namespace-ID',
+  fieldNacosNamespaceHint: 'Leer = der öffentliche Namespace. Angegeben wird die Namespace-ID, nicht der Anzeigename',
+  fieldNacosCredLabel: 'Nacos-Zugangsdaten',
+  fieldNacosCredHint: 'Wähle ein in „Zugangsdaten-Tresor · Nacos-Konfiguration“ angelegtes Paar aus Benutzername + Passwort. Leer = anonymes Lesen (die meisten Eigenbau-Nacos haben die Authentifizierung aus)',
+  fieldNacosCoordBad: 'Höchstens 256 Zeichen, ohne Leerzeichen und Steuerzeichen',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

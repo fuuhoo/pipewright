@@ -62,6 +62,7 @@ export default {
   envSourceRepo: '引用仓库文件',
   envSourcePaste: '粘贴正文',
   envSourceUpload: '上传本地文件',
+  envSourceNacos: '从 Nacos 读取',
   fieldEnvSourceLabel: '环境变量导入',
   fieldEnvSourceHint:
     '把整份 .env 注入本节点的执行环境:同名变量以这里的为准,覆盖运行参数、上游任务输出与「变量与缓存」里的同名项。只有脚本类节点能用(构建任务的产物档位=镜像本期不接)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: '正文超过 64 KiB 上限',
   fieldEnvPreviewCount: '识别出 {n} 个变量',
   fieldEnvPreviewSkipped: '识别出 {n} 个变量,{m} 行不是 KEY=VALUE 已跳过',
+  fieldNacosUrlLabel: 'Nacos 地址',
+  fieldNacosUrlHint: '填到根路径并带上上下文路径,自建默认形如 http://127.0.0.1:8848/nacos;地址里不写账号密码,鉴权用下面的凭据。请求由平台所在机器发出,所以回环地址指的是那台机器本身',
+  fieldNacosUrlRequired: '从 Nacos 读取要填配置中心地址',
+  fieldNacosUrlTooLong: '地址过长,不能超过 512 个字符',
+  fieldNacosUrlShape: '地址形状不对:要 http://主机:端口/路径 这种完整形式,协议只能是 http 或 https,且不含空白',
+  fieldNacosUrlUserInfo: '地址里不要写用户名密码,请在下面引用「凭据仓库」里的 Nacos 凭据',
+  fieldNacosUrlQuery: '地址只填到根路径(含 /nacos 上下文路径),不要带查询串或锚点',
+  fieldNacosUrlBlocked: '这个地址被出网收口拦住:链路本地、云元数据一类的保留地址不能当配置中心',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: '配置格式要选 properties 或 text,正文每行一条 KEY=VALUE;YAML 与 JSON 读回来一行变量也解析不出,构建会直接失败',
+  fieldNacosDataIdRequired: '从 Nacos 读取要填 Data ID',
+  fieldNacosGroupLabel: '分组',
+  fieldNacosGroupHint: '配置所在分组,留空按 DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: '命名空间 ID',
+  fieldNacosNamespaceHint: '留空 = public 默认命名空间;要填的是命名空间 ID,不是显示名',
+  fieldNacosCredLabel: 'Nacos 凭据',
+  fieldNacosCredHint: '选「凭据仓库 · Nacos 配置」里建好的用户名 + 密码;留空 = 匿名读取(自建 Nacos 大多没开鉴权)',
+  fieldNacosCoordBad: '这一段要填 256 个字符以内、不含空白与控制字符的原文',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

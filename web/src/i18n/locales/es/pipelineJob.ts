@@ -62,6 +62,7 @@ export default {
   envSourceRepo: 'Archivo del repositorio',
   envSourcePaste: 'Pegar contenido',
   envSourceUpload: 'Elegir archivo local',
+  envSourceNacos: 'Leer de Nacos',
   fieldEnvSourceLabel: 'Importar env',
   fieldEnvSourceHint:
     'Inyecta un .env completo en el entorno de ejecución de este nodo: las variables homónimas importadas aquí ganan y sustituyen a los parámetros de ejecución, las salidas de tareas upstream y las entradas homónimas de «Variables y caché». Solo nodos de script (una tarea de compilación con tipo de artefacto = imagen aún no está admitida)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: 'El contenido supera el límite de 64 KiB',
   fieldEnvPreviewCount: '{n} variables reconocidas',
   fieldEnvPreviewSkipped: '{n} variables reconocidas, {m} línea(s) no son KEY=VALUE y se omitieron',
+  fieldNacosUrlLabel: 'Dirección de Nacos',
+  fieldNacosUrlHint: 'Escribe la raíz incluyendo la ruta de contexto; un servidor propio suele verse como http://127.0.0.1:8848/nacos. No pongas credenciales en la dirección: selecciona una abajo. La máquina de la plataforma es la que hace la petición, así que una dirección de loopback es esa misma máquina',
+  fieldNacosUrlRequired: 'Leer de Nacos necesita la dirección del servidor de configuración',
+  fieldNacosUrlTooLong: 'Dirección demasiado larga: no puede pasar de 512 caracteres',
+  fieldNacosUrlShape: 'Dirección con formato incorrecto: usa la forma completa http://host:puerto/ruta, solo http o https, y sin espacios',
+  fieldNacosUrlUserInfo: 'No escribas usuario y contraseña en la dirección: referencia un credencial de Nacos del almacén de credenciales',
+  fieldNacosUrlQuery: 'Deja la dirección en la raíz (incluida la ruta de contexto /nacos), sin cadena de consulta ni ancla',
+  fieldNacosUrlBlocked: 'El control de salida rechazó esta dirección: las direcciones link-local y de metadatos cloud no pueden actuar como servidor de configuración',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: 'La configuración debe estar guardada como properties o text, con un KEY=VALUE por línea. De un YAML o JSON no se interpreta ni una variable y la compilación falla en el acto',
+  fieldNacosDataIdRequired: 'Leer de Nacos necesita un Data ID',
+  fieldNacosGroupLabel: 'Grupo',
+  fieldNacosGroupHint: 'Grupo donde está la configuración; dejarlo vacío significa DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: 'ID del espacio de nombres',
+  fieldNacosNamespaceHint: 'Vacío = el espacio público. Escribe el ID del espacio de nombres, no su nombre visible',
+  fieldNacosCredLabel: 'Credencial de Nacos',
+  fieldNacosCredHint: 'Elige un usuario + contraseña creados en Almacén de credenciales - Config de Nacos. Vacío = lectura anónima (la mayoría de Nacos propios no activan la autenticación)',
+  fieldNacosCoordBad: 'Usa como máximo 256 caracteres, sin espacios ni caracteres de control',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

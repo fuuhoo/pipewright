@@ -62,6 +62,7 @@ export default {
   envSourceRepo: 'Fichier du dépôt',
   envSourcePaste: 'Coller le contenu',
   envSourceUpload: 'Choisir un fichier local',
+  envSourceNacos: 'Lire depuis Nacos',
   fieldEnvSourceLabel: 'Import de fichier env',
   fieldEnvSourceHint:
     'Injecte un .env complet dans l’environnement d’exécution de ce nœud : les variables homonymes importées ici priment sur les paramètres d’exécution, les sorties des tâches amont et les entrées homonymes de « Variables et cache ». Réservé aux nœuds de script (une tâche de compilation avec type d’artefact = image n’est pas encore prise en charge)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: 'Le contenu dépasse la limite de 64 KiB',
   fieldEnvPreviewCount: '{n} variables reconnues',
   fieldEnvPreviewSkipped: '{n} variables reconnues, {m} ligne(s) non conforme(s) au format KEY=VALUE et ignorée(s)',
+  fieldNacosUrlLabel: 'Adresse Nacos',
+  fieldNacosUrlHint: 'Indiquez la racine en incluant le chemin de contexte ; un serveur auto-hébergé ressemble souvent à http://127.0.0.1:8848/nacos. Ne mettez pas les identifiants dans l’adresse : choisissez-en un ci-dessous. C’est la machine de la plateforme qui émet la requête, donc une adresse loopback désigne cette machine elle-même',
+  fieldNacosUrlRequired: 'Lire depuis Nacos exige l’adresse du serveur de configuration',
+  fieldNacosUrlTooLong: 'Adresse trop longue : elle ne peut pas dépasser 512 caractères',
+  fieldNacosUrlShape: 'Adresse mal formée : utilisez la forme complète http://hote:port/chemin, uniquement http ou https, sans espace',
+  fieldNacosUrlUserInfo: 'N’écrivez pas utilisateur et mot de passe dans l’adresse : référencez un identifiant Nacos du coffre ci-dessous',
+  fieldNacosUrlQuery: 'Arrêtez l’adresse au chemin racine (avec le chemin de contexte /nacos), sans chaîne de requête ni ancre',
+  fieldNacosUrlBlocked: 'Le filtrage sortant a rejeté cette adresse : les adresses link-local et métadonnées cloud ne peuvent pas servir de serveur de configuration',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: 'La configuration doit être stockée en properties ou text, une ligne KEY=VALUE par variable. Du YAML ou du JSON ne produisent aucune variable et la construction échoue immédiatement',
+  fieldNacosDataIdRequired: 'Lire depuis Nacos exige un Data ID',
+  fieldNacosGroupLabel: 'Groupe',
+  fieldNacosGroupHint: 'Groupe de la configuration ; vide signifie DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: 'ID d’espace de noms',
+  fieldNacosNamespaceHint: 'Vide = l’espace public. Indiquez l’ID de l’espace de noms, pas son nom affiché',
+  fieldNacosCredLabel: 'Identifiant Nacos',
+  fieldNacosCredHint: 'Choisissez un utilisateur + mot de passe créés dans Coffre d’identifiants - Config Nacos. Vide = lecture anonyme (la plupart des Nacos auto-hébergés n’ont pas d’authentification)',
+  fieldNacosCoordBad: 'Utilisez au plus 256 caractères, sans espace ni caractère de contrôle',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

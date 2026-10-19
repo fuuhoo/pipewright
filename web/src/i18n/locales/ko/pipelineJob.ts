@@ -62,6 +62,7 @@ export default {
   envSourceRepo: '저장소 파일',
   envSourcePaste: '내용 붙여넣기',
   envSourceUpload: '로컬 파일 업로드',
+  envSourceNacos: 'Nacos에서 읽기',
   fieldEnvSourceLabel: '환경 변수 가져오기',
   fieldEnvSourceHint:
     '.env 전체를 이 노드의 실행 환경에 주입합니다. 같은 이름 변수는 여기서 가져온 값이 우선하며 실행 매개변수·상류 잡 출력·「변수와 캐시」의 같은 항목을 덮어씁니다. 스크립트 계열 노드만 지원(빌드 잡의 산출물 등급=이미지는 이번 버전 미지원)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: '본문이 64 KiB 한도를 초과했습니다',
   fieldEnvPreviewCount: '{n}개 변수 인식',
   fieldEnvPreviewSkipped: '{n}개 변수 인식, KEY=VALUE가 아닌 {m}줄 건너뜀',
+  fieldNacosUrlLabel: 'Nacos 주소',
+  fieldNacosUrlHint: '컨텍스트 경로를 포함해 루트 경로까지 입력합니다. 자체 구축 기본값은 예를 들어 http://127.0.0.1:8848/nacos 입니다. 자격 증명은 주소에 쓰지 말고 아래에서 선택하세요. 요청은 플랫폼이 실행 중인 기기에서 나가므로, 루프백 주소는 그 기기 자체를 뜻합니다',
+  fieldNacosUrlRequired: 'Nacos에서 읽으려면 구성 센터 주소가 필요합니다',
+  fieldNacosUrlTooLong: '주소가 너무 깁니다（512자 이내）',
+  fieldNacosUrlShape: '주소 형식이 올바르지 않습니다: http://host:port/path 형태의 완전한 주소, http 또는 https만 허용, 공백 없음',
+  fieldNacosUrlUserInfo: '주소에는 사용자 이름과 비밀번호를 쓰지 마세요. 아래에서 Nacos 자격 증명을 선택해 참조합니다',
+  fieldNacosUrlQuery: '주소는 루트 경로（/nacos 컨텍스트 경로 포함）까지만 적고 쿼리스트링이나 조각은 붙이지 마세요',
+  fieldNacosUrlBlocked: '외부 접속 제한이 이 주소를 막았습니다: 링크 로컬이나 클라우드 메타데이터 예약 주소는 구성 센터로 쓸 수 없습니다',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: '구성 형식은 properties 또는 text를 고르고 내용은 한 줄에 KEY=VALUE 하나여야 합니다. YAML이나 JSON에서는 변수를 하나도 해석하지 못해 빌드가 바로 실패합니다',
+  fieldNacosDataIdRequired: 'Nacos에서 읽으려면 Data ID가 필요합니다',
+  fieldNacosGroupLabel: '그룹',
+  fieldNacosGroupHint: '구성이 속한 그룹. 비워 두면 DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: '네임스페이스 ID',
+  fieldNacosNamespaceHint: '비움 = public 기본 네임스페이스. 표시 이름이 아니라 네임스페이스 ID를 입력합니다',
+  fieldNacosCredLabel: 'Nacos 자격 증명',
+  fieldNacosCredHint: '「자격 증명 저장소 · Nacos 구성」에서 만든 사용자 이름 + 비밀번호를 선택하세요. 비움 = 익명 읽기（자체 구축 Nacos는 대부분 인증이 꺼져 있습니다）',
+  fieldNacosCoordBad: '공백과 제어 문자가 없는 256자 이내의 원문을 입력하세요',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

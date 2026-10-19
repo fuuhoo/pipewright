@@ -62,6 +62,7 @@ export default {
   envSourceRepo: '引用倉庫檔案',
   envSourcePaste: '貼上內容',
   envSourceUpload: '上傳本機檔案',
+  envSourceNacos: '從 Nacos 讀取',
   fieldEnvSourceLabel: '環境變數匯入',
   fieldEnvSourceHint:
     '把整份 .env 注入本節點的執行環境:同名變數以這裡為準,覆蓋執行參數、上游任務輸出與「變數與快取」裡的同名項。僅腳本類節點可用(建置任務的產品檔位=映像本期不接)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: '內容超過 64 KiB 上限',
   fieldEnvPreviewCount: '辨識出 {n} 個變數',
   fieldEnvPreviewSkipped: '辨識出 {n} 個變數,{m} 行不是 KEY=VALUE 已跳過',
+  fieldNacosUrlLabel: 'Nacos 網址',
+  fieldNacosUrlHint: '填到根路徑並帶上上下文路徑，自建預設形如 http://127.0.0.1:8848/nacos；網址裡不寫帳號密碼，認證用下面的憑證。請求由平台所在機器發出，所以迴路地址指的就是那台機器本身',
+  fieldNacosUrlRequired: '從 Nacos 讀取要填設定中心網址',
+  fieldNacosUrlTooLong: '網址過長，不能超過 512 個字元',
+  fieldNacosUrlShape: '網址形狀不對：要 http://主機:埠/路徑 這種完整形式，協定只能是 http 或 https，且不含空白',
+  fieldNacosUrlUserInfo: '網址裡不要寫使用者名稱與密碼，請在下面引用「憑證庫」裡的 Nacos 憑證',
+  fieldNacosUrlQuery: '網址只填到根路徑（含 /nacos 上下文路徑），不要帶查詢字串或錨點',
+  fieldNacosUrlBlocked: '這個網址被出網收口擋下：鏈路本地、雲端中繼資料一類的保留地址不能當設定中心',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: '設定格式要選 properties 或 text，內容每行一條 KEY=VALUE；YAML 與 JSON 讀回來一行變數也解析不出，建置會直接失敗',
+  fieldNacosDataIdRequired: '從 Nacos 讀取要填 Data ID',
+  fieldNacosGroupLabel: '分組',
+  fieldNacosGroupHint: '設定所在分組，留空按 DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: '命名空間 ID',
+  fieldNacosNamespaceHint: '留空 = public 預設命名空間；要填的是命名空間 ID，不是顯示名',
+  fieldNacosCredLabel: 'Nacos 憑證',
+  fieldNacosCredHint: '選「憑證庫 · Nacos 設定」裡建好的使用者名稱 + 密碼；留空 = 匿名讀取（自建 Nacos 多數沒開認證）',
+  fieldNacosCoordBad: '這一段要填 256 個字元以內、不含空白與控制字元的原文',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

@@ -62,6 +62,7 @@ export default {
   envSourceRepo: 'Repo file',
   envSourcePaste: 'Paste content',
   envSourceUpload: 'Upload local file',
+  envSourceNacos: 'Read from Nacos',
   fieldEnvSourceLabel: 'Env file import',
   fieldEnvSourceHint:
     'Injects a whole .env into this node\'s execution environment: names imported here win over run parameters, upstream job outputs and same-name entries in “Variables & cache”. Script-class nodes only (a build job with artifact tier = image is not supported yet)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: 'Content exceeds the 64 KiB limit',
   fieldEnvPreviewCount: '{n} variables recognised',
   fieldEnvPreviewSkipped: '{n} variables recognised, {m} line(s) are not KEY=VALUE and were skipped',
+  fieldNacosUrlLabel: 'Nacos address',
+  fieldNacosUrlHint: 'Give the root address including the context path; a self-hosted server usually looks like http://127.0.0.1:8848/nacos. Keep credentials out of the address and pick one below instead. The platform machine issues this request, so a loopback address means that machine itself',
+  fieldNacosUrlRequired: 'Reading from Nacos needs the config server address',
+  fieldNacosUrlTooLong: 'Address too long - it cannot exceed 512 characters',
+  fieldNacosUrlShape: 'Malformed address: use the full http://host:port/path form, http or https only, and no whitespace',
+  fieldNacosUrlUserInfo: 'Do not put the username and password in the address - reference a Nacos credential from the vault below',
+  fieldNacosUrlQuery: 'Stop the address at the root path (including the /nacos context path) - no query string or fragment',
+  fieldNacosUrlBlocked: 'The egress guard rejected this address: link-local and cloud-metadata addresses cannot be a config server',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: 'The config has to be stored as properties or text, one KEY=VALUE per line. A YAML or JSON config parses into not a single variable and the build fails outright',
+  fieldNacosDataIdRequired: 'Reading from Nacos needs a Data ID',
+  fieldNacosGroupLabel: 'Group',
+  fieldNacosGroupHint: 'Group holding the config; leaving it empty means DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: 'Namespace ID',
+  fieldNacosNamespaceHint: 'Empty = the public namespace. Fill in the namespace ID, not its display name',
+  fieldNacosCredLabel: 'Nacos credential',
+  fieldNacosCredHint: 'Pick a username + password created under Credential vault - Nacos config. Empty = anonymous read (most self-hosted Nacos servers leave auth off)',
+  fieldNacosCoordBad: 'Use at most 256 characters, with no whitespace or control characters',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────

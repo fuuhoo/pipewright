@@ -62,6 +62,7 @@ export default {
   envSourceRepo: 'リポジトリのファイル',
   envSourcePaste: '内容を貼り付け',
   envSourceUpload: 'ローカルファイルをアップロード',
+  envSourceNacos: 'Nacos から読み取り',
   fieldEnvSourceLabel: '環境変数のインポート',
   fieldEnvSourceHint:
     '.env 一式をこのノードの実行環境に注入します。同名の変数はこちらが優先され、実行パラメータ・上流ジョブの出力・「変数とキャッシュ」の同名項目を上書きします。スクリプト系ノードのみ対応(ビルドの成果物階層=イメージは今回未対応)',
@@ -84,6 +85,24 @@ export default {
   fieldEnvTextTooLarge: '本文が 64 KiB の上限を超えています',
   fieldEnvPreviewCount: '{n} 個の変数を認識',
   fieldEnvPreviewSkipped: '{n} 個の変数を認識、KEY=VALUE でない {m} 行をスキップ',
+  fieldNacosUrlLabel: 'Nacos アドレス',
+  fieldNacosUrlHint: 'コンテキストパスを含めてルートパスまで入力します。自己ホストの既定はたとえば http://127.0.0.1:8848/nacos。認証情報はアドレスに書かず、下の資格証明を指定してください。要求はプラットフォームが動くマシンから発されるため、ループバックアドレスはそのマシン自身を指します',
+  fieldNacosUrlRequired: 'Nacos から読み取るには設定センターのアドレスが必要です',
+  fieldNacosUrlTooLong: 'アドレスが長すぎます（512 文字以内）',
+  fieldNacosUrlShape: 'アドレスの形が不正です：http://host:port/path の完全な形、http または https のみ、空白なしで入力してください',
+  fieldNacosUrlUserInfo: 'アドレスにユーザー名とパスワードを書かないでください。下の資格証明選択で Nacos 資格証明を参照します',
+  fieldNacosUrlQuery: 'アドレスはルートパス（/nacos コンテキストパス込み）までとし、クエリ文字列やフラグメントは付けないでください',
+  fieldNacosUrlBlocked: 'アウトバウンド制限がこのアドレスを通しませんでした：リンクローカルやクラウド メタデータ系の予約アドレスは設定センターにできません',
+  fieldNacosDataIdLabel: 'Data ID',
+  fieldNacosDataIdHint: '設定の形式は properties か text を選び、内容は 1 行に 1 件の KEY=VALUE にしてください。YAML や JSON からは変数を 1 つも解釈できず、ビルドはそのまま失敗します',
+  fieldNacosDataIdRequired: 'Nacos から読み取るには Data ID が必要です',
+  fieldNacosGroupLabel: 'グループ',
+  fieldNacosGroupHint: '設定のグループ。空欄なら DEFAULT_GROUP',
+  fieldNacosNamespaceLabel: '名前空間 ID',
+  fieldNacosNamespaceHint: '空欄 = public（既定の名前空間）。表示名ではなく名前空間 ID を入力します',
+  fieldNacosCredLabel: 'Nacos 資格証明',
+  fieldNacosCredHint: '「資格証明ストア · Nacos 設定」で作ったユーザー名 + パスワードを選択します。空欄 = 匿名読み取り（自己ホストの Nacos は多くの場合認証がオフ）',
+  fieldNacosCoordBad: '空白と制御文字を含まない 256 文字以内の文字列を入力してください',
 
 
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
