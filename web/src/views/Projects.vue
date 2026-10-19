@@ -235,6 +235,8 @@ const inlineCredTypeLabels = computed<Record<CredentialType, string>>(() => ({
   registry: t('settingsVault.typeRegistry'),
   // 行内建不了集群凭据(kubeconfig 要到保险库整份粘贴),此条只为满足 Record 完整性。
   kubeconfig: t('settingsVault.typeKubeconfig'),
+  // 配置中心凭据同理只能去保险库建 —— 构建节点上凑不出「Nacos 地址 + 账号」这一对。
+  nacos: t('settingsVault.typeNacos'),
 }))
 
 async function loadCredentials(): Promise<void> {

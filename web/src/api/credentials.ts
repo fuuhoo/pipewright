@@ -24,6 +24,8 @@ export type CredentialType =
   | 'ssh_password'
   | 'registry'
   | 'kubeconfig'
+  /** 配置中心(Nacos)登录对:与 registry 同一条「用户名 + 密码」折法与掩码口径。 */
+  | 'nacos'
 
 export interface Credential {
   id: string

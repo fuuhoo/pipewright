@@ -183,19 +183,29 @@ const typeLabels = computed<Record<CredentialType, string>>(() => ({
   ssh_password: t('settingsVault.typeSshPassword'),
   registry: t('settingsVault.typeRegistry'),
   kubeconfig: t('settingsVault.typeKubeconfig'),
+  nacos: t('settingsVault.typeNacos'),
 }))
 
 const idleCount = computed(
   () => credentials.value.filter(idleWarning).length,
 )
 
-// 用户名栏:git 系与镜像仓库共用这一栏。registry 不标「可选」——
-// 仓库登录就是用户名 + 密码,缺用户名等于只能匿名。
-const USERNAME_FIELD_TYPES: CredentialType[] = ['git_token', 'git_http', 'git_ssh', 'registry']
+// 用户名栏:git 系、镜像仓库与配置中心共用这一栏。registry / nacos 不标「可选」——
+// 登录就是用户名 + 密码,缺用户名等于只能匿名。
+const USERNAME_FIELD_TYPES: CredentialType[] = ['git_token', 'git_http', 'git_ssh', 'registry', 'nacos']
 const showUsernameField = computed(() => USERNAME_FIELD_TYPES.includes(form.value.type))
+// 栏标题各自点名用途:写「Git 用户名」会让人把 git 令牌当成 Nacos 账号存进来。
+const usernameLabel = computed(() => {
+  if (form.value.type === 'registry') return t('settingsVault.fieldRegistryUsername')
+  if (form.value.type === 'nacos') return t('settingsVault.fieldNacosUsername')
+  return t('settingsVault.fieldGitUsername')
+})
+// registry / nacos 的登录对缺用户名就成了匿名,不给「（可选）」;git 系才真是可省。
+const usernameIsOptional = computed(() => !['registry', 'nacos'].includes(form.value.type))
 const usernamePlaceholder = computed(() => {
   switch (form.value.type) {
     case 'registry': return t('settingsVault.registryUsernamePlaceholder')
+    case 'nacos': return t('settingsVault.nacosUsernamePlaceholder')
     case 'git_ssh': return t('settingsVault.gitSSHUsernamePlaceholder')
     default: return t('settingsVault.gitUsernamePlaceholder')
   }
@@ -203,16 +213,18 @@ const usernamePlaceholder = computed(() => {
 const usernameHint = computed(() => {
   switch (form.value.type) {
     case 'registry': return t('settingsVault.hintRegistryUsername')
+    case 'nacos': return t('settingsVault.hintNacosUsername')
     case 'git_ssh': return t('settingsVault.hintGitSSHUsername')
     default: return t('settingsVault.hintGitUsername')
   }
 })
-// 口令栏文案:registry 是「密码」而非「密钥/token」,避免用户把用户名写进同一栏。
+// 口令栏文案:registry 与 nacos 是「密码」而非「密钥/token」,避免用户把用户名写进同一栏。
 const secretLabel = computed(() => {
   if (modalMode.value === 'edit') return t('settingsVault.fieldSecretNew')
   if (form.value.type === 'git_http') return t('settingsVault.fieldSecretGitHttp')
   if (form.value.type === 'git_ssh') return t('settingsVault.fieldSecretGitSSH')
   if (form.value.type === 'registry') return t('settingsVault.fieldSecretRegistry')
+  if (form.value.type === 'nacos') return t('settingsVault.fieldSecretNacos')
   if (form.value.type === 'kubeconfig') return t('settingsVault.fieldSecretKubeconfig')
   return t('settingsVault.fieldSecret')
 })
@@ -222,6 +234,7 @@ const secretPlaceholder = computed(() => {
     case 'ssh_password': return t('settingsVault.secretPlaceholderSshPassword')
     case 'git_http': return t('settingsVault.secretPlaceholderGitHttp')
     case 'registry': return t('settingsVault.secretPlaceholderRegistry')
+    case 'nacos': return t('settingsVault.secretPlaceholderNacos')
     case 'kubeconfig': return t('settingsVault.secretPlaceholderKubeconfig')
     default: return t('settingsVault.secretPlaceholderToken')
   }
@@ -241,6 +254,7 @@ const secretHint = computed(() => {
     case 'git_http': return t('settingsVault.hintGitHttp')
     case 'git_ssh': return t('settingsVault.hintGitSSH')
     case 'registry': return t('settingsVault.hintRegistrySecret')
+    case 'nacos': return t('settingsVault.hintNacosSecret')
     case 'kubeconfig': return t('settingsVault.hintKubeconfig')
     default: return t('settingsVault.hintSecret')
   }
@@ -589,6 +603,12 @@ async function toggleEditReveal(): Promise<void> {
               <path d="M12 2.5 20 7v10l-8 4.5L4 17V7z"/>
               <path d="M12 8v8M8.5 10.5 12 8l3.5 2.5"/>
             </svg>
+            <!-- nacos(配置中心:调节滑块,表示「一组可改的配置项」) -->
+            <svg v-else-if="cred.type === 'nacos'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+              <path d="M4 7h11M19 7h1M4 17h5M13 17h7"/>
+              <circle cx="17" cy="7" r="2"/>
+              <circle cx="11" cy="17" r="2"/>
+            </svg>
             <!-- registry -->
             <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
               <rect x="3" y="3" width="8" height="8" rx="1"/>
@@ -744,7 +764,7 @@ async function toggleEditReveal(): Promise<void> {
             <label class="field-label" for="cred-type">{{ t('settingsVault.fieldType') }}</label>
             <div class="segmented" role="group" :aria-label="t('settingsVault.credentialTypeAria')">
               <button
-                v-for="opt in (['git_token', 'git_http', 'git_ssh', 'ssh_key', 'ssh_password', 'registry', 'kubeconfig'] as CredentialType[])"
+                v-for="opt in (['git_token', 'git_http', 'git_ssh', 'ssh_key', 'ssh_password', 'registry', 'nacos', 'kubeconfig'] as CredentialType[])"
                 :key="opt"
                 type="button"
                 class="seg-item"
@@ -781,8 +801,8 @@ async function toggleEditReveal(): Promise<void> {
           <!-- Secret — password type, never echoed back -->
           <div v-if="showUsernameField" class="field">
             <label class="field-label" for="cred-username">
-              {{ form.type === 'registry' ? t('settingsVault.fieldRegistryUsername') : t('settingsVault.fieldGitUsername') }}
-              <span v-if="form.type !== 'registry'" class="field-optional">{{ t('settingsVault.optional') }}</span>
+              {{ usernameLabel }}
+              <span v-if="usernameIsOptional" class="field-optional">{{ t('settingsVault.optional') }}</span>
             </label>
             <input
               id="cred-username"
@@ -1280,6 +1300,11 @@ async function toggleEditReveal(): Promise<void> {
 .type-icon--registry {
   background: var(--color-amber-soft);
   color: var(--color-amber);
+}
+
+.type-icon--nacos {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 
 /* ─── credential cells ────────────────────────────────────────────────────── */
