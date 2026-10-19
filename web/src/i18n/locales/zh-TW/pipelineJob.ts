@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     '可選快取鍵範本。留空則自動按「分支 + 工作區內 lockfile(package-lock/pom.xml/go.sum 等)內容」推導:相依變則自動冷建置。支援 {\'{{參數}}\'}',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: '不匯入',
+  envSourceRepo: '引用倉庫檔案',
+  envSourcePaste: '貼上內容',
+  envSourceUpload: '上傳本機檔案',
+  fieldEnvSourceLabel: '環境變數匯入',
+  fieldEnvSourceHint:
+    '把整份 .env 注入本節點的執行環境:同名變數以這裡為準,覆蓋執行參數、上游任務輸出與「變數與快取」裡的同名項。僅腳本類節點可用(建置任務的產品檔位=映像本期不接)',
+  fieldEnvFileLabel: '倉庫內 env 檔案',
+  fieldEnvFileHint:
+    '專案倉庫根下的相對路徑(如 .env.production);執行時依本次 commit 現讀,改完合併即生效。檔名要形如 .env、.env.production 或 prod.env',
+  fieldEnvFileRequired: '引用倉庫檔案時要填倉庫裡的路徑',
+  fieldEnvFileBad: '路徑不合法:要填倉庫內相對路徑,不能是絕對路徑,也不能含 ..',
+  fieldEnvFileNotEnv: '檔名不像 env 檔案:要形如 .env、.env.production 或 prod.env',
+  fieldEnvPickButton: '選擇本機 env 檔案',
+  fieldEnvPickHint:
+    '檔案只在你這台瀏覽器裡讀成下面的內容,不會傳到平台;落庫的是一段文字,和貼上完全一樣',
+  fieldEnvPickPicked: '已讀入「{name}」',
+  fieldEnvPickTooLarge: '檔案超過 {n} KiB 上限,未讀入',
+  fieldEnvPickReadFailed: '讀取檔案失敗,請改用貼上',
+  fieldEnvTextLabel: 'env 內容',
+  fieldEnvTextHint:
+    '每行一條 KEY=VALUE;# 開頭算註解,解析不了的行會跳過並在建置日誌裡提示。值兩端成對的引號會自動去掉',
+  fieldEnvTextRequired: '要匯入就得填內容',
+  fieldEnvTextTooLarge: '內容超過 64 KiB 上限',
+  fieldEnvPreviewCount: '辨識出 {n} 個變數',
+  fieldEnvPreviewSkipped: '辨識出 {n} 個變數,{m} 行不是 KEY=VALUE 已跳過',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: '倉庫根',
   workspaceJobDir: '本任務工作目錄',

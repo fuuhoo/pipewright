@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     'Optional cache key template. If empty, derived automatically from “branch + lockfile content in the workspace (package-lock/pom.xml/go.sum etc.)”: dependency changes trigger an automatic cold build. Supports {\'{{param}}\'}',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: 'Don\'t import',
+  envSourceRepo: 'Repo file',
+  envSourcePaste: 'Paste content',
+  envSourceUpload: 'Upload local file',
+  fieldEnvSourceLabel: 'Env file import',
+  fieldEnvSourceHint:
+    'Injects a whole .env into this node\'s execution environment: names imported here win over run parameters, upstream job outputs and same-name entries in “Variables & cache”. Script-class nodes only (a build job with artifact tier = image is not supported yet)',
+  fieldEnvFileLabel: 'Env file in repo',
+  fieldEnvFileHint:
+    'Path relative to the repo root (e.g. .env.production); read at run time from this commit, so merging a change is enough. File names look like .env, .env.production or prod.env',
+  fieldEnvFileRequired: 'Enter the repository path when the source is a repo file',
+  fieldEnvFileBad: 'Invalid path: use a repository-relative path, no absolute path and no ..',
+  fieldEnvFileNotEnv: 'Not an env file name: use .env, .env.production or prod.env',
+  fieldEnvPickButton: 'Choose a local env file',
+  fieldEnvPickHint:
+    'The file is read into the text box below inside your browser only — nothing goes to the server. What gets stored is plain text, exactly like pasting',
+  fieldEnvPickPicked: 'Read “{name}”',
+  fieldEnvPickTooLarge: 'The file is over the {n} KiB limit and was not read',
+  fieldEnvPickReadFailed: 'Could not read the file — paste the content instead',
+  fieldEnvTextLabel: 'Env content',
+  fieldEnvTextHint:
+    'One KEY=VALUE per line; # starts a comment, lines that can\'t be parsed are skipped and reported in the build log. Quotes wrapping a whole value are stripped',
+  fieldEnvTextRequired: 'Fill in the content to import it',
+  fieldEnvTextTooLarge: 'Content exceeds the 64 KiB limit',
+  fieldEnvPreviewCount: '{n} variables recognised',
+  fieldEnvPreviewSkipped: '{n} variables recognised, {m} line(s) are not KEY=VALUE and were skipped',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: 'Repo root',
   workspaceJobDir: 'This job’s working dir',

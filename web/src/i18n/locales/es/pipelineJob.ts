@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     'Plantilla de clave de caché opcional. Si está vacía, se deriva automáticamente de «rama + contenido del lockfile en el espacio de trabajo (package-lock/pom.xml/go.sum, etc.)»: los cambios de dependencias provocan un build en frío automático. Admite {\'{{parámetro}}\'}',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: 'No importar',
+  envSourceRepo: 'Archivo del repositorio',
+  envSourcePaste: 'Pegar contenido',
+  envSourceUpload: 'Elegir archivo local',
+  fieldEnvSourceLabel: 'Importar env',
+  fieldEnvSourceHint:
+    'Inyecta un .env completo en el entorno de ejecución de este nodo: las variables homónimas importadas aquí ganan y sustituyen a los parámetros de ejecución, las salidas de tareas upstream y las entradas homónimas de «Variables y caché». Solo nodos de script (una tarea de compilación con tipo de artefacto = imagen aún no está admitida)',
+  fieldEnvFileLabel: 'Archivo env en el repositorio',
+  fieldEnvFileHint:
+    'Ruta relativa a la raíz del repositorio (p. ej. .env.production); se lee del commit actual en tiempo de ejecución, así que basta con integrar el cambio. Nombres como .env, .env.production o prod.env',
+  fieldEnvFileRequired: 'Indica la ruta en el repositorio cuando el origen es un archivo del repositorio',
+  fieldEnvFileBad: 'Ruta no válida: usa una ruta relativa dentro del repositorio, sin ruta absoluta ni ..',
+  fieldEnvFileNotEnv: 'No parece un archivo env: usa .env, .env.production o prod.env',
+  fieldEnvPickButton: 'Elegir un archivo env local',
+  fieldEnvPickHint:
+    'El archivo se convierte en texto solo dentro de tu navegador y nunca se envía al servidor; lo que se guarda es texto plano, igual que pegarlo',
+  fieldEnvPickPicked: 'Se leyó «{name}»',
+  fieldEnvPickTooLarge: 'El archivo supera el límite de {n} KiB y no se leyó',
+  fieldEnvPickReadFailed: 'No se pudo leer el archivo; pega el contenido',
+  fieldEnvTextLabel: 'Contenido env',
+  fieldEnvTextHint:
+    'Un KEY=VALUE por línea; # inicia un comentario y las líneas que no se pueden analizar se omiten y se avisan en el registro de compilación. Las comillas que envuelven un valor completo se quitan',
+  fieldEnvTextRequired: 'Hace falta contenido para importar',
+  fieldEnvTextTooLarge: 'El contenido supera el límite de 64 KiB',
+  fieldEnvPreviewCount: '{n} variables reconocidas',
+  fieldEnvPreviewSkipped: '{n} variables reconocidas, {m} línea(s) no son KEY=VALUE y se omitieron',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: 'Raíz del repositorio',
   workspaceJobDir: 'Directorio de trabajo de este trabajo',

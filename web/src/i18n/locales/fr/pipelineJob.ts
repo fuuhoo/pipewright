@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     'Modèle de clé de cache optionnel. Si vide, dérivé automatiquement de « branche + contenu du lockfile dans l’espace de travail (package-lock/pom.xml/go.sum, etc.) » : un changement de dépendances déclenche un build à froid automatique. Prend en charge {\'{{paramètre}}\'}',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: 'Ne pas importer',
+  envSourceRepo: 'Fichier du dépôt',
+  envSourcePaste: 'Coller le contenu',
+  envSourceUpload: 'Choisir un fichier local',
+  fieldEnvSourceLabel: 'Import de fichier env',
+  fieldEnvSourceHint:
+    'Injecte un .env complet dans l’environnement d’exécution de ce nœud : les variables homonymes importées ici priment sur les paramètres d’exécution, les sorties des tâches amont et les entrées homonymes de « Variables et cache ». Réservé aux nœuds de script (une tâche de compilation avec type d’artefact = image n’est pas encore prise en charge)',
+  fieldEnvFileLabel: 'Fichier env dans le dépôt',
+  fieldEnvFileHint:
+    'Chemin relatif à la racine du dépôt (ex. .env.production) ; lu sur le commit courant au moment de l’exécution, un simple merge suffit. Noms en .env, .env.production ou prod.env',
+  fieldEnvFileRequired: 'Indiquez le chemin dans le dépôt quand la source est un fichier du dépôt',
+  fieldEnvFileBad: 'Chemin invalide : utilisez un chemin relatif dans le dépôt, sans chemin absolu ni ..',
+  fieldEnvFileNotEnv: 'Nom non conforme à un fichier env : .env, .env.production ou prod.env',
+  fieldEnvPickButton: 'Choisir un fichier env local',
+  fieldEnvPickHint:
+    'Le fichier est lu dans votre navigateur seul pour remplir le texte ci-dessous, jamais envoyé au serveur ; ce qui est enregistré reste du texte simple, comme un collage',
+  fieldEnvPickPicked: '« {name} » lu',
+  fieldEnvPickTooLarge: 'Fichier au-dessus de la limite de {n} KiB, non lu',
+  fieldEnvPickReadFailed: 'Lecture impossible ; collez le contenu',
+  fieldEnvTextLabel: 'Contenu env',
+  fieldEnvTextHint:
+    'Un KEY=VALUE par ligne ; # introduit un commentaire, les lignes impossibles à analyser sont ignorées et signalées dans le journal de compilation. Les guillemets autour d’une valeur entière sont retirés',
+  fieldEnvTextRequired: 'Un contenu est nécessaire pour importer',
+  fieldEnvTextTooLarge: 'Le contenu dépasse la limite de 64 KiB',
+  fieldEnvPreviewCount: '{n} variables reconnues',
+  fieldEnvPreviewSkipped: '{n} variables reconnues, {m} ligne(s) non conforme(s) au format KEY=VALUE et ignorée(s)',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: 'Racine du dépôt',
   workspaceJobDir: 'Répertoire de travail de cette tâche',

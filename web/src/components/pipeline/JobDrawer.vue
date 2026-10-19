@@ -11,6 +11,7 @@ import type { Environment } from '../../api/pipelineSettings'
 import { listEnabledBuildEnvs, type PresetBuildEnv } from '../../api/buildEnvs'
 import { listEnabledConfigProfiles, type ConfigProfile } from '../../api/configProfiles'
 import { OTHER_LANGUAGE } from '../../lib/languageOptions'
+import { ENV_MAX_BYTES, previewEnvBody } from '../../lib/envFileImport'
 import {
   getJobTypeSpec,
   splitConfig,
@@ -540,6 +541,40 @@ function setField(key: string, value: string): void {
   flush()
 }
 
+// ─── 环境变量导入 ─────────────────────────────────────────────────────────────
+// 「上传」只在你这台浏览器里把本地文件读成正文填进 envText,没有任何服务端暂存:
+// 落库形状与「粘贴」逐字相同,后端因此只有一条读取路径,不会两条实现各自漂移。
+const envPickError = ref('')
+
+async function onEnvFilePicked(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  envPickError.value = ''
+  if (!file) return
+  if (file.size > ENV_MAX_BYTES) {
+    envPickError.value = t('pipelineJob.fieldEnvPickTooLarge', { n: ENV_MAX_BYTES >> 10 })
+    return
+  }
+  try {
+    const text = await file.text()
+    updateLocal('envText', text)
+    setField('envFileName', file.name)
+  } catch {
+    envPickError.value = t('pipelineJob.fieldEnvPickReadFailed')
+  }
+}
+
+/** 正文框的识别结果:注入前先说清「几个变量、几行看不懂」。改名打错字会静默少一个变量,那要在构建日志里查半天。 */
+const envTextPreview = computed(() => {
+  const text = typedConfig.value.envText ?? ''
+  if (!text.trim()) return ''
+  const { keys, skipped } = previewEnvBody(text)
+  return skipped > 0
+    ? t('pipelineJob.fieldEnvPreviewSkipped', { n: keys.length, m: skipped })
+    : t('pipelineJob.fieldEnvPreviewCount', { n: keys.length })
+})
+
 // ─── Raw extras (advanced) ─────────────────────────────────────────────────────
 
 function addExtra(): void {
@@ -1018,6 +1053,20 @@ async function confirmSave(): Promise<void> {
           <p v-else class="field-hint">{{ t('pipelineJob.fieldPushTargetNone') }}</p>
         </div>
 
+        <!-- env 文件选取:正文在你这台浏览器里读进下面的 envText 框,不发服务端 -->
+        <div v-else-if="field.kind === 'envpick'" class="env-pick">
+          <input
+            type="file"
+            class="env-pick-input"
+            :aria-label="field.label"
+            @change="onEnvFilePicked"
+          />
+          <p v-if="fieldValue('envFileName')" class="env-pick-picked">
+            {{ t('pipelineJob.fieldEnvPickPicked', { name: fieldValue('envFileName') }) }}
+          </p>
+          <p v-if="envPickError" class="field-error">{{ envPickError }}</p>
+        </div>
+
         <!-- number / text -->
         <input
           v-else
@@ -1032,6 +1081,7 @@ async function confirmSave(): Promise<void> {
         />
 
         <p v-if="field.hint && field.kind !== 'toggle'" class="field-hint">{{ field.hint }}</p>
+        <p v-if="field.key === 'envText' && envTextPreview" class="field-hint">{{ envTextPreview }}</p>
         <p v-if="fieldError(field)" class="field-error">{{ fieldError(field) }}</p>
       </div>
       </template>
@@ -1359,6 +1409,30 @@ async function confirmSave(): Promise<void> {
   padding: 9px 11px;
   line-height: 1.5;
   resize: vertical;
+}
+
+/* env 文件选取:保留原生控件(能选文件、能看文件名),只把按钮染成主题色。 */
+.env-pick-input {
+  width: 100%;
+  font-size: 0.78rem;
+  color: var(--color-dim);
+}
+.env-pick-input::file-selector-button {
+  margin-right: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
+  background: var(--color-inset);
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.env-pick-picked {
+  margin: 6px 0 0;
+  font-size: 0.74rem;
+  color: var(--color-dim);
 }
 
 .is-mono {

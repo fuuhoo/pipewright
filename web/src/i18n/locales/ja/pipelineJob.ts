@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     '任意のキャッシュキーテンプレート。空の場合は「ブランチ + ワークスペース内の lockfile(package-lock/pom.xml/go.sum など)の内容」から自動導出:依存が変わると自動でコールドビルド。{\'{{パラメータ}}\'} に対応',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: 'インポートしない',
+  envSourceRepo: 'リポジトリのファイル',
+  envSourcePaste: '内容を貼り付け',
+  envSourceUpload: 'ローカルファイルをアップロード',
+  fieldEnvSourceLabel: '環境変数のインポート',
+  fieldEnvSourceHint:
+    '.env 一式をこのノードの実行環境に注入します。同名の変数はこちらが優先され、実行パラメータ・上流ジョブの出力・「変数とキャッシュ」の同名項目を上書きします。スクリプト系ノードのみ対応(ビルドの成果物階層=イメージは今回未対応)',
+  fieldEnvFileLabel: 'リポジトリ内の env ファイル',
+  fieldEnvFileHint:
+    'リポジトリルートからの相対パス(例 .env.production)。実行時に今回の commit から読み込むので、変更をマージすれば反映されます。ファイル名は .env、.env.production、prod.env の形式',
+  fieldEnvFileRequired: 'リポジトリのファイルを選ぶ場合はパスを入力してください',
+  fieldEnvFileBad: '不正なパスです。リポジトリ内の相対パスを入力し、絶対パスや .. は使えません',
+  fieldEnvFileNotEnv: 'env ファイルらしい名前ではありません(.env / .env.production / prod.env)',
+  fieldEnvPickButton: 'ローカルの env ファイルを選択',
+  fieldEnvPickHint:
+    'ファイルはあなたのブラウザだけで下の本文に読み込まれ、サーバーには送信されません。保存されるのは貼り付けと同じプレーンテキストです',
+  fieldEnvPickPicked: '「{name}」を読み込み済み',
+  fieldEnvPickTooLarge: 'ファイルが {n} KiB を超えているため読み込みませんでした',
+  fieldEnvPickReadFailed: 'ファイルを読めませんでした。本文を貼り付けてください',
+  fieldEnvTextLabel: 'env 本文',
+  fieldEnvTextHint:
+    '1 行 1 件の KEY=VALUE。# で始まる行はコメント、解析できない行はスキップされビルドログに記録されます。値を囲む対のクォートは自動で除去されます',
+  fieldEnvTextRequired: 'インポートするには本文が必要です',
+  fieldEnvTextTooLarge: '本文が 64 KiB の上限を超えています',
+  fieldEnvPreviewCount: '{n} 個の変数を認識',
+  fieldEnvPreviewSkipped: '{n} 個の変数を認識、KEY=VALUE でない {m} 行をスキップ',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: 'リポジトリ直下',
   workspaceJobDir: 'このジョブの作業ディレクトリ',

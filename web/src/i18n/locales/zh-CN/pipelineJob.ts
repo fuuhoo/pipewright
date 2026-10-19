@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     '可选缓存键模板。留空则自动按「分支 + 工作区内 lockfile(package-lock/pom.xml/go.sum 等)内容」推导:依赖变则自动冷构建。支持 {\'{{参数}}\'}',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: '不导入',
+  envSourceRepo: '引用仓库文件',
+  envSourcePaste: '粘贴正文',
+  envSourceUpload: '上传本地文件',
+  fieldEnvSourceLabel: '环境变量导入',
+  fieldEnvSourceHint:
+    '把整份 .env 注入本节点的执行环境:同名变量以这里的为准,覆盖运行参数、上游任务输出与「变量与缓存」里的同名项。只有脚本类节点能用(构建任务的产物档位=镜像本期不接)',
+  fieldEnvFileLabel: '仓库内 env 文件',
+  fieldEnvFileHint:
+    '项目仓库根下的相对路径(如 .env.production);运行时按本次 commit 现读,改完合入即生效。文件名要形如 .env、.env.production 或 prod.env',
+  fieldEnvFileRequired: '引用仓库文件时要填仓库里的路径',
+  fieldEnvFileBad: '路径非法:要填仓库内相对路径,不能是绝对路径,也不能含 ..',
+  fieldEnvFileNotEnv: '文件名不像 env 文件:要形如 .env、.env.production 或 prod.env',
+  fieldEnvPickButton: '选择本地 env 文件',
+  fieldEnvPickHint:
+    '文件只在你这台浏览器里读成下面的正文,不会传到平台;落库的就是一段文本,和粘贴一模一样',
+  fieldEnvPickPicked: '已读入「{name}」',
+  fieldEnvPickTooLarge: '文件超过 {n} KiB 上限,没有读入',
+  fieldEnvPickReadFailed: '读取文件失败,请改用粘贴',
+  fieldEnvTextLabel: 'env 正文',
+  fieldEnvTextHint:
+    '每行一条 KEY=VALUE;# 开头算注释,解析不了的行会跳过并在构建日志里提示。值两端成对的引号会自动去掉',
+  fieldEnvTextRequired: '要导入就得填正文',
+  fieldEnvTextTooLarge: '正文超过 64 KiB 上限',
+  fieldEnvPreviewCount: '识别出 {n} 个变量',
+  fieldEnvPreviewSkipped: '识别出 {n} 个变量,{m} 行不是 KEY=VALUE 已跳过',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: '仓库根',
   workspaceJobDir: '本任务工作目录',

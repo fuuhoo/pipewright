@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     'Optionale Cache-Key-Vorlage. Wenn leer, automatisch aus „Branch + Lockfile-Inhalt im Workspace (package-lock/pom.xml/go.sum usw.)“ abgeleitet: Änderungen an Abhängigkeiten lösen automatisch einen Cold-Build aus. Unterstützt {\'{{Parameter}}\'}',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: 'Nicht importieren',
+  envSourceRepo: 'Datei im Repository',
+  envSourcePaste: 'Inhalt einfügen',
+  envSourceUpload: 'Lokale Datei auswählen',
+  fieldEnvSourceLabel: 'Env-Datei-Import',
+  fieldEnvSourceHint:
+    'Injiziert eine komplette .env in die Ausführungsumgebung dieses Knotens: gleichnamige importierte Variablen gewinnen und überschreiben Ausführungsparameter, Ausgaben vorgelagerter Jobs und gleichnamige Einträge unter „Variablen und Cache“. Nur Skript-Knoten (ein Build-Task mit Artefaktart = image ist noch nicht unterstützt)',
+  fieldEnvFileLabel: 'Env-Datei im Repository',
+  fieldEnvFileHint:
+    'Pfad relativ zur Repository-Wurzel (z. B. .env.production); zur Laufzeit aus dem aktuellen Commit gelesen — eine geänderte Datei wirkt nach dem Merge. Dateinamen wie .env, .env.production oder prod.env',
+  fieldEnvFileRequired: 'Bei „Datei im Repository“ den Pfad im Repository angeben',
+  fieldEnvFileBad: 'Ungültiger Pfad: relativen Pfad im Repository verwenden, ohne absoluten Pfad und ohne ..',
+  fieldEnvFileNotEnv: 'Kein Env-Dateiname: .env, .env.production oder prod.env verwenden',
+  fieldEnvPickButton: 'Lokale Env-Datei auswählen',
+  fieldEnvPickHint:
+    'Die Datei wird nur in deinem Browser zum folgenden Text gelesen und nie an den Server gesendet; gespeichert wird reiner Text — exakt wie beim Einfügen',
+  fieldEnvPickPicked: '„{name}“ gelesen',
+  fieldEnvPickTooLarge: 'Datei über dem Limit von {n} KiB — nicht gelesen',
+  fieldEnvPickReadFailed: 'Datei konnte nicht gelesen werden — Inhalt bitte einfügen',
+  fieldEnvTextLabel: 'Env-Inhalt',
+  fieldEnvTextHint:
+    'Ein KEY=VALUE pro Zeile; # leitet einen Kommentar ab, nicht interpretierbare Zeilen werden übersprungen und im Build-Protokoll gemeldet. Anführungszeichen um einen kompletten Wert entfallen',
+  fieldEnvTextRequired: 'Zum Importieren ist ein Inhalt nötig',
+  fieldEnvTextTooLarge: 'Inhalt überschreitet das Limit von 64 KiB',
+  fieldEnvPreviewCount: '{n} Variablen erkannt',
+  fieldEnvPreviewSkipped: '{n} Variablen erkannt, {m} Zeile(n) sind nicht KEY=VALUE und wurden übersprungen',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: 'Repo-Wurzel',
   workspaceJobDir: 'Arbeitsverzeichnis dieses Jobs',

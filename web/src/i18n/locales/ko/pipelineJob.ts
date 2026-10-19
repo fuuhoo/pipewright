@@ -57,6 +57,35 @@ export default {
   fieldCacheKeyHint:
     '선택적 캐시 키 템플릿. 비우면 「브랜치 + 작업 공간 내 lockfile(package-lock/pom.xml/go.sum 등) 내용」으로 자동 도출: 의존성이 바뀌면 자동 콜드 빌드. {\'{{매개변수}}\'} 지원',
 
+  // ─── jobConfigSchema · env file import fields ────────────────────────────
+  envSourceNone: '가져오지 않음',
+  envSourceRepo: '저장소 파일',
+  envSourcePaste: '내용 붙여넣기',
+  envSourceUpload: '로컬 파일 업로드',
+  fieldEnvSourceLabel: '환경 변수 가져오기',
+  fieldEnvSourceHint:
+    '.env 전체를 이 노드의 실행 환경에 주입합니다. 같은 이름 변수는 여기서 가져온 값이 우선하며 실행 매개변수·상류 잡 출력·「변수와 캐시」의 같은 항목을 덮어씁니다. 스크립트 계열 노드만 지원(빌드 잡의 산출물 등급=이미지는 이번 버전 미지원)',
+  fieldEnvFileLabel: '저장소 내 env 파일',
+  fieldEnvFileHint:
+    '저장소 루트 기준 상대 경로(예: .env.production). 실행 시 이번 commit에서 바로 읽으므로 병합만 하면 반영됩니다. 파일 이름은 .env, .env.production, prod.env 형식',
+  fieldEnvFileRequired: '저장소 파일을 선택하면 저장소 경로를 입력하세요',
+  fieldEnvFileBad: '잘못된 경로: 저장소 내 상대 경로를 입력하고 절대 경로 또는 ..는 사용할 수 없습니다',
+  fieldEnvFileNotEnv: 'env 파일 이름 형식이 아닙니다(.env, .env.production, prod.env 중 하나)',
+  fieldEnvPickButton: '로컬 env 파일 선택',
+  fieldEnvPickHint:
+    '파일은 사용자의 브라우저에서만 아래 본문으로 읽으며 서버로 전송되지 않습니다. 저장되는 내용은 붙여넣기와 동일한 일반 텍스트입니다',
+  fieldEnvPickPicked: '“{name}” 읽음',
+  fieldEnvPickTooLarge: '파일이 {n} KiB 한도를 넘어 읽지 않았습니다',
+  fieldEnvPickReadFailed: '파일을 읽을 수 없습니다. 본문을 직접 붙여넣으세요',
+  fieldEnvTextLabel: 'env 본문',
+  fieldEnvTextHint:
+    '한 줄에 KEY=VALUE 하나. #으로 시작하는 줄은 주석이며 해석할 수 없는 줄은 건너뛰고 빌드 로그에 기록됩니다. 값 양쪽의 쌍따옴표는 자동으로 제거됩니다',
+  fieldEnvTextRequired: '가져오려면 본문이 필요합니다',
+  fieldEnvTextTooLarge: '본문이 64 KiB 한도를 초과했습니다',
+  fieldEnvPreviewCount: '{n}개 변수 인식',
+  fieldEnvPreviewSkipped: '{n}개 변수 인식, KEY=VALUE가 아닌 {m}줄 건너뜀',
+
+
   // ─── jobConfigSchema · deploy ssh fields ───────────────────────────────
   workspaceRoot: '저장소 루트',
   workspaceJobDir: '이 작업의 작업 경로',

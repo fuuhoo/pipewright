@@ -16,6 +16,7 @@
 
 import type { CredentialType } from '../../api/credentials'
 import { composeIssue, stackNameIssue } from '../../lib/composePaste'
+import { envBodyIssue, repoEnvPathIssue } from '../../lib/envFileImport'
 import { t } from '../../i18n'
 
 // ─── Field model ──────────────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ export type FieldKind =
   | 'pushTarget'
   /** K8s 集群选择:候选 = 设置 · K8s 集群 里本人可见的集群(值存集群 ID) */
   | 'cluster'
+  /** env 文件选取:只在你浏览器里把本地文件读成正文填进 envText,没有任何上传 */
+  | 'envpick'
 
 export interface SelectOption {
   value: string
@@ -374,6 +377,44 @@ const EXEC_OPTION_FIELDS: JobField[] = [
   },
 ]
 
+// 环境变量导入的来源,值与后端 pipeline.EnvSource* 逐字一致(对不上就是「来源无法识别」的 422)。
+// 三档都只在节点层生效:导入的变量同名时覆盖运行参数、上游步骤输出与「变量与缓存」里的同名项。
+const ENV_SOURCE_NONE    = 'none'
+const ENV_SOURCE_REPO    = 'repo'
+const ENV_SOURCE_PASTE   = 'paste'
+const ENV_SOURCE_UPLOAD  = 'upload'
+
+const ENV_SOURCE_OPTIONS: SelectOption[] = [
+  { value: ENV_SOURCE_NONE, get label() { return t('pipelineJob.envSourceNone') } },
+  { value: ENV_SOURCE_REPO, get label() { return t('pipelineJob.envSourceRepo') } },
+  { value: ENV_SOURCE_PASTE, get label() { return t('pipelineJob.envSourcePaste') } },
+  { value: ENV_SOURCE_UPLOAD, get label() { return t('pipelineJob.envSourceUpload') } },
+]
+
+const envSourceIs = (v: string) => (c: Record<string, string>) => (c.envSource || ENV_SOURCE_NONE) === v
+// 粘贴与上传共用同一份正文框(envText):上传只是「在浏览器里把本地文件读进这个框」,
+// 落库形状与粘贴完全相同,所以后端只有一处读取路径,不会两条实现慢慢漂移。
+const envUsesText = (c: Record<string, string>) => envSourceIs(ENV_SOURCE_PASTE)(c) || envSourceIs(ENV_SOURCE_UPLOAD)(c)
+
+// 与后端 RepoEnvPathOK / validateJobEnv 同一判据(见 lib/envFileImport.ts),表单先报错就不用等 422。
+function envFileIssue(path: string): string {
+  switch (repoEnvPathIssue(path)) {
+    case 'empty': return t('pipelineJob.fieldEnvFileRequired')
+    case 'tooLong':
+    case 'notRelative': return t('pipelineJob.fieldEnvFileBad')
+    case 'notEnvFile': return t('pipelineJob.fieldEnvFileNotEnv')
+    default: return ''
+  }
+}
+
+function envTextIssue(text: string): string {
+  switch (envBodyIssue(text)) {
+    case 'empty': return t('pipelineJob.fieldEnvTextRequired')
+    case 'tooLarge': return t('pipelineJob.fieldEnvTextTooLarge')
+    default: return ''
+  }
+}
+
 const SCRIPT_FIELDS: JobField[] = [
   {
     key: 'buildEnvId',
@@ -394,6 +435,47 @@ const SCRIPT_FIELDS: JobField[] = [
     get label() { return t('pipelineJob.fieldConfigProfilesLabel') },
     kind: 'configprofiles',
     get hint() { return t('pipelineJob.fieldConfigProfilesHint') },
+  },
+  // ─── 环境变量导入(整份 .env 注入构建容器)───────────────────────────────
+  // 来源排在必填项之前:它决定下面哪几格有效。「档位=镜像」的构建任务后端会直接拒,
+  // 所以这条字段组在 build spec 里由 tierIsFile 门控,只在「产物档」出现。
+  {
+    key: 'envSource',
+    get label() { return t('pipelineJob.fieldEnvSourceLabel') },
+    kind: 'select',
+    options: ENV_SOURCE_OPTIONS,
+    get hint() { return t('pipelineJob.fieldEnvSourceHint') },
+  },
+  {
+    // 仓库来源不进节点:执行期按本次 commit 从工作区现读,改完合入即生效(与 composeFile 同规则)。
+    key: 'envFile',
+    get label() { return t('pipelineJob.fieldEnvFileLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: '.env',
+    presets: ['.env', '.env.production', 'deploy/prod.env'],
+    get hint() { return t('pipelineJob.fieldEnvFileHint') },
+    when: envSourceIs(ENV_SOURCE_REPO),
+    validate: (c) => envFileIssue(c.envFile ?? ''),
+  },
+  {
+    // 上传只发生在浏览器:选中的文件读成正文填进下面那个框,envFileName 仅用于回显当初选的是哪个文件。
+    key: 'envFileName',
+    get label() { return t('pipelineJob.fieldEnvPickButton') },
+    kind: 'envpick',
+    get hint() { return t('pipelineJob.fieldEnvPickHint') },
+    when: envSourceIs(ENV_SOURCE_UPLOAD),
+  },
+  {
+    key: 'envText',
+    get label() { return t('pipelineJob.fieldEnvTextLabel') },
+    kind: 'textarea',
+    monospace: true,
+    rows: 8,
+    placeholder: 'API_URL=https://api.example\nTIMEOUT=30',
+    get hint() { return t('pipelineJob.fieldEnvTextHint') },
+    when: envUsesText,
+    validate: (c) => envTextIssue(c.envText ?? ''),
   },
   {
     key: 'workDir',
