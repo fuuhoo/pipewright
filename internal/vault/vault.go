@@ -36,6 +36,10 @@ const (
 	// 故整份入库加密、掩码全打点(它没有「安全可暴露的尾部」—— 末段往往是证书 base64)。
 	// 能否真解析出地址由 internal/kube 在建集群时把关:那里的失败信息比这里能说的是话更具体。
 	TypeKubeConfig = "kubeconfig"
+	// TypeNacos 是配置中心(Nacos)的登录对:username = 账号,secret = 密码。形状与 registry
+	// 相同(都是用户名 + 密码),掩码因此也照 registry 走「账号可见 + 口令打点」。
+	// 只有开了鉴权的 Nacos 才需要它(nacos.core.auth.enabled 默认关),所以流水线里的引用是可选的。
+	TypeNacos = "nacos"
 )
 
 // 领域错误。错误体永不含明文/密文/master key。
@@ -111,6 +115,12 @@ type RegistryAuth struct {
 	Password string
 }
 
+// NacosAuth 是配置中心登录对。Username 为空 = 匿名读取(未选凭据、或凭据已被删)。
+type NacosAuth struct {
+	Username string
+	Password string
+}
+
 // Vault 定义保险库领域对外接口。(-er 约定的同类:领域聚合用 Vault)
 type Vault interface {
 	// Create 加密并持久化新凭据,返回掩码视图(不含明文)。
@@ -123,6 +133,9 @@ type Vault interface {
 	// GetRegistryAuth 取镜像仓库凭据并折成 (用户名, 密码):用户名栏优先,读不到才按存量
 	// "user:password" 约定从明文里切(见 ResolveRegistryAuth)。同时更新 last_used_at。
 	GetRegistryAuth(id string) (RegistryAuth, error)
+	// GetNacosAuth 取配置中心(nacos 类型)凭据并折成 (用户名, 密码),规则与 registry 同一条
+	// (见 ResolveNacosAuth)。同时更新 last_used_at。
+	GetNacosAuth(id string) (NacosAuth, error)
 	// Reveal 解密并返回指定凭据的明文,**不更新 last_used_at**(供脱敏登记等「只读取值、非真正使用」
 	// 的场景:把凭据明文登记进 Masker 以便日志/诊断/通知出网前替换为 [MASKED],不应算「最近使用」)。
 	// 未配置 master key → ErrVaultUnconfigured;不存在 → ErrNotFound;解密失败 → ErrDecrypt(不泄漏)。
@@ -178,7 +191,7 @@ func (s *service) configured() bool { return s.key != nil }
 // validateType 校验类型枚举。
 func validateType(t string) error {
 	switch t {
-	case TypeGitToken, TypeGitHTTP, TypeGitSSH, TypeSSHKey, TypeRegistry, TypeSSHPassword, TypeDNSToken, TypeKubeConfig:
+	case TypeGitToken, TypeGitHTTP, TypeGitSSH, TypeSSHKey, TypeRegistry, TypeSSHPassword, TypeDNSToken, TypeKubeConfig, TypeNacos:
 		return nil
 	default:
 		return ErrInvalidType
@@ -330,8 +343,17 @@ func (s *service) GetRegistryAuth(id string) (RegistryAuth, error) {
 	return ResolveRegistryAuth(username, secret), nil
 }
 
+// GetNacosAuth 取配置中心凭据明文并折成登录对(规则见 ResolveNacosAuth)。
+func (s *service) GetNacosAuth(id string) (NacosAuth, error) {
+	username, secret, err := s.takePair(id)
+	if err != nil {
+		return NacosAuth{}, err
+	}
+	return ResolveNacosAuth(username, secret), nil
+}
+
 // takePair 按 id 解密「用户名 + 明文」一对,并刷新 last_used_at(即真正用了一次)。
-// git 与镜像仓库两类凭据同表同存法,共用这一条取用路径。
+// git、镜像仓库、配置中心这几类凭据同表同存法(都是用户名栏 + 一条口令),共用这一条取用路径。
 func (s *service) takePair(id string) (username, secret string, err error) {
 	if !s.configured() {
 		return "", "", ErrVaultUnconfigured
@@ -371,6 +393,14 @@ func ResolveRegistryAuth(username, secret string) RegistryAuth {
 		return RegistryAuth{Username: secret[:i], Password: secret[i+1:]}
 	}
 	return RegistryAuth{Password: secret}
+}
+
+// ResolveNacosAuth 与 ResolveRegistryAuth 是同一条规则(凭据形状都是用户名 + 密码),
+// 所以直接复用那个折法,规则只住一处。切不出用户名就双双为空,调用方据此按匿名处理 ——
+// 自建 Nacos 大多没开鉴权,匿名读是常态,不是错误。
+func ResolveNacosAuth(username, secret string) NacosAuth {
+	r := ResolveRegistryAuth(username, secret)
+	return NacosAuth{Username: r.Username, Password: r.Password}
 }
 
 func (s *service) Reveal(id string) (string, error) {
@@ -460,9 +490,9 @@ func (s *service) Update(id string, in UpdateInput) (*Credential, error) {
 		masked = maskWithUsername(credType, username, *in.Secret)
 		rotate = true
 	}
-	// 只改用户名、不轮换口令的 registry 凭据:掩码里的账号名也得跟着换,
+	// 只改用户名、不轮换口令的 registry / nacos 凭据:掩码里的账号名也得跟着换,
 	// 否则列表上挂着的是上一个账号名。用户名列空(存量 user:password 写法)时保留原掩码。
-	if !rotate && credType == TypeRegistry && username != "" {
+	if !rotate && (credType == TypeRegistry || credType == TypeNacos) && username != "" {
 		masked = username + " " + maskDots
 	}
 

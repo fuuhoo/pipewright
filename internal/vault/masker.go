@@ -30,7 +30,7 @@ func mask(credType, secret string) string {
 		return maskSSHKey(secret)
 	case TypeRegistry:
 		return maskRegistry(secret)
-	case TypeSSHPassword:
+	case TypeSSHPassword, TypeNacos:
 		// 密码:全打点,绝不暴露任何字符(不留尾部)。
 		return maskDots
 	default:
@@ -38,10 +38,10 @@ func mask(credType, secret string) string {
 	}
 }
 
-// maskWithUsername 同 mask,但 registry 优先取**用户名列**:表单现在把用户名与密码分开录入,
+// maskWithUsername 同 mask,但 registry / nacos 优先取**用户名列**:表单现在把用户名与密码分开录入,
 // 用户名是明文元数据,列里有就没必要再从口令里猜。其余类型与用户名无关。
 func maskWithUsername(credType, username, secret string) string {
-	if credType == TypeRegistry {
+	if credType == TypeRegistry || credType == TypeNacos {
 		if u := strings.TrimSpace(username); u != "" {
 			return u + " " + maskDots
 		}

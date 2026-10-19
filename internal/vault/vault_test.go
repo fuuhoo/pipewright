@@ -2,6 +2,7 @@ package vault
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
@@ -390,4 +391,77 @@ func dumpEntireDB(t *testing.T, db *sql.DB) string {
 		_ = rows.Close()
 	}
 	return b.String()
+}
+
+// ── 配置中心(nacos)凭据 ────────────────────────────────────────────────────
+
+// 与镜像仓库同一条折法:用户名栏非空时整串明文都是密码 —— Nacos 的密码里带冒号很常见,
+// 从中间截断就会「明明填对了却登不进去」。掩码要挂着账号名,列表里才认得出是哪一套。
+func TestNacosAuthPrefersUsernameColumn(t *testing.T) {
+	db := testDB(t)
+	v := New(db, testKey())
+	cred, err := v.Create(CreateInput{
+		Name: "nacos-prod", Type: TypeNacos, Username: "nacos", Secret: "p@ss:with:colons",
+	})
+	if err != nil {
+		t.Fatalf("Create nacos: %v", err)
+	}
+	if want := "nacos " + maskDots; cred.MaskedValue != want {
+		t.Fatalf("masked = %q, want %q(配置中心密码不该露尾巴)", cred.MaskedValue, want)
+	}
+	auth, err := v.GetNacosAuth(cred.ID)
+	if err != nil {
+		t.Fatalf("GetNacosAuth: %v", err)
+	}
+	if auth.Username != "nacos" || auth.Password != "p@ss:with:colons" {
+		t.Fatalf("NacosAuth = %+v", auth)
+	}
+	var ciphertext string
+	if err := db.QueryRow(`SELECT ciphertext FROM credentials WHERE id = ?`, cred.ID).Scan(&ciphertext); err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+	if strings.Contains(ciphertext, "p@ss:with:colons") {
+		t.Fatal("配置中心口令明文入库")
+	}
+}
+
+// 只改用户名、不轮换口令:掩码里的账号得跟着换(与 registry 同一处判据,漏一类就会出现
+// 「Nacos 凭据改了账号,列表还挂着上一个」)。
+func TestUpdateNacosUsernameRefreshesMask(t *testing.T) {
+	v := New(testDB(t), testKey())
+	cred, err := v.Create(CreateInput{Name: "nacos", Type: TypeNacos, Username: "alice", Secret: "pw111111"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	user := "bob"
+	updated, err := v.Update(cred.ID, UpdateInput{Username: &user})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if want := "bob " + maskDots; updated.MaskedValue != want {
+		t.Fatalf("masked = %q, want %q", updated.MaskedValue, want)
+	}
+	auth, err := v.GetNacosAuth(cred.ID)
+	if err != nil || auth.Username != "bob" || auth.Password != "pw111111" {
+		t.Fatalf("口令未轮换却变了: %+v err=%v", auth, err)
+	}
+}
+
+// 取不存在 / 被禁用的凭据:错误分类要能被执行侧认出来(那里按类给人话术)。
+func TestGetNacosAuthErrorClasses(t *testing.T) {
+	db := testDB(t)
+	v := New(db, testKey())
+	if _, err := v.GetNacosAuth("no-such-id"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("不存在的凭据 = %v,要 ErrNotFound", err)
+	}
+	cred, err := v.Create(CreateInput{Name: "nacos", Type: TypeNacos, Username: "u", Secret: "pw111111"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE credentials SET enabled = 0 WHERE id = ?`, cred.ID); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := v.GetNacosAuth(cred.ID); !errors.Is(err, ErrDisabledCredential) {
+		t.Fatalf("禁用凭据 = %v,要 ErrDisabledCredential", err)
+	}
 }
