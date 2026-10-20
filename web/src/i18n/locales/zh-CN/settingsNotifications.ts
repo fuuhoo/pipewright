@@ -137,6 +137,12 @@ export default {
   evApprovalRequiredDesc: '运行进入人工审批门,等待批准或拒绝',
   evAnomalyDetected: '异常检测',
   evAnomalyDetectedDesc: '服务器指标(CPU/内存/磁盘)命中阈值规则时告警',
+  evCertExpiring: '证书即将到期',
+  evCertExpiringDesc: '导入的证书或关了自动续期的证书进入 30 天窗口,需要有人接手',
+  evCertRenewed: '证书已续期',
+  evCertRenewedDesc: '平台自动续期成功,并按落点配置铺发到目标机',
+  evCertRenewFailed: '证书续期失败',
+  evCertRenewFailedDesc: '平台尝试续期但没签出新证书,旧证书通常仍在服务',
 
   // 事件路由区
   routesTitle: '事件路由',

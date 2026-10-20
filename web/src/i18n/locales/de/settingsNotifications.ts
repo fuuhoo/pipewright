@@ -133,6 +133,12 @@ export default {
   evApprovalRequiredDesc: 'Ein Lauf hat ein manuelles Genehmigungs-Gate erreicht und wartet auf Genehmigung oder Ablehnung',
   evAnomalyDetected: 'Anomalie erkannt',
   evAnomalyDetectedDesc: 'Eine Servermetrik (CPU/Speicher/Festplatte) hat eine Schwellenwertregel überschritten',
+  evCertExpiring: 'Zertifikat läuft bald ab',
+  evCertExpiringDesc: 'Ein importiertes Zertifikat oder eines mit deaktivierter automatischer Erneuerung ist im 30-Tage-Fenster und braucht einen Eingriff',
+  evCertRenewed: 'Zertifikat erneuert',
+  evCertRenewedDesc: 'Automatische Erneuerung erfolgreich, danach Verteilung an die konfigurierten Zielserver',
+  evCertRenewFailed: 'Zertifikatserneuerung fehlgeschlagen',
+  evCertRenewFailedDesc: 'Die Plattform hat die Erneuerung versucht, aber kein neues Zertifikat erhalten; das alte bedient in der Regel weiter',
 
   routesTitle: 'Ereignisrouten',
   routesDescPre: 'Konfigurieren Sie, welche Ereignisse über welche Kanäle benachrichtigen. ',

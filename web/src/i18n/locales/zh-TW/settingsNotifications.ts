@@ -132,6 +132,12 @@ export default {
   evApprovalRequiredDesc: '執行進入人工審批門,等待批准或拒絕',
   evAnomalyDetected: '異常偵測',
   evAnomalyDetectedDesc: '伺服器指標(CPU/記憶體/磁碟)命中閾值規則時告警',
+  evCertExpiring: '憑證即將到期',
+  evCertExpiringDesc: '匯入的憑證或已關掉自動續期的憑證進入 30 天窗口,需要有人接手',
+  evCertRenewed: '憑證已續期',
+  evCertRenewedDesc: '平台自動續期成功,並按落點設定鋪發到目標機',
+  evCertRenewFailed: '憑證續期失敗',
+  evCertRenewFailedDesc: '平台嘗試續期但沒簽出新憑證,舊憑證通常仍在服務',
 
   routesTitle: '事件路由',
   routesDescPre: '設定「哪些事件經哪些管道通知」。',

@@ -133,6 +133,12 @@ export default {
   evApprovalRequiredDesc: 'Una ejecución llegó a una puerta de aprobación manual y espera aprobación o rechazo',
   evAnomalyDetected: 'Anomalía detectada',
   evAnomalyDetectedDesc: 'Una métrica del servidor (CPU/memoria/disco) cruzó una regla de umbral',
+  evCertExpiring: 'Certificado a punto de caducar',
+  evCertExpiringDesc: 'Un certificado importado, o con la renovación automática desactivada, entró en la ventana de 30 días y requiere atención',
+  evCertRenewed: 'Certificado renovado',
+  evCertRenewedDesc: 'La plataforma lo renovó y lo aplicó a los destinos configurados',
+  evCertRenewFailed: 'Renovación del certificado fallida',
+  evCertRenewFailedDesc: 'La plataforma intentó renovarlo pero no obtuvo un certificado nuevo; el anterior suele seguir en servicio',
 
   routesTitle: 'Rutas de eventos',
   routesDescPre: 'Configura qué eventos notifican por qué canales. ',

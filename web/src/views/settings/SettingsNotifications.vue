@@ -450,6 +450,9 @@ const EVENTS = computed<EventMeta[]>(() => [
   { id: 'health_check_failed', label: t('settingsNotifications.evHealthCheckFailed'), desc: t('settingsNotifications.evHealthCheckFailedDesc') },
   { id: 'approval_required', label: t('settingsNotifications.evApprovalRequired'), desc: t('settingsNotifications.evApprovalRequiredDesc') },
   { id: 'anomaly_detected', label: t('settingsNotifications.evAnomalyDetected'), desc: t('settingsNotifications.evAnomalyDetectedDesc') },
+  { id: 'cert_expiring', label: t('settingsNotifications.evCertExpiring'), desc: t('settingsNotifications.evCertExpiringDesc') },
+  { id: 'cert_renewed', label: t('settingsNotifications.evCertRenewed'), desc: t('settingsNotifications.evCertRenewedDesc') },
+  { id: 'cert_renew_failed', label: t('settingsNotifications.evCertRenewFailed'), desc: t('settingsNotifications.evCertRenewFailedDesc') },
 ])
 
 const routesLoadState = ref<LoadState>('loading')

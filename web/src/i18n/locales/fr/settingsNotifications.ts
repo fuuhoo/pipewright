@@ -133,6 +133,12 @@ export default {
   evApprovalRequiredDesc: 'Une exécution a atteint une porte d’approbation manuelle et attend approbation ou refus',
   evAnomalyDetected: 'Anomalie détectée',
   evAnomalyDetectedDesc: 'Une métrique serveur (CPU/mémoire/disque) a franchi une règle de seuil',
+  evCertExpiring: 'Certificat bientôt expiré',
+  evCertExpiringDesc: 'Un certificat importé, ou dont le renouvellement automatique est désactivé, est entré dans la fenêtre de 30 jours et demande une action',
+  evCertRenewed: 'Certificat renouvelé',
+  evCertRenewedDesc: 'Renouvellement automatique réussi, puis application aux cibles configurées',
+  evCertRenewFailed: 'Échec du renouvellement du certificat',
+  evCertRenewFailedDesc: 'La plateforme a tenté un renouvellement sans obtenir de nouveau certificat ; le précédent sert encore en général',
 
   routesTitle: 'Routes d’événements',
   routesDescPre: 'Configurez quels événements notifient quels canaux. ',

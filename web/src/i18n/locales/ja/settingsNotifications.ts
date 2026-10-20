@@ -133,6 +133,12 @@ export default {
   evApprovalRequiredDesc: '実行が手動承認ゲートに到達し、承認または却下を待っています',
   evAnomalyDetected: '異常を検出',
   evAnomalyDetectedDesc: 'サーバー指標(CPU/メモリ/ディスク)がしきい値ルールに該当したとき通知',
+  evCertExpiring: '証明書の有効期限が間もなく切れます',
+  evCertExpiringDesc: 'インポートした証明書、または自動更新がオフの証明書が30日窓に入り、対応が必要です',
+  evCertRenewed: '証明書を更新しました',
+  evCertRenewedDesc: 'プラットフォームが自動更新し、設定済みの配置先に配信しました',
+  evCertRenewFailed: '証明書の更新に失敗しました',
+  evCertRenewFailedDesc: 'プラットフォームは更新を試みましたが新しい証明書を取得できませんでした。既存証明書は通常そのまま稼働中です',
 
   routesTitle: 'イベントルート',
   routesDescPre: '「どのイベントをどのチャンネルで通知するか」を設定します。',

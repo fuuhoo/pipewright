@@ -133,6 +133,12 @@ export default {
   evApprovalRequiredDesc: '실행이 수동 승인 게이트에 도달하여 승인 또는 거부를 기다리는 중',
   evAnomalyDetected: '이상 감지',
   evAnomalyDetectedDesc: '서버 지표(CPU/메모리/디스크)가 임계값 규칙에 도달하면 알림',
+  evCertExpiring: '인증서 만료 임박',
+  evCertExpiringDesc: '가져온 인증서 또는 자동 갱신이 꺼진 인증서가 30일 구간에 들어갔습니다. 조치가 필요합니다',
+  evCertRenewed: '인증서 갱신 완료',
+  evCertRenewedDesc: '플랫폼이 자동 갱신에 성공하고 설정된 배포 대상으로 전송했습니다',
+  evCertRenewFailed: '인증서 갱신 실패',
+  evCertRenewFailedDesc: '플랫폼이 갱신을 시도했지만 새 인증서를 발급받지 못했습니다. 기존 인증서는 보통 계속 서비스 중입니다',
 
   routesTitle: '이벤트 라우트',
   routesDescPre: '"어떤 이벤트를 어떤 채널로 알릴지"를 구성합니다. ',

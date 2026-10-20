@@ -133,6 +133,12 @@ export default {
   evApprovalRequiredDesc: 'A run reached a manual approval gate and awaits approve or reject',
   evAnomalyDetected: 'Anomaly Detected',
   evAnomalyDetectedDesc: 'A server metric (CPU/memory/disk) crossed a threshold rule',
+  evCertExpiring: 'Certificate Expiring',
+  evCertExpiringDesc: 'An imported certificate, or one with auto-renew off, entered the 30-day window and needs someone to act',
+  evCertRenewed: 'Certificate Renewed',
+  evCertRenewedDesc: 'The platform renewed it and pushed it out to the configured deployment targets',
+  evCertRenewFailed: 'Certificate Renewal Failed',
+  evCertRenewFailedDesc: 'The platform tried to renew it but got no new certificate; the old one is usually still serving',
 
   routesTitle: 'Event Routes',
   routesDescPre: 'Configure which events notify which channels. ',

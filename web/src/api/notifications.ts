@@ -135,6 +135,9 @@ export type NotificationEvent =
   | 'health_check_failed'
   | 'approval_required'
   | 'anomaly_detected'
+  | 'cert_expiring'
+  | 'cert_renewed'
+  | 'cert_renew_failed'
 
 /** GET response item — an event→channel mapping. */
 export interface NotificationRoute {
