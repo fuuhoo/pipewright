@@ -11,6 +11,7 @@ import {
   Server,
   Box,
   Certificate,
+  ShieldLock,
   AlertTriangle,
   Bell,
   Settings,
@@ -91,6 +92,8 @@ const navItems: NavItem[] = [
   { name: 'containers',    to: '/containers',    icon: Box,        labelKey: 'nav.containers',    ariaKey: 'nav.containers', requires: { perm: 'container.view' } },
   // R2 / E2.4: 证书总览大盘(跨主机跨域名一张表 + 到期高亮)。
   { name: 'proxy-overview', to: '/proxy',        icon: Certificate, labelKey: 'nav.proxyOverview', ariaKey: 'nav.proxyOverview', requires: { perm: 'cert.view' } },
+  // 证书管理:申请(DNS-01 自签 / 导入已有)、到期监控、SSH 发布三条线的操作台。
+  { name: 'certs',         to: '/certs',         icon: ShieldLock,  labelKey: 'nav.certs',         ariaKey: 'nav.certs', requires: { perm: 'cert.view' } },
   // R4 / E4.1: PR 预览环境大盘(临时环境列表 + 手动回收)。
   { name: 'previews',      to: '/previews',      icon: Browser,    labelKey: 'nav.previews',      ariaKey: 'nav.previews', requires: { perm: 'preview.view' } },
   // Story 6-5: configurable anomaly detection & alerts (FR-23)

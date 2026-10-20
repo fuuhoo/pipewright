@@ -27,6 +27,7 @@ export default {
     serverStatus: '服务器',
     containers: '容器',
     proxyOverview: '证书总览',
+    certs: '证书管理',
     previews: '预览环境',
     anomaly: '异常检测',
     notifications: '通知',

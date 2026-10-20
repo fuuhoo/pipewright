@@ -116,6 +116,7 @@ export const LANDING_ORDER: { name: string; requires?: AccessRequires }[] = [
   { name: 'server-status', requires: { perm: 'server.view' } },
   { name: 'containers', requires: { perm: 'container.view' } },
   { name: 'proxy-overview', requires: { perm: 'cert.view' } },
+  { name: 'certs', requires: { perm: 'cert.view' } },
   { name: 'previews', requires: { perm: 'preview.view' } },
   { name: 'anomaly', requires: { perm: 'anomaly.view' } },
   { name: 'permissions' },

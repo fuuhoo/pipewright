@@ -28,6 +28,7 @@ const zhTW: typeof zhCN = {
     serverStatus: '伺服器',
     containers: '容器',
     proxyOverview: '憑證總覽',
+    certs: '憑證管理',
     previews: '預覽環境',
     anomaly: '異常偵測',
     notifications: '通知',

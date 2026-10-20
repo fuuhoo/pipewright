@@ -22,6 +22,8 @@ const ServerStatus = () => import('../views/ServerStatus.vue')
 const Containers = () => import('../views/Containers.vue')
 // R2 / E2.4: 证书总览大盘(跨主机跨域名一张表 + 到期高亮;只读聚合)
 const ProxyOverview = () => import('../views/ProxyOverview.vue')
+// 证书管理:申请(DNS-01 自签 + 导入已有)、到期监控、SSH 发布三条线的操作台。
+const Certs = () => import('../views/Certs.vue')
 // R4 / E4.1: PR 预览环境大盘(临时环境列表 + 手动回收;对标 Vercel preview deployments)
 const Previews = () => import('../views/Previews.vue')
 // Story 6-5: configurable anomaly detection & alerts (FR-23)
@@ -153,6 +155,8 @@ const router = createRouter({
         { path: 'containers', name: 'containers', component: Containers, meta: { title: '容器', requires: { perm: 'container.view' } } },
         // R2 / E2.4: 证书总览大盘(跨主机跨域名 + 到期高亮)
         { path: 'proxy', name: 'proxy-overview', component: ProxyOverview, meta: { title: '证书总览', requires: { perm: 'cert.view' } } },
+        // 证书管理:与只读总览同用 cert.view 功能点(写操作在页内按 cert.manage 灭掉)。
+        { path: 'certs', name: 'certs', component: Certs, meta: { title: '证书管理', requires: { perm: 'cert.view' } } },
         // R4 / E4.1: PR 预览环境大盘(临时环境列表 + 手动回收)
         { path: 'previews', name: 'previews', component: Previews, meta: { title: '预览环境', requires: { perm: 'preview.view' } } },
         // Story 6-5: configurable anomaly detection & alerts (FR-23)

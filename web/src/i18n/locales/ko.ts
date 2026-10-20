@@ -28,6 +28,7 @@ const ko: typeof zhCN = {
     serverStatus: '서버',
     containers: '컨테이너',
     proxyOverview: '인증서 개요',
+    certs: '인증서 관리',
     previews: '미리보기 환경',
     anomaly: '이상 감지',
     notifications: '알림',
