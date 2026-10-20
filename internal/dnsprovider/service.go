@@ -195,6 +195,66 @@ func (s *service) clientFor(p *Provider) (DNSClient, error) {
 	return client, nil
 }
 
+// txtClientFor 同 clientFor,但要求该提供商的客户端实现了 TXTClient(DNS-01 用)。
+// 未知/未实现的类型返回 ErrProviderNotImplemented —— 宁可不签,也不去动别的记录冒充 TXT。
+func (s *service) txtClientFor(p *Provider) (TXTClient, error) {
+	client, err := s.clientFor(p)
+	if err != nil {
+		return nil, err
+	}
+	tc, ok := client.(TXTClient)
+	if !ok {
+		return nil, fmt.Errorf("%w(%s 不支持写 TXT 记录,平台自签证书需要它)", ErrProviderNotImplemented, p.Type)
+	}
+	return tc, nil
+}
+
+// EnsureTXTRecord 在提供商根域下为 name 落一条 TXT 记录(平台自签证书的 DNS-01 校验题)。
+func (s *service) EnsureTXTRecord(ctx context.Context, providerID, name, value string) error {
+	p, zone, fqdn, err := s.txtTarget(ctx, providerID, name)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(value) == "" {
+		return ErrEmptyTXTValue
+	}
+	client, err := s.txtClientFor(p)
+	if err != nil {
+		return err
+	}
+	return client.EnsureTXTRecord(ctx, zone, fqdn, value)
+}
+
+// DeleteTXTRecord 清理提供商根域下 name 的全部 TXT 记录(幂等)。
+func (s *service) DeleteTXTRecord(ctx context.Context, providerID, name string) error {
+	p, zone, fqdn, err := s.txtTarget(ctx, providerID, name)
+	if err != nil {
+		return err
+	}
+	client, err := s.txtClientFor(p)
+	if err != nil {
+		return err
+	}
+	return client.DeleteTXTRecord(ctx, zone, fqdn)
+}
+
+// txtTarget 读提供商 + 把记录名归一/校验收在它的根域下,返回 (提供商, zone, 归一后的 FQDN)。
+//
+// 根域检查是**权限边界**而不是格式问题:dns_providers 一条记录代表「这份凭据能管 example.com」,
+// 若允许把 name 原样透传,一个写错的 `_acme-challenge.other.com` 会拿这份凭据去改别的域,
+// 而且 DNS API 多半静默接受(阿里云按 DomainName 查,Cloudflare 按 name 查不到 zone 才报错)。
+func (s *service) txtTarget(ctx context.Context, providerID, name string) (*Provider, string, string, error) {
+	p, err := s.store.get(ctx, providerID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	fqdn := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(name), ".")))
+	if fqdn == "" || (fqdn != p.BaseDomain && !strings.HasSuffix(fqdn, "."+p.BaseDomain)) {
+		return nil, "", "", fmt.Errorf("%w:%s 不在该提供商管理的根域 %s 下", ErrTXTOutsideZone, strings.TrimSpace(name), p.BaseDomain)
+	}
+	return p, p.BaseDomain, fqdn, nil
+}
+
 // AllocateSubdomain 瞬时分配子域名(E3.3 + E3.4):
 //  1. 取提供商 + 校验入参(上游容器/端口、宿主机 IP)。
 //  2. crypto/rand 挑可读后缀,组成 app-<6char>.<baseDomain>;若与已建路由域名冲突则重试(有限次)。

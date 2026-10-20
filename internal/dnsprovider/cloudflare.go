@@ -193,8 +193,89 @@ func (c *cloudflareClient) DeleteARecord(ctx context.Context, zone, name string)
 	return nil
 }
 
+// listRecords 按类型 + 名字取 zone 下的记录(listTXT 与 ensure 都走它)。
+func (c *cloudflareClient) listRecords(ctx context.Context, zid, recType, name string) ([]cfRecord, error) {
+	listResp, err := c.do(ctx, http.MethodGet,
+		fmt.Sprintf("/zones/%s/dns_records?type=%s&name=%s", url.PathEscape(zid), url.QueryEscape(recType), url.QueryEscape(name)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var records []cfRecord
+	if err := json.Unmarshal(listResp.Result, &records); err != nil {
+		return nil, fmt.Errorf("%w:%s 记录列表解析失败", ErrVerifyFailed, recType)
+	}
+	return records, nil
+}
+
+// deleteRecords 逐条删除(全删,不只删第一条)。
+func (c *cloudflareClient) deleteRecords(ctx context.Context, zid string, records []cfRecord) error {
+	for _, r := range records {
+		if _, err := c.do(ctx, http.MethodDelete,
+			fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(zid), url.PathEscape(r.ID)), nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EnsureTXTRecord 为 zone 下 name 落一条 TXT 记录,内容归一为 value。
+//
+// 不是「有同名记录就跳过」:DNS-01 只允许 _acme-challenge.<域名> 上有**一条** TXT,上一次清理
+// 失败留下的旧值会让 CA 直接判这次校验失败。所以这里把第一条改成(或新建)value,并删掉多余条目。
+func (c *cloudflareClient) EnsureTXTRecord(ctx context.Context, zone, name, value string) error {
+	zid, err := c.zoneID(ctx, zone)
+	if err != nil {
+		return wrapAs(err, ErrEnsureTXT)
+	}
+	records, err := c.listRecords(ctx, zid, "TXT", name)
+	if err != nil {
+		return wrapAs(err, ErrEnsureTXT)
+	}
+	payload := map[string]any{
+		"type":    "TXT",
+		"name":    name,
+		"content": value,
+		"ttl":     120,
+	}
+	if len(records) == 0 {
+		if _, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/zones/%s/dns_records", url.PathEscape(zid)), payload); err != nil {
+			return wrapAs(err, ErrEnsureTXT)
+		}
+		return nil
+	}
+	if err := c.deleteRecords(ctx, zid, records[1:]); err != nil {
+		return wrapAs(err, ErrEnsureTXT)
+	}
+	if txtEqual(records[0].Content, value) {
+		return nil // 已是目标值(且多余条目已清干净),不再发 PUT。
+	}
+	if _, err := c.do(ctx, http.MethodPut,
+		fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(zid), url.PathEscape(records[0].ID)), payload); err != nil {
+		return wrapAs(err, ErrEnsureTXT)
+	}
+	return nil
+}
+
+// DeleteTXTRecord 删除 zone 下 name 的全部 TXT 记录(幂等:无记录返回 nil)。
+func (c *cloudflareClient) DeleteTXTRecord(ctx context.Context, zone, name string) error {
+	zid, err := c.zoneID(ctx, zone)
+	if err != nil {
+		return wrapAs(err, ErrDeleteTXT)
+	}
+	records, err := c.listRecords(ctx, zid, "TXT", name)
+	if err != nil {
+		return wrapAs(err, ErrDeleteTXT)
+	}
+	if err := c.deleteRecords(ctx, zid, records); err != nil {
+		return wrapAs(err, ErrDeleteTXT)
+	}
+	return nil
+}
+
 // notImplementedClient 是未知提供商类型的「自动 A 记录」占位实现(诚实地返回未实现)。
 // DNS-01 通配符证书签发仍可用(走 Caddy 镜像内 DNS 插件),与本桩无关。
+// 它**刻意不实现 TXTClient**:平台自签证书必须要能写 TXT,类型断言失败即 ErrProviderNotImplemented
+// (见 service.txtClientFor)——宁可不签,也不假装记录已写好。
 type notImplementedClient struct{ providerType string }
 
 func (n notImplementedClient) EnsureARecord(context.Context, string, string, string) error {

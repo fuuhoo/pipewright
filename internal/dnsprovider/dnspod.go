@@ -246,3 +246,95 @@ func (c *dnspodClient) DeleteARecord(ctx context.Context, zone, name string) err
 	}
 	return nil
 }
+
+// dpTXTRecords 取 zone 下 sub(相对根域)的全部 TXT 记录。
+// base 决定错误家族(建/删两条路径的归类不同);DNSPod 的「无记录」是 code "10" 而非空列表,按空处理。
+func (c *dnspodClient) dpTXTRecords(ctx context.Context, zone, sub string, base error) ([]dpRecord, error) {
+	var list dpRecordListResp
+	fields := url.Values{"domain": {zone}, "sub_domain": {sub}, "record_type": {"TXT"}}
+	if err := c.post(ctx, "/Record.List", fields, &list); err != nil {
+		return nil, wrapAs(err, base)
+	}
+	if list.Status.Code == "10" {
+		return nil, nil
+	}
+	if list.Status.Code != "1" {
+		return nil, dpStatusErr(base, list.Status)
+	}
+	var out []dpRecord
+	for _, r := range list.Records {
+		// sub_domain 筛选是「精确或子域」语义,回来仍要按 Type/Name 自己精确过滤(与 A 记录同法)。
+		if strings.EqualFold(r.Type, "TXT") && strings.EqualFold(r.Name, sub) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// removeDNSPodRecords 逐条 Record.Remove(全删,不只删第一条)。
+func (c *dnspodClient) removeDNSPodRecords(ctx context.Context, zone string, records []dpRecord, base error) error {
+	for _, r := range records {
+		var rm dpMutateResp
+		if err := c.post(ctx, "/Record.Remove", url.Values{"domain": {zone}, "record_id": {r.ID}}, &rm); err != nil {
+			return wrapAs(err, base)
+		}
+		if rm.Status.Code != "1" {
+			return dpStatusErr(base, rm.Status)
+		}
+	}
+	return nil
+}
+
+// EnsureTXTRecord 为 zone 下 name 落一条 TXT 记录,内容归一为 value(收敛成一条,理由见 TXTClient)。
+func (c *dnspodClient) EnsureTXTRecord(ctx context.Context, zone, name, value string) error {
+	sub := subDomain(name, zone)
+	records, err := c.dpTXTRecords(ctx, zone, sub, ErrEnsureTXT)
+	if err != nil {
+		return err
+	}
+	lineFields := url.Values{
+		"domain":      {zone},
+		"sub_domain":  {sub},
+		"record_type": {"TXT"},
+		"record_line": {"默认"},
+		"value":       {value},
+	}
+	if len(records) == 0 {
+		var create dpMutateResp
+		if err := c.post(ctx, "/Record.Create", lineFields, &create); err != nil {
+			return wrapAs(err, ErrEnsureTXT)
+		}
+		if create.Status.Code != "1" {
+			return dpStatusErr(ErrEnsureTXT, create.Status)
+		}
+		return nil
+	}
+	if err := c.removeDNSPodRecords(ctx, zone, records[1:], ErrEnsureTXT); err != nil {
+		return err
+	}
+	if txtEqual(records[0].Value, value) {
+		return nil // 已是目标值(多余条目已清干净),不再发 Modify。
+	}
+	modFields := url.Values{"record_id": {records[0].ID}}
+	for k, v := range lineFields {
+		modFields[k] = v
+	}
+	var mod dpMutateResp
+	if err := c.post(ctx, "/Record.Modify", modFields, &mod); err != nil {
+		return wrapAs(err, ErrEnsureTXT)
+	}
+	if mod.Status.Code != "1" {
+		return dpStatusErr(ErrEnsureTXT, mod.Status)
+	}
+	return nil
+}
+
+// DeleteTXTRecord 删除 zone 下 name 的全部 TXT 记录(幂等:无记录返回 nil)。
+func (c *dnspodClient) DeleteTXTRecord(ctx context.Context, zone, name string) error {
+	sub := subDomain(name, zone)
+	records, err := c.dpTXTRecords(ctx, zone, sub, ErrDeleteTXT)
+	if err != nil {
+		return err
+	}
+	return c.removeDNSPodRecords(ctx, zone, records, ErrDeleteTXT)
+}

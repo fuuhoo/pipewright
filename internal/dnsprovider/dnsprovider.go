@@ -12,6 +12,8 @@
 //     三家的 DNS-01 通配符证书签发也都能用(走 Caddy 镜像内的 DNS 插件,与自动建 A 记录正交)。
 //   - AllocateSubdomain:瞬时挑一个可读子域名 app-<6char>.<baseDomain> → 自动建 A 记录指向宿主机
 //     公网 IP → 创建一条 DNS-01 的反代路由(证书即刻可签)。
+//   - TXTClient / EnsureTXTRecord:为**平台自己**经 ACME DNS-01 签证书写校验用 TXT 记录
+//     (internal/cert 那条线;三家提供商均经各自 API 真实实现)。
 //
 // AC-SEC:写入解析的 IP 是宿主机的(由调用方传入,非用户自由文本);zone/name 服务端严格校验;
 // 命令 / API 入参严格归一,杜绝注入。
@@ -66,6 +68,17 @@ var (
 	ErrDeleteRecord = errors.New("dnsprovider: delete A record failed")
 	// ErrAllocate 表示子域名分配失败(多次随机仍冲突 / 建记录失败 / 建路由失败)。
 	ErrAllocate = errors.New("dnsprovider: allocate subdomain failed")
+
+	// ErrEnsureTXT 表示建/改 TXT 记录失败(DNS-01 校验题写不进域)。
+	ErrEnsureTXT = errors.New("dnsprovider: ensure TXT record failed")
+	// ErrDeleteTXT 表示删除 TXT 记录失败。与 A 记录那两个错误分开:失败原因要能指对记录类型,
+	// 否则证书页上「发布失败:ensure A record failed」这种话没人看得懂。
+	ErrDeleteTXT = errors.New("dnsprovider: delete TXT record failed")
+	// ErrTXTOutsideZone 表示要写的记录名不在该提供商的根域下。这条是权限边界:提供商凭据能管的
+	// 只有登记时声明的那个 zone,拿它去写别的域(哪怕只是拼错)必须硬失败。
+	ErrTXTOutsideZone = errors.New("dnsprovider: record name is outside the provider zone")
+	// ErrEmptyTXTValue 表示 TXT 内容为空(DNS-01 的校验值是算出来的,空说明上游传错了,不该发到 API)。
+	ErrEmptyTXTValue = errors.New("dnsprovider: TXT value must not be empty")
 )
 
 // Provider 是一个 DNS 提供商接入的领域模型(冻结契约)。绝不含 token 明文,只持 CredentialID 引用。
@@ -98,6 +111,31 @@ type DNSClient interface {
 	VerifyZone(ctx context.Context, zone string) error
 }
 
+// TXTClient 抽象 DNS-01 需要的 TXT 记录读写。
+//
+// 为什么单开一个接口而不是往 DNSClient 上加两个方法:A 记录那条线(自动分配子域名 / 预览环境)
+// 一辈子用不到 TXT,TXT 那条线(平台自己经 ACME 签证书)用不到 A 记录。合在一起等于让每个测试假
+// 客户端都得长出与己无关的方法,还把「这个提供商支持哪些写入」揉成一团。
+// 真实客户端同时实现两个接口,service 经 txtClientFor 取;没实现的(如未知类型)得到
+// ErrProviderNotImplemented,而不是静默走 A 记录那条路径。
+type TXTClient interface {
+	// EnsureTXTRecord 为 zone 下的 name 落一条 TXT 记录,内容归一为 value(幂等:同名多条时收敛成一条)。
+	// DNS-01 只允许 _acme-challenge.<domain> 上有**一条** TXT:上一次清理失败留下的旧值会让 CA
+	// 直接判失败,所以这里不是「有就跳过」,而是「改成 value 并删掉其余」。
+	EnsureTXTRecord(ctx context.Context, zone, name, value string) error
+	// DeleteTXTRecord 删除 zone 下 name 的**全部** TXT 记录(幂等:无记录视为成功)。
+	// 与 DeleteARecord 不同 —— 那里删掉一条就返回,这里必须清干净:残留一条就等于下次签发作废。
+	DeleteTXTRecord(ctx context.Context, zone, name string) error
+}
+
+// 三家真实客户端必须同时实现 DNSClient 与 TXTClient。编译期钉住:漏一个方法不会等到签证书
+// 那天才由类型断言失败暴露,而是 `go build` 直接不过。
+var (
+	_ TXTClient = (*cloudflareClient)(nil)
+	_ TXTClient = (*dnspodClient)(nil)
+	_ TXTClient = (*alidnsClient)(nil)
+)
+
 // Service 定义 DNS 提供商领域对外接口(冻结契约;httpapi 消费)。
 type Service interface {
 	// List 返回全部 DNS 提供商(创建时间倒序;无 token)。
@@ -124,6 +162,14 @@ type Service interface {
 	// ProviderType 返回某提供商的类型(供 proxy 校验 DNS-01 引用,不取 token)。
 	// 不存在 → ok=false。供 proxy.DNSResolver 适配。
 	ProviderType(ctx context.Context, providerID string) (providerType string, ok bool, err error)
+
+	// EnsureTXTRecord 在指定提供商的根域下为 name(FQDN)落一条 TXT 记录(幂等收敛成一条)。
+	// 供平台自己经 ACME DNS-01 签证书时写校验题:cert 层算出 `_acme-challenge.<域名>` 与校验值,
+	// 这里只管「写进对应 zone」。name 不在该提供商 base_domain 下 → ErrTXTOutsideZone(凭据越权)。
+	// providerID 不存在 → ErrNotFound;vault 未配/凭据缺失 → 相应错误;错误体绝不含 token。
+	EnsureTXTRecord(ctx context.Context, providerID, name, value string) error
+	// DeleteTXTRecord 删除该提供商根域下 name 的全部 TXT 记录(ACME 校验通过后清理;幂等)。
+	DeleteTXTRecord(ctx context.Context, providerID, name string) error
 
 	// ResolveToken 取某提供商的 (类型, token 明文)(供 proxy 在 apply 时渲染 DNS-01)。
 	// token 仅供调用方即时注入 0600 临时 Caddyfile,绝不日志/回库/回 API。

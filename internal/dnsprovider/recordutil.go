@@ -31,21 +31,30 @@ func subDomain(name, zone string) string {
 	return n
 }
 
+// txtEqual 比较既有 TXT 内容是否已是目标值:各家 API 回显时可能带外层引号或多余空白
+// (Cloudflare 会回 `"text"` 形式),归一后再比,免得每次 renew 都白发一次 PUT/Modify。
+func txtEqual(existing, want string) bool {
+	return strings.Trim(strings.TrimSpace(existing), `"`) == want
+}
+
 // wrapEnsure 把 verify 路径的错误重打成 ErrEnsureRecord 家族(保留人话尾巴,不泄漏凭据)。
 // post() 内部统一用 ErrVerifyFailed 包网络/解析错误;在建记录上下文里改挂 ErrEnsureRecord 以便上层归类。
-func wrapEnsure(err error) error {
+func wrapEnsure(err error) error { return wrapAs(err, ErrEnsureRecord) }
+
+// wrapAs 同 wrapEnsure,但指定目标错误家族(A 记录 / TXT 记录各有各的错误,见 dnsprovider.go)。
+// 凭据格式错误(ErrInvalidCredential)是确定性的,原样上抛供 httpapi 映射 400;其余非
+// ErrVerifyFailed 的错误也原样返回(已经是本层抛出的具体错误,不再二次包装)。
+func wrapAs(err, base error) error {
 	if err == nil {
 		return nil
 	}
-	// 凭据格式错误是确定性的,原样上抛(供 httpapi 映射 400)。
 	if errors.Is(err, ErrInvalidCredential) {
 		return err
 	}
 	if errors.Is(err, ErrVerifyFailed) {
-		// 取人话尾巴(": 无法连接 …" 之类),换挂 ErrEnsureRecord。
 		tail := strings.TrimPrefix(err.Error(), ErrVerifyFailed.Error())
 		tail = strings.TrimPrefix(tail, ":")
-		return fmt.Errorf("%w:%s", ErrEnsureRecord, strings.TrimSpace(tail))
+		return fmt.Errorf("%w:%s", base, strings.TrimSpace(tail))
 	}
 	return err
 }

@@ -293,3 +293,71 @@ func (c *alidnsClient) DeleteARecord(ctx context.Context, zone, name string) err
 	}
 	return nil // 无记录 → 幂等成功。
 }
+
+// aliTXTRecords 取 zone 下 sub(相对根域)的全部 TXT 记录。
+// RRKeyWord 是模糊匹配语义,回来仍要按 RR/Type 精确过滤(与 A 记录同法);base 决定错误家族。
+func (c *alidnsClient) aliTXTRecords(ctx context.Context, zone, sub string, base error) ([]aliRecord, error) {
+	var list aliDescribeRecordsResp
+	fields := url.Values{"DomainName": {zone}, "RRKeyWord": {sub}, "Type": {"TXT"}}
+	if err := c.call(ctx, base, "DescribeDomainRecords", fields, &list); err != nil {
+		return nil, err
+	}
+	var out []aliRecord
+	for _, r := range list.DomainRecords.Record {
+		if strings.EqualFold(r.Type, "TXT") && strings.EqualFold(r.RR, sub) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// removeAliRecords 逐条 DeleteDomainRecord(全删,不只删第一条)。
+func (c *alidnsClient) removeAliRecords(ctx context.Context, records []aliRecord, base error) error {
+	for _, r := range records {
+		if err := c.call(ctx, base, "DeleteDomainRecord", url.Values{"RecordId": {r.RecordID}}, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EnsureTXTRecord 为 zone 下 name 落一条 TXT 记录,内容归一为 value(收敛成一条,理由见 TXTClient)。
+func (c *alidnsClient) EnsureTXTRecord(ctx context.Context, zone, name, value string) error {
+	sub := subDomain(name, zone)
+	records, err := c.aliTXTRecords(ctx, zone, sub, ErrEnsureTXT)
+	if err != nil {
+		return err
+	}
+	if len(records) == 0 {
+		addFields := url.Values{
+			"DomainName": {zone},
+			"RR":         {sub},
+			"Type":       {"TXT"},
+			"Value":      {value},
+		}
+		return c.call(ctx, ErrEnsureTXT, "AddDomainRecord", addFields, nil)
+	}
+	if err := c.removeAliRecords(ctx, records[1:], ErrEnsureTXT); err != nil {
+		return err
+	}
+	if txtEqual(records[0].Value, value) {
+		return nil // 已是目标值(多余条目已清干净),不再发 Update。
+	}
+	updFields := url.Values{
+		"RecordId": {records[0].RecordID},
+		"RR":       {sub},
+		"Type":     {"TXT"},
+		"Value":    {value},
+	}
+	return c.call(ctx, ErrEnsureTXT, "UpdateDomainRecord", updFields, nil)
+}
+
+// DeleteTXTRecord 删除 zone 下 name 的全部 TXT 记录(幂等:无记录返回 nil)。
+func (c *alidnsClient) DeleteTXTRecord(ctx context.Context, zone, name string) error {
+	sub := subDomain(name, zone)
+	records, err := c.aliTXTRecords(ctx, zone, sub, ErrDeleteTXT)
+	if err != nil {
+		return err
+	}
+	return c.removeAliRecords(ctx, records, ErrDeleteTXT)
+}
