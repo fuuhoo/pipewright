@@ -33,6 +33,8 @@ const ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'project_update', label: 'project_update' },
   { value: 'project_delete', label: 'project_delete' },
   { value: 'project_cache_clear', label: 'project_cache_clear' },
+  { value: 'project_copy', label: 'project_copy' },
+  { value: 'project_copy_batch', label: 'project_copy_batch' },
   { value: 'run_trigger_manual', label: 'run_trigger_manual' },
   { value: 'build_env_create', label: 'build_env_create' },
   { value: 'build_env_update', label: 'build_env_update' },

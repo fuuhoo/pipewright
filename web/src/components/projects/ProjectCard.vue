@@ -24,6 +24,7 @@ const emit = defineEmits<{
   repo: [project: Project]
   code: [project: Project]
   pipeline: [project: Project]
+  copy: [project: Project]
   remove: [project: Project]
   assign: [project: Project]
 }>()
@@ -237,6 +238,19 @@ function relativeTime(isoStr: string): string {
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.07 4.93a10 10 0 1 1-14.14 0"/>
             <path d="M12 2v4M12 18v4M4.93 4.93 7.76 7.76M16.24 16.24l2.83 2.83"/>
+          </svg>
+        </button>
+
+        <!-- 复制:配置整套搬走、历史一条不带(副本内容不对,改两笔比重配一遍快得多) -->
+        <button
+          class="action-btn"
+          :title="t('projects.actionCopyTitle', { name: project.name })"
+          :aria-label="t('projects.actionCopyAria', { name: project.name })"
+          @click="emit('copy', project)"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
         </button>
 

@@ -17,10 +17,13 @@ import { listCredentials, usableCredentials, createCredential, type Credential, 
 import { listGroups, type Group } from '../api/groups'
 import CredentialSelect from '../components/projects/CredentialSelect.vue'
 import ProjectCard from '../components/projects/ProjectCard.vue'
+import CopyProjectsModal from '../components/projects/CopyProjectsModal.vue'
 import RefPicker from '../components/projects/RefPicker.vue'
 import TriggerRunModal from '../components/projects/TriggerRunModal.vue'
 import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
+import { useToast } from '../composables/useToast'
+import type { CopiedProject } from '../api/projects'
 import { isSupportedRepoUrl } from '../lib/gitUrl'
 import { runStatusLabel } from '../lib/runStatus'
 // lib 的 groupOptions(筛选下拉候选)与本页那个同名局部量(归组弹窗的可管组候选)不是一回事,别名隔开
@@ -820,6 +823,37 @@ function onTriggered(runId: string): void {
   void router.push(`/runs/${runId}`)
 }
 
+// ─── 复制 modal ───────────────────────────────────────────────────────────────
+//
+// 单个与整组共用同一个弹窗:要问用户的只有两件事 —— 副本叫什么、落在哪个组。
+// 复制完不拿回执在本地拼卡片,而是重拉一次列表:避让后的真名、副本最终落在哪个组、
+// 还在不在自己的可见范围里,这三件事都是服务端说了算。
+//
+// 权限这里不预判:卡片能列出来就说明看得见,能不能复制由服务端逐条判(整组尤其如此),
+// 弹窗把 403 的原因照实说清楚就够了 —— 前端重推一遍判定迟早和后端走样。
+
+const toast = useToast()
+const copyModalOpen = ref(false)
+const copySources = ref<Project[]>([])
+
+function openCopyModal(p: Project): void {
+  copySources.value = [p]
+  copyModalOpen.value = true
+}
+
+/** 组头的「复制整组」:复制这一段当前列出的全部项目(未归组那一档也算一档)。 */
+function openSectionCopy(section: ProjectGroupSection): void {
+  copySources.value = [...section.projects]
+  copyModalOpen.value = true
+}
+
+async function onCopied(created: CopiedProject[]): Promise<void> {
+  const names = created.map((c) => c.name)
+  const title = names.length === 1 ? t('projects.copyDoneOne', { name: names[0] }) : t('projects.copyDoneMany', { n: names.length })
+  toast.success(title, { detail: names.join('、') })
+  await loadProjects()
+}
+
 </script>
 
 <template>
@@ -1012,6 +1046,7 @@ function onTriggered(runId: string): void {
           @repo="openRepoModal"
           @code="openCardCode"
           @pipeline="openCardPipeline"
+          @copy="openCopyModal"
           @remove="openDeleteModal"
           @assign="openGroupModal"
         />
@@ -1026,37 +1061,53 @@ function onTriggered(runId: string): void {
           class="group-section"
           :aria-label="sectionLabel(section)"
         >
-          <button
-            type="button"
-            class="group-head"
-            :aria-expanded="isSectionOpen(section.key)"
-            :aria-controls="sectionGridId(section.key)"
-            @click="toggleSection(section.key)"
-          >
-            <svg
-              class="group-chevron"
-              :class="{ 'group-chevron--open': isSectionOpen(section.key) }"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+          <!-- 组头一行:整行是折叠开关,「复制整组」必须是它的兄弟而不是嵌套按钮(button 里不能放 button)。 -->
+          <div class="group-head-row">
+            <button
+              type="button"
+              class="group-head"
+              :aria-expanded="isSectionOpen(section.key)"
+              :aria-controls="sectionGridId(section.key)"
+              @click="toggleSection(section.key)"
             >
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
-            <span class="group-name">{{ sectionLabel(section) }}</span>
-            <span
-              v-if="section.visibility"
-              class="group-visibility"
-              :class="{ 'group-visibility--private': section.visibility === 'private' }"
-            >{{ section.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}</span>
-            <span class="group-count">{{ t('projects.resultCount', { n: section.projects.length }) }}</span>
-            <span v-if="section.ownerName" class="group-owner">{{ t('groups.colOwner') }}:{{ section.ownerName }}</span>
-          </button>
+              <svg
+                class="group-chevron"
+                :class="{ 'group-chevron--open': isSectionOpen(section.key) }"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 6l6 6-6 6"/>
+              </svg>
+              <span class="group-name">{{ sectionLabel(section) }}</span>
+              <span
+                v-if="section.visibility"
+                class="group-visibility"
+                :class="{ 'group-visibility--private': section.visibility === 'private' }"
+              >{{ section.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}</span>
+              <span class="group-count">{{ t('projects.resultCount', { n: section.projects.length }) }}</span>
+              <span v-if="section.ownerName" class="group-owner">{{ t('groups.colOwner') }}:{{ section.ownerName }}</span>
+            </button>
+            <button
+              v-if="section.projects.length"
+              type="button"
+              class="group-copy"
+              :title="t('projects.copyGroupTitle', { name: sectionLabel(section), n: section.projects.length })"
+              @click="openSectionCopy(section)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              {{ t('projects.copyGroupAction') }}
+            </button>
+          </div>
 
           <template v-if="isSectionOpen(section.key)">
             <ul v-if="section.projects.length" class="project-grid group-projects" role="list">
@@ -1071,6 +1122,7 @@ function onTriggered(runId: string): void {
                 @repo="openRepoModal"
                 @code="openCardCode"
                 @pipeline="openCardPipeline"
+                @copy="openCopyModal"
                 @remove="openDeleteModal"
                 @assign="openGroupModal"
               />
@@ -1086,6 +1138,16 @@ function onTriggered(runId: string): void {
        Manual trigger modal(与流水线配置页共用 TriggerRunModal)
   ════════════════════════════════════════════════════════════════════════ -->
   <TriggerRunModal v-model:open="triggerModalOpen" :project="triggerProject" @triggered="onTriggered" />
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       复制项目 modal(一份 = 卡片上的「复制」,一批 = 组头的「复制整组」)
+  ════════════════════════════════════════════════════════════════════════ -->
+  <CopyProjectsModal
+    v-model:open="copyModalOpen"
+    :sources="copySources"
+    :groups="groups"
+    @copied="onCopied"
+  />
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        New project modal
@@ -2050,6 +2112,52 @@ function onTriggered(runId: string): void {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
   border-radius: var(--rounded-md);
+}
+
+.group-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 组头本来是整行宽的按钮;这一行多了「复制整组」,它就得能缩,不能把兄弟挤出屏幕。 */
+.group-head-row .group-head {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.group-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 9px;
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
+  color: var(--color-faint);
+  font-family: var(--font-sans);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    border-color var(--duration-fast),
+    background-color var(--duration-fast);
+}
+
+.group-copy:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.group-copy:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .group-chevron {

@@ -200,3 +200,50 @@ export async function clearProjectCache(id: string, kinds?: string[]): Promise<C
     kinds && kinds.length ? { kinds } : {},
   )
 }
+
+// ─── 复制项目(单个 / 一次 N 个)─────────────────────────────────────────────
+//
+// 搬的是配置,不是历史:副本的流水线、定时、参数、通知一套整套照抄,运行记录一条不带。
+// 两个端点回执形状相同(都是 CopiedProject[]),所以刷新列表的逻辑只写一遍。
+//
+// POST /api/projects/{id}/copy    → 单个。权限由服务端按 URL 认出源项目后判定。
+// POST /api/project-copies        → 一批。源 ID 全在请求体里,服务端逐条判 ——
+//   走集合式 POST 而不是 /groups/{id}/copy-projects,是因为「未归组」的 groupId 是空串,
+//   塞不进 URL 路径;复制未归组那一档会 404。
+
+/** 一次复制的命名意图:显式名优先;留空则「源名 + 后缀」,重名由服务端自动避让。 */
+export interface CopyNaming {
+  /** 仅单个复制有用(批量时每个源各自命名)。空 = 走 suffix。 */
+  name?: string
+  /** 原样接在源名后面的尾巴,自带分隔符。空 = 服务端默认「 副本」。 */
+  suffix?: string
+}
+
+/**
+ * 复制后的落组三态,与后端 targetGroupId 字段一一对应:
+ *   - 字段缺省(undefined)= 各副本沿用自己源项目的分组
+ *   - ''(未归组)/ 组 ID = 全部落到这一个组
+ */
+export interface CopyInput extends CopyNaming {
+  targetGroupId?: string
+}
+
+export interface CopyManyInput extends CopyInput {
+  projectIds: string[]
+}
+
+/** 一份副本的回执 —— 拿 id 刷新列表,名字以服务端说的为准(它才知道避让结果)。 */
+export interface CopiedProject {
+  id: string
+  name: string
+  groupId: string
+  sourceId: string
+}
+
+export async function copyProject(id: string, input: CopyInput = {}): Promise<CopiedProject[]> {
+  return http.post<CopiedProject[]>(`/api/projects/${encodeURIComponent(id)}/copy`, input)
+}
+
+export async function copyProjects(input: CopyManyInput): Promise<CopiedProject[]> {
+  return http.post<CopiedProject[]>('/api/project-copies', input)
+}
