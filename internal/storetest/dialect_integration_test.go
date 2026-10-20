@@ -3,6 +3,7 @@ package storetest_test
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,9 +21,18 @@ func TestMigrationsApplied(t *testing.T) {
 		if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM schema_migrations`).Scan(&n); err != nil {
 			t.Fatalf("count migrations: %v", err)
 		}
-		// 与 migrations/{sqlite,mysql} 下的 .sql 文件数一致;新增迁移需同步改此值。
-		if n != 67 {
-			t.Fatalf("应用迁移数 = %d, 期望 67", n)
+		// 应用数须与本方言目录下的 .sql 文件数一致。这里刻意不写死常数:每加一张表都要顺手改一个
+		// 魔法数字,忘了改就红在一件与本次改动无关的事上(本仓库发生过),而文件数本身就是权威来源。
+		sub := "sqlite"
+		if st.Dialect == store.MySQL {
+			sub = "mysql"
+		}
+		files, err := filepath.Glob(filepath.Join("..", "store", "migrations", sub, "*.sql"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("数 %s 迁移文件: %v (n=%d)", sub, err, len(files))
+		}
+		if n != len(files) {
+			t.Fatalf("应用迁移数 = %d, 目录下有 %d 个 .sql", n, len(files))
 		}
 		// 核心领域表存在(随手验一张)。
 		if _, err := st.DB.ExecContext(ctx, `SELECT 1 FROM audit_log WHERE 1=0`); err != nil {
@@ -50,6 +60,12 @@ func TestMigrationsApplied(t *testing.T) {
 		if _, err := st.DB.ExecContext(ctx,
 			`SELECT display_name, email FROM users WHERE 1=0`); err != nil {
 			t.Fatalf("users 缺本地档案列: %v", err)
+		}
+		// 0070-0072 证书三表:签发/续期/发布三条路径都按列名读写,漏列要等到真签证书那天才炸。
+		for _, tbl := range []string{"certificates", "acme_accounts", "cert_deployments"} {
+			if _, err := st.DB.ExecContext(ctx, "SELECT 1 FROM "+tbl+" WHERE 1=0"); err != nil {
+				t.Fatalf("%s 表缺失: %v", tbl, err)
+			}
 		}
 	})
 }
