@@ -36,6 +36,7 @@ import YamlImportModal from '../components/pipeline/YamlImportModal.vue'
 import TemplatePickerModal from '../components/pipeline/TemplatePickerModal.vue'
 import PacPreviewModal from '../components/pipeline/PacPreviewModal.vue'
 import ProjectPreviewConfig from '../components/pipeline/ProjectPreviewConfig.vue'
+import TriggerRunModal from '../components/projects/TriggerRunModal.vue'
 
 // ─── Route ────────────────────────────────────────────────────────────────────
 
@@ -443,6 +444,14 @@ async function togglePrStatus(next: boolean): Promise<void> {
     prStatusToggling.value = false
   }
 }
+
+// ─── 直接运行 ─────────────────────────────────────────────────────────────────
+// 跑的是库里已保存的流水线(与项目列表页那个「运行」同一套弹窗、同一个接口)。
+const runModalOpen = ref(false)
+
+function onRunTriggered(runId: string): void {
+  void router.push(`/runs/${runId}`)
+}
 </script>
 
 <template>
@@ -515,6 +524,17 @@ async function togglePrStatus(next: boolean): Promise<void> {
         >
           <span v-if="saveSubmitting" class="spinner" aria-hidden="true"/>
           {{ saveSubmitting ? t('projectPipeline.saving') : t('projectPipeline.saveDraft') }}
+        </button>
+
+        <button
+          class="top-btn top-btn--run"
+          :disabled="!project || loadState !== 'idle' || saveSubmitting"
+          @click="runModalOpen = true"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
+          </svg>
+          {{ t('projects.runNow') }}
         </button>
       </div>
     </header>
@@ -804,6 +824,9 @@ async function togglePrStatus(next: boolean): Promise<void> {
       @close="pacPreviewOpen = false"
     />
 
+    <!-- ─── 直接运行(与项目列表页共用触发弹窗) ───────────────────────────── -->
+    <TriggerRunModal v-model:open="runModalOpen" :project="project" @triggered="onRunTriggered" />
+
   </div>
 </template>
 
@@ -951,6 +974,16 @@ async function togglePrStatus(next: boolean): Promise<void> {
 .top-btn--save:disabled {
   box-shadow: none;
   transform: none;
+}
+
+/* 运行是「离开编辑器去看结果」的动作,用绿色描边与保存的实心块区分开 */
+.top-btn--run {
+  color: var(--color-green);
+  border-color: var(--color-green-line);
+}
+
+.top-btn--run:hover:not(:disabled) {
+  background: var(--color-green-soft);
 }
 
 /* ─── Validate button (Story 2-6) ────────────────────────────────────────── */
