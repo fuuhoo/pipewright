@@ -16,6 +16,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/group"
 	"github.com/fuuhoo/pipewright/internal/mask"
 	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/projectcopy"
 	"github.com/fuuhoo/pipewright/internal/role"
 	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/fuuhoo/pipewright/internal/storetest"
@@ -181,6 +182,7 @@ func setupGuard(t *testing.T) *guardEnv {
 		WithUsers(userSvc),
 		WithGroups(gs),
 		WithAccess(access.NewService(gs)),
+		WithProjectCopy(projectcopy.New(db)),
 		WithApprovals(approvalCoord, approvalStore),
 		WithServers(target.New(db, v, stubDialer{res: &target.ExecResult{Stdout: "ok"}})),
 	))

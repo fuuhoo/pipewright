@@ -46,8 +46,13 @@ const (
 	// 单列一个动作而不是塞进 project_update:它不改任何库内配置,改的是磁盘上的缓存目录,
 	// 事后要看的是「谁在什么时候把谁的依赖清空了」(清错会让下一次构建慢很久)。
 	ActionProjectCacheClear = "project_cache_clear"
-	ActionRunTriggerManual  = "run_trigger_manual"
-	ActionPasswordChange    = "password_change"
+	// 复制项目单独两个动作,而不是并回 project_create:副本的内容整份来自另一个项目,
+	// 事后要分清「凭空配出来的」和「照着别人抄一份的」——后者才是排查复制扩散的入口。
+	// 一批单独一条:一次点击出 N 个副本,逐行记录会把这一件事刷成几十条看不全的流水。
+	ActionProjectCopy      = "project_copy"
+	ActionProjectCopyBatch = "project_copy_batch"
+	ActionRunTriggerManual = "run_trigger_manual"
+	ActionPasswordChange   = "password_change"
 	// ActionProfileUpdate 是本人改显示名/邮箱(账户设置里的本地档案)。
 	// 与 user_update 分开:那是管理员改别人的账号行,actor 与改的东西都不是一回事。
 	ActionProfileUpdate     = "profile_update"

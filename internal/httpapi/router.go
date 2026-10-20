@@ -37,6 +37,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/fuuhoo/pipewright/internal/projectcache"
+	"github.com/fuuhoo/pipewright/internal/projectcopy"
 	"github.com/fuuhoo/pipewright/internal/promotion"
 	"github.com/fuuhoo/pipewright/internal/proxy"
 	"github.com/fuuhoo/pipewright/internal/repocache"
@@ -68,8 +69,10 @@ const contextKeySession contextKey = 1
 type Option func(*options)
 
 type options struct {
-	vault            vault.Vault
-	projects         project.Service
+	vault    vault.Vault
+	projects project.Service
+	// projectCopy 把「配置整套搬给一个新项目」这条动作接进来(见 project_copy.go)。
+	projectCopy      *projectcopy.Service
 	triggers         trigger.Service
 	cron             cron.Service
 	chain            chain.Service
@@ -226,6 +229,12 @@ func WithVault(v vault.Vault) Option {
 // 不传则项目相关端点返回 503(服务未初始化)。
 func WithProjects(s project.Service) Option {
 	return func(o *options) { o.projects = s }
+}
+
+// WithProjectCopy 注入项目复制服务,挂载 /api/projects/{id}/copy(单个)与
+// /api/project-copies(一批)两条路由。nil → 两条端点 503。
+func WithProjectCopy(s *projectcopy.Service) Option {
+	return func(o *options) { o.projectCopy = s }
 }
 
 // WithCron 注入定时触发配置服务,挂载 /api/projects/{id}/cron 路由(Story 8-6)。
@@ -699,6 +708,12 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Post("/projects/test-clone", makeTestCloneHandler(p))
 		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, o.access, aud, authn))
 		ar.Delete("/projects/{id}", makeDeleteProjectHandler(p, aud, authn))
+		// 复制单个项目:配置整套搬走、历史一条不带(internal/projectcopy)。
+		// 挂在 /projects/{id}/ 下是为了让 accessGuard 认出源项目并按写方法判 ActOperate。
+		ar.Post("/projects/{id}/copy", makeCopyProjectHandler(o.projectCopy, o.access, aud, authn))
+		// 一次复制 N 个(分组视图里「复制整组」勾的那批)。前缀与 /projects 不同,accessGuard
+		// 认不出来,所以源项目的 ActOperate 由 handler 逐条判 —— 见 project_copy.go。
+		ar.Post("/project-copies", makeCopyProjectsHandler(o.projectCopy, o.access, aud, authn))
 
 		// 触发设置与分支映射(Story 2.3)。t 为 nil 时 handler 返回 503。
 		// secret/reset 须在通用 trigger 路由之外单独注册;均过 auth + 写方法 CSRF。
