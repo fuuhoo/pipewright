@@ -104,6 +104,7 @@ export default {
     container_view: '容器总览',
     container_operate: '容器生命周期与镜像清理',
     cert_view: '证书总览',
+    cert_manage: '申请 / 导入 / 发布证书',
     preview_view: '预览环境',
     preview_recycle: '回收预览环境',
     anomaly_view: '异常检测',

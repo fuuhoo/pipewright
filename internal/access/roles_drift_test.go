@@ -117,17 +117,37 @@ func seededRoleIDs(t *testing.T) []string {
 	return out
 }
 
-// readPresetMigration 读 0063 的 sqlite 那份。这里不 Skip:迁移目录与本包同属一个 Go 模块,
-// 读不到只有两种可能 —— 文件被改名(那这条守卫就永远形同虚设)或正则失配,两者都该炸出来。
-// 断言只读 sqlite 版即可:mysql 那份由 internal/store 的迁移测试逐字比对内容。
+// readPresetMigration 拼出「预置档点集的播种权威」:0063 的初播 + 之后每支给预置档补点的迁移。
+//
+// 这里不 Skip:迁移目录与本包同属一个 Go 模块,读不到只有两种可能 —— 文件被改名(那这条守卫就
+// 永远形同虚设)或正则失配,两者都该炸出来。断言只读 sqlite 版即可:mysql 那份由 internal/store
+// 的迁移测试逐字比对内容。
+//
+// 为什么要跟着后续迁移走:字典里新增一个点而播种没给任何角色,守卫会红 —— 那不是测试写错了,
+// 而是「这个能力上线那天,除管理员外没人用得上」。漏读某一支同样致命,所以按目录扫而不是手抄名单。
 func readPresetMigration(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "store", "migrations", "sqlite", "0063_preset_roles_to_custom.sql")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("读不到 0063 迁移(%s):%v", path, err)
+	dir := filepath.Join("..", "store", "migrations", "sqlite")
+	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("扫不到 sqlite 迁移目录 %s: %v", dir, err)
 	}
-	return string(raw)
+	sort.Strings(files)
+	var b strings.Builder
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("读不到迁移 %s: %v", f, err)
+		}
+		if strings.Contains(string(raw), "INSERT INTO role_perms") {
+			b.Write(raw)
+			b.WriteByte('\n')
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("没有任何迁移往 role_perms 播种过预置档(0063 被删了?)")
+	}
+	return b.String()
 }
 
 // seededPresetPoints 解析出 0063 给每个预置档播种的功能点集(按角色分组,保留声明序)。
@@ -201,7 +221,7 @@ func TestSeededPresetGranularity(t *testing.T) {
 			t.Fatalf("开发者该能看到 %s", id)
 		}
 	}
-	for _, id := range []string{"server.exec", "container.operate", "preview.recycle", "anomaly.edit", "cluster.operate"} {
+	for _, id := range []string{"server.exec", "container.operate", "preview.recycle", "anomaly.edit", "cluster.operate", "cert.manage"} {
 		if HasPerm("developer", id) {
 			t.Fatalf("开发者不该拿到落点操作点 %s", id)
 		}
@@ -210,7 +230,7 @@ func TestSeededPresetGranularity(t *testing.T) {
 	if HasPerm("ops", "project.edit") || HasPerm("ops", "library.edit") {
 		t.Fatal("运维不该拿到编排编辑点")
 	}
-	for _, id := range []string{"container.operate", "server.exec", "anomaly.edit"} {
+	for _, id := range []string{"container.operate", "server.exec", "anomaly.edit", "cert.manage"} {
 		if !HasPerm("ops", id) {
 			t.Fatalf("运维该拿到 %s", id)
 		}

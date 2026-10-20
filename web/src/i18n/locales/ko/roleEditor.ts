@@ -99,6 +99,7 @@ export default {
     container_view: '컨테이너 개요',
     container_operate: '컨테이너 수명 주기와 이미지 정리',
     cert_view: '인증서 개요',
+    cert_manage: '인증서 발급·가져오기·배포',
     preview_view: '미리보기 환경',
     preview_recycle: '미리보기 환경 회수',
     anomaly_view: '이상 탐지',

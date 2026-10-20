@@ -53,6 +53,7 @@ export const PERM_LABEL_KEY: Record<PermId, string> = {
   'container.view': 'roleEditor.perm.container_view',
   'container.operate': 'roleEditor.perm.container_operate',
   'cert.view': 'roleEditor.perm.cert_view',
+  'cert.manage': 'roleEditor.perm.cert_manage',
   'preview.view': 'roleEditor.perm.preview_view',
   'preview.recycle': 'roleEditor.perm.preview_recycle',
   'anomaly.view': 'roleEditor.perm.anomaly_view',

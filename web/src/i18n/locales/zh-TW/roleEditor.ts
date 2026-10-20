@@ -99,6 +99,7 @@ export default {
     container_view: '容器總覽',
     container_operate: '容器生命週期與映像清理',
     cert_view: '憑證總覽',
+    cert_manage: '申請 / 匯入 / 發佈憑證',
     preview_view: '預覽環境',
     preview_recycle: '回收預覽環境',
     anomaly_view: '異常偵測',

@@ -230,11 +230,11 @@ describe('功能点标签在 zh-CN 真查得到(动态 t() 键的补充守卫)',
     return typeof node === 'string' && node.length > 0
   }
 
-  it('PERM_LABEL_KEY 覆盖 21 个功能点,每个都能在 roleEditor.perm 下命中', () => {
+  it('PERM_LABEL_KEY 覆盖 22 个功能点,每个都能在 roleEditor.perm 下命中', () => {
     // 数量与 internal/access/perms.go 的字典同源于 PermId(Record 缺键编译不过),
     // 这里再钉一次数字:Go 侧加点时必须同时改 PermId + 这张表 + 8 份词条。
     const keys = Object.keys(PERM_LABEL_KEY)
-    expect(keys.length).toBe(21)
+    expect(keys.length).toBe(22)
     for (const id of keys) expect(resolves(PERM_LABEL_KEY[id as PermId])).toBe(true)
   })
 

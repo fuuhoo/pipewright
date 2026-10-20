@@ -99,6 +99,7 @@ export default {
     container_view: 'コンテナ一覧',
     container_operate: 'コンテナの Lifecycle とイメージ整理',
     cert_view: '証明書一覧',
+    cert_manage: '証明書の発行・インポート・デプロイ',
     preview_view: 'プレビュー環境',
     preview_recycle: 'プレビュー環境の回収',
     anomaly_view: '異常検知',

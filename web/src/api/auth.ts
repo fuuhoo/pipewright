@@ -49,6 +49,7 @@ export type PermId =
   | 'container.view'
   | 'container.operate'
   | 'cert.view'
+  | 'cert.manage'
   | 'preview.view'
   | 'preview.recycle'
   | 'anomaly.view'

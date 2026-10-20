@@ -69,6 +69,9 @@ var permDict = []Perm{
 	// 容器生命周期与镜像清理同档:能重启容器就该能删悬空镜像。
 	{ID: "container.operate", Kind: KindServer, Act: ActOperate},
 	{ID: "cert.view", Kind: KindServer, Act: ActView},
+	// 证书的申请 / 替换 / 发布:动的不只是库里一行,还会往目标机写私钥并跑用户填的生效指令,
+	// 所以它与 server.exec、container.operate 同档。取证书包(含私钥明文)也挂这一点。
+	{ID: "cert.manage", Kind: KindServer, Act: ActOperate},
 	{ID: "preview.view", Kind: KindServer, Act: ActView},
 	{ID: "preview.recycle", Kind: KindServer, Act: ActOperate},
 	{ID: "anomaly.view", Kind: KindServer, Act: ActView},

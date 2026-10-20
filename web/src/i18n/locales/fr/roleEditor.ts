@@ -99,6 +99,7 @@ export default {
     container_view: 'Vue d’ensemble des conteneurs',
     container_operate: 'Cycle de vie des conteneurs et nettoyage d’images',
     cert_view: 'Vue d’ensemble des certificats',
+    cert_manage: 'Émettre / importer / déployer des certificats',
     preview_view: 'Environnements de prévisualisation',
     preview_recycle: 'Recycler les environnements de prévisualisation',
     anomaly_view: "Détection d'anomalies",

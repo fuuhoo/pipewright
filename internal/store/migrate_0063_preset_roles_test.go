@@ -18,6 +18,10 @@ import (
 // (internal/httpapi/middleware.go 的 RequireUser)。所以播种缺一行、少一个点都得炸在测试里,
 // 而不是炸在一个升级后忽然登不进去的账号上。
 //
+// 计数是**全部迁移跑完之后**的现状:0063 之后还会有新迁移给预置档补点(如 0073 的 cert.manage),
+// 所以这里的数字跟着涨不是在放宽,而是这一档「升级完那天起实际能用哪些入口」的对外承诺。
+// 定位仍由 must / mustNot 两组钉死:补点只能补在该档定位允许的方向上。
+//
 // 两方言都跑:MySQL 那份是另一个文件,语法只在 sqlite 验过的话等于没验。
 func TestMigration0063PresetRoles(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, st *store.Store) {
@@ -31,13 +35,13 @@ func TestMigration0063PresetRoles(t *testing.T) {
 			mustNot []string
 		}{
 			// 普通用户:四类落点都能动,设置类不给。
-			{"user", 20, []string{"server.exec", "cluster.operate", "project.edit"}, []string{"settings.access"}},
+			{"user", 21, []string{"server.exec", "cluster.operate", "project.edit", "cert.manage"}, []string{"settings.access"}},
 			// 开发者:编排可改,落点只读。
-			{"developer", 15, []string{"project.edit", "server.view"}, []string{"server.exec", "container.operate", "settings.access"}},
+			{"developer", 15, []string{"project.edit", "server.view"}, []string{"server.exec", "container.operate", "cert.manage", "settings.access"}},
 			// 运维:落点可操作,编排只读。
-			{"ops", 18, []string{"server.exec", "container.operate", "cluster.operate"}, []string{"project.edit", "library.edit", "settings.access"}},
+			{"ops", 19, []string{"server.exec", "container.operate", "cluster.operate", "cert.manage"}, []string{"project.edit", "library.edit", "settings.access"}},
 			// 只读:全是 *.view,一个 operate 都不给。
-			{"viewer", 12, []string{"dashboard.view", "server.view"}, []string{"run.operate", "server.exec", "settings.access"}},
+			{"viewer", 12, []string{"dashboard.view", "server.view"}, []string{"run.operate", "server.exec", "cert.manage", "settings.access"}},
 		}
 
 		var total int
