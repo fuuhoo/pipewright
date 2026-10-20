@@ -9,6 +9,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -33,8 +35,8 @@ func (b Bundle) Fullchain() string {
 
 // Service 是证书仓库对外接口(httpapi 与到期扫描器消费)。
 //
-// 本期(#341)只覆盖「存」与「导入」:申请(Issue)与发布(Deploy)分别由 acme.go、deploy.go 补,
-// 因此这里的方法名一律不含 sign/deploy。
+// 「存 / 导入」(Issue 之外)与「签」(Issue / RegisterAccount)都在这里;发布(Deploy)由
+// deploy.go 补,所以清单里没有 deploy 方法。
 type Service interface {
 	// List 返回全部证书视图(到期升序;不含任何密钥材料)。
 	List(ctx context.Context) ([]Certificate, error)
@@ -46,6 +48,9 @@ type Service interface {
 	Replace(ctx context.Context, id string, in ImportInput) (*Certificate, error)
 	// Create 登记一张待签证书(source=acme):只落记录,真正签发由 Issue 负责。
 	Create(ctx context.Context, in CreateInput) (*Certificate, error)
+	// Issue 经 ACME DNS-01 签(或续)一张 acme 来源证书,成功后正文、私钥与到期时间就地更新。
+	// 首次申请与到期续期是同一条路径(见 acme.go)。upload 来源 → ErrNotACME。
+	Issue(ctx context.Context, id string) (*Certificate, error)
 	// Delete 删除证书(其发布落点随行级联删除)。
 	Delete(ctx context.Context, id string) error
 	// SetAutoRenew 打开/关闭这张证书的自动续期。
@@ -64,6 +69,8 @@ type Service interface {
 
 	// Accounts 返回已注册的 ACME 账户视图(不含账户私钥)。
 	Accounts(ctx context.Context) ([]Account, error)
+	// RegisterAccount 注册(或就地更新)一个 CA 的 ACME 账户:账户密钥首次生成后长期复用。
+	RegisterAccount(ctx context.Context, in AccountInput) (*Account, error)
 }
 
 // service 是 store + vault 密封能力支撑的实现。
@@ -71,13 +78,44 @@ type service struct {
 	store *Store
 	seal  Seal
 	now   func() time.Time // 注入便于单测固定「当前时间」(状态推导与续期窗口都吃它)
+
+	// —— 签发路径的注入点(acme.go;零值即「没接上」,Issue 会明确报错而不是卡住)——
+	txt               TXTWriter                                                // 写/删 DNS-01 的 TXT 记录(dnsprovider.Service)
+	httpClient        *http.Client                                             // 访问 CA 的客户端(nil = http.DefaultClient)
+	lookupTXT         func(ctx context.Context, name string) ([]string, error) // 解析 TXT 判断记录是否已生效
+	propagateTimeout  time.Duration                                            // 等记录可见的上限(0 = 不等)
+	propagateInterval time.Duration                                            // 轮询间隔
+	directory         func(ca CA) string                                       // CA → directory URL(测试里换成假 ACME 服务)
 }
 
 // New 构造 Service。
 //   - db:参数化 SQL 触库。
 //   - seal:vault(密封/解封私钥);nil 时任何需要密钥材料的路径返回 ErrVaultUnconfigured。
-func New(db *sql.DB, seal Seal) Service {
-	return &service{store: NewStore(db), seal: seal, now: time.Now}
+//   - opts:签发路径的注入点(不接 TXTWriter 时 Issue 报 ErrTXTWriterUnconfigured)。
+func New(db *sql.DB, seal Seal, opts ...Option) Service {
+	s := &service{
+		store:             NewStore(db),
+		seal:              seal,
+		now:               time.Now,
+		lookupTXT:         net.DefaultResolver.LookupTXT,
+		propagateTimeout:  2 * time.Minute,
+		propagateInterval: 5 * time.Second,
+		directory:         func(ca CA) string { return ca.DirectoryURL },
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// directoryURL 取某 CA 的 ACME directory 地址。
+// 生产恒为 cas.go 里的预置值(用户不能自由填:每家的端点、限流、是否要 EAB 都不一样);
+// 走这一层是为了让契约测试能把同一家指向假 ACME 服务。
+func (s *service) directoryURL(ca CA) string {
+	if s.directory == nil {
+		return ca.DirectoryURL
+	}
+	return s.directory(ca)
 }
 
 func (s *service) List(ctx context.Context) ([]Certificate, error) {
