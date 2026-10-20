@@ -15,14 +15,10 @@ import {
 } from '../api/projects'
 import { listCredentials, usableCredentials, createCredential, type Credential, type CredentialType } from '../api/credentials'
 import { listGroups, type Group } from '../api/groups'
-import { triggerManual, type RunDetail, type TriggerManualInput } from '../api/runs'
-import { listRefs, listCommits, type GitCommit } from '../api/refs'
-import RunParamsEditor from '../components/RunParamsEditor.vue'
-import TypedRunParams from '../components/TypedRunParams.vue'
 import CredentialSelect from '../components/projects/CredentialSelect.vue'
 import ProjectCard from '../components/projects/ProjectCard.vue'
 import RefPicker from '../components/projects/RefPicker.vue'
-import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
+import TriggerRunModal from '../components/projects/TriggerRunModal.vue'
 import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
 import { isSupportedRepoUrl } from '../lib/gitUrl'
@@ -810,126 +806,18 @@ async function confirmDelete(): Promise<void> {
 }
 
 // ─── manual trigger modal ─────────────────────────────────────────────────────
+// 弹窗本体抽到 TriggerRunModal(项目列表与流水线配置页共用同一套触发交互)。
 
-const triggerModalOpen   = ref(false)
-const triggerProject     = ref<Project | null>(null)
-const triggerForm        = ref({ branch: '', commit: '' })
-const triggerParams      = ref<Record<string, string>>({})
-const triggerDefs        = ref<ParamDef[]>([])
-const triggerBranchError = ref('')
-const triggerBanner      = ref('')
-const triggerSubmitting  = ref(false)
+const triggerModalOpen = ref(false)
+const triggerProject   = ref<Project | null>(null)
 
 function openTriggerModal(p: Project): void {
-  triggerProject.value     = p
-  triggerForm.value        = { branch: p.defaultBranch || '', commit: '' }
-  triggerParams.value      = {}
-  triggerDefs.value        = []
-  triggerBranchError.value = ''
-  triggerBanner.value      = ''
-  triggerSubmitting.value  = false
-  triggerModalOpen.value   = true
-  // 纯发布项目没有仓库,列分支只会 400;参数定义照拉(运行参数与仓库无关)。
-  if (p.repoUrl) void loadBranchOptions(p.id)
-  void loadTriggerDefs(p.id)
+  triggerProject.value   = p
+  triggerModalOpen.value = true
 }
 
-// 类型化运行参数定义(P0):有定义 → 弹窗渲染类型化控件;无 → 回退自由 KV。失败静默(降级)。
-async function loadTriggerDefs(projectId: string): Promise<void> {
-  try {
-    triggerDefs.value = await getParameters(projectId)
-  } catch {
-    triggerDefs.value = []
-  }
-}
-
-// 代码管理区(Story 8-18):拉取真实分支/commit 供下拉建议;未启用/失败 → 静默回退手填。
-const triggerBranches = ref<string[]>([])
-const triggerTags = ref<string[]>([])
-const commitOptions = ref<GitCommit[]>([])
-async function loadBranchOptions(projectId: string): Promise<void> {
-  triggerBranches.value = []
-  triggerTags.value = []
-  commitOptions.value = []
-  try {
-    const refs = await listRefs(projectId)
-    triggerBranches.value = refs.branches.map((r) => r.name)
-    triggerTags.value = refs.tags.map((r) => r.name)
-  } catch {
-    // 代码管理区未启用(503)或仓库不可达:静默,保持纯文本输入(优雅降级)。
-  }
-  void loadCommitOptions(projectId, triggerForm.value.branch)
-}
-
-// 据当前分支拉最近 commit 供 commit 下拉(分支变化时刷新);失败静默。
-let commitLoadSeq = 0
-async function loadCommitOptions(projectId: string, ref: string): Promise<void> {
-  const seq = ++commitLoadSeq
-  try {
-    const commits = await listCommits(projectId, ref, 30)
-    if (seq === commitLoadSeq) commitOptions.value = commits
-  } catch {
-    if (seq === commitLoadSeq) commitOptions.value = []
-  }
-}
-
-function onTriggerBranchInput(value?: string): void {
-  triggerBranchError.value = ''
-  if (triggerProject.value) void loadCommitOptions(triggerProject.value.id, value ?? triggerForm.value.branch)
-}
-
-function closeTriggerModal(): void {
-  if (triggerSubmitting.value) return
-  triggerModalOpen.value = false
-  triggerProject.value   = null
-}
-
-async function handleTriggerSubmit(): Promise<void> {
-  triggerBranchError.value = ''
-  triggerBanner.value      = ''
-
-  // 分支可选:留空时后端按项目默认分支解析(项目已知默认分支,不必逼用户填)。
-  const branch = triggerForm.value.branch.trim()
-
-  if (!triggerProject.value) return
-
-  // 类型化参数:提交前客户端即时校验(后端仍会再校验一次 422)。
-  if (triggerDefs.value.length) {
-    const verr = validateParamValues(triggerDefs.value, triggerParams.value)
-    if (verr) {
-      triggerBanner.value = verr
-      return
-    }
-  }
-
-  triggerSubmitting.value = true
-
-  try {
-    const input: TriggerManualInput = {}
-    if (branch) input.branch = branch
-    const commit = triggerForm.value.commit.trim()
-    if (commit) input.commit = commit
-    if (Object.keys(triggerParams.value).length) input.params = triggerParams.value
-
-    const run: RunDetail = await triggerManual(triggerProject.value.id, input)
-    triggerModalOpen.value = false
-    triggerProject.value   = null
-    void router.push(`/runs/${run.id}`)
-  } catch (err) {
-    if (err instanceof HttpError) {
-      if (err.status === 0) {
-        triggerBanner.value = t('projects.errNetwork')
-      } else if (err.status === 404) {
-        triggerBanner.value = t('projects.triggerErrNotFound')
-      } else {
-        triggerBanner.value = err.apiError?.message ?? t('projects.triggerErrStatus', { status: err.status })
-      }
-    } else {
-      triggerBanner.value = t('projects.triggerErrRetry')
-    }
-  } finally {
-    triggerSubmitting.value = false
-  }
+function onTriggered(runId: string): void {
+  void router.push(`/runs/${runId}`)
 }
 
 </script>
@@ -1195,153 +1083,9 @@ async function handleTriggerSubmit(): Promise<void> {
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
-       Manual trigger modal
+       Manual trigger modal(与流水线配置页共用 TriggerRunModal)
   ════════════════════════════════════════════════════════════════════════ -->
-  <Teleport to="body">
-    <div
-      v-if="triggerModalOpen && triggerProject"
-      class="modal-scrim"
-      role="dialog"
-      :aria-label="t('projects.triggerDialogAria', { name: triggerProject.name })"
-      aria-modal="true"
-      @keydown.esc="closeTriggerModal"
-      @click.self="closeTriggerModal"
-    >
-      <div class="modal modal--sm">
-        <!-- Header -->
-        <div class="modal-head">
-          <div class="modal-icon modal-icon--run" aria-hidden="true">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-              <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/>
-            </svg>
-          </div>
-          <div>
-            <h3 class="modal-title">{{ t('projects.triggerTitle') }}</h3>
-            <p class="modal-sub">{{ triggerProject.repoUrl ? t('projects.triggerSub', { name: triggerProject.name }) : t('projects.triggerSubNoRepo', { name: triggerProject.name }) }}</p>
-          </div>
-          <button
-            class="modal-close"
-            :aria-label="t('projects.closeDialog')"
-            :disabled="triggerSubmitting"
-            @click="closeTriggerModal"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 6 6 18M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-
-        <!-- Error banner -->
-        <div
-          v-if="triggerBanner"
-          class="banner banner--error modal-banner"
-          role="alert"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
-          </svg>
-          {{ triggerBanner }}
-        </div>
-
-        <form
-          class="modal-form"
-          novalidate
-          @submit.prevent="handleTriggerSubmit"
-        >
-          <!-- Branch(纯发布项目没有仓库,不显示分支/commit 两项) -->
-          <div v-if="triggerProject?.repoUrl" class="field">
-            <label class="field-label" for="trigger-branch">
-              {{ t('projects.branch') }}
-              <span class="field-hint-inline">{{ t('projects.branchHint') }}</span>
-            </label>
-            <RefPicker
-              input-id="trigger-branch"
-              v-model="triggerForm.branch"
-              :branches="triggerBranches"
-              :tags="triggerTags"
-              :disabled="triggerSubmitting"
-              :has-error="!!triggerBranchError"
-              :described-by="triggerBranchError ? 'trigger-branch-err' : undefined"
-              placeholder="main"
-              :branches-label="t('projects.refGroupBranches')"
-              :tags-label="t('projects.refGroupTags')"
-              @update:model-value="onTriggerBranchInput"
-            />
-            <span
-              v-if="triggerBranchError"
-              id="trigger-branch-err"
-              class="field-error"
-              role="alert"
-            >{{ triggerBranchError }}</span>
-          </div>
-
-          <!-- Commit (optional) -->
-          <div v-if="triggerProject?.repoUrl" class="field">
-            <label class="field-label" for="trigger-commit">
-              {{ t('projects.commit') }}
-              <span class="field-hint-inline">{{ t('projects.commitHint') }}</span>
-            </label>
-            <input
-              id="trigger-commit"
-              v-model="triggerForm.commit"
-              class="field-input field-input--mono"
-              type="text"
-              :placeholder="t('projects.commitPlaceholder')"
-              autocomplete="off"
-              list="trigger-commit-options"
-              :disabled="triggerSubmitting"
-            />
-            <!-- 代码管理区:当前分支最近 commit 下拉建议(短 sha — 首行说明) -->
-            <datalist id="trigger-commit-options">
-              <option v-for="c in commitOptions" :key="c.sha" :value="c.short">{{ c.subject }}</option>
-            </datalist>
-          </div>
-
-          <!-- Parameters · 有类型化定义(P0)→ 渲染类型化控件;无 → 自由 KV(Story 8-11) -->
-          <div class="field">
-            <label class="field-label">
-              {{ t('projects.params') }}
-              <span class="field-hint-inline">{{ triggerDefs.length ? t('projects.paramsHintTyped') : t('projects.paramsHintFree') }}</span>
-            </label>
-            <TypedRunParams
-              v-if="triggerDefs.length"
-              :key="`typed-${triggerProject.id}`"
-              :defs="triggerDefs"
-              v-model="triggerParams"
-            />
-            <RunParamsEditor
-              v-else
-              :key="triggerProject.id"
-              v-model="triggerParams"
-              :disabled="triggerSubmitting"
-            />
-          </div>
-
-          <!-- Footer -->
-          <div class="modal-footer">
-            <button
-              type="button"
-              class="btn-secondary"
-              :disabled="triggerSubmitting"
-              @click="closeTriggerModal"
-            >{{ t('projects.cancel') }}</button>
-            <button
-              type="submit"
-              class="btn-run"
-              :disabled="triggerSubmitting"
-              :aria-busy="triggerSubmitting"
-            >
-              <span v-if="triggerSubmitting" class="spinner" aria-hidden="true" />
-              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
-              </svg>
-              {{ triggerSubmitting ? t('projects.triggering') : t('projects.runNow') }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </Teleport>
+  <TriggerRunModal v-model:open="triggerModalOpen" :project="triggerProject" @triggered="onTriggered" />
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        New project modal
@@ -2624,42 +2368,6 @@ async function handleTriggerSubmit(): Promise<void> {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
-}
-
-.btn-run {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 15px;
-  border: none;
-  background: var(--color-primary);
-  color: #fff;
-  font-family: var(--font-sans);
-  font-size: 0.83rem;
-  font-weight: 600;
-  border-radius: var(--rounded);
-  cursor: pointer;
-  box-shadow: 0 5px 16px var(--color-primary-soft);
-  transition: background-color var(--duration-fast), transform var(--duration-fast), box-shadow var(--duration-fast);
-  white-space: nowrap;
-}
-
-.btn-run:hover:not(:disabled) {
-  background: var(--color-primary-press);
-  transform: translateY(-1px);
-}
-
-.btn-run:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 3px;
-}
-
-.btn-run:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 /* ─── modal ─────────────────────────────────────────────────────────────────── */
