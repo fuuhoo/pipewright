@@ -35,8 +35,8 @@ func (b Bundle) Fullchain() string {
 
 // Service 是证书仓库对外接口(httpapi 与到期扫描器消费)。
 //
-// 「存 / 导入」(Issue 之外)与「签」(Issue / RegisterAccount)都在这里;发布(Deploy)由
-// deploy.go 补,所以清单里没有 deploy 方法。
+// 三条线都在这份清单里:「存 / 导入」(本文件)、「签」(acme.go 的 Issue / RegisterAccount)、
+// 「发」(deploy.go 的 Deploy / DeployAuto)。
 type Service interface {
 	// List 返回全部证书视图(到期升序;不含任何密钥材料)。
 	List(ctx context.Context) ([]Certificate, error)
@@ -67,6 +67,13 @@ type Service interface {
 	// DeleteTarget 删除一个落点配置。
 	DeleteTarget(ctx context.Context, id string) error
 
+	// Deploy 把一张证书的正文与私钥铺到它的**全部**落点,并在每个落点上跑用户填的生效指令。
+	// 逐落点独立(一台失败不动其它台),结果只在 report 里说话;返回值中的 error 只用于
+	// 前置条件不成立(证书没正文 / 没接执行能力)。见 deploy.go。
+	Deploy(ctx context.Context, certID string) (*DeployReport, error)
+	// DeployAuto 只铺 auto_deploy 为真的落点(续期后的自动发布走它;见 deploy.go)。
+	DeployAuto(ctx context.Context, certID string) (*DeployReport, error)
+
 	// Accounts 返回已注册的 ACME 账户视图(不含账户私钥)。
 	Accounts(ctx context.Context) ([]Account, error)
 	// RegisterAccount 注册(或就地更新)一个 CA 的 ACME 账户:账户密钥首次生成后长期复用。
@@ -86,6 +93,9 @@ type service struct {
 	propagateTimeout  time.Duration                                            // 等记录可见的上限(0 = 不等)
 	propagateInterval time.Duration                                            // 轮询间隔
 	directory         func(ca CA) string                                       // CA → directory URL(测试里换成假 ACME 服务)
+
+	// —— 发布路径的注入点(deploy.go;不接则 Deploy 报 ErrPublisherUnconfigured)——
+	pub Publisher // 目标机上的上传与执行能力(target.Service)
 }
 
 // New 构造 Service。
