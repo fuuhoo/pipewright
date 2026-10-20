@@ -517,16 +517,6 @@ function onRunTriggered(runId: string): void {
         </button>
 
         <button
-          class="top-btn top-btn--save"
-          :disabled="saveSubmitting || loadState !== 'idle'"
-          :aria-busy="saveSubmitting"
-          @click="handleSave"
-        >
-          <span v-if="saveSubmitting" class="spinner" aria-hidden="true"/>
-          {{ saveSubmitting ? t('projectPipeline.saving') : t('projectPipeline.saveDraft') }}
-        </button>
-
-        <button
           class="top-btn top-btn--run"
           :disabled="!project || loadState !== 'idle' || saveSubmitting"
           @click="runModalOpen = true"
@@ -535,6 +525,16 @@ function onRunTriggered(runId: string): void {
             <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
           </svg>
           {{ t('projects.runNow') }}
+        </button>
+
+        <button
+          class="top-btn top-btn--save"
+          :disabled="saveSubmitting || loadState !== 'idle'"
+          :aria-busy="saveSubmitting"
+          @click="handleSave"
+        >
+          <span v-if="saveSubmitting" class="spinner" aria-hidden="true"/>
+          {{ saveSubmitting ? t('projectPipeline.saving') : t('projectPipeline.saveDraft') }}
         </button>
       </div>
     </header>
