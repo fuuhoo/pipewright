@@ -22,6 +22,12 @@ export default {
     emptySearchFilter: '无匹配「{q}」且符合当前状态筛选的容器(共 {total} 个)。',
     emptySearch: '无匹配「{q}」的容器(共 {total} 个)。',
     emptyFilter: '无匹配当前筛选的容器(共 {total} 个)。',
+    // 卡片内分页脚(命中行超过一页才出现)
+    pagerAria: '容器分页',
+    pagerPrev: '上一页',
+    pagerNext: '下一页',
+    pagerPosition: '第 {page}/{pages} 页',
+    pagerRange: '{from}–{to} / 共 {total} 条',
     selectContainerAria: '选择容器 {name}',
     statTitle: '网络 {net} · 块 {block}',
     statLine: 'CPU {cpu} · 内存 {mem} ({memPerc})',

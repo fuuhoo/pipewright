@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: '「{q}」に一致し現在のステータスフィルタにも合うコンテナがありません(合計 {total} 個)。',
     emptySearch: '「{q}」に一致するコンテナがありません(合計 {total} 個)。',
     emptyFilter: '現在のフィルタに一致するコンテナがありません(合計 {total} 個)。',
+    // カード内のページ送り(一致行が 1 ページを超えるときだけ表示)
+    pagerAria: 'コンテナのページ送り',
+    pagerPrev: '前のページ',
+    pagerNext: '次のページ',
+    pagerPosition: '{page}/{pages} ページ',
+    pagerRange: '{from}〜{to} / 全 {total} 件',
     selectContainerAria: 'コンテナ {name} を選択',
     statTitle: 'ネットワーク {net} · ブロック {block}',
     statLine: 'CPU {cpu} · メモリ {mem} ({memPerc})',

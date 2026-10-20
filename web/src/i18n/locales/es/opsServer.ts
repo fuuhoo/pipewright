@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: 'Ningún contenedor coincide con «{q}» y con el filtro de estado actual ({total} en total).',
     emptySearch: 'Ningún contenedor coincide con «{q}» ({total} en total).',
     emptyFilter: 'Ningún contenedor coincide con el filtro actual ({total} en total).',
+    // Paginación dentro de la tarjeta (aparece si hay más de una página)
+    pagerAria: 'Paginación de contenedores',
+    pagerPrev: 'Página anterior',
+    pagerNext: 'Página siguiente',
+    pagerPosition: 'Página {page}/{pages}',
+    pagerRange: '{from}–{to} de {total}',
     selectContainerAria: 'Seleccionar contenedor {name}',
     statTitle: 'Red {net} · Bloque {block}',
     statLine: 'CPU {cpu} · Memoria {mem} ({memPerc})',

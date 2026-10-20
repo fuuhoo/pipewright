@@ -4,7 +4,7 @@
   tab 内容只针对这一台(Portainer 式按主机管理)。容器 tab:生命周期操作 + 日志 + 终端;
   镜像 tab:列表 + 拉取 + 删除。生命周期/镜像写操作完成后 emit('changed') 让父刷新聚合。
 */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   getServerContainerStats,
@@ -54,6 +54,7 @@ import {
   type ActionSpec,
   type StateBucket,
 } from '../../lib/containerState'
+import { matchesContainer, paginate, queryTokens, type HostFields } from '../../lib/containerListFilter'
 
 const props = defineProps<{
   group: ServerContainers
@@ -66,8 +67,10 @@ const props = defineProps<{
   ownerGroup?: string
   /** 容器状态筛选(来自页面级筛选段);'all' = 不筛。 */
   stateFilter: 'all' | StateBucket
-  /** 文本搜索(来自页面级搜索框);按 names / image 忽略大小写包含。 */
+  /** 文本搜索(来自页面级搜索框);命中判据见 lib/containerListFilter。 */
   search: string
+  /** 一张卡片内每页显示多少容器行;0 = 一次摊完(来自页面级「每页」档位)。 */
+  pageSize: number
   /** 批量模式:容器行左侧显示复选框。 */
   bulkMode: boolean
   /** 父持有的选择集;key = `${serverId}::${containerName}`。 */
@@ -111,18 +114,37 @@ function isBusy(cid: string, action: string): boolean {
   return busy.value.has(`${cid}:${action}`)
 }
 
-const visibleContainers = computed(() => {
+const searchTokens = computed(() => queryTokens(props.search))
+const hostFields = computed<HostFields>(() => ({ name: props.name, host: props.host }))
+
+/** 状态筛选 + 搜索词叠加后的命中行(分页在此之前,所以「共 N 条」说的是筛后)。 */
+const matchedContainers = computed(() => {
   let list = props.group.containers
   if (props.stateFilter !== 'all') {
     list = list.filter((c) => stateBucket(c.state) === props.stateFilter)
   }
-  const q = props.search.trim().toLowerCase()
-  if (q) {
-    list = list.filter(
-      (c) => c.names.toLowerCase().includes(q) || c.image.toLowerCase().includes(q),
-    )
+  if (searchTokens.value.length > 0) {
+    const host = hostFields.value
+    const tokens = searchTokens.value
+    list = list.filter((c) => matchesContainer(c, host, tokens))
   }
   return list
+})
+
+// 分页单位是一张卡片里的行:卡片按机器分组,行才是会长到几百条的那一维。
+// 页码留在卡片本地 —— 轮询只 patch props,实例不重建,所以翻页不会被 12s 一次的刷新打断。
+const rowPage = ref(1)
+const containerPage = computed(() => paginate(matchedContainers.value, rowPage.value, props.pageSize))
+// 列表变短(容器被删、筛得更严)时把越界页码夹回来,免得停在空白末页。
+watch(
+  () => containerPage.value.page,
+  (p) => {
+    if (p !== rowPage.value) rowPage.value = p
+  },
+)
+// 换了筛选条件或每页条数,继续停在这一页没有意义:回到第 1 页。
+watch([() => props.search, () => props.stateFilter, () => props.pageSize], () => {
+  rowPage.value = 1
 })
 
 // 容器 tab 过滤后为空时的提示文案(区分搜索 / 状态筛选)。
@@ -755,7 +777,7 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
       <!-- 卡片内 tab:容器 / 镜像 -->
       <div class="card-tabs" role="tablist">
         <button class="ctab" :class="{ 'ctab--active': tab === 'containers' }" role="tab" @click="switchTab('containers')">
-          {{ t('opsServer.card.tabContainers') }} <span class="ctab__n">{{ group.total }}</span>
+          {{ t('opsServer.card.tabContainers') }} <span class="ctab__n">{{ containerPage.total }}</span>
         </button>
         <button class="ctab" :class="{ 'ctab--active': tab === 'images' }" role="tab" @click="switchTab('images')">
           {{ t('opsServer.card.tabImages') }} <span v-if="imgState === 'loaded'" class="ctab__n">{{ images.length }}</span>
@@ -783,9 +805,9 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
           </button>
         </div>
         <p v-if="group.total === 0" class="panel__hint">{{ t('opsServer.card.noContainers') }}</p>
-        <p v-else-if="visibleContainers.length === 0" class="panel__hint">{{ emptyContainersHint }}</p>
+        <p v-else-if="containerPage.total === 0" class="panel__hint">{{ emptyContainersHint }}</p>
         <ul v-else class="clist" role="list">
-          <li v-for="c in visibleContainers" :key="c.id" class="crow" :class="{ 'crow--busy': rowBusy(c.id), 'crow--bulk': bulkMode }">
+          <li v-for="c in containerPage.items" :key="c.id" class="crow" :class="{ 'crow--busy': rowBusy(c.id), 'crow--bulk': bulkMode }">
             <label v-if="bulkMode" class="crow__check">
               <input
                 type="checkbox"
@@ -832,6 +854,13 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
             </div>
           </li>
         </ul>
+        <!-- 一页装不下才出现:翻页只动这一张卡片,别的机器各行其是 -->
+        <div v-if="containerPage.pages > 1" class="pager" role="group" :aria-label="t('opsServer.card.pagerAria')">
+          <button class="pager__btn" :disabled="containerPage.page <= 1" :aria-label="t('opsServer.card.pagerPrev')" @click="rowPage = containerPage.page - 1">‹</button>
+          <span class="pager__pos">{{ t('opsServer.card.pagerPosition', { page: containerPage.page, pages: containerPage.pages }) }}</span>
+          <span class="pager__range">{{ t('opsServer.card.pagerRange', { from: containerPage.from, to: containerPage.to, total: containerPage.total }) }}</span>
+          <button class="pager__btn" :disabled="containerPage.page >= containerPage.pages" :aria-label="t('opsServer.card.pagerNext')" @click="rowPage = containerPage.page + 1">›</button>
+        </div>
       </template>
 
       <!-- 镜像 tab -->
@@ -1359,6 +1388,43 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 .cstats-bar__label {
   font-size: var(--text-micro);
   color: var(--color-faint);
+}
+/* 卡片内分页脚:命中行超过一页才出现,只管这一张卡片 */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-micro);
+  color: var(--color-faint);
+}
+.pager__btn {
+  width: 26px;
+  height: 24px;
+  line-height: 1;
+  border-radius: var(--rounded-sm);
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-dim);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+.pager__btn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-text);
+}
+.pager__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pager__pos {
+  font-weight: 600;
+  color: var(--color-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pager__range {
+  font-variant-numeric: tabular-nums;
 }
 .crow__actions {
   display: flex;

@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: '「{q}」와 일치하고 현재 상태 필터에도 맞는 컨테이너가 없습니다(총 {total}개).',
     emptySearch: '「{q}」와 일치하는 컨테이너가 없습니다(총 {total}개).',
     emptyFilter: '현재 필터와 일치하는 컨테이너가 없습니다(총 {total}개).',
+    // 카드 안 페이지 이동(일치 행이 한 페이지를 넘을 때만 표시)
+    pagerAria: '컨테이너 페이지 이동',
+    pagerPrev: '이전 페이지',
+    pagerNext: '다음 페이지',
+    pagerPosition: '{page}/{pages} 페이지',
+    pagerRange: '{from}–{to} / 총 {total}개',
     selectContainerAria: '컨테이너 {name} 선택',
     statTitle: '네트워크 {net} · 블록 {block}',
     statLine: 'CPU {cpu} · 메모리 {mem} ({memPerc})',

@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: '無符合「{q}」且符合目前狀態篩選的容器(共 {total} 個)。',
     emptySearch: '無符合「{q}」的容器(共 {total} 個)。',
     emptyFilter: '無符合目前篩選的容器(共 {total} 個)。',
+    // 卡片內分頁腳(符合列超過一頁才出現)
+    pagerAria: '容器分頁',
+    pagerPrev: '上一頁',
+    pagerNext: '下一頁',
+    pagerPosition: '第 {page}/{pages} 頁',
+    pagerRange: '{from}–{to} / 共 {total} 條',
     selectContainerAria: '選擇容器 {name}',
     statTitle: '網路 {net} · 區塊 {block}',
     statLine: 'CPU {cpu} · 記憶體 {mem} ({memPerc})',

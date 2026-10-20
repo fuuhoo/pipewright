@@ -11,6 +11,13 @@ import { streamAllContainers, type ServerContainers, type ContainerInfo } from '
 import { listServers, serviceAction, type Server, type ServiceAction } from '../api/servers'
 import { listGroups, type Group } from '../api/groups'
 import { GROUP_ALL, groupLabel, groupOptions, matchesGroup } from '../lib/groupFilter'
+import {
+  PAGE_ALL,
+  PAGE_SIZE_OPTIONS,
+  hostHasMatch,
+  queryTokens,
+  type HostFields,
+} from '../lib/containerListFilter'
 import { HttpError } from '../api/http'
 import { stateBucket, type StateBucket } from '../lib/containerState'
 import {
@@ -168,8 +175,29 @@ function filterCount(key: StateFilter): number {
 }
 
 // ─── 文本搜索 ─────────────────────────────────────────────────────────────────
-// 透传给各 ServerCard,与状态筛选叠加(按名字 / 镜像,忽略大小写)。
+// 一个框多字段:命中 容器名 / 镜像 / 容器 ID / 端口映射 / 状态 / 机器名 / 机器 IP 任一即算命中
+// (判据在 lib/containerListFilter,卡片行与这里的「整张卡片该不该出现」共用同一函数)。
 const searchText = ref('')
+const searchTokens = computed(() => queryTokens(searchText.value))
+
+function hostFields(serverId: string): HostFields {
+  return { name: serverName(serverId), host: serverHost(serverId) }
+}
+
+/** 搜索时只留命中机器的卡片:一台机器一屏,摊 50 张空卡片比滚动找更累人。 */
+const displayGroups = computed(() => {
+  const tokens = searchTokens.value
+  if (tokens.length === 0) return scopeGroups.value
+  return scopeGroups.value.filter((g) => hostHasMatch(g.containers, hostFields(g.serverId), tokens))
+})
+/** 有机器、却一台都不命中:与「机器被分组筛光」是两种空态,文案要分开。 */
+const searchToEmpty = computed(
+  () => searchTokens.value.length > 0 && scopeGroups.value.length > 0 && displayGroups.value.length === 0,
+)
+
+// ─── 每页条数 ─────────────────────────────────────────────────────────────────
+// 分页单位是一张卡片里的容器行(机器维度已经有「只看这台」+ 分组筛选 + 搜索收敛)。
+const pageSize = ref<number>(PAGE_SIZE_OPTIONS[0])
 
 // ─── 卡片折叠 ─────────────────────────────────────────────────────────────────
 // 折叠集由页面持有,卡片只读自己那一项 —— 这样页头才能一键折叠/展开当前范围的全部卡片。
@@ -177,7 +205,7 @@ const searchText = ref('')
 const folded = ref<Set<string>>(new Set())
 // 只有连得上且有运行时的卡片有正文可折(卡片内那个按钮也是这个条件)。
 const foldableIds = computed(() =>
-  scopeGroups.value.filter((g) => g.reachable && g.runtime).map((g) => g.serverId),
+  displayGroups.value.filter((g) => g.reachable && g.runtime).map((g) => g.serverId),
 )
 const allFolded = computed(
   () => foldableIds.value.length > 0 && foldableIds.value.every((id) => folded.value.has(id)),
@@ -490,6 +518,13 @@ onUnmounted(() => {
       :description="t('containers.groupEmpty')"
     />
 
+    <!-- 搜到一台不剩:机器在,只是这屏没有命中的容器 -->
+    <EmptyState
+      v-else-if="searchToEmpty"
+      :title="t('containers.searchEmptyTitle')"
+      :description="t('containers.searchEmpty', { q: searchText.trim() })"
+    />
+
     <template v-else>
       <!-- 服务器切换:一台一张卡,机器多了不用滚动找;在线的排前面、离线的沉底 -->
       <div v-if="showScopeBar" class="scope-bar" role="group" :aria-label="t('containers.serverFilterAria')">
@@ -574,6 +609,14 @@ onUnmounted(() => {
               <path d="M6 9l6 6 6-6"/>
             </svg>
           </div>
+          <div class="page-size">
+            <span class="page-size__label">{{ t('containers.pageSizeLabel') }}</span>
+            <select v-model.number="pageSize" class="page-size__select" :aria-label="t('containers.pageSizeAria')">
+              <option v-for="n in PAGE_SIZE_OPTIONS" :key="n" :value="n">
+                {{ n === PAGE_ALL ? t('containers.pageSizeAll') : n }}
+              </option>
+            </select>
+          </div>
           <div class="search-box">
             <input
               v-model="searchText"
@@ -618,10 +661,10 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 逐台卡片(卡片内自带 容器/镜像 tab;只渲染切换范围内的机器)。后台刷新就地换卡,不压暗。 -->
+      <!-- 逐台卡片(卡片内自带 容器/镜像 tab;只渲染切换范围内、且搜索有命中的机器)。后台刷新就地换卡,不压暗。 -->
       <section class="cards" :aria-label="t('containers.cardsAria')">
         <ServerCard
-          v-for="g in scopeGroups"
+          v-for="g in displayGroups"
           :key="g.serverId"
           :group="g"
           :name="serverName(g.serverId)"
@@ -629,6 +672,7 @@ onUnmounted(() => {
           :owner-group="hostGroupTag(g.serverId)"
           :state-filter="stateFilter"
           :search="searchText"
+          :page-size="pageSize"
           :bulk-mode="bulkMode"
           :selected-set="selected"
           :folded-set="folded"
@@ -750,6 +794,7 @@ onUnmounted(() => {
 .controls-right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 /* 分组下拉与同一行的搜索框同高同圆角:一行里两种形状会比多一行还乱 */
@@ -782,6 +827,33 @@ onUnmounted(() => {
   transform: translateY(-50%);
   color: var(--color-faint);
   pointer-events: none;
+}
+/* 每页条数:留原生下拉箭头,但收进一颗胶囊,免得右侧一长串控件里再长出第二个框 */
+.page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 5px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-card);
+  font-size: var(--text-label);
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+.page-size__select {
+  font-family: inherit;
+  font-size: var(--text-label);
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  padding-right: 2px;
+  cursor: pointer;
+}
+.page-size__select:focus-visible {
+  outline: none;
+  color: var(--color-primary);
 }
 .fold-all {
   flex-shrink: 0;

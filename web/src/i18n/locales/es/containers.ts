@@ -40,9 +40,14 @@ export default {
   filterStopped: 'Detenidos',
   filterPaused: 'En pausa',
 
-  searchPlaceholder: 'Buscar contenedores por nombre / imagen',
-  searchAria: 'Buscar contenedores por nombre o imagen',
+  searchPlaceholder: 'Buscar contenedores por nombre / IP / imagen',
+  searchAria: 'Buscar contenedores por nombre, IP o imagen',
   searchClear: 'Borrar búsqueda',
+  pageSizeLabel: 'Por página',
+  pageSizeAria: 'Contenedores mostrados por página en cada tarjeta de servidor',
+  pageSizeAll: 'Todos',
+  searchEmptyTitle: 'Ningún contenedor coincide',
+  searchEmpty: 'Nada en los servidores visibles coincide con «{q}» (cuenta nombre, IP, imagen, puertos o estado).',
   foldAll: 'Contraer todo',
   unfoldAll: 'Expandir todo',
 

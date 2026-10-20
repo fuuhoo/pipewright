@@ -40,9 +40,14 @@ export default {
   filterStopped: 'Stopped',
   filterPaused: 'Paused',
 
-  searchPlaceholder: 'Search containers by name / image',
-  searchAria: 'Search containers by name or image',
+  searchPlaceholder: 'Search containers by name / IP / image',
+  searchAria: 'Search containers by name, IP or image',
   searchClear: 'Clear search',
+  pageSizeLabel: 'Per page',
+  pageSizeAria: 'Containers shown per page in each server card',
+  pageSizeAll: 'All',
+  searchEmptyTitle: 'No matching containers',
+  searchEmpty: 'Nothing on the visible servers matches “{q}” (name, IP, image, ports or state all count).',
   foldAll: 'Collapse all',
   unfoldAll: 'Expand all',
 

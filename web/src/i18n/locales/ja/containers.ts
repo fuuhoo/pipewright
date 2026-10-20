@@ -40,9 +40,14 @@ export default {
   filterStopped: '停止済み',
   filterPaused: '一時停止',
 
-  searchPlaceholder: '名前 / イメージでコンテナを検索',
-  searchAria: '名前またはイメージでコンテナを検索',
+  searchPlaceholder: '名前 / IP / イメージでコンテナを検索',
+  searchAria: '名前、IP またはイメージでコンテナを検索',
   searchClear: '検索をクリア',
+  pageSizeLabel: '表示件数',
+  pageSizeAria: 'サーバーカード 1 枚で 1 ページに表示するコンテナ数',
+  pageSizeAll: 'すべて',
+  searchEmptyTitle: '一致するコンテナがありません',
+  searchEmpty: '表示中のサーバーに「{q}」に一致するコンテナがありません(名前、IP、イメージ、ポート、状態のいずれも対象)。',
   foldAll: 'すべて折りたたむ',
   unfoldAll: 'すべて展開',
 

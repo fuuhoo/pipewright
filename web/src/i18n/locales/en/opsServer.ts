@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: 'No containers match “{q}” and the current status filter ({total} total).',
     emptySearch: 'No containers match “{q}” ({total} total).',
     emptyFilter: 'No containers match the current filter ({total} total).',
+    // In-card pager (only when matches exceed one page)
+    pagerAria: 'Container pagination',
+    pagerPrev: 'Previous page',
+    pagerNext: 'Next page',
+    pagerPosition: 'Page {page}/{pages}',
+    pagerRange: '{from}–{to} of {total}',
     selectContainerAria: 'Select container {name}',
     statTitle: 'Net {net} · Block {block}',
     statLine: 'CPU {cpu} · Memory {mem} ({memPerc})',

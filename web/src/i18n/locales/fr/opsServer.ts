@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: 'Aucun conteneur ne correspond à « {q} » et au filtre d’état actuel ({total} au total).',
     emptySearch: 'Aucun conteneur ne correspond à « {q} » ({total} au total).',
     emptyFilter: 'Aucun conteneur ne correspond au filtre actuel ({total} au total).',
+    // Pagination dans la carte (à partir d’une seule page dépassée)
+    pagerAria: 'Pagination des conteneurs',
+    pagerPrev: 'Page précédente',
+    pagerNext: 'Page suivante',
+    pagerPosition: 'Page {page}/{pages}',
+    pagerRange: '{from}–{to} sur {total}',
     selectContainerAria: 'Sélectionner le conteneur {name}',
     statTitle: 'Réseau {net} · Bloc {block}',
     statLine: 'CPU {cpu} · Mémoire {mem} ({memPerc})',

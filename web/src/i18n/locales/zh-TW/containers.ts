@@ -40,9 +40,14 @@ export default {
   filterStopped: '已停止',
   filterPaused: '已暫停',
 
-  searchPlaceholder: '依名稱 / 映像搜尋容器',
-  searchAria: '依名稱或映像搜尋容器',
+  searchPlaceholder: '依名稱 / IP / 映像搜尋容器',
+  searchAria: '依名稱、IP 或映像搜尋容器',
   searchClear: '清除搜尋',
+  pageSizeLabel: '每頁',
+  pageSizeAria: '每張機器卡片一頁顯示多少個容器',
+  pageSizeAll: '全部',
+  searchEmptyTitle: '沒有符合的容器',
+  searchEmpty: '可見的伺服器上沒有任何容器符合「{q}」(名稱、IP、映像、連接埠、狀態都算)。',
   foldAll: '全部摺疊',
   unfoldAll: '全部展開',
 

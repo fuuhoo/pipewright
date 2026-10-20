@@ -40,9 +40,14 @@ export default {
   filterStopped: '已停止',
   filterPaused: '已暂停',
 
-  searchPlaceholder: '按名字 / 镜像搜索容器',
-  searchAria: '按名字或镜像搜索容器',
+  searchPlaceholder: '按名称 / IP / 镜像搜索容器',
+  searchAria: '按名称、IP 或镜像搜索容器',
   searchClear: '清除搜索',
+  pageSizeLabel: '每页',
+  pageSizeAria: '每张机器卡片一页显示多少个容器',
+  pageSizeAll: '全部',
+  searchEmptyTitle: '没有匹配的容器',
+  searchEmpty: '可见的服务器上没有任何容器命中「{q}」(名称、IP、镜像、端口、状态都算)。',
   foldAll: '全部折叠',
   unfoldAll: '全部展开',
 

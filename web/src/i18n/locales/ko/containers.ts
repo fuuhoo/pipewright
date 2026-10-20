@@ -40,9 +40,14 @@ export default {
   filterStopped: '중지됨',
   filterPaused: '일시 중지됨',
 
-  searchPlaceholder: '이름 / 이미지로 컨테이너 검색',
-  searchAria: '이름 또는 이미지로 컨테이너 검색',
+  searchPlaceholder: '이름 / IP / 이미지로 컨테이너 검색',
+  searchAria: '이름, IP 또는 이미지로 컨테이너 검색',
   searchClear: '검색 지우기',
+  pageSizeLabel: '페이지당',
+  pageSizeAria: '서버 카드 한 페이지에 표시할 컨테이너 수',
+  pageSizeAll: '전체',
+  searchEmptyTitle: '일치하는 컨테이너가 없습니다',
+  searchEmpty: '보이는 서버에서 “{q}”와 일치하는 컨테이너가 없습니다(이름, IP, 이미지, 포트, 상태 모두 대상).',
   foldAll: '모두 접기',
   unfoldAll: '모두 펼치기',
 

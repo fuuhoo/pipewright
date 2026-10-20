@@ -19,6 +19,12 @@ export default {
     emptySearchFilter: 'Kein Container entspricht „{q}“ und dem aktuellen Statusfilter (insgesamt {total}).',
     emptySearch: 'Kein Container entspricht „{q}“ (insgesamt {total}).',
     emptyFilter: 'Kein Container entspricht dem aktuellen Filter (insgesamt {total}).',
+    // Blätterleiste in der Karte (erscheint erst ab mehr als einer Seite)
+    pagerAria: 'Container-Seiten',
+    pagerPrev: 'Vorherige Seite',
+    pagerNext: 'Nächste Seite',
+    pagerPosition: 'Seite {page}/{pages}',
+    pagerRange: '{from}–{to} von {total}',
     selectContainerAria: 'Container {name} auswählen',
     statTitle: 'Netzwerk {net} · Block {block}',
     statLine: 'CPU {cpu} · Speicher {mem} ({memPerc})',

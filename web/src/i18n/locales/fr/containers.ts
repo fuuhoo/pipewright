@@ -40,9 +40,14 @@ export default {
   filterStopped: 'Arrêtés',
   filterPaused: 'En pause',
 
-  searchPlaceholder: 'Rechercher des conteneurs par nom / image',
-  searchAria: 'Rechercher des conteneurs par nom ou image',
+  searchPlaceholder: 'Rechercher des conteneurs par nom / IP / image',
+  searchAria: 'Rechercher des conteneurs par nom, IP ou image',
   searchClear: 'Effacer la recherche',
+  pageSizeLabel: 'Par page',
+  pageSizeAria: 'Nombre de conteneurs affichés par page dans chaque carte de serveur',
+  pageSizeAll: 'Tous',
+  searchEmptyTitle: 'Aucun conteneur correspondant',
+  searchEmpty: 'Rien sur les serveurs visibles ne correspond à « {q} » (nom, IP, image, ports ou état comptent).',
   foldAll: 'Tout réduire',
   unfoldAll: 'Tout déployer',
 
