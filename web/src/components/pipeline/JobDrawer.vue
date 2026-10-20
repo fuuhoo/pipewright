@@ -228,6 +228,38 @@ const firstAdvancedKey = computed<string>(
   () => visibleFields.value.find((f) => ADVANCED_FIELD_KEYS.has(f.key))?.key ?? '',
 )
 
+// 「环境变量导入」整组:编译等指令之下、工作目录之上才是它的阅读顺序 —— 先写怎么构建,
+// 再说构建时能读到哪些变量。视图切到步骤构建器时,commands 那格被步骤接管并移出表单,
+// 所以这一组必须跟着往下挪,否则它会跑到指令上面(见 stepBuilderSlot)。
+const ENV_IMPORT_KEYS = new Set<string>([
+  'envSource',
+  'envFile',
+  'envFileName',
+  'envText',
+  'nacosBaseUrl',
+  'nacosDataId',
+  'nacosGroup',
+  'nacosNamespaceId',
+  'nacosCredentialId',
+])
+
+/**
+ * 步骤构建器插在字段序列里的哪一格:before=true 表示「在这格之前」,即紧接环境变量组上面;
+ * 这一组整组不可见时(档位收成镜像)没有锚点,退回最后一格之后 = 原位置。
+ */
+const stepBuilderSlot = computed<{ key: string; before: boolean }>(() => {
+  const anchor = visibleFields.value.find((f) => ENV_IMPORT_KEYS.has(f.key))?.key
+  if (anchor) return { key: anchor, before: true }
+  return { key: visibleFields.value[visibleFields.value.length - 1]?.key ?? '', before: false }
+})
+
+function showStepsHere(field: JobField, index: number): boolean {
+  if (!canUseStepBuilder.value || viewMode.value !== 'steps') return false
+  const slot = stepBuilderSlot.value
+  if (field.key !== slot.key) return false
+  return slot.before || index === visibleFields.value.length - 1
+}
+
 /** 步骤构建器回传的编译片段并入 typedConfig 落库。 */
 function onStepsUpdate(patch: { commands: string; artifactPath: string }): void {
   typedConfig.value = {
@@ -836,7 +868,16 @@ async function confirmSave(): Promise<void> {
         </template>
       </div>
 
-      <template v-for="field in visibleFields" :key="field.key">
+      <template v-for="(field, fieldIndex) in visibleFields" :key="field.key">
+        <!-- 可视化步骤构建器(脚本类节点;编译进 commands/artifactPath,经 update 落库)。
+             插在这里 = 「编译等指令」在环境变量导入之上,与原始参数视图里 commands 格的位置一致。 -->
+        <div v-if="showStepsHere(field, fieldIndex)" class="drawer-field step-builder-field">
+          <StepBuilder :config="typedConfig" :language="commandTemplateLang" @update="onStepsUpdate" />
+          <p class="field-hint">
+            {{ t('pipelineJob.stepBuilderHint') }}
+          </p>
+        </div>
+
         <!-- 高级折叠开关:插在第一个高级(执行/缓存)字段前 -->
         <button
           v-if="field.key === firstAdvancedKey"
@@ -1085,14 +1126,6 @@ async function confirmSave(): Promise<void> {
         <p v-if="fieldError(field)" class="field-error">{{ fieldError(field) }}</p>
       </div>
       </template>
-
-      <!-- 可视化步骤构建器(脚本类节点;编译进 commands/artifactPath,经 update 落库) -->
-      <div v-if="canUseStepBuilder && viewMode === 'steps'" class="drawer-field step-builder-field">
-        <StepBuilder :config="typedConfig" :language="commandTemplateLang" @update="onStepsUpdate" />
-        <p class="field-hint">
-          {{ t('pipelineJob.stepBuilderHint') }}
-        </p>
-      </div>
     </div>
 
     <!-- Advanced raw KV (extras not covered by the schema) -->

@@ -21,6 +21,26 @@ describe('JobDrawer + StepBuilder integration', () => {
     expect(wrapper.findAll('.view-tab').length).toBe(2)
   })
 
+  // 阅读顺序:先「怎么构建」(步骤 = commands),再「构建时能读到什么」(环境变量导入)。
+  // 步骤视图里 commands 格被步骤接管并移出表单,所以步骤块必须插在环境变量组之前。
+  it('renders the step builder above the env-import group in steps view', () => {
+    const wrapper = mount(JobDrawer, {
+      props: { job: builderJob({ image: 'node:20', envSource: 'nacos' }), stage },
+    })
+    const order = wrapper
+      .findAll('.drawer-section .drawer-field')
+      .map((n) =>
+        n.classes().includes('step-builder-field') ? '<steps>' : n.find('.drawer-field-label').text(),
+      )
+    const stepsIdx = order.findIndex((label) => label.startsWith('<steps>'))
+    const envIdx = order.indexOf('环境变量导入')
+    expect(stepsIdx).toBeGreaterThanOrEqual(0)
+    expect(envIdx).toBeGreaterThanOrEqual(0)
+    expect(stepsIdx).toBeLessThan(envIdx)
+    // Nacos 坐标组跟着自己的档位走,不能跑到步骤上面
+    expect(envIdx).toBeLessThan(order.indexOf('Nacos 地址'))
+  })
+
   // 「自定义脚本」(script/custom)节点天然写命令文本:默认原始参数、无可视化步骤切换。
   it('uses raw view (no step builder, no view switch) for a 自定义脚本 node', () => {
     const job: PipelineJob = { id: 'js', name: '自定义脚本', type: 'script', summary: '', config: { image: 'node:20' } }
