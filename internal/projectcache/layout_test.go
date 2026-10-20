@@ -82,6 +82,10 @@ func TestPlanMountsAndEnv(t *testing.T) {
 	if _, ok := got["/root/.m2"]; ok {
 		t.Fatal("不该挂 /root/.m2(会遮蔽配置资源注入的 settings.xml)")
 	}
+	// pnpm 不设挂载档:pnpm 12 根本不往 /root/.local/share 写(见 layout.go 包注释)。
+	if _, ok := got["/root/.local/share/pnpm/store"]; ok {
+		t.Fatal("不该挂 pnpm store 档:实测 pnpm 12 会静默改用 node_modules/.pnpm-store")
+	}
 
 	joined := strings.Join(plan.Env, "\n")
 	for _, kv := range []string{
@@ -98,6 +102,9 @@ func TestPlanMountsAndEnv(t *testing.T) {
 	}
 	if strings.Contains(joined, "CARGO_HOME") {
 		t.Fatal("不该注入 CARGO_HOME(指到缓存目录会把 registry 多套一层)")
+	}
+	if strings.Contains(joined, "XDG_DATA_HOME") {
+		t.Fatal("不该注入 XDG_DATA_HOME(会连带搬走其他工具的数据目录)")
 	}
 	if len(plan.Skipped) != 0 {
 		t.Fatalf("无冲突时不该有 Skipped: %v", plan.Skipped)

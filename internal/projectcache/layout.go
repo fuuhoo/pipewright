@@ -19,6 +19,13 @@
 //     的 HOME 不是 /root,只有这一套能命中。
 //     cargo 只走默认路径套:`CARGO_HOME` 若指到 /pw-cache/cargo-registry 就会把 registry 再
 //     套一层,两视图对不上,而指到 /root/.cargo 会盖掉镜像里的 cargo 可执行文件,故不设 env。
+//     pnpm **不能靠加挂载档生效**(2026-10-20 实测,勿再试):pnpm 12 会把 store 静默改到
+//     `node_modules/.pnpm-store/`(工作区内,即用即销),`pnpm store path` 报的默认落点
+//     `/root/.local/share/pnpm/store/v11` 一次都没被写过;`npm_config_store_dir`、
+//     `PNPM_STORE_PATH`、`npm_config_cache` 三个环境变量,以及项目级与 `$HOME` 下的
+//     `.npmrc` 里 `store-dir=…` 全都被无视。唯一认的是命令行 `--store-dir`,指到中立套
+//     `/pw-cache/pnpm-store` 即跨运行持久(127 包:冷 6.1s/下载 127 → 温 2.9s/reused 127)。
+//     所以 pnpm 要提速,由用户在安装指令里加 `--store-dir=/pw-cache/pnpm-store`,平台不代写命令。
 //
 // 只覆盖 root 的 `/root/.m2/repository` 而**不是** `/root/.m2`:后者会和「配置资源」注入的
 // `/root/.m2/settings.xml` 形成父子嵌套挂载,谁后挂谁遮蔽前者,docker 对顺序无保证。
