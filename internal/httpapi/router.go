@@ -935,7 +935,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 读要 cert.view、写要 cert.manage;往目标机写东西的四个动作(落点增删改、发布)还要
 		// 那台机器的 ActOperate —— 两道轴各挡一件事,见 certs.go 头注释。
 		// 私钥只有一个出口:GET /certs/{id}/bundle(要 cert.manage + 每次留审计 + no-store)。
-		// 字面段 cas / accounts / import 由 chi 优先于 /{id} 匹配,不会被详情吞掉。
+		// 字面段 cas / accounts / import / check 由 chi 优先于 /{id} 匹配,不会被详情吞掉。
+		// POST /certs/check 不是只读:它会当场续期落在窗口里的证书,所以吃 cert.manage 且留审计。
 		cs := o.certs
 		ar.Get("/certs", makeListCertsHandler(cs))
 		ar.Post("/certs", makeCreateCertHandler(cs, aud, authn))
@@ -943,6 +944,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/certs/accounts", makeListCertAccountsHandler(cs))
 		ar.Post("/certs/accounts", makeRegisterCertAccountHandler(cs, aud, authn))
 		ar.Post("/certs/import", makeImportCertHandler(cs, aud, authn))
+		ar.Post("/certs/check", makeCheckCertsHandler(cs, aud, authn))
 		ar.Get("/certs/{id}", makeGetCertHandler(cs))
 		ar.Delete("/certs/{id}", makeDeleteCertHandler(cs, aud, authn))
 		ar.Post("/certs/{id}/replace", makeReplaceCertHandler(cs, aud, authn))

@@ -14,6 +14,9 @@ func init() {
 		"健康检查失败": {"zh-TW": "健康檢查失敗", "en": "Health check failed", "ja": "ヘルスチェック失敗", "ko": "상태 점검 실패", "es": "Comprobación de estado fallida", "fr": "Échec de la vérification de santé", "de": "Health-Check fehlgeschlagen"},
 		"需要审批":   {"zh-TW": "需要審批", "en": "Approval required", "ja": "承認が必要です", "ko": "승인 필요", "es": "Se requiere aprobación", "fr": "Approbation requise", "de": "Genehmigung erforderlich"},
 		"异常检测":   {"zh-TW": "異常偵測", "en": "Anomaly detected", "ja": "異常を検出", "ko": "이상 감지", "es": "Anomalía detectada", "fr": "Anomalie détectée", "de": "Anomalie erkannt"},
+		"证书即将到期": {"zh-TW": "憑證即將到期", "en": "Certificate expiring", "ja": "証明書の有効期限が間もなく切れます", "ko": "인증서 만료 임박", "es": "Certificado a punto de caducar", "fr": "Certificat bientôt expiré", "de": "Zertifikat läuft bald ab"},
+		"证书已续期":  {"zh-TW": "憑證已續期", "en": "Certificate renewed", "ja": "証明書を更新しました", "ko": "인증서 갱신 완료", "es": "Certificado renovado", "fr": "Certificat renouvelé", "de": "Zertifikat erneuert"},
+		"证书续期失败": {"zh-TW": "憑證續期失敗", "en": "Certificate renewal failed", "ja": "証明書の更新に失敗しました", "ko": "인증서 갱신 실패", "es": "Renovación del certificado fallida", "fr": "Échec du renouvellement du certificat", "de": "Zertifikatserneuerung fehlgeschlagen"},
 		"运行参数":   {"zh-TW": "執行參數", "en": "Parameters", "ja": "実行パラメータ", "ko": "실행 매개변수", "es": "Parámetros", "fr": "Paramètres", "de": "Parameter"},
 
 		// Field labels (notification body + feishu card field list).

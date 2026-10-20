@@ -33,6 +33,13 @@ const (
 	EventApprovalRequired = "approval_required"
 	// EventAnomalyDetected 服务器指标异常(异常检测命中阈值规则;非 run 维度,projectID 空=全局路由)。
 	EventAnomalyDetected = "anomaly_detected"
+	// EventCertExpiring 证书即将到期(或已过期)而平台不会自己续:导入的证书、或用户关了自动续期。
+	// 非 run/项目维度,projectID 空=全局路由;Project 位带的是域名(标题渲染成「[example.com] 证书即将到期」)。
+	EventCertExpiring = "cert_expiring"
+	// EventCertRenewed 平台把一张 ACME 证书续好了,并已按配置自动铺发到落点。
+	EventCertRenewed = "cert_renewed"
+	// EventCertRenewFailed 平台尝试续期但失败(旧证书通常还在服务,所以这条是「要有人去看」而非「已 outage」)。
+	EventCertRenewFailed = "cert_renew_failed"
 )
 
 // 路由领域错误。
@@ -50,7 +57,7 @@ func validEvent(e string) bool {
 	switch e {
 	case EventBuildSucceeded, EventBuildFailed, EventDeploySucceeded,
 		EventDeployFailed, EventRollback, EventHealthCheckFailed, EventApprovalRequired,
-		EventAnomalyDetected:
+		EventAnomalyDetected, EventCertExpiring, EventCertRenewed, EventCertRenewFailed:
 		return true
 	default:
 		return false
@@ -64,6 +71,7 @@ func Events() []string {
 		EventDeploySucceeded, EventDeployFailed,
 		EventRollback, EventHealthCheckFailed,
 		EventApprovalRequired, EventAnomalyDetected,
+		EventCertExpiring, EventCertRenewed, EventCertRenewFailed,
 	}
 }
 
@@ -487,6 +495,12 @@ func eventLabel(event, lang string) string {
 		return i18n.T(lang, "需要审批")
 	case EventAnomalyDetected:
 		return i18n.T(lang, "异常检测")
+	case EventCertExpiring:
+		return i18n.T(lang, "证书即将到期")
+	case EventCertRenewed:
+		return i18n.T(lang, "证书已续期")
+	case EventCertRenewFailed:
+		return i18n.T(lang, "证书续期失败")
 	default:
 		return event
 	}

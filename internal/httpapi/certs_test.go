@@ -463,6 +463,11 @@ func TestCerts_ServiceUnconfigured(t *testing.T) {
 	if code != http.StatusServiceUnavailable {
 		t.Fatalf("未装配时 POST = %d %s, want 503", code, body)
 	}
+	// 「立即检查」也在这条线上:它会当场续期,更不能因为没装配就 panic 或静默返回空汇总。
+	code, body = certCall(t, c, cs, http.MethodPost, srv.URL+"/api/certs/check", "")
+	if code != http.StatusServiceUnavailable || decodeCode(t, decodeJSONBody(t, body)) != "internal" {
+		t.Fatalf("未装配时 POST /certs/check = %d %s, want 503 internal", code, body)
+	}
 }
 
 // —— 登记 / 清单 / 详情 ——————————————————————————————————

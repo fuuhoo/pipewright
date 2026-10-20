@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/cert"
+	"github.com/fuuhoo/pipewright/internal/notify"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -896,4 +899,123 @@ func makeRegisterCertAccountHandler(svc cert.Service, aud audit.Recorder, ac aut
 		})
 		writeJSON(w, http.StatusOK, toCertAccountDTO(a))
 	}
+}
+
+// certCheckItemDTO / certCheckDTO 是一轮「立即检查」的汇总(逐张说话,页面按三组分列)。
+type certCheckItemDTO struct {
+	CertID   string `json:"certId"`
+	Domain   string `json:"domain"`
+	Status   string `json:"status"`
+	DaysLeft int    `json:"daysLeft"`
+	Detail   string `json:"detail"`
+	Deploy   string `json:"deploy"`
+}
+
+type certCheckDTO struct {
+	Checked  int                `json:"checked"`
+	Expiring []certCheckItemDTO `json:"expiring"`
+	Renewed  []certCheckItemDTO `json:"renewed"`
+	Failed   []certCheckItemDTO `json:"failed"`
+}
+
+func toCertCheckItems(items []cert.CheckItem) []certCheckItemDTO {
+	out := make([]certCheckItemDTO, 0, len(items))
+	for _, it := range items {
+		out = append(out, certCheckItemDTO{
+			CertID: it.CertID, Domain: it.Domain, Status: it.Status,
+			DaysLeft: it.DaysLeft, Detail: it.Detail, Deploy: it.Deploy,
+		})
+	}
+	return out
+}
+
+// makeCheckCertsHandler 返回 POST /api/certs/check handler:立刻扫一遍全部证书。
+//
+// 这不是只读接口:落在续期窗口里、开了自动续期的 acme 证书会**当场真的续一次**并按配置铺发,
+// 所以它要 cert.manage、要留审计,而且响应可能要等几十秒(DNS-01 要等 TXT 记录生效)。
+// notifier 传 nil:手动这一趟只把结果原样报给页面,既不发通知也不吃掉 7 天的自动提醒额度。
+func makeCheckCertsHandler(svc cert.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeCertUnconfigured(w)
+			return
+		}
+		if !requireCertPerm(w, r, permCertManage) {
+			return
+		}
+		rep, err := svc.CheckOnce(r.Context(), nil)
+		if err != nil {
+			recordAuditFromRequest(r, aud, ac, audit.Entry{
+				Action:     audit.ActionCertCheck,
+				TargetType: audit.TargetCert,
+				Detail:     map[string]any{"ok": false, "reason": certErrorText(err)},
+				IP:         clientIP(r),
+			})
+			writeCertError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionCertCheck,
+			TargetType: audit.TargetCert,
+			Detail: map[string]any{
+				"ok": true, "checked": rep.Checked,
+				"renewed": len(rep.Renewed), "failed": len(rep.Failed), "expiring": len(rep.Expiring),
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, certCheckDTO{
+			Checked:  rep.Checked,
+			Expiring: toCertCheckItems(rep.Expiring),
+			Renewed:  toCertCheckItems(rep.Renewed),
+			Failed:   toCertCheckItems(rep.Failed),
+		})
+	}
+}
+
+// NewCertNotifier 构造 cert.Notifier:三条监控事件映射到 notify 的三个事件枚举,走**全局路由**
+// (证书不属任何项目)。与 NewAnomalyNotifier 同一套解耦方式:cert 包不 import notify。
+func NewCertNotifier(notifySvc notify.Service) cert.Notifier {
+	return certNotifier{notify: notifySvc}
+}
+
+// certEventFor 把领域监控种类映射成通知事件枚举。
+func certEventFor(kind string) string {
+	switch kind {
+	case cert.MonitorExpiring:
+		return notify.EventCertExpiring
+	case cert.MonitorRenewed:
+		return notify.EventCertRenewed
+	case cert.MonitorRenewFailed:
+		return notify.EventCertRenewFailed
+	default:
+		return ""
+	}
+}
+
+// certNotifier 把一条证书监控事件映射为通知事件并经渠道异步发送。
+type certNotifier struct{ notify notify.Service }
+
+// NotifyCertEvent 实现 cert.Notifier。fire-and-forget:扫描那一轮不该为一条通知等慢渠道。
+// 独立 ctx + 超时(与 anomalyNotifier 同口径),失败只记日志。
+// Project 位放的是域名:标题渲染成「[example.com] 证书即将到期」,Status 带那行该做什么。
+func (n certNotifier) NotifyCertEvent(_ context.Context, e cert.CertEvent) {
+	if n.notify == nil {
+		return
+	}
+	event := certEventFor(e.Kind)
+	if event == "" {
+		log.Printf("[cert] 未知的监控种类 %q,已跳过", e.Kind)
+		return
+	}
+	go func() {
+		sendCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		if err := n.notify.RouteEventForProject(sendCtx, "", event, notify.TemplateVars{
+			Project: e.Domain,
+			Status:  e.Message,
+			Event:   event,
+		}); err != nil {
+			log.Printf("[cert] 证书 %s 的 %s 通知 best-effort 失败:%v", e.Domain, event, err)
+		}
+	}()
 }

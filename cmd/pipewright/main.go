@@ -631,6 +631,22 @@ func main() {
 	previewSweeper.Start(context.Background())
 	log.Printf("[previewenv] 预览环境自动回收器已启动(每 %s 一扫;仅回收确证 PR 已关闭/合并的环境)", previewSweepInterval)
 
+	// 证书到期监控器:每轮扫全部证书,把落在续期窗口(30 天)内且开了自动续期的 acme 证书就地
+	// 续期、按落点配置自动铺发,并通过通知事件说出去(cert_expiring / cert_renewed /
+	// cert_renew_failed,7 天节流,见 internal/cert/monitor.go)。
+	// 后台**只续不首签**:登记了但还没签出正文的证书一律不动,首次签发必须是用户明确点的。
+	// 间隔 env PIPEWRIGHT_CERT_MONITOR_INTERVAL(整数秒)覆盖,默认 6h;置 0 关闭定时
+	// (页面「立即检查」与每张证书自己的「签发」按钮都仍可手动触发)。
+	certMonitorInterval := envDurationSeconds("PIPEWRIGHT_CERT_MONITOR_INTERVAL", cert.DefaultMonitorInterval)
+	certMonitor := cert.NewMonitor(certSvc, httpapi.NewCertNotifier(notifySvc), certMonitorInterval)
+	if certMonitorInterval > 0 {
+		certMonitor.Start(context.Background())
+		log.Printf("[cert] 到期监控已启动(每 %s 一扫;续期窗口 %s,提醒节流 %s)",
+			certMonitorInterval, cert.IssuanceWindow, cert.ReminderInterval)
+	} else {
+		log.Printf("[cert] 到期监控已按 PIPEWRIGHT_CERT_MONITOR_INTERVAL=0 关闭(仍可手动签发/发布/立即检查)")
+	}
+
 	// 装配只读源码读取器(Story 3.6;FR-4 预埋):go-git 浅克隆读 tree/blob;严格 SSRF 收口;
 	// 克隆失败优雅降级(不致命)。无 init 副作用/不驻留。
 	sourceReader := httpapi.NewSourceReader()
@@ -789,6 +805,7 @@ func main() {
 	cronScheduler.Stop()
 	retentionSweeper.Stop()
 	previewSweeper.Stop()
+	certMonitor.Stop()
 	pool.Stop(shutdownCtx)
 	log.Printf("[run] worker pool stopped")
 }

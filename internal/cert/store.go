@@ -40,7 +40,7 @@ type accountRow struct {
 
 const certCols = `id, domain, sans, source, status, ca, dns_provider_id, auto_renew, key_algo,
 	not_before, not_after, issuer, serial, cert_pem, chain_pem, key_sealed, last_error,
-	issued_at, checked_at, created_at, updated_at`
+	issued_at, checked_at, remind_at, created_at, updated_at`
 
 // certArgs 把一行证书摊平成 certCols 顺序的入参。
 // 时间一律经 ts 写成 RFC3339 **文本**:这几列是 TEXT,直接把 time.Time 交给驱动,
@@ -50,7 +50,7 @@ func certArgs(r *certRow) []any {
 		r.ID, r.Domain, sansJSON(r.SANs), r.Source, r.Status, r.CA, r.DNSProviderID,
 		b2i(r.AutoRenew), r.KeyAlgo, ts(r.NotBefore), ts(r.NotAfter), r.Issuer, r.Serial,
 		r.CertPEM, r.ChainPEM, nilIfEmpty(r.keySealed), r.LastError,
-		ts(r.IssuedAt), ts(r.CheckedAt), ts(r.CreatedAt), ts(r.UpdatedAt),
+		ts(r.IssuedAt), ts(r.CheckedAt), ts(r.RemindAt), ts(r.CreatedAt), ts(r.UpdatedAt),
 	}
 }
 
@@ -60,20 +60,20 @@ func certUpdateArgs(r *certRow) []any {
 		r.Domain, sansJSON(r.SANs), r.Source, r.Status, r.CA, r.DNSProviderID,
 		b2i(r.AutoRenew), r.KeyAlgo, ts(r.NotBefore), ts(r.NotAfter), r.Issuer, r.Serial,
 		r.CertPEM, r.ChainPEM, nilIfEmpty(r.keySealed), r.LastError,
-		ts(r.IssuedAt), ts(r.CheckedAt), ts(r.UpdatedAt),
+		ts(r.IssuedAt), ts(r.CheckedAt), ts(r.RemindAt), ts(r.UpdatedAt),
 	}
 }
 
 const certSet = `domain=?, sans=?, source=?, status=?, ca=?, dns_provider_id=?, auto_renew=?,
 	key_algo=?, not_before=?, not_after=?, issuer=?, serial=?, cert_pem=?, chain_pem=?,
-	key_sealed=?, last_error=?, issued_at=?, checked_at=?, updated_at=?`
+	key_sealed=?, last_error=?, issued_at=?, checked_at=?, remind_at=?, updated_at=?`
 
 // insertCert 落库一张新证书(id 由这里生成)。domain 已有记录 → ErrDomainExists:
 // 重签是就地更新那一条,不是攒出一堆同域名的历史行。
 func (s *Store) insertCert(ctx context.Context, r *certRow) error {
 	r.ID = uuid.NewString()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO certificates (`+certCols+`) VALUES (`+placeholders(21)+`)`,
+		`INSERT INTO certificates (`+certCols+`) VALUES (`+placeholders(22)+`)`,
 		certArgs(r)...)
 	if err != nil {
 		if store.IsUniqueErr(err) {
@@ -98,6 +98,32 @@ func (s *Store) updateCert(ctx context.Context, r *certRow) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// markCertChecked 刷新一张证书的「上次看过」时刻与状态(到期扫描每轮一笔)。
+// 为什么连 status 一起写:一张再没人动的证书跨过到期线之后,库里那一行不会自己变,而页面读的
+// 就是这一列 —— 不随扫描刷新,「已过期」会永远显示成「已签发」。
+// 刻意不动 updated_at:那是「配置被人改过」的口径,每 6 小时被扫描器摸一下就跳,页面上的
+// 「最近修改」就没有意义了。也刻意不整行 UPDATE:扫描器手里那份是本轮开头读的,期间签发
+// 可能已经把正文换新,拿旧行覆盖回去会把刚签出来的证书签掉。
+func (s *Store) markCertChecked(ctx context.Context, id string, at time.Time, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE certificates SET checked_at=?, status=? WHERE id=?`, ts(at), status, id)
+	if err != nil {
+		return fmt.Errorf("cert: mark checked: %w", err)
+	}
+	return nil
+}
+
+// markCertReminded 记下「这张证书上次发提醒的时刻」,同时刷新 checked_at 与 status
+// (同一轮里几件事一起落,理由见 markCertChecked)。
+func (s *Store) markCertReminded(ctx context.Context, id string, at time.Time, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE certificates SET remind_at=?, checked_at=?, status=? WHERE id=?`, ts(at), ts(at), status, id)
+	if err != nil {
+		return fmt.Errorf("cert: mark reminder: %w", err)
 	}
 	return nil
 }
@@ -170,13 +196,14 @@ func scanCert(sc rowScanner) (*certRow, error) {
 		issuer, serial, certPEM, chainPEM, lastError        string
 		sans                                                string
 		notBefore, notAfter, issuedAt, checkedAt            string
+		remindAt                                            string
 		created, updated                                    string
 		autoRenew                                           int64
 		keySealed                                           []byte
 	)
 	err := sc.Scan(&id, &domain, &sans, &source, &status, &ca, &providerID, &autoRenew, &keyAlgo,
 		&notBefore, &notAfter, &issuer, &serial, &certPEM, &chainPEM, &keySealed, &lastError,
-		&issuedAt, &checkedAt, &created, &updated)
+		&issuedAt, &checkedAt, &remindAt, &created, &updated)
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +216,7 @@ func scanCert(sc rowScanner) (*certRow, error) {
 	r.keySealed = keySealed
 	r.NotBefore, r.NotAfter = parseTS(notBefore), parseTS(notAfter)
 	r.IssuedAt, r.CheckedAt = parseTS(issuedAt), parseTS(checkedAt)
+	r.RemindAt = parseTS(remindAt)
 	r.CreatedAt, r.UpdatedAt = parseTS(created), parseTS(updated)
 	return &r, nil
 }

@@ -35,8 +35,8 @@ func (b Bundle) Fullchain() string {
 
 // Service 是证书仓库对外接口(httpapi 与到期扫描器消费)。
 //
-// 三条线都在这份清单里:「存 / 导入」(本文件)、「签」(acme.go 的 Issue / RegisterAccount)、
-// 「发」(deploy.go 的 Deploy / DeployAuto)。
+// 四条线都在这份清单里:「存 / 导入」(本文件)、「签」(acme.go 的 Issue / RegisterAccount)、
+// 「发」(deploy.go 的 Deploy / DeployAuto)、「监控」(monitor.go 的 CheckOnce 与后台 Monitor)。
 type Service interface {
 	// List 返回全部证书视图(到期升序;不含任何密钥材料)。
 	List(ctx context.Context) ([]Certificate, error)
@@ -73,6 +73,11 @@ type Service interface {
 	Deploy(ctx context.Context, certID string) (*DeployReport, error)
 	// DeployAuto 只铺 auto_deploy 为真的落点(续期后的自动发布走它;见 deploy.go)。
 	DeployAuto(ctx context.Context, certID string) (*DeployReport, error)
+
+	// CheckOnce 扫一遍全部证书:落在续期窗口内的 acme 证书就地续期并按配置自动铺发,平台续不动
+	// 的那批(导入的、关了自动续期的)汇总出来让人自己换。notifier 为 nil = 只汇总进报告,
+	// 既不发通知也不写提醒时刻(页面上的「立即检查」用这条路)。见 monitor.go。
+	CheckOnce(ctx context.Context, notifier Notifier) (*CheckReport, error)
 
 	// Accounts 返回已注册的 ACME 账户视图(不含账户私钥)。
 	Accounts(ctx context.Context) ([]Account, error)

@@ -129,8 +129,11 @@ type Certificate struct {
 	LastError     string
 	IssuedAt      time.Time
 	CheckedAt     time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// RemindAt 是到期扫描器上次为这张证书发提醒的时刻(零值 = 从没发过)。
+	// 只有「反复会出现」的提醒(即将到期、续期失败)受它节流;续期成功一次就是一次,不拦。
+	RemindAt  time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // DaysLeft 返回距到期还有多少天(向上取整;已过期为负)。无正文时按 0 天处理。
@@ -143,6 +146,13 @@ func (c *Certificate) DaysLeft(now time.Time) int {
 		return -int((-d + 24*time.Hour - 1) / (24 * time.Hour))
 	}
 	return int((d + 24*time.Hour - 1) / (24 * time.Hour))
+}
+
+// ReminderDue 报告这张证书现在能否再发一条「即将到期 / 续期失败」提醒:距上次提醒满一个
+// ReminderInterval 才放行。两类提醒共用同一道闸门 —— 一张证书同一时刻只该有一种声音,
+// 否则「快到期了」和「续期没成功」两条通知前后脚发出去,用户看不出到底该做什么。
+func (c *Certificate) ReminderDue(now time.Time) bool {
+	return c.RemindAt.IsZero() || !now.Before(c.RemindAt.Add(ReminderInterval))
 }
 
 // DeployTarget 是一张证书的一个发布落点(可复用配置 + 最近一次结果)。
@@ -396,6 +406,14 @@ func DeriveStatus(hasCert bool, notAfter, now time.Time) string {
 // 取 30 天是 LE/ZeroSSL 90 天证书的行业惯例(certbot 默认同为 30 天),
 // 给 DNS-01 失败留够重试余地,又不会让 LE 的续期窗口(30 天)提前太多。
 const IssuanceWindow = 30 * 24 * time.Hour
+
+// ReminderInterval 是「同一件事多久再提醒一次」的节流窗口。
+//
+// 为什么必须有:一张剩 29 天的证书在整个续期窗口里每轮都会被扫到,不节流就是每天几条
+// 一模一样的通知,结局是用户把证书通知整体关掉 —— 那连真出事也没人看了。
+// 取 7 天:30 天窗口里最多提醒 4 次,足够让人注意到,又不至于刷屏。续期成功不发第二次
+// (窗口随新正文重置),所以那一类不节流。
+const ReminderInterval = 7 * 24 * time.Hour
 
 // NeedsRenew 报告这张证书是否该由到期扫描器尝试续期:
 // 必须是 ACME 来源、开了自动续期、有证书正文且落在续期窗口内(或已过期)。

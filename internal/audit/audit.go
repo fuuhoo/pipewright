@@ -163,6 +163,9 @@ const (
 	ActionCertDeploy          = "cert_deploy"
 	ActionCertAccountRegister = "cert_account_register"
 	ActionCertBundleDownload  = "cert_bundle_download"
+	// ActionCertCheck 是页面上的「立即检查」:它会就地续期并自动铺发,不只是一次只读扫描,
+	// 所以要留痕 —— 事后看「这张证书什么时候被谁触发的续期」,这一条和后台扫描器能区分开。
+	ActionCertCheck = "cert_check"
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
