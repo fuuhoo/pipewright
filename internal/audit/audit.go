@@ -147,6 +147,22 @@ const (
 	ActionRoleUpdate = "role_update"
 	ActionRoleDelete = "role_delete"
 	ActionRoleCopy   = "role_copy"
+
+	// 证书这条线:登记/导入/替换/签发/删除各留一条,发布与取证书包单独留 —— 后两者分别是
+	// 「往目标机写私钥并跑用户填的指令」和「把私钥放进出站响应」,事后追查泄露路径时
+	// 只有这两类需要复盘到「谁在什么时候拿到了私钥」,不能藏在 cert_update 里。
+	ActionCertCreate          = "cert_create"
+	ActionCertImport          = "cert_import"
+	ActionCertReplace         = "cert_replace"
+	ActionCertIssue           = "cert_issue"
+	ActionCertDelete          = "cert_delete"
+	ActionCertAutoRenew       = "cert_auto_renew"
+	ActionCertTargetCreate    = "cert_target_create"
+	ActionCertTargetUpdate    = "cert_target_update"
+	ActionCertTargetDelete    = "cert_target_delete"
+	ActionCertDeploy          = "cert_deploy"
+	ActionCertAccountRegister = "cert_account_register"
+	ActionCertBundleDownload  = "cert_bundle_download"
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
@@ -169,6 +185,12 @@ const (
 	TargetResourceGroup  = "resource_group"
 	TargetKubeCluster    = "kube_cluster"
 	TargetRole           = "role"
+	// 证书三档:证书本身、它的一个发布落点(cert_deployments 行)、一个 CA 的 ACME 账户。
+	// 落点单独一类是因为它有自己的主机坐标与路径 —— 出事后要查的是「哪台机的哪个路径被写了」。
+	TargetCert           = "cert"
+	TargetCertDeployment = "cert_target"
+	// TargetACMEAccount 与既有 TargetAccount(用户账户)不通用:这里记的是 CA 侧的账户密钥归属。
+	TargetACMEAccount = "acme_account"
 )
 
 // Entry 是一条审计写入入参(冻结契约)。Detail 写库前过 Masker,绝不含明文 secret。

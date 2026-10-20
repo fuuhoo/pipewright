@@ -20,6 +20,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/buildenv"
+	"github.com/fuuhoo/pipewright/internal/cert"
 	"github.com/fuuhoo/pipewright/internal/chain"
 	"github.com/fuuhoo/pipewright/internal/configprofile"
 	"github.com/fuuhoo/pipewright/internal/cron"
@@ -114,7 +115,9 @@ type options struct {
 	retention       *retention.Service
 	proxy           proxy.Service
 	dnsProviders    dnsprovider.Service
-	previewEnvs     PreviewService
+	// certs 是证书申请/导入/发布这条腿(internal/cert)。私钥经 vault,响应只有一处能拿到。
+	certs       cert.Service
+	previewEnvs PreviewService
 	// v6.2 阶段 9:新增领域服务。
 	buildEnvSvc   *buildenv.Service
 	buildEnvCheck *buildenv.Checker
@@ -398,6 +401,14 @@ func WithServers(s target.Service) Option {
 // 不传则相关端点返回 503(服务未初始化)。
 func WithKubeClusters(s kube.Service) Option {
 	return func(o *options) { o.kubeClusters = s }
+}
+
+// WithCerts 注入证书领域服务(internal/cert),挂载 /api/certs* 路由:登记 / 导入 / 签发 /
+// 发布 / 落点 / 证书包 / ACME 账号。读要 cert.view、写要 cert.manage,往目标机写东西的动作
+// 还要那台机器的 ActOperate;私钥只在 GET /certs/{id}/bundle 出站,且每次留审计。
+// 不传则相关端点返回 503(服务未初始化)。
+func WithCerts(s cert.Service) Option {
+	return func(o *options) { o.certs = s }
 }
 
 // WithDeploy 注入部署执行服务(Story 4.2;internal/deploy,FR-10),挂载
@@ -920,6 +931,29 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Put("/kube-clusters/{id}", makeUpdateKubeClusterHandler(kc, o.access, aud, authn))
 		ar.Delete("/kube-clusters/{id}", makeDeleteKubeClusterHandler(kc, o.access, aud, authn))
 		ar.Post("/kube-clusters/{id}/test", makeTestKubeClusterHandler(kc, aud, authn))
+		// 证书申请与发布(internal/cert)。cs 为 nil 时 handler 返回 503。
+		// 读要 cert.view、写要 cert.manage;往目标机写东西的四个动作(落点增删改、发布)还要
+		// 那台机器的 ActOperate —— 两道轴各挡一件事,见 certs.go 头注释。
+		// 私钥只有一个出口:GET /certs/{id}/bundle(要 cert.manage + 每次留审计 + no-store)。
+		// 字面段 cas / accounts / import 由 chi 优先于 /{id} 匹配,不会被详情吞掉。
+		cs := o.certs
+		ar.Get("/certs", makeListCertsHandler(cs))
+		ar.Post("/certs", makeCreateCertHandler(cs, aud, authn))
+		ar.Get("/certs/cas", makeListCAsHandler())
+		ar.Get("/certs/accounts", makeListCertAccountsHandler(cs))
+		ar.Post("/certs/accounts", makeRegisterCertAccountHandler(cs, aud, authn))
+		ar.Post("/certs/import", makeImportCertHandler(cs, aud, authn))
+		ar.Get("/certs/{id}", makeGetCertHandler(cs))
+		ar.Delete("/certs/{id}", makeDeleteCertHandler(cs, aud, authn))
+		ar.Post("/certs/{id}/replace", makeReplaceCertHandler(cs, aud, authn))
+		ar.Post("/certs/{id}/issue", makeIssueCertHandler(cs, aud, authn))
+		ar.Post("/certs/{id}/auto-renew", makeSetAutoRenewHandler(cs, aud, authn))
+		ar.Get("/certs/{id}/bundle", makeCertBundleHandler(cs, aud, authn))
+		ar.Get("/certs/{id}/targets", makeListCertTargetsHandler(cs))
+		ar.Post("/certs/{id}/targets", makeAddCertTargetHandler(cs, o.access, aud, authn))
+		ar.Put("/certs/{id}/targets/{targetId}", makeUpdateCertTargetHandler(cs, o.access, aud, authn))
+		ar.Delete("/certs/{id}/targets/{targetId}", makeDeleteCertTargetHandler(cs, o.access, aud, authn))
+		ar.Post("/certs/{id}/deploy", makeDeployCertHandler(cs, o.access, aud, authn))
 		// 服务日志查看(Story 6.2;FR-16,经 SSH 取目标服务器日志)。复用 sv(4-1 装配,无新服务)。
 		// 均为 GET 只读 → 过 auth、豁免 CSRF。source/target 严格白名单校验(AC-SEC-02);
 		// SSH/命令失败人读不 500;实时 /logs/stream 为 SSE,客户端断开即关 SSH session。
