@@ -1196,7 +1196,7 @@ func (b *Builder) runBuildImageJob(ctx context.Context, sink run.StepSink, rep d
 func (b *Builder) collectScriptArtifacts(ctx context.Context, jobs []pipeline.Job, workspace, slug, stageName string, rep dagrun.StageReporter) {
 	onLine := func(stream, line string) { _ = rep.Log(ctx, stream, line) }
 	for _, jb := range jobs {
-		for _, rel := range splitCommands(renderTemplate(cfgString(jb.Config, "artifactPath"), templateContext(jb.Config))) { // 渲染 {{参数}} + 按行拆分
+		for _, rel := range artifactPathsOf(jb) { // 渲染 {{参数}} + 按行拆分(与远程回传同一口径)
 			// 通配(如 backend/target/*.jar)→ 展开为实际文件逐个收集;否则按原路径收集。
 			if strings.ContainsAny(rel, "*?[") {
 				clean := filepath.Clean(rel)

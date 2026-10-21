@@ -8,11 +8,13 @@ package build
 //  2. 把本地工作区打成 tar.gz,经 SSH(target.Upload = stdin 流,无 argv 长度限)传到远程临时目录并解包。
 //  3. 在远程机用容器跑 script job(NewRemoteDriver:shellDriver 经 SSH Commander → 远程 `docker run`),
 //     日志经 reporterSink 回流。
-//  4. 收尾删远程工作区(尽力)。
+//  4. 把 job 声明的文件产物从远程工作区 tar 流回中控机同一相对路径,交给本地收集器归档(见 remote_artifacts.go)。
+//  5. 收尾删远程工作区(尽力)。
 //
 // 安全/语义沿用:命令 array 化(不拼 shell);secret 经 -e 注入容器(与本地同,不更差);失败映射 ErrBuildFailed。
-// 边界(后续增量):远程测试报告/质量门禁采集(报告文件在远程,本期不回采,优雅跳过);多 runner 负载均衡 /
-// 按 stage 选 runner。
+// 产物回传已接上(见 remote_artifacts.go):远程工作区里声明的产物路径打 tar 流回中控机原位,再走与
+// 本地同一个收集器进制品库。边界(后续增量):远程测试报告/质量门禁采集(报告文件在远程,本期不回采,
+// 优雅跳过);多 runner 负载均衡 / 按 stage 选 runner。
 
 import (
 	"bytes"
@@ -33,10 +35,12 @@ type RunnerLookup interface {
 	RunnerFor(ctx context.Context, projectID string) (serverID string, ok bool)
 }
 
-// remoteExec 抽象远程执行所需的 target 能力(Exec + Upload;target.Service 即满足;便于 fake 单测)。
+// remoteExec 抽象远程执行所需的 target 能力(Exec + Upload + ExecStream;target.Service 即满足;便于 fake 单测)。
 type remoteExec interface {
 	RemoteExecer // Exec(ctx, serverID, cmd) (*target.ExecResult, error)
 	Upload(ctx context.Context, serverID string, content io.Reader, remotePath string) error
+	// ExecStream 流式取回命令的 stdout(回传产物归档用;Exec 会把整段 stdout 缓冲进内存)。
+	ExecStream(ctx context.Context, serverID string, cmd []string) (io.ReadCloser, error)
 }
 
 // NewStageExecutorWithRunner 返回「按项目 runner 配置派发本地/远程」的阶段执行器。
@@ -149,6 +153,11 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 			return err
 		}
 	}
+
+	// 4) 产物回传:远程工作区里声明的产物路径拉回中控机同一相对路径,之后交给**与本地同一个**
+	//    收集器归档进制品库(类型判定、metadata、下游部署按来源任务挑产物全部沿用)。
+	b.pullRemoteArtifacts(ctx, tgt, serverID, remoteWS, workspace, scriptJobs, func(stream, line string) { _ = rep.Log(ctx, stream, line) })
+	b.collectScriptArtifacts(ctx, scriptJobs, workspace, slugify(proj.Name), stage.Name, rep)
 
 	_ = rep.Log(ctx, streamStdout, fmt.Sprintf("✓ 远程 runner(%s)执行完成;测试报告/质量门禁在远程模式暂不回采(后续增量)", serverID))
 	return nil

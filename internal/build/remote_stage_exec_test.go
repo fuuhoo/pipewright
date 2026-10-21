@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -37,6 +38,16 @@ func (f *fakeRemoteTarget) Upload(_ context.Context, serverID string, content io
 	b, _ := io.ReadAll(content)
 	f.uploaded = append(f.uploaded, b...)
 	return nil
+}
+
+// ExecStream 默认不支持(这些用例没声明产物,不会走到);simRemote 覆盖它模拟远程归档。
+func (f *fakeRemoteTarget) ExecStream(_ context.Context, serverID string, cmd []string) (io.ReadCloser, error) {
+	if f.serverIDs == nil {
+		f.serverIDs = map[string]bool{}
+	}
+	f.serverIDs[serverID] = true
+	f.cmds = append(f.cmds, cmd)
+	return nil, fmt.Errorf("fakeRemoteTarget: 未装配远程归档,不该被调用:%v", cmd)
 }
 
 type fakeRunnerLookup struct {
