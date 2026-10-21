@@ -41,6 +41,10 @@ type Service struct {
 	server   *mcp.Server
 	tokens   TokenVerifier
 	endpoint func(token, clientAddr string) Endpoint
+	// stdio 是 stdio 形态专用的出门通道:那份令牌来自启动参数,不属于任何一个请求,
+	// 所以只能在建服务时定下来。进程内形态这里是 nil —— 它的身份跟着请求走,
+	// 没有「一份配置管全程」可言,拿 stdio 跑它等于把调用方令牌焊死成空串。
+	stdio Endpoint
 }
 
 // instructions 写给 AI:先讲清「典型链路」,再点出两个最容易踩的坑(空流水线假绿灯、
@@ -73,12 +77,16 @@ func New(tokens TokenVerifier, router http.Handler) *Service {
 	endpoint := func(token, clientAddr string) Endpoint {
 		return &httpEndpoint{base: loopbackBase, token: token, client: client, clientAddr: clientAddr}
 	}
+	return &Service{server: buildServer(), tokens: tokens, endpoint: endpoint}
+}
 
+// buildServer 造一份「工具已注册好」的 SDK server:两种形态(进程内 / 连远端)共用同一份
+// 工具注册与 instructions,差别只在往下的 endpoint 怎么造。
+func buildServer() *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: ServerName, Version: version.Version},
 		&mcp.ServerOptions{Instructions: instructions})
 	registerTools(server)
-
-	return &Service{server: server, tokens: tokens, endpoint: endpoint}
+	return server
 }
 
 // Handler 返回挂在 /mcp 上的 http.Handler。
@@ -87,6 +95,9 @@ func New(tokens TokenVerifier, router http.Handler) *Service {
 // 令牌未启用都是 401,且不回落到会话 cookie —— 回落就等于允许一个能诱导管理员发请求的
 // 页面借她的会话冒充令牌持有者)。校验通过才把「这把令牌专属的 REST 通道」写进 context,
 // SDK 会把请求 context 传给工具处理函数,于是每次工具调用天然以调用方身份执行。
+//
+// 只有进程内形态该挂它:NewRemote 造出来的 Service 没有 TokenVerifier(令牌是配置进来的,
+// 不是在这里验的),挂上去只会得到一个对任何请求都回 401 的端点。
 func (s *Service) Handler() http.Handler {
 	inner := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s.server },

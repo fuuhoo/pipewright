@@ -80,6 +80,13 @@ func main() {
 		}
 	}
 
+	// 子命令在读配置、开库、绑端口之前分派:`pipewright mcp` 是给 AI 客户端用的 stdio 桥,
+	// 它只该往外出连到某个平台;把本平台这套启动流程跟着跑一遍既慢又有害(白开一个库、
+	// 白占 8080,还可能对着一份不相干的数据做迁移)。
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		os.Exit(runMCPCommand(os.Args[2:]))
+	}
+
 	cfg := config.Load()
 
 	// 监听地址允许用命令行覆盖环境变量,优先级 --addr/--port > PIPEWRIGHT_ADDR > :8080。
