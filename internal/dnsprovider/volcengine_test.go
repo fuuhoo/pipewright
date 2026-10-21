@@ -103,9 +103,9 @@ func volcBody(t *testing.T, r *http.Request) map[string]any {
 
 const volcOneZone = `{"ResponseMetadata":{"RequestId":"z"},"Result":{"Zones":[{"ZID":123456,"ZoneName":"example.com"}]}}`
 
-// --- VerifyZone -------------------------------------------------------------
+// --- ListZones --------------------------------------------------------------
 
-func TestVolcVerifyZoneSuccess(t *testing.T) {
+func TestVolcListZonesSuccess(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("查域名列表应 GET, got %s", r.Method)
@@ -126,25 +126,26 @@ func TestVolcVerifyZoneSuccess(t *testing.T) {
 		if r.Header.Get("X-Content-Sha256") != volcHashEmpty {
 			t.Fatalf("GET 无实体,X-Content-Sha256 应是空串哈希, got %q", r.Header.Get("X-Content-Sha256"))
 		}
-		return jsonResp(200, volcOneZone), nil
+		return jsonResp(200, `{"ResponseMetadata":{"RequestId":"z"},"Result":{"Zones":[{"ZID":123456,"ZoneName":"Example.COM"},{"ZID":1,"ZoneName":"sub.example.com"}]}}`), nil
 	})
 	c := fixedVolcClient(volcTestAK+","+volcTestSK, rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Join(zones, " ") != "example.com sub.example.com" {
+		t.Fatalf("应归一排序, got %v", zones)
 	}
 }
 
-func TestVolcVerifyZoneNotFound(t *testing.T) {
+func TestVolcListZonesEmpty(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return jsonResp(200, `{"Result":{"Zones":[{"ZID":1,"ZoneName":"other.com"}]}}`), nil
+		return jsonResp(200, `{"Result":{"Zones":[]}}`), nil
 	})
 	c := fixedVolcClient(volcTestAK+","+volcTestSK, rt)
-	err := c.VerifyZone(context.Background(), "example.com")
-	if !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("域名不受该凭据管理应 ErrVerifyFailed, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "不存在或不受该凭据管理") {
-		t.Fatalf("应给可行动的人话, got %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil || len(zones) != 0 {
+		t.Fatalf("账号无域名应回空清单, got %v / %v", zones, err)
 	}
 }
 
@@ -154,7 +155,7 @@ func TestVolcBusinessErrorInsideHttp200(t *testing.T) {
 		return jsonResp(200, `{"ResponseMetadata":{"Error":{"Code":"ZoneNotExists","Message":"zone not found"}}}`), nil
 	})
 	c := fixedVolcClient(volcTestAK+","+volcTestSK, rt)
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("信封里的错误也必须上抛, got %v", err)
 	}
@@ -163,12 +164,12 @@ func TestVolcBusinessErrorInsideHttp200(t *testing.T) {
 	}
 }
 
-func TestVolcVerifyZoneAuthFail(t *testing.T) {
+func TestVolcListZonesAuthFail(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return jsonResp(401, `{"ResponseMetadata":{"Error":{"Code":"SignatureDoesNotMatch","Message":"The signature does not match."}}}`), nil
 	})
 	c := fixedVolcClient(volcTestAK+",wrong-sk", rt)
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("验签失败应 ErrVerifyFailed, got %v", err)
 	}
@@ -186,7 +187,7 @@ func TestVolcTransportErrorLeaksNothing(t *testing.T) {
 		return nil, fmt.Errorf("dial tcp: lookup failed for %s", volcTestSK)
 	})
 	c := fixedVolcClient(volcTestAK+","+volcTestSK, rt)
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("连不上应 ErrVerifyFailed, got %v", err)
 	}
@@ -203,7 +204,7 @@ func TestVolcInvalidCredentialSendsNothing(t *testing.T) {
 		return jsonResp(200, `{}`), nil
 	})
 	c := fixedVolcClient("no-comma", rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); !errors.Is(err, ErrInvalidCredential) {
+	if _, err := c.ListZones(context.Background()); !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("坏凭据应 ErrInvalidCredential, got %v", err)
 	}
 	if called {
@@ -211,9 +212,9 @@ func TestVolcInvalidCredentialSendsNothing(t *testing.T) {
 	}
 }
 
-// --- ZID 解析(火山建/查记录都必须带数字 ZID,这是本厂商特有的一跳)-----------
+// --- 翻页(火山没有「按域名查单个 zone 详情」的读接口,只能列全量)--------------
 
-// volcFillerZones 造 n 条不匹配的域名,把列表撑满一页以触发翻页。
+// volcFillerZones 造 n 条域名,把列表撑满一页以触发翻页。
 func volcFillerZones(n int) string {
 	parts := make([]string, 0, n)
 	for i := 0; i < n; i++ {
@@ -222,7 +223,7 @@ func volcFillerZones(n int) string {
 	return strings.Join(parts, ",")
 }
 
-func TestVolcResolveZonePaginates(t *testing.T) {
+func TestVolcListZonesPages(t *testing.T) {
 	var pages []string
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		p := r.URL.Query().Get("PageNumber")
@@ -233,15 +234,19 @@ func TestVolcResolveZonePaginates(t *testing.T) {
 		case "2":
 			return jsonResp(200, volcOneZone), nil
 		}
-		t.Fatalf("翻到第二页就该停, 不该再请求第 %s 页", p)
+		t.Fatalf("第二页不足 100 条就该停, 不该再请求第 %s 页", p)
 		return nil, nil
 	})
 	c := fixedVolcClient(volcTestAK+","+volcTestSK, rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
 	}
 	if len(pages) != 2 || pages[0] != "1" || pages[1] != "2" {
-		t.Fatalf("应逐页翻到命中, got %v", pages)
+		t.Fatalf("应逐页翻到不足一整页, got %v", pages)
+	}
+	if len(zones) != 101 || zones[0] != "example.com" {
+		t.Fatalf("应攒满两页共 101 个域并排序, got %d 个", len(zones))
 	}
 }
 
@@ -526,14 +531,15 @@ func TestVolcEnsureTXTViaService(t *testing.T) {
 		}
 	})
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": volcTestAK + "," + volcTestSK}}, &stubRouteCreator{}, dialDNS(rt))
-	p, err := svc.Create(ctx, CreateInput{Type: TypeVolcengine, Name: "火山", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, err := svc.Create(ctx, CreateInput{Type: TypeVolcengine, Name: "火山", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.app.example.com", "digest"); err != nil {
 		t.Fatalf("EnsureTXTRecord: %v", err)
 	}
-	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.other.com", "digest"); !errors.Is(err, ErrTXTOutsideZone) {
-		t.Fatalf("别的域应 ErrTXTOutsideZone, got %v", err)
+	// 越界域名必须硬失败(凭据只能管账号清单里那些域)。
+	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.other.com", "digest"); !errors.Is(err, ErrNoHostedZone) {
+		t.Fatalf("别的域应 ErrNoHostedZone, got %v", err)
 	}
 }

@@ -38,9 +38,12 @@ const (
 	baiduTestAK = "baiduAKtestExample"
 	baiduTestSK = "baiduSKtestExample"
 
-	// VerifyZone 发的那次列表请求(GET /v1/dns/zone?maxKeys=100&name=example.com)。
+	// ListZones 首页(GET /v1/dns/zone?maxKeys=100)。
 	baiduVectorList = "bce-auth-v1/baiduAKtestExample/2026-01-02T03:04:05Z/3600/content-type;host;x-bce-date/" +
-		"fab659ff9ce2a2a7c052ddaee42707b5bfae6a86a20e031031149565e33bda6f"
+		"0a06dbe3db402382b9353ae21b2df94bec917b221b5ea002cedc363d9e1ad69c"
+	// ListZones 翻页(GET /v1/dns/zone?marker=b.com&maxKeys=100)。
+	baiduVectorPage = "bce-auth-v1/baiduAKtestExample/2026-01-02T03:04:05Z/3600/content-type;host;x-bce-date/" +
+		"7262ab744eb2226df261dd3934af06e56446b09042e4fd586f479fcd493d214a"
 	// 添加记录那次写请求(POST /v1/dns/zone/example.com/record,无查询串)。
 	baiduVectorWrite = "bce-auth-v1/baiduAKtestExample/2026-01-02T03:04:05Z/3600/content-type;host;x-bce-date/" +
 		"146149edc2580fc9e270c1b97a106a7a69b2d5172795693c262c4334df20efde"
@@ -48,9 +51,14 @@ const (
 
 func TestBceAuthorizationKnownVector(t *testing.T) {
 	got := bceAuthorization(baiduTestAK, baiduTestSK, http.MethodGet, "dns.baidubce.com", "/v1/dns/zone",
-		map[string]string{"name": "example.com", "maxKeys": "100"}, "2026-01-02T03:04:05Z")
+		map[string]string{"maxKeys": "100"}, "2026-01-02T03:04:05Z")
 	if got != baiduVectorList {
 		t.Fatalf("列表签名不符官方 SDK 向量\n got=%q\nwant=%q", got, baiduVectorList)
+	}
+	got = bceAuthorization(baiduTestAK, baiduTestSK, http.MethodGet, "dns.baidubce.com", "/v1/dns/zone",
+		map[string]string{"marker": "b.com", "maxKeys": "100"}, "2026-01-02T03:04:05Z")
+	if got != baiduVectorPage {
+		t.Fatalf("翻页签名不符官方 SDK 向量\n got=%q\nwant=%q", got, baiduVectorPage)
 	}
 	got = bceAuthorization(baiduTestAK, baiduTestSK, http.MethodPost, "dns.baidubce.com", "/v1/dns/zone/example.com/record",
 		nil, "2026-01-02T03:04:05Z")
@@ -68,9 +76,10 @@ func fixedBaiduClient(cred string, rt http.RoundTripper) *baiduDNSClient {
 
 func baiduJSON(body string) *http.Response { return jsonResp(200, body) }
 
-// --- VerifyZone -------------------------------------------------------------
+// --- ListZones --------------------------------------------------------------
 
-func TestBaiduVerifyZoneSuccess(t *testing.T) {
+func TestBaiduListZonesSuccess(t *testing.T) {
+	var pages []string
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("查域名列表应 GET, got %s", r.Method)
@@ -79,56 +88,73 @@ func TestBaiduVerifyZoneSuccess(t *testing.T) {
 			t.Fatalf("应走 /v1/dns/zone(公网 DNS 按域名寻址), got %q", r.URL.Path)
 		}
 		q := r.URL.Query()
-		if q.Get("name") != "example.com" || q.Get("maxKeys") != "100" {
-			t.Fatalf("应带 name/maxKeys, got %v", q)
+		if q.Get("maxKeys") != "100" {
+			t.Fatalf("应带 maxKeys=100, got %v", q)
 		}
-		if r.Header.Get("Authorization") != baiduVectorList {
-			t.Fatalf("Authorization 不符官方 SDK 向量: %q", r.Header.Get("Authorization"))
-		}
+		pages = append(pages, q.Get("marker"))
 		// 签名里签的就是这个头,发出去的必须一字不差。
 		if r.Header.Get("x-bce-date") != "2026-01-02T03:04:05Z" {
 			t.Fatalf("x-bce-date 应与签名时刻一致, got %q", r.Header.Get("x-bce-date"))
 		}
-		return baiduJSON(`{"zones":[{"name":"example.com","status":"running"}]}`), nil
+		want := baiduVectorList
+		if q.Get("marker") == "b.com" {
+			want = baiduVectorPage
+		}
+		if got := r.Header.Get("Authorization"); got != want {
+			t.Fatalf("Authorization 不符官方 SDK 向量\n got=%q\nwant=%q", got, want)
+		}
+		if q.Get("marker") == "" {
+			// 首页故意混大小写:百度按 marker 翻页,清单要归一后才可比。
+			return baiduJSON(`{"zones":[{"name":"Example.COM","status":"running"}],"isTruncated":true,"nextMarker":"b.com"}`), nil
+		}
+		return baiduJSON(`{"zones":[{"name":"b.com","status":"pause"}],"isTruncated":false}`), nil
 	})
 	c := fixedBaiduClient(baiduTestAK+","+baiduTestSK, rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if len(pages) != 2 || pages[0] != "" || pages[1] != "b.com" {
+		t.Fatalf("应按 nextMarker 翻到 isTruncated=false, got %v", pages)
+	}
+	if strings.Join(zones, " ") != "b.com example.com" {
+		t.Fatalf("应归一排序并翻满两页, got %v", zones)
 	}
 }
 
-func TestBaiduVerifyZoneNotFound(t *testing.T) {
+func TestBaiduListZonesEmpty(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		// name 是精确筛选,但列表里回的是别的域 → 判不可管理。
-		return baiduJSON(`{"zones":[{"name":"other.com","status":"running"}]}`), nil
+		return baiduJSON(`{"zones":[],"isTruncated":false}`), nil
 	})
 	c := fixedBaiduClient(baiduTestAK+","+baiduTestSK, rt)
-	err := c.VerifyZone(context.Background(), "example.com")
-	if !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("域名不受该凭据管理应 ErrVerifyFailed, got %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
 	}
-	if !strings.Contains(err.Error(), "不存在或不受该凭据管理") {
-		t.Fatalf("应给可行动的人话, got %v", err)
+	if len(zones) != 0 {
+		t.Fatalf("账号无域名应回空清单, got %v", zones)
 	}
 }
 
-func TestBaiduVerifyZoneNotRunning(t *testing.T) {
+func TestBaiduListZonesKeepsPausedZone(t *testing.T) {
+	// 暂停(pause)/锁定只是解析停了,记录仍可读写;「解析是否生效」该由 ACME 校验自然暴露,
+	// 不能在这里冒充「凭据管不了这个域」。
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		// 域名在但被暂停/锁定:解析不生效,DNS-01 必然失败,要在这里就拦住。
-		return baiduJSON(`{"zones":[{"name":"example.com","status":"lock"}]}`), nil
+		return baiduJSON(`{"zones":[{"name":"example.com","status":"lock"}],"isTruncated":false}`), nil
 	})
 	c := fixedBaiduClient(baiduTestAK+","+baiduTestSK, rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("域名非 running 应 ErrVerifyFailed, got %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil || len(zones) != 1 || zones[0] != "example.com" {
+		t.Fatalf("非 running 的域也应进清单, got %v / %v", zones, err)
 	}
 }
 
-func TestBaiduVerifyZoneAuthFail(t *testing.T) {
+func TestBaiduListZonesAuthFail(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return jsonResp(403, `{"code":"SignatureDoesNotMatch","message":"The signature does not match.","requestId":"r1"}`), nil
 	})
 	c := fixedBaiduClient(baiduTestAK+",wrong-sk", rt)
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("验签失败应 ErrVerifyFailed, got %v", err)
 	}
@@ -147,7 +173,7 @@ func TestBaiduInvalidCredentialSendsNothing(t *testing.T) {
 		return baiduJSON(`{}`), nil
 	})
 	c := fixedBaiduClient("no-comma", rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); !errors.Is(err, ErrInvalidCredential) {
+	if _, err := c.ListZones(context.Background()); !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("坏凭据应 ErrInvalidCredential, got %v", err)
 	}
 	if called {
@@ -424,14 +450,15 @@ func TestBaiduEnsureTXTViaService(t *testing.T) {
 		}
 	})
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": baiduTestAK + "," + baiduTestSK}}, &stubRouteCreator{}, dialDNS(rt))
-	p, err := svc.Create(ctx, CreateInput{Type: TypeBaiduDNS, Name: "百度", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, err := svc.Create(ctx, CreateInput{Type: TypeBaiduDNS, Name: "百度", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.app.example.com", "digest"); err != nil {
 		t.Fatalf("EnsureTXTRecord: %v", err)
 	}
-	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.other.com", "digest"); !errors.Is(err, ErrTXTOutsideZone) {
-		t.Fatalf("别的域应 ErrTXTOutsideZone, got %v", err)
+	// 越界域名必须硬失败(凭据只能管账号清单里那些域)。
+	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.other.com", "digest"); !errors.Is(err, ErrNoHostedZone) {
+		t.Fatalf("别的域应 ErrNoHostedZone, got %v", err)
 	}
 }

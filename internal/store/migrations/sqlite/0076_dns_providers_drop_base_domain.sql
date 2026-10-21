@@ -1,0 +1,11 @@
+-- 0076 dns_providers 去掉 base_domain:根域不再由用户填,改为用时从服务商账号现推。
+--
+-- 为什么删而不是留空:「这个凭据能管哪些域」的答案本来就在服务商账号里(它的域名清单),
+-- 抄一份进我们的库只会过期。填错的那份还拦不住任何东西 —— 反代签发走 Caddy 镜像内的 DNS 插件,
+-- 它只读 AK/SK,压根不看这一列;而平台自己写 TXT 时改为按记录名去账号域名清单里推区
+-- (见 internal/dnsprovider/zone.go),推不出来就硬失败,越权那条线反而更严。
+-- 添加提供商因此只剩「类型 + 名称 + 凭据」三格,与 Certimate 这类工具的交互一致。
+--
+-- 直接 DROP COLUMN(不做表重建):该列无索引、非主键、不被任何外键引用,
+-- 重建反而会踩上 ON DELETE CASCADE 的坑。SQLite 需 ≥3.35,当前驱动 modernc.org/sqlite 远高于此。
+ALTER TABLE dns_providers DROP COLUMN base_domain;

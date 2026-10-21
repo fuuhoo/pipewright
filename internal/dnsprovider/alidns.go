@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -214,10 +215,40 @@ func aliErr(base error, status int, ae aliErrResp) error {
 	return fmt.Errorf("%w:阿里云 DNS API 拒绝(HTTP %d)", base, status)
 }
 
-// VerifyZone 校验当前凭据可管理 zone:Action=DescribeDomainInfo&DomainName=<zone>。
-// HTTP 200 + 无错误码 → 成功。
-func (c *alidnsClient) VerifyZone(ctx context.Context, zone string) error {
-	return c.call(ctx, ErrVerifyFailed, "DescribeDomainInfo", url.Values{"DomainName": {zone}}, nil)
+// aliDomain / aliDescribeDomainsResp 取我们需要的字段子集。
+// 只取 DomainName:阿里云记录接口的 DomainName 参数认的就是这个形态(PunyCode 是它的 IDN 编码,
+// 拿去当 DomainName 传反而不稳),所以清单里不混入 punycode 形态。
+type aliDomain struct {
+	DomainName string `json:"DomainName"`
+}
+
+type aliDescribeDomainsResp struct {
+	TotalItems int `json:"TotalItems"`
+	PageNumber int `json:"PageNumber"`
+	PageSize   int `json:"PageSize"`
+	Domains    struct {
+		Domain []aliDomain `json:"Domain"`
+	} `json:"Domains"`
+}
+
+// ListZones 列出该凭据账号下托管的全部域名:Action=DescribeDomains 逐页翻(PageSize 上限 100)。
+// 一份清单既回答「凭据能不能用」,又是 zone 推导与前端域名下拉的来源。
+func (c *alidnsClient) ListZones(ctx context.Context) ([]string, error) {
+	var out []string
+	for page := 1; ; page++ {
+		var list aliDescribeDomainsResp
+		fields := url.Values{"PageNumber": {strconv.Itoa(page)}, "PageSize": {"100"}}
+		if err := c.call(ctx, ErrVerifyFailed, "DescribeDomains", fields, &list); err != nil {
+			return nil, err
+		}
+		for _, d := range list.Domains.Domain {
+			out = append(out, d.DomainName)
+		}
+		// 终止条件按「已取条数 ≥ TotalItems」而非「本页不满 100」:阿里云在末页可能仍返回满页。
+		if len(list.Domains.Domain) == 0 || len(out) >= list.TotalItems {
+			return sortNormalizedZones(out), nil
+		}
+	}
 }
 
 // EnsureARecord 为 zone 下 name 建/改 A 记录指向 ip(幂等 upsert):

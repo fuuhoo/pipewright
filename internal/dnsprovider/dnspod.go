@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,11 +57,7 @@ type dnspodStatus struct {
 	Message string `json:"message"`
 }
 
-// dpDomainInfoResp / dpRecordListResp / dpMutateResp 取我们需要的字段子集。
-type dpDomainInfoResp struct {
-	Status dnspodStatus `json:"status"`
-}
-
+// dpRecord / dpRecordListResp / dpMutateResp 取我们需要的字段子集。
 type dpRecord struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
@@ -129,16 +126,43 @@ func dpStatusErr(base error, st dnspodStatus) error {
 	return fmt.Errorf("%w:DNSPod API 返回错误(code %s)", base, st.Code)
 }
 
-// VerifyZone 校验当前 login_token 可管理 zone(根域):POST Domain.Info。code=="1" 成功。
-func (c *dnspodClient) VerifyZone(ctx context.Context, zone string) error {
-	var out dpDomainInfoResp
-	if err := c.post(ctx, "/Domain.Info", url.Values{"domain": {zone}}, &out); err != nil {
-		return err
+// dpDomainListResp 是经典 API Domain.List 的响应体(只取区名与总数)。
+// 注意 status 在顶层是**对象**、在 domains[] 里是**字符串**(如 "ok"),两者不能共用一个类型。
+type dpDomainListResp struct {
+	Status dnspodStatus `json:"status"`
+	Info   struct {
+		DomainTotal string `json:"domain_total"`
+	} `json:"info"`
+	Domains []struct {
+		Name string `json:"name"`
+	} `json:"domains"`
+}
+
+// ListZones 列出该 login_token 账号下托管的全部域名:POST /Domain.List 逐页翻(length 上限 2000)。
+// DNSPod 的「账号无域名」是 status code "9" 而非空列表,与 Record.List 的 "10" 同法按空处理。
+func (c *dnspodClient) ListZones(ctx context.Context) ([]string, error) {
+	const length = 200
+	var out []string
+	for offset := 0; ; offset += length {
+		var list dpDomainListResp
+		fields := url.Values{"type": {"mine"}, "offset": {strconv.Itoa(offset)}, "length": {strconv.Itoa(length)}}
+		if err := c.post(ctx, "/Domain.List", fields, &list); err != nil {
+			return nil, err
+		}
+		if list.Status.Code == "9" {
+			return []string{}, nil
+		}
+		if list.Status.Code != "1" {
+			return nil, dpStatusErr(ErrVerifyFailed, list.Status)
+		}
+		for _, d := range list.Domains {
+			out = append(out, d.Name)
+		}
+		total, err := strconv.Atoi(strings.TrimSpace(list.Info.DomainTotal))
+		if err != nil || len(out) >= total || len(list.Domains) == 0 {
+			return sortNormalizedZones(out), nil
+		}
 	}
-	if out.Status.Code != "1" {
-		return dpStatusErr(ErrVerifyFailed, out.Status)
-	}
-	return nil
 }
 
 // EnsureARecord 为 zone 下的 name 建/改 A 记录指向 ip(幂等 upsert):

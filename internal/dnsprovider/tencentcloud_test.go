@@ -68,15 +68,15 @@ func tcBody(t *testing.T, r *http.Request) map[string]any {
 // tcAction 读 X-TC-Action(公共参数不进实体,靠头带)。
 func tcAction(r *http.Request) string { return r.Header.Get("X-TC-Action") }
 
-// --- VerifyZone -------------------------------------------------------------
+// --- ListZones --------------------------------------------------------------
 
-func TestTencentVerifyZoneSuccess(t *testing.T) {
+func TestTencentListZonesSuccess(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("3.0 应全用 POST, got %s", r.Method)
 		}
-		if tcAction(r) != "DescribeDomain" {
-			t.Fatalf("应 X-TC-Action=DescribeDomain, got %q", tcAction(r))
+		if tcAction(r) != "DescribeDomainList" {
+			t.Fatalf("应 X-TC-Action=DescribeDomainList, got %q", tcAction(r))
 		}
 		if r.Header.Get("X-TC-Version") != tencentVersion {
 			t.Fatalf("应带 X-TC-Version=%s, got %q", tencentVersion, r.Header.Get("X-TC-Version"))
@@ -91,24 +91,47 @@ func TestTencentVerifyZoneSuccess(t *testing.T) {
 		if !strings.Contains(auth, "/"+tencentService+"/tc3_request") {
 			t.Fatalf("CredentialScope 应含 service/tc3_request: %q", auth)
 		}
-		if got := tcBody(t, r)["Domain"]; got != "example.com" {
-			t.Fatalf("应带 Domain, got %v", got)
+		body := tcBody(t, r)
+		// Type=MINE 只列自己账号里的域;用 OTHER 会把别人公开的域名也列进来,那不是这份凭据能写的区。
+		if body["Type"] != "MINE" {
+			t.Fatalf("应带 Type=MINE, got %v", body["Type"])
 		}
-		return jsonResp(200, `{"Response":{"RequestId":"r1"}}`), nil
+		if body["Offset"] != float64(0) || body["Limit"] != float64(1000) {
+			t.Fatalf("应带 Offset/Limit, got %v/%v", body["Offset"], body["Limit"])
+		}
+		return jsonResp(200, `{"Response":{"RequestId":"r1","DomainList":[{"Name":"Example.COM"},{"Name":"blog.example.com"}]}}`), nil
 	})
 	c := fixedTencentClient("AKIDid,secretKey", rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Join(zones, ",") != "blog.example.com,example.com" {
+		t.Fatalf("应归一并排序, got %v", zones)
 	}
 }
 
-func TestTencentVerifyZoneAuthFail(t *testing.T) {
+func TestTencentListZonesEmpty(t *testing.T) {
+	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResp(200, `{"Response":{"RequestId":"r1","DomainList":[]}}`), nil
+	})
+	c := fixedTencentClient("AKIDid,secretKey", rt)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("账号里没有域名不算失败: %v", err)
+	}
+	if len(zones) != 0 {
+		t.Fatalf("应空清单, got %v", zones)
+	}
+}
+
+func TestTencentListZonesAuthFail(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		// 3.0 出错时 HTTP 仍是 200,错误在 Response.Error 里。
 		return jsonResp(200, `{"Response":{"Error":{"Code":"AuthFailure.SecretIdNotFound","Message":"The SecretId is not found."}}}`), nil
 	})
 	c := fixedTencentClient("AKIDid,wrong-key", rt)
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("鉴权失败应 ErrVerifyFailed, got %v", err)
 	}
@@ -120,16 +143,6 @@ func TestTencentVerifyZoneAuthFail(t *testing.T) {
 	}
 }
 
-func TestTencentVerifyZoneDomainNotOwned(t *testing.T) {
-	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return jsonResp(200, `{"Response":{"Error":{"Code":"FailedOperation.NotDomainOwner","Message":"not owner"}}}`), nil
-	})
-	c := fixedTencentClient("AKIDid,secretKey", rt)
-	if err := c.VerifyZone(context.Background(), "nope.com"); !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("非本人域名应 ErrVerifyFailed, got %v", err)
-	}
-}
-
 func TestTencentInvalidCredentialSendsNothing(t *testing.T) {
 	called := false
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -137,7 +150,7 @@ func TestTencentInvalidCredentialSendsNothing(t *testing.T) {
 		return jsonResp(200, `{}`), nil
 	})
 	c := fixedTencentClient("no-comma", rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); !errors.Is(err, ErrInvalidCredential) {
+	if _, err := c.ListZones(context.Background()); !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("坏凭据应 ErrInvalidCredential, got %v", err)
 	}
 	if called {
@@ -344,8 +357,9 @@ func TestTencentEnsureTXTViaService(t *testing.T) {
 	ctx := context.Background()
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch tcAction(r) {
-		case "DescribeDomain":
-			return jsonResp(200, `{"Response":{"RequestId":"v"}}`), nil
+		case "DescribeDomainList":
+			// 区不再来自库里某个字段,而是这份凭据账号里托管的域名。
+			return jsonResp(200, `{"Response":{"DomainList":[{"Name":"example.com"}]}}`), nil
 		case "DescribeRecordList":
 			return jsonResp(200, `{"Response":{"RecordList":[]}}`), nil
 		case "CreateRecord":
@@ -357,15 +371,15 @@ func TestTencentEnsureTXTViaService(t *testing.T) {
 		return nil, nil
 	})
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "AKIDid,secretKey"}}, &stubRouteCreator{}, dialDNS(rt))
-	p, err := svc.Create(ctx, CreateInput{Type: TypeTencentCloud, Name: "腾讯", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, err := svc.Create(ctx, CreateInput{Type: TypeTencentCloud, Name: "腾讯", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.app.example.com", "digest"); err != nil {
 		t.Fatalf("EnsureTXTRecord: %v", err)
 	}
-	// 越界域名必须硬失败(凭据只能管登记时声明的那个 zone)。
-	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.other.com", "digest"); !errors.Is(err, ErrTXTOutsideZone) {
-		t.Fatalf("别的域应 ErrTXTOutsideZone, got %v", err)
+	// 越界域名必须硬失败(凭据只能管账号里那些域)。
+	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.other.com", "digest"); !errors.Is(err, ErrNoHostedZone) {
+		t.Fatalf("别的域应 ErrNoHostedZone, got %v", err)
 	}
 }

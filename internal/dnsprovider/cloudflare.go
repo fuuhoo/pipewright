@@ -124,10 +124,28 @@ func (c *cloudflareClient) zoneID(ctx context.Context, zone string) (string, err
 	return "", fmt.Errorf("%w:凭据无法管理 zone %s(请确认 token 有该域 DNS 编辑权限)", ErrVerifyFailed, zone)
 }
 
-// VerifyZone 校验当前 token 可管理 zone(根域)。
-func (c *cloudflareClient) VerifyZone(ctx context.Context, zone string) error {
-	_, err := c.zoneID(ctx, zone)
-	return err
+// ListZones 列出该 token 可管理的 zone(/zones 只返回 token 有权看的区,这正是我们要的边界)。
+// 默认一页 20 条,故按 page/per_page 翻页取全。
+func (c *cloudflareClient) ListZones(ctx context.Context) ([]string, error) {
+	const perPage = 100
+	var out []string
+	for page := 1; ; page++ {
+		resp, err := c.do(ctx, http.MethodGet,
+			fmt.Sprintf("/zones?per_page=%d&page=%d", perPage, page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var zones []cfZone
+		if err := json.Unmarshal(resp.Result, &zones); err != nil {
+			return nil, fmt.Errorf("%w:zone 列表解析失败", ErrVerifyFailed)
+		}
+		for _, z := range zones {
+			out = append(out, z.Name)
+		}
+		if len(zones) < perPage {
+			return sortNormalizedZones(out), nil
+		}
+	}
 }
 
 // EnsureARecord 为 zone 下的 name(FQDN)建/改 A 记录指向 ip(幂等 upsert):
@@ -275,7 +293,7 @@ func (c *cloudflareClient) DeleteTXTRecord(ctx context.Context, zone, name strin
 // notImplementedClient 是未知提供商类型的「自动 A 记录」占位实现(诚实地返回未实现)。
 // DNS-01 通配符证书签发仍可用(走 Caddy 镜像内 DNS 插件),与本桩无关。
 // 它**刻意不实现 TXTClient**:平台自签证书必须要能写 TXT,类型断言失败即 ErrProviderNotImplemented
-// (见 service.txtClientFor)——宁可不签,也不假装记录已写好。
+// (见 service.txtTarget)——宁可不签,也不假装记录已写好。
 type notImplementedClient struct{ providerType string }
 
 func (n notImplementedClient) EnsureARecord(context.Context, string, string, string) error {
@@ -285,8 +303,8 @@ func (n notImplementedClient) EnsureARecord(context.Context, string, string, str
 // DeleteARecord 占位:没建过记录 → 无可删,幂等返回 nil(回收 best-effort,不阻断)。
 func (n notImplementedClient) DeleteARecord(context.Context, string, string) error { return nil }
 
-func (n notImplementedClient) VerifyZone(context.Context, string) error {
-	return fmt.Errorf("%w(%s 暂未实现 zone 校验)", ErrProviderNotImplemented, n.providerType)
+func (n notImplementedClient) ListZones(context.Context) ([]string, error) {
+	return nil, fmt.Errorf("%w(%s 暂未实现域名清单查询)", ErrProviderNotImplemented, n.providerType)
 }
 
 // newDNSClient 据提供商类型 + token 构造对应 DNSClient。transport/base 供测试注入(生产为 nil/空)。

@@ -23,9 +23,9 @@ func (s *Store) insert(ctx context.Context, p *Provider) error {
 	created := p.CreatedAt.UTC().Format(time.RFC3339)
 	updated := p.UpdatedAt.UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO dns_providers (id, type, name, credential_id, base_domain, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Type, p.Name, p.CredentialID, p.BaseDomain, created, updated,
+		`INSERT INTO dns_providers (id, type, name, credential_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Type, p.Name, p.CredentialID, created, updated,
 	)
 	if err != nil {
 		return fmt.Errorf("dnsprovider: insert: %w", err)
@@ -36,7 +36,7 @@ func (s *Store) insert(ctx context.Context, p *Provider) error {
 // get 读取单条提供商;不存在 → ErrNotFound。
 func (s *Store) get(ctx context.Context, id string) (*Provider, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, type, name, credential_id, base_domain, created_at, updated_at
+		`SELECT id, type, name, credential_id, created_at, updated_at
 		 FROM dns_providers WHERE id = ?`, id)
 	p, err := scanProvider(row)
 	if err != nil {
@@ -51,7 +51,7 @@ func (s *Store) get(ctx context.Context, id string) (*Provider, error) {
 // list 返回全部提供商(创建时间倒序)。
 func (s *Store) list(ctx context.Context) ([]Provider, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, type, name, credential_id, base_domain, created_at, updated_at
+		`SELECT id, type, name, credential_id, created_at, updated_at
 		 FROM dns_providers ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, fmt.Errorf("dnsprovider: list: %w", err)
@@ -92,7 +92,6 @@ func newProvider(in CreateInput) *Provider {
 		Type:         in.Type,
 		Name:         in.Name,
 		CredentialID: in.CredentialID,
-		BaseDomain:   in.BaseDomain,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -110,7 +109,7 @@ func scanProvider(sc scanner) (*Provider, error) {
 		createdStr string
 		updatedStr string
 	)
-	if err := sc.Scan(&p.ID, &p.Type, &p.Name, &p.CredentialID, &p.BaseDomain, &createdStr, &updatedStr); err != nil {
+	if err := sc.Scan(&p.ID, &p.Type, &p.Name, &p.CredentialID, &createdStr, &updatedStr); err != nil {
 		return nil, err
 	}
 	created, err := time.Parse(time.RFC3339, createdStr)

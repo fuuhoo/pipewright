@@ -361,11 +361,23 @@ func (c *volcengineClient) removeVolcRecords(ctx context.Context, zid int64, rec
 	return nil
 }
 
-// VerifyZone 校验当前凭据可管理 zone:ListZones 里能精确找到这个 ZoneName 即成功。
-// 火山没有「按域名查单个 zone 详情」的读接口(CheckZone 问的是子域能否添加),故走列表匹配。
-func (c *volcengineClient) VerifyZone(ctx context.Context, zone string) error {
-	_, err := c.resolveZone(ctx, zone, ErrVerifyFailed)
-	return err
+// ListZones 列出该凭据账号下托管的全部域名:ListZones 逐页翻(火山没有「按域名查单个 zone 详情」
+// 的读接口,CheckZone 问的是子域能否添加)。
+func (c *volcengineClient) ListZones(ctx context.Context) ([]string, error) {
+	var out []string
+	for page := 1; ; page++ {
+		var list volcListZonesResp
+		params := map[string]any{"PageSize": 100, "PageNumber": page}
+		if err := c.call(ctx, ErrVerifyFailed, http.MethodGet, "ListZones", params, &list); err != nil {
+			return nil, err
+		}
+		for _, z := range list.Result.Zones {
+			out = append(out, z.ZoneName)
+		}
+		if len(list.Result.Zones) < 100 {
+			return sortNormalizedZones(out), nil
+		}
+	}
 }
 
 // EnsureARecord 为 zone 下 name 建/改 A 记录指向 ip(幂等 upsert)。

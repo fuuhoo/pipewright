@@ -33,7 +33,6 @@ type dnsProviderDTO struct {
 	ID                   string `json:"id"`
 	Type                 string `json:"type"`
 	Name                 string `json:"name"`
-	BaseDomain           string `json:"baseDomain"`
 	CredentialConfigured bool   `json:"credentialConfigured"`
 	CreatedAt            string `json:"createdAt"`
 }
@@ -44,7 +43,6 @@ func toDNSProviderDTO(p dnsprovider.Provider) dnsProviderDTO {
 		ID:                   p.ID,
 		Type:                 p.Type,
 		Name:                 p.Name,
-		BaseDomain:           p.BaseDomain,
 		CredentialConfigured: strings.TrimSpace(p.CredentialID) != "",
 		CreatedAt:            p.CreatedAt.UTC().Format(time.RFC3339),
 	}
@@ -61,8 +59,6 @@ func writeDNSProviderError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_dns_provider", "请填写 DNS 提供商展示名")
 	case errors.Is(err, dnsprovider.ErrEmptyCredentialID):
 		writeError(w, http.StatusBadRequest, "invalid_dns_provider", "请选择 API 凭据")
-	case errors.Is(err, dnsprovider.ErrInvalidBaseDomain):
-		writeError(w, http.StatusBadRequest, "invalid_dns_provider", "根域格式非法,请填写有效的域名(如 example.com)")
 	case errors.Is(err, dnsprovider.ErrCredentialNotFound):
 		writeError(w, http.StatusUnprocessableEntity, "credential_error", "引用的 API 凭据不存在")
 	case errors.Is(err, dnsprovider.ErrVaultUnconfigured):
@@ -72,7 +68,10 @@ func writeDNSProviderError(w http.ResponseWriter, err error) {
 	case errors.Is(err, dnsprovider.ErrProviderNotImplemented):
 		writeError(w, http.StatusNotImplemented, "not_implemented", "该提供商暂未实现自动建 A 记录(DNS-01 证书签发仍可用,请手动添加解析)")
 	case errors.Is(err, dnsprovider.ErrVerifyFailed):
-		writeError(w, http.StatusBadGateway, "dns_verify_failed", "DNS 校验失败:凭据无效、无该域权限或 API 不可达")
+		writeError(w, http.StatusBadGateway, "dns_verify_failed", "DNS 校验失败:凭据无效、账号里没有可管理的域名或 API 不可达")
+	case errors.Is(err, dnsprovider.ErrNoHostedZone):
+		// 要写的记录名不归这份凭据账号里任何一个域管 —— 这是凭据越权,不是网络问题,故 422 而非 502。
+		writeError(w, http.StatusUnprocessableEntity, "no_hosted_zone", "该域名不在这个凭据账号托管的域名下,请换一个 DNS 提供商或先在服务商控制台添加域名")
 	case errors.Is(err, dnsprovider.ErrEnsureRecord):
 		writeError(w, http.StatusBadGateway, "dns_record_failed", "建立 A 记录失败,请确认凭据有该域 DNS 编辑权限")
 	case errors.Is(err, dnsprovider.ErrAllocate):
@@ -116,10 +115,9 @@ func makeCreateDNSProviderHandler(svc dnsprovider.Service, v vault.Vault, rec au
 		// token 是「只写」字段:前端创建时提交一次明文,经 vault 加密入库换取 credentialId
 		// 后即弃,绝不回库/响应/审计/日志。DB 的 dns_providers 只持 credential_id 引用。
 		var in struct {
-			Type       string `json:"type"`
-			Name       string `json:"name"`
-			Token      string `json:"token"`
-			BaseDomain string `json:"baseDomain"`
+			Type  string `json:"type"`
+			Name  string `json:"name"`
+			Token string `json:"token"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -147,7 +145,6 @@ func makeCreateDNSProviderHandler(svc dnsprovider.Service, v vault.Vault, rec au
 			Type:         in.Type,
 			Name:         in.Name,
 			CredentialID: cred.ID,
-			BaseDomain:   in.BaseDomain,
 		})
 		if err != nil {
 			// 登记失败 → 回滚刚存的凭据,避免悬挂(provider 没建成,凭据不应留存)。
@@ -160,7 +157,7 @@ func makeCreateDNSProviderHandler(svc dnsprovider.Service, v vault.Vault, rec au
 			Action:     auditActionDNSProviderCreate,
 			TargetType: auditTargetDNSProvider,
 			TargetID:   p.ID,
-			Detail:     map[string]any{"type": p.Type, "name": p.Name, "baseDomain": p.BaseDomain}, // 绝无 token
+			Detail:     map[string]any{"type": p.Type, "name": p.Name}, // 绝无 token
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, toDNSProviderDTO(*p))
@@ -190,8 +187,11 @@ func makeDeleteDNSProviderHandler(svc dnsprovider.Service, rec audit.Recorder) h
 	}
 }
 
-// makeVerifyDNSProviderHandler 返回 POST /api/dns/providers/{id}/verify(认证 + CSRF)→ { ok: true }。
-// 取该提供商凭据明文 → 经 DNS API 校验 zone 可管理(token 用完即弃,绝不外泄)。
+// makeVerifyDNSProviderHandler 返回 POST /api/dns/providers/{id}/verify(认证 + CSRF)
+// → { ok: true, zones: [...] }。
+// 取该提供商凭据明文 → 列出该账号在服务商侧托管的根域。能列出来即凭据可用,
+// 空清单不算失败(新账号确实可能一个域都没加),由前端提示「账号里没有托管域名」。
+// 保留 POST + 审计:按钮语义是「我主动核对一次」,不是普通读。
 func makeVerifyDNSProviderHandler(svc dnsprovider.Service, rec audit.Recorder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -199,7 +199,8 @@ func makeVerifyDNSProviderHandler(svc dnsprovider.Service, rec audit.Recorder) h
 			return
 		}
 		id := chi.URLParam(r, "id")
-		if err := svc.Verify(r.Context(), id); err != nil {
+		zones, err := svc.Zones(r.Context(), id)
+		if err != nil {
 			writeDNSProviderError(w, err)
 			return
 		}
@@ -208,10 +209,36 @@ func makeVerifyDNSProviderHandler(svc dnsprovider.Service, rec audit.Recorder) h
 			Action:     auditActionDNSProviderVerify,
 			TargetType: auditTargetDNSProvider,
 			TargetID:   id,
+			Detail:     map[string]any{"zoneCount": len(zones)}, // 只记数量,不把用户域名铺进审计
 			IP:         clientIP(r),
 		})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "zones": zonesOf(zones)})
 	}
+}
+
+// makeListProviderZonesHandler 返回 GET /api/dns/providers/{id}/zones → { items: [...] }。
+// 供「一键瞬时子域名」的根域下拉:同一份账号域名清单,读语义无审计。
+func makeListProviderZonesHandler(svc dnsprovider.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "DNS 提供商服务未初始化")
+			return
+		}
+		zones, err := svc.Zones(r.Context(), chi.URLParam(r, "id"))
+		if err != nil {
+			writeDNSProviderError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": zonesOf(zones)})
+	}
+}
+
+// zonesOf 保证 JSON 里是 [] 而非 null(Zones 在无托管域名时返回 nil slice)。
+func zonesOf(zones []string) []string {
+	if zones == nil {
+		return []string{}
+	}
+	return zones
 }
 
 // subdomainDeps 是瞬时子域名分配端点的依赖:DNS 服务(分配)+ 目标服务器(解析宿主机 IP)+
@@ -223,7 +250,9 @@ type subdomainDeps struct {
 }
 
 // makeAllocateSubdomainHandler 返回 POST /api/proxy/subdomains(认证 + CSRF)→ Route DTO(201)。
-// body: { providerId, serverId, upstreamContainer, upstreamPort }。
+// body: { providerId, zone, serverId, upstreamContainer, upstreamPort }。
+// zone 由前端从 GET /api/dns/providers/{id}/zones 的账号域名清单里选 —— 随机子域名前缀本身
+// 推不出所属根域,只能由调用方显式给定。
 // 流程:解析宿主机公网 IP(据 server.Host,非用户自由文本)→ AllocateSubdomain(建 A 记录 + 建 DNS-01
 // 路由)→ 回读新建路由 DTO 返回。token 全程不出现在任何响应/审计。
 func makeAllocateSubdomainHandler(deps subdomainDeps, rec audit.Recorder) http.HandlerFunc {
@@ -235,6 +264,7 @@ func makeAllocateSubdomainHandler(deps subdomainDeps, rec audit.Recorder) http.H
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<14)
 		var in struct {
 			ProviderID        string `json:"providerId"`
+			Zone              string `json:"zone"`
 			ServerID          string `json:"serverId"`
 			UpstreamContainer string `json:"upstreamContainer"`
 			UpstreamPort      int    `json:"upstreamPort"`
@@ -258,6 +288,7 @@ func makeAllocateSubdomainHandler(deps subdomainDeps, rec audit.Recorder) http.H
 
 		ref, err := deps.dns.AllocateSubdomain(r.Context(), dnsprovider.AllocateInput{
 			ProviderID:        in.ProviderID,
+			Zone:              in.Zone,
 			ServerID:          in.ServerID,
 			UpstreamContainer: in.UpstreamContainer,
 			UpstreamPort:      in.UpstreamPort,

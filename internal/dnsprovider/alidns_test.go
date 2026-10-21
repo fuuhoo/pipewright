@@ -78,16 +78,16 @@ func fixedAliClient(cred string, rt http.RoundTripper) *alidnsClient {
 	return c
 }
 
-// --- VerifyZone -------------------------------------------------------------
+// --- ListZones --------------------------------------------------------------
 
-func TestAliDNSVerifyZoneSuccess(t *testing.T) {
+func TestAliDNSListZonesSuccess(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		q := r.URL.Query()
-		if q.Get("Action") != "DescribeDomainInfo" {
-			t.Fatalf("应 Action=DescribeDomainInfo, got %q", q.Get("Action"))
+		if q.Get("Action") != "DescribeDomains" {
+			t.Fatalf("应 Action=DescribeDomains, got %q", q.Get("Action"))
 		}
-		if q.Get("DomainName") != "example.com" {
-			t.Fatalf("应带 DomainName, got %q", q.Get("DomainName"))
+		if q.Get("PageNumber") != "1" || q.Get("PageSize") != "100" {
+			t.Fatalf("应带分页, got %q/%q", q.Get("PageNumber"), q.Get("PageSize"))
 		}
 		if q.Get("Signature") == "" {
 			t.Fatalf("应带 Signature")
@@ -95,35 +95,68 @@ func TestAliDNSVerifyZoneSuccess(t *testing.T) {
 		if q.Get("AccessKeyId") != "testAccessKeyId" {
 			t.Fatalf("应带 AccessKeyId, got %q", q.Get("AccessKeyId"))
 		}
-		return jsonResp(200, `{"DomainName":"example.com","RequestId":"r1"}`), nil
+		return jsonResp(200, `{"Domains":{"Domain":[{"DomainName":"Example.COM"},{"DomainName":"api.example.com"}]},"TotalItems":2,"RequestId":"r1"}`), nil
 	})
 	c := fixedAliClient("testAccessKeyId,testAccessKeySecret", rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Join(zones, ",") != "api.example.com,example.com" {
+		t.Fatalf("应归一并排序, got %v", zones)
 	}
 }
 
-func TestAliDNSVerifyZoneAuthFail(t *testing.T) {
+// 终止条件按「已取条数 ≥ TotalItems」而不是「本页不满 100」:阿里云在中间页就可能只回一两条,
+// 提前收尾页会漏域名(而漏掉的域意味着那半边根本签不出证书)。
+func TestAliDNSListZonesPagesUntilTotal(t *testing.T) {
+	var pages []string
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		page := r.URL.Query().Get("PageNumber")
+		pages = append(pages, page)
+		if page == "1" {
+			return jsonResp(200, `{"Domains":{"Domain":[{"DomainName":"a.com"}]},"TotalItems":2}`), nil
+		}
+		return jsonResp(200, `{"Domains":{"Domain":[{"DomainName":"b.com"}]},"TotalItems":2}`), nil
+	})
+	c := fixedAliClient("testAccessKeyId,testAccessKeySecret", rt)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Join(pages, ",") != "1,2" {
+		t.Fatalf("应翻到第 2 页才停, got %v", pages)
+	}
+	if strings.Join(zones, ",") != "a.com,b.com" {
+		t.Fatalf("两页都要收进清单, got %v", zones)
+	}
+}
+
+func TestAliDNSListZonesEmpty(t *testing.T) {
+	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResp(200, `{"Domains":{"Domain":[]},"TotalItems":0}`), nil
+	})
+	c := fixedAliClient("testAccessKeyId,testAccessKeySecret", rt)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("账号里没有域名不算失败: %v", err)
+	}
+	if len(zones) != 0 {
+		t.Fatalf("应空清单, got %v", zones)
+	}
+}
+
+func TestAliDNSListZonesAuthFail(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return jsonResp(403, `{"Code":"InvalidAccessKeyId.NotFound","Message":"Specified access key is not found.","RequestId":"r2"}`), nil
 	})
 	c := fixedAliClient("testAccessKeyId,wrong-secret", rt)
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("鉴权失败应 ErrVerifyFailed, got %v", err)
 	}
 	if strings.Contains(err.Error(), "wrong-secret") || strings.Contains(err.Error(), "testAccessKeyId") {
 		t.Fatalf("错误文本不应含凭据: %v", err)
-	}
-}
-
-func TestAliDNSVerifyZoneNotFound(t *testing.T) {
-	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return jsonResp(400, `{"Code":"InvalidDomainName.NoExist","Message":"The specified domain name does not exist.","RequestId":"r3"}`), nil
-	})
-	c := fixedAliClient("testAccessKeyId,testAccessKeySecret", rt)
-	if err := c.VerifyZone(context.Background(), "nope.com"); !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("域名不存在应 ErrVerifyFailed, got %v", err)
 	}
 }
 
@@ -134,7 +167,8 @@ func TestAliDNSInvalidCredential(t *testing.T) {
 		return jsonResp(200, `{}`), nil
 	})
 	c := fixedAliClient("no-comma", rt)
-	if err := c.VerifyZone(context.Background(), "example.com"); !errors.Is(err, ErrInvalidCredential) {
+	_, err := c.ListZones(context.Background())
+	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("坏凭据应 ErrInvalidCredential, got %v", err)
 	}
 	if called {
@@ -234,6 +268,8 @@ func TestAllocateSubdomainDNSPodReal(t *testing.T) {
 	ctx := context.Background()
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
+		case strings.Contains(r.URL.Path, "/Domain.List"):
+			return jsonResp(200, `{"status":{"code":"1","message":"ok"},"info":{"domain_total":"1"},"domains":[{"name":"example.com"}]}`), nil
 		case strings.Contains(r.URL.Path, "/Record.List"):
 			return jsonResp(200, `{"status":{"code":"10"},"records":[]}`), nil
 		case strings.Contains(r.URL.Path, "/Record.Create"):
@@ -244,9 +280,10 @@ func TestAllocateSubdomainDNSPodReal(t *testing.T) {
 	})
 	rc := &stubRouteCreator{nextRouteID: "route-dp"}
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "12345,sEcReT"}}, rc, dialDNS(rt))
-	p, _ := svc.Create(ctx, CreateInput{Type: "dnspod", Name: "DP", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, _ := svc.Create(ctx, CreateInput{Type: "dnspod", Name: "DP", CredentialID: "cred-1"})
 	ref, err := svc.AllocateSubdomain(ctx, AllocateInput{
-		ProviderID: p.ID, ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 8080, HostIP: "203.0.113.5",
+		ProviderID: p.ID, Zone: "example.com",
+		ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 8080, HostIP: "203.0.113.5",
 	})
 	if err != nil {
 		t.Fatalf("AllocateSubdomain(dnspod): %v", err)

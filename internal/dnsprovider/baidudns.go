@@ -272,30 +272,26 @@ type baiduListZonesResp struct {
 	IsTruncated bool   `json:"isTruncated"`
 }
 
-// VerifyZone 校验当前凭据可管理 zone:GET /v1/dns/zone?name=<zone> 里能精确匹配到 ZoneName。
-// 百度公网 DNS **没有**「查单个域名详情」接口(域名相关只有添加/查询列表/删除),故走列表匹配;
-// 匹配到的域还须 status 为 running,否则解析不生效,签证书会在 ACME 校验阶段才发现。
-func (c *baiduDNSClient) VerifyZone(ctx context.Context, zone string) error {
+// ListZones 列出该凭据账号下托管的全部域名:GET /v1/dns/zone 按 marker 翻页(maxKeys 上限 100)。
+// 百度公网 DNS **没有**「查单个域名详情」接口(域名相关只有添加/查询列表/删除),故只能列全量再匹配。
+// 刻意不看 zones[].status(pause/spam 等):暂停只是解析停了,记录仍可读写;「解析是否生效」该由
+// ACME 校验自然暴露,而不是在这里冒充「凭据管不了这个域」。
+func (c *baiduDNSClient) ListZones(ctx context.Context) ([]string, error) {
+	var out []string
 	for marker := ""; ; {
-		params := map[string]string{"name": zone, "maxKeys": "100"}
+		params := map[string]string{"maxKeys": "100"}
 		if marker != "" {
 			params["marker"] = marker
 		}
 		var list baiduListZonesResp
 		if err := c.call(ctx, ErrVerifyFailed, http.MethodGet, "/v1/dns/zone", params, nil, &list); err != nil {
-			return err
+			return nil, err
 		}
 		for _, z := range list.Zones {
-			if strings.EqualFold(z.Name, strings.TrimSuffix(zone, ".")) {
-				if z.Status != "" && !strings.EqualFold(z.Status, "running") {
-					return fmt.Errorf("%w:百度智能云域名 %s 当前状态 %s,解析未生效", ErrVerifyFailed, zone, z.Status)
-				}
-				return nil
-			}
+			out = append(out, z.Name)
 		}
-		// name 是精确筛选语义;查不到即「该凭据管不了这个域」(文档没有专门的「域名不受管理」错误码)。
-		if !list.IsTruncated || list.NextMarker == "" {
-			return fmt.Errorf("%w:百度智能云域名 %s 不存在或不受该凭据管理", ErrVerifyFailed, zone)
+		if !list.IsTruncated || list.NextMarker == "" || len(list.Zones) == 0 {
+			return sortNormalizedZones(out), nil
 		}
 		marker = list.NextMarker
 	}

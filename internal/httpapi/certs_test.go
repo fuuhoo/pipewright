@@ -165,8 +165,8 @@ func setupCertsAPI(t *testing.T, withPublisher bool) *certEnv {
 	// DNS-01 的提供商引用必须落得下:登记路径会查 dns_providers,引用悬空等于必然签不出。
 	// (TXT 写入能力始终不接,所以签发仍在「装配缺失」处停下,不会因为这里有行记录就去碰网络。)
 	if _, err := db.Exec(
-		`INSERT INTO dns_providers (id, type, name, credential_id, base_domain, created_at, updated_at)
-		 VALUES ('dns-1', 'cloudflare', 'dns-1', ?, 'example.com', ?, ?)`,
+		`INSERT INTO dns_providers (id, type, name, credential_id, created_at, updated_at)
+		 VALUES ('dns-1', 'cloudflare', 'dns-1', ?, ?, ?)`,
 		sshCred.ID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatalf("seed dns provider: %v", err)
 	}

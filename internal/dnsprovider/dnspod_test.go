@@ -73,12 +73,12 @@ func TestParseDNSPodToken(t *testing.T) {
 	}
 }
 
-// --- VerifyZone -------------------------------------------------------------
+// --- ListZones --------------------------------------------------------------
 
-func TestDNSPodVerifyZoneSuccess(t *testing.T) {
+func TestDNSPodListZonesSuccess(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if !strings.Contains(r.URL.Path, "/Domain.Info") {
-			t.Fatalf("VerifyZone 应打 Domain.Info, got %s", r.URL.Path)
+		if !strings.Contains(r.URL.Path, "/Domain.List") {
+			t.Fatalf("ListZones 应打 Domain.List, got %s", r.URL.Path)
 		}
 		if got := readFormField(t, r, "login_token"); got != "12345,sEcReT" {
 			t.Fatalf("应带 login_token, got %q", got)
@@ -86,20 +86,67 @@ func TestDNSPodVerifyZoneSuccess(t *testing.T) {
 		if got := readFormField(t, r, "format"); got != "json" {
 			t.Fatalf("应带 format=json, got %q", got)
 		}
-		return jsonResp(200, `{"status":{"code":"1","message":"Action completed successful"}}`), nil
+		if got := readFormField(t, r, "type"); got != "mine" {
+			t.Fatalf("只该列自己账号的域名(type=mine), got %q", got)
+		}
+		return jsonResp(200, `{"status":{"code":"1","message":"Action completed successful"},"info":{"domain_total":"2"},"domains":[{"name":"Example.COM"},{"name":"blog.example.com"}]}`), nil
 	})
 	c := newDNSPodClient("12345,sEcReT", rt, "")
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Join(zones, ",") != "blog.example.com,example.com" {
+		t.Fatalf("应归一并排序, got %v", zones)
 	}
 }
 
-func TestDNSPodVerifyZoneAuthFail(t *testing.T) {
+// 按 info.domain_total 翻页而不是「本页不满就停」:DNSPod 的 length 上限很大但默认值会截,
+// 少收一页就等于那个域永远签不出证书。
+func TestDNSPodListZonesPagesUntilTotal(t *testing.T) {
+	var offsets []string
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		off := readFormField(t, r, "offset")
+		offsets = append(offsets, off)
+		if off == "0" {
+			return jsonResp(200, `{"status":{"code":"1"},"info":{"domain_total":"2"},"domains":[{"name":"a.com"}]}`), nil
+		}
+		return jsonResp(200, `{"status":{"code":"1"},"info":{"domain_total":"2"},"domains":[{"name":"b.com"}]}`), nil
+	})
+	c := newDNSPodClient("12345,sEcReT", rt, "")
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Join(offsets, ",") != "0,200" {
+		t.Fatalf("应翻第二页, got %v", offsets)
+	}
+	if strings.Join(zones, ",") != "a.com,b.com" {
+		t.Fatalf("两页都要收进清单, got %v", zones)
+	}
+}
+
+func TestDNSPodListZonesNoDomain(t *testing.T) {
+	// DNSPod 的「账号无域名」是 code "9" 而不是空列表 —— 与 Record.List 的 "10" 同法当空处理,不是错误。
+	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResp(200, `{"status":{"code":"9","message":"No domain records"},"info":{"domain_total":"0"},"domains":[]}`), nil
+	})
+	c := newDNSPodClient("12345,sEcReT", rt, "")
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("账号里没有域名不算失败: %v", err)
+	}
+	if len(zones) != 0 {
+		t.Fatalf("应空清单, got %v", zones)
+	}
+}
+
+func TestDNSPodListZonesAuthFail(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return jsonResp(200, `{"status":{"code":"-1","message":"Login token error"}}`), nil
 	})
 	c := newDNSPodClient("12345,bad-secret", rt, "")
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("鉴权失败应 ErrVerifyFailed, got %v", err)
 	}
@@ -108,25 +155,16 @@ func TestDNSPodVerifyZoneAuthFail(t *testing.T) {
 	}
 }
 
-func TestDNSPodVerifyZoneDomainNotFound(t *testing.T) {
-	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return jsonResp(200, `{"status":{"code":"6","message":"domain not under your account"}}`), nil
-	})
-	c := newDNSPodClient("12345,sEcReT", rt, "")
-	if err := c.VerifyZone(context.Background(), "nope.com"); !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("域名不存在应 ErrVerifyFailed, got %v", err)
-	}
-}
-
 func TestDNSPodInvalidCredential(t *testing.T) {
-	// 保险库存了无逗号串 → VerifyZone 在请求前就报 ErrInvalidCredential(不发网络)。
+	// 保险库存了无逗号串 → ListZones 在请求前就报 ErrInvalidCredential(不发网络)。
 	called := false
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		called = true
 		return jsonResp(200, `{"status":{"code":"1"}}`), nil
 	})
 	c := newDNSPodClient("no-comma-token", rt, "")
-	if err := c.VerifyZone(context.Background(), "example.com"); !errors.Is(err, ErrInvalidCredential) {
+	_, err := c.ListZones(context.Background())
+	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("坏凭据应 ErrInvalidCredential, got %v", err)
 	}
 	if called {

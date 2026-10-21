@@ -284,49 +284,84 @@ func TestAliDNSTXTErrorIsClassifiedAndLeakFree(t *testing.T) {
 	}
 }
 
-// --- service 层:根域边界与装配 ----------------------------------------------
+// --- service 层:区推导边界与装配 --------------------------------------------
 
-// aOnlyClient 只实现 DNSClient(没有 TXT 方法)。用它断言:能力缺失要明说,不拿 A 记录糊弄。
-type aOnlyClient struct{}
+// aOnlyClient 只实现 DNSClient(没有 TXT 方法)。用它断言两件事:
+//   - 能力缺失要明说,不拿 A 记录糊弄;
+//   - 能力判定排在区推导之前 —— 反证是 ListZones 调用数为 0(若顺序颠倒,错误会退化成
+//     「不在任何域名下」,而真正该说的是「这个提供商不支持写 TXT」)。
+type aOnlyClient struct{ zoneCalls int }
 
-func (aOnlyClient) EnsureARecord(context.Context, string, string, string) error { return nil }
-func (aOnlyClient) DeleteARecord(context.Context, string, string) error         { return nil }
-func (aOnlyClient) VerifyZone(context.Context, string) error                    { return nil }
+func (a *aOnlyClient) EnsureARecord(context.Context, string, string, string) error { return nil }
+func (a *aOnlyClient) DeleteARecord(context.Context, string, string) error         { return nil }
+func (a *aOnlyClient) ListZones(context.Context) ([]string, error) {
+	a.zoneCalls++
+	return []string{"example.com"}, nil
+}
 
-func TestServiceTXTRejectsNameOutsideZone(t *testing.T) {
+// TestServiceTXTRejectsEmptyName 断言空记录名在取凭据/拨号之前就硬失败(连清单都不必拉)。
+func TestServiceTXTRejectsEmptyName(t *testing.T) {
 	ctx := context.Background()
-	var dialed bool
+	dialed := false
 	dial := func(providerType, token string) DNSClient {
 		dialed = true
 		return newCloudflareClient(token, roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-			t.Fatalf("越界的名字不该发请求")
+			t.Fatalf("空记录名不该发请求")
 			return nil, nil
 		}), "")
 	}
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, nil, dial)
-	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	for _, name := range []string{"", "other.com", "_acme-challenge.other.com", "_acme-challenge.example.com.evil.cn", "example.org"} {
-		err := svc.EnsureTXTRecord(ctx, p.ID, name, dns01Value)
-		if !errors.Is(err, ErrTXTOutsideZone) {
-			t.Fatalf("名字 %q 不在根域下应 ErrTXTOutsideZone, got %v", name, err)
+	for _, name := range []string{"", "   ", "."} {
+		if e := svc.EnsureTXTRecord(ctx, p.ID, name, dns01Value); !errors.Is(e, ErrNoHostedZone) {
+			t.Fatalf("空记录名 %q 应 ErrNoHostedZone, got %v", name, e)
 		}
-		if e := svc.DeleteTXTRecord(ctx, p.ID, name); !errors.Is(e, ErrTXTOutsideZone) {
+	}
+	if dialed {
+		t.Fatalf("空记录名不该拨号取凭据")
+	}
+}
+
+// TestServiceTXTRejectsNameOutsideAccountZones 是权限边界:账号里只托管 example.com 时,
+// 别的域(哪怕格式合法、哪怕是别的域的后缀)一律 ErrNoHostedZone,而且一条写请求都不发。
+// 注意断言的形态:区推导本身要拉账号域名清单,所以「不发请求」只能落在**记录写**这一步。
+func TestServiceTXTRejectsNameOutsideAccountZones(t *testing.T) {
+	ctx := context.Background()
+	var writes int
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/zones") && !strings.Contains(r.URL.Path, "dns_records") {
+			return jsonResp(200, `{"success":true,"result":[{"id":"z1","name":"example.com"}]}`), nil
+		}
+		writes++ // 只有记录读写才走到这里
+		t.Fatalf("越界的名字不该发记录请求 %s %s", r.Method, r.URL)
+		return nil, nil
+	})
+	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, nil,
+		func(providerType, token string) DNSClient { return newCloudflareClient(token, rt, "") })
+	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, name := range []string{"other.com", "_acme-challenge.other.com", "_acme-challenge.example.com.evil.cn", "example.org"} {
+		if e := svc.EnsureTXTRecord(ctx, p.ID, name, dns01Value); !errors.Is(e, ErrNoHostedZone) {
+			t.Fatalf("名字 %q 不在账号托管域名下应 ErrNoHostedZone, got %v", name, e)
+		}
+		if e := svc.DeleteTXTRecord(ctx, p.ID, name); !errors.Is(e, ErrNoHostedZone) {
 			t.Fatalf("删除同样该拦住: %v", e)
 		}
 	}
-	// 根域检查排在取凭据之前:越界的名字连 token 都不该被解出来,更不该发给 API。
-	if dialed {
-		t.Fatalf("越界记录名不该拨号取凭据")
+	if writes != 0 {
+		t.Fatalf("区推导失败后不该发任何记录请求, got %d", writes)
 	}
 }
 
 func TestServiceTXTRequiresValue(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, nil, prodDialFactory)
-	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	if err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.example.com", "   "); !errors.Is(err, ErrEmptyTXTValue) {
 		t.Fatalf("空校验值应 ErrEmptyTXTValue, got %v", err)
 	}
@@ -337,9 +372,10 @@ func TestServiceTXTRequiresValue(t *testing.T) {
 
 func TestServiceTXTNeedsTXTSupport(t *testing.T) {
 	ctx := context.Background()
-	dial := func(providerType, token string) DNSClient { return aOnlyClient{} }
+	only := &aOnlyClient{}
+	dial := func(providerType, token string) DNSClient { return only }
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, nil, dial)
-	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	err := svc.EnsureTXTRecord(ctx, p.ID, "_acme-challenge.example.com", dns01Value)
 	if !errors.Is(err, ErrProviderNotImplemented) {
 		t.Fatalf("客户端不会写 TXT 时应明说未实现, got %v", err)
@@ -347,16 +383,21 @@ func TestServiceTXTNeedsTXTSupport(t *testing.T) {
 	if err := svc.DeleteTXTRecord(ctx, p.ID, "_acme-challenge.example.com"); !errors.Is(err, ErrProviderNotImplemented) {
 		t.Fatalf("删除同理: %v", err)
 	}
+	if only.zoneCalls != 0 {
+		t.Fatalf("能力判定该排在区推导之前,却拉了 %d 次域名清单", only.zoneCalls)
+	}
 }
 
-// 端到一段(仍不触网):根域取自库里的提供商记录,记录名归一后才交给 API。
+// 端到一段(仍不触网):记录名归一后推出区,再交给 API。
+// 区不再来自库里的某个字段,而是这份凭据账号里托管的域名 —— 这里清单只有 example.com,
+// 故 `_ACME-Challenge.Example.COM.` 归一并推出 example.com。
 func TestServiceEnsureTXTUsesProviderZone(t *testing.T) {
 	ctx := context.Background()
 	var posted string
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/zones"):
-			return jsonResp(200, `{"success":true,"result":[{"id":"z1","name":"example.com"}]}`), nil
+			return jsonResp(200, `{"success":true,"result":[{"id":"z1","name":"Example.COM"}]}`), nil
 		case r.Method == http.MethodGet:
 			return jsonResp(200, `{"success":true,"result":[]}`), nil
 		case r.Method == http.MethodPost:
@@ -369,7 +410,7 @@ func TestServiceEnsureTXTUsesProviderZone(t *testing.T) {
 	})
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, nil,
 		func(providerType, token string) DNSClient { return newCloudflareClient(token, rt, "") })
-	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "Example.COM"})
+	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -1130,6 +1130,9 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/dns/providers", makeListDNSProvidersHandler(dp))
 		ar.Post("/dns/providers", makeCreateDNSProviderHandler(dp, o.vault, aud))
 		ar.Post("/dns/providers/{id}/verify", makeVerifyDNSProviderHandler(dp, aud))
+		// 该凭据账号托管的根域清单(只读):供「一键瞬时子域名」选根域,以及查看这个账号能签哪些域。
+		// 根域不再是 dns_providers 表的字段,由服务商账号侧域名动态推导。
+		ar.Get("/dns/providers/{id}/zones", makeListProviderZonesHandler(dp))
 		ar.Delete("/dns/providers/{id}", makeDeleteDNSProviderHandler(dp, aud))
 		// 瞬时子域名分配(R3 E3.3 + E3.4):建 A 记录 + 建 DNS-01 反代路由 → 普通 Route DTO。
 		ar.Post("/proxy/subdomains", makeAllocateSubdomainHandler(subdomainDeps{dns: dp, servers: sv, proxy: px}, aud))

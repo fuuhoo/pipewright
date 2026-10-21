@@ -280,10 +280,42 @@ func (c *tencentCloudClient) removeTCRecords(ctx context.Context, zone string, r
 	return nil
 }
 
-// VerifyZone 校验当前凭据可管理 zone:Action=DescribeDomain。
-// 3.0 的「域名不存在 / 不是我的」都走 Response.Error,故无错误即成功。
-func (c *tencentCloudClient) VerifyZone(ctx context.Context, zone string) error {
-	return c.call(ctx, ErrVerifyFailed, "DescribeDomain", map[string]any{"Domain": zone}, nil)
+// tcDomain 是 DescribeDomainList 里我们要用的字段子集。
+//
+// 区名在 **Name**(不是 Domain —— `Domain` 只存在于 DescribeDomain 返回的 DomainInfo 里,
+// 照记忆写成 Domain 会解出一个空清单)。Status(ENABLE/PAUSE/SPAM)刻意忽略:暂停只是解析停了,
+// 记录仍可读写,「凭据能不能管这个区」与「解析当前是否生效」是两件事,后者由 ACME/访问侧自然暴露。
+type tcDomain struct {
+	Name string `json:"Name"`
+}
+
+type tcListDomainsResp struct {
+	Response struct {
+		DomainList []tcDomain `json:"DomainList"`
+	} `json:"Response"`
+}
+
+// ListZones 列出该凭据账号下托管的全部域名:Action=DescribeDomainList 按 Offset 翻页。
+// Type=MINE 只取「本账号添加的域」,与「凭据可用」判据同口径(共享域协作者拿不到写入权限)。
+func (c *tencentCloudClient) ListZones(ctx context.Context) ([]string, error) {
+	const limit = 1000
+	var out []string
+	for offset := 0; ; offset += limit {
+		var list tcListDomainsResp
+		if err := c.call(ctx, ErrVerifyFailed, "DescribeDomainList", map[string]any{
+			"Type":   "MINE",
+			"Offset": offset,
+			"Limit":  limit,
+		}, &list); err != nil {
+			return nil, err
+		}
+		for _, d := range list.Response.DomainList {
+			out = append(out, d.Name)
+		}
+		if len(list.Response.DomainList) < limit {
+			return sortNormalizedZones(out), nil
+		}
+	}
 }
 
 // EnsureARecord 为 zone 下 name 建/改 A 记录指向 ip(幂等 upsert)。

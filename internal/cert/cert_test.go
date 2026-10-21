@@ -124,8 +124,8 @@ func seedHost(t *testing.T, db *sql.DB, id string) {
 func seedProvider(t *testing.T, db *sql.DB, id string) {
 	t.Helper()
 	now := testNow.Format(time.RFC3339)
-	if _, err := db.Exec(`INSERT INTO dns_providers (id, type, name, credential_id, base_domain, created_at, updated_at)
-		 VALUES (?, 'cloudflare', ?, 'cred-x', 'example.com', ?, ?)`, id, "dns-"+id, now, now); err != nil {
+	if _, err := db.Exec(`INSERT INTO dns_providers (id, type, name, credential_id, created_at, updated_at)
+		 VALUES (?, 'cloudflare', ?, 'cred-x', ?, ?)`, id, "dns-"+id, now, now); err != nil {
 		t.Fatalf("插 DNS 提供商: %v", err)
 	}
 }

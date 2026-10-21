@@ -103,12 +103,9 @@ func TestStoreCRUD(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "tok"}}, nil, prodDialFactory)
 
-	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "Example.COM"})
+	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
-	}
-	if p.BaseDomain != "example.com" {
-		t.Fatalf("根域应归一化小写, got %q", p.BaseDomain)
 	}
 
 	got, err := svc.Get(ctx, p.ID)
@@ -135,12 +132,10 @@ func TestCreateValidation(t *testing.T) {
 		in   CreateInput
 		want error
 	}{
-		{CreateInput{Type: "route53", Name: "x", CredentialID: "cred-1", BaseDomain: "example.com"}, ErrInvalidType},
-		{CreateInput{Type: "cloudflare", Name: "", CredentialID: "cred-1", BaseDomain: "example.com"}, ErrEmptyName},
-		{CreateInput{Type: "cloudflare", Name: "x", CredentialID: "", BaseDomain: "example.com"}, ErrEmptyCredentialID},
-		{CreateInput{Type: "cloudflare", Name: "x", CredentialID: "cred-1", BaseDomain: "*.example.com"}, ErrInvalidBaseDomain},
-		{CreateInput{Type: "cloudflare", Name: "x", CredentialID: "cred-1", BaseDomain: "not a domain"}, ErrInvalidBaseDomain},
-		{CreateInput{Type: "cloudflare", Name: "x", CredentialID: "no-such-cred", BaseDomain: "example.com"}, ErrCredentialNotFound},
+		{CreateInput{Type: "route53", Name: "x", CredentialID: "cred-1"}, ErrInvalidType},
+		{CreateInput{Type: "cloudflare", Name: "", CredentialID: "cred-1"}, ErrEmptyName},
+		{CreateInput{Type: "cloudflare", Name: "x", CredentialID: ""}, ErrEmptyCredentialID},
+		{CreateInput{Type: "cloudflare", Name: "x", CredentialID: "no-such-cred"}, ErrCredentialNotFound},
 	}
 	for i, c := range cases {
 		_, err := svc.Create(ctx, c.in)
@@ -152,31 +147,39 @@ func TestCreateValidation(t *testing.T) {
 
 // --- Cloudflare 客户端(mock transport)-------------------------------------
 
-func TestCloudflareVerifyZoneSuccess(t *testing.T) {
+func TestCloudflareListZonesSuccess(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Authorization") != "Bearer cf-token" {
 			t.Fatalf("应带 Bearer token")
 		}
 		if !strings.Contains(r.URL.String(), "/zones") {
-			t.Fatalf("VerifyZone 应查 /zones, got %s", r.URL)
+			t.Fatalf("ListZones 应查 /zones, got %s", r.URL)
 		}
-		return jsonResp(200, `{"success":true,"result":[{"id":"zone123","name":"example.com"}]}`), nil
+		return jsonResp(200, `{"success":true,"result":[{"id":"zone123","name":"Example.COM"},{"id":"zone2","name":"blog.example.com"}]}`), nil
 	})
 	c := newCloudflareClient("cf-token", rt, "")
-	if err := c.VerifyZone(context.Background(), "example.com"); err != nil {
-		t.Fatalf("VerifyZone: %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	// 归一小写 + 字典序:前端下拉与 zone 推导都要求清单可比。
+	if len(zones) != 2 || zones[0] != "blog.example.com" || zones[1] != "example.com" {
+		t.Fatalf("清单应归一并排序, got %v", zones)
 	}
 }
 
-func TestCloudflareVerifyZoneNoPermission(t *testing.T) {
+func TestCloudflareListZonesEmpty(t *testing.T) {
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		// 成功但返回空 zone 列表(token 无该 zone 权限)。
+		// 成功但账号下一条域名都没有(token 有效但没加域)。
 		return jsonResp(200, `{"success":true,"result":[]}`), nil
 	})
 	c := newCloudflareClient("cf-token", rt, "")
-	err := c.VerifyZone(context.Background(), "example.com")
-	if !errors.Is(err, ErrVerifyFailed) {
-		t.Fatalf("无权限应 ErrVerifyFailed, got %v", err)
+	zones, err := c.ListZones(context.Background())
+	if err != nil {
+		t.Fatalf("空清单不算失败: %v", err)
+	}
+	if len(zones) != 0 {
+		t.Fatalf("应返回空清单, got %v", zones)
 	}
 }
 
@@ -185,7 +188,7 @@ func TestCloudflareAPIError(t *testing.T) {
 		return jsonResp(403, `{"success":false,"errors":[{"code":9109,"message":"Invalid access token"}]}`), nil
 	})
 	c := newCloudflareClient("bad", rt, "")
-	err := c.VerifyZone(context.Background(), "example.com")
+	_, err := c.ListZones(context.Background())
 	if !errors.Is(err, ErrVerifyFailed) {
 		t.Fatalf("API 拒绝应 ErrVerifyFailed, got %v", err)
 	}
@@ -248,6 +251,40 @@ func TestCloudflareEnsureARecordUpdate(t *testing.T) {
 	}
 }
 
+// --- Zones(替代旧的 Verify)-------------------------------------------------
+
+// Zones 是「凭据可用 + 能管哪些域」的唯一判据:根域不再是库里的字段,答案在服务商账号里。
+func TestServiceZonesListsAccountDomains(t *testing.T) {
+	ctx := context.Background()
+	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResp(200, `{"success":true,"result":[{"id":"z1","name":"B.example.com"},{"id":"z2","name":"a.example.com"}]}`), nil
+	})
+	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, nil, dialDNS(rt))
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
+
+	zones, err := svc.Zones(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Zones: %v", err)
+	}
+	if strings.Join(zones, ",") != "a.example.com,b.example.com" {
+		t.Fatalf("应返回归一并排序的账号域名清单, got %v", zones)
+	}
+
+	// 提供商不存在 → ErrNotFound(不触网)。
+	if _, err := svc.Zones(ctx, "no-such"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("不存在应 ErrNotFound, got %v", err)
+	}
+}
+
+func TestServiceZonesVaultUnconfigured(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, stubVault{uncfg: true}, nil, prodDialFactory)
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-x"})
+	if _, err := svc.Zones(ctx, p.ID); !errors.Is(err, ErrVaultUnconfigured) {
+		t.Fatalf("vault 未配置应 ErrVaultUnconfigured, got %v", err)
+	}
+}
+
 // --- AllocateSubdomain ------------------------------------------------------
 
 // dialDNS 造一个用 mock transport 的 Cloudflare client(供 AllocateSubdomain 测试)。
@@ -273,12 +310,13 @@ func TestAllocateSubdomainHappyPath(t *testing.T) {
 	rc := &stubRouteCreator{nextRouteID: "route-xyz"}
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, rc, dialDNS(rt))
 
-	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create provider: %v", err)
 	}
 	ref, err := svc.AllocateSubdomain(ctx, AllocateInput{
-		ProviderID: p.ID, ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 8080, HostIP: "203.0.113.5",
+		ProviderID: p.ID, Zone: "example.com",
+		ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 8080, HostIP: "203.0.113.5",
 	})
 	if err != nil {
 		t.Fatalf("AllocateSubdomain: %v", err)
@@ -310,9 +348,10 @@ func TestAllocateSubdomainCollisionRetries(t *testing.T) {
 	rc := &stubRouteCreator{failFirstN: 2, nextRouteID: "route-final"}
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, rc, dialDNS(rt))
 
-	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	ref, err := svc.AllocateSubdomain(ctx, AllocateInput{
-		ProviderID: p.ID, ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
+		ProviderID: p.ID, Zone: "example.com",
+		ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
 	})
 	if err != nil {
 		t.Fatalf("应在重试后成功: %v", err)
@@ -331,10 +370,11 @@ func TestAllocateSubdomainRejectsBadHostIP(t *testing.T) {
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, rc, dialDNS(roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return jsonResp(200, `{"success":true,"result":[]}`), nil
 	})))
-	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	for _, badIP := range []string{"", "not-an-ip", "2001:db8::1", "example.com"} {
 		_, err := svc.AllocateSubdomain(ctx, AllocateInput{
-			ProviderID: p.ID, ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: badIP,
+			ProviderID: p.ID, Zone: "example.com",
+			ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: badIP,
 		})
 		if !errors.Is(err, ErrAllocate) {
 			t.Fatalf("非法 hostIP %q 应 ErrAllocate, got %v", badIP, err)
@@ -345,16 +385,70 @@ func TestAllocateSubdomainRejectsBadHostIP(t *testing.T) {
 	}
 }
 
+// 随机后缀推不出所属区,故区必须由调用方给;给了仍要先过两道闸:格式合法 + 确实在这个凭据
+// 账号的托管清单里。第二道是权限边界 —— 一份只托管 example.com 的凭据不该被拿去在别的域下建记录。
+func TestAllocateSubdomainRejectsZone(t *testing.T) {
+	ctx := context.Background()
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/zones") && r.Method == http.MethodGet {
+			return jsonResp(200, `{"success":true,"result":[{"id":"z1","name":"example.com"}]}`), nil
+		}
+		return jsonResp(200, `{"success":true,"result":[]}`), nil
+	})
+	rc := &stubRouteCreator{}
+	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, rc, dialDNS(rt))
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
+
+	// 格式闸:还没触网就该拦住。
+	for _, badZone := range []string{"", "  ", "*.example.com", "not a domain", "203.0.113.5"} {
+		_, err := svc.AllocateSubdomain(ctx, AllocateInput{
+			ProviderID: p.ID, Zone: badZone,
+			ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
+		})
+		if !errors.Is(err, ErrAllocate) {
+			t.Fatalf("非法根域 %q 应 ErrAllocate, got %v", badZone, err)
+		}
+	}
+	if len(rc.calls) != 0 {
+		t.Fatalf("非法根域不应建任何路由")
+	}
+
+	// 归属闸:别的域(哪怕格式合法)不归这份凭据管 → ErrNoHostedZone,且不建记录/路由。
+	_, err := svc.AllocateSubdomain(ctx, AllocateInput{
+		ProviderID: p.ID, Zone: "other.com",
+		ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
+	})
+	if !errors.Is(err, ErrNoHostedZone) {
+		t.Fatalf("未托管的根域应 ErrNoHostedZone, got %v", err)
+	}
+	if len(rc.calls) != 0 {
+		t.Fatalf("区推导失败不应建任何路由")
+	}
+
+	// 只托管父区时选子域是允许的(NS 未切下去,父区仍然负责这段名字)。
+	_, err = svc.AllocateSubdomain(ctx, AllocateInput{
+		ProviderID: p.ID, Zone: "preview.example.com",
+		ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
+	})
+	if err != nil {
+		t.Fatalf("子域应落到父区 example.com: %v", err)
+	}
+	if len(rc.calls) != 1 || !strings.HasSuffix(rc.calls[0].Domain, ".preview.example.com") {
+		t.Fatalf("应建一条 preview.example.com 下的路由, got %+v", rc.calls)
+	}
+}
+
 // DNSPod / 阿里云 现已是真实实现;若保险库里存的凭据格式不合约定(DNSPod 须 "id,token"),
-// AllocateSubdomain 应在建 A 记录阶段返回 ErrInvalidCredential 且不建任何路由。
+// AllocateSubdomain 应在第一步(列账号域名推区)就返回 ErrInvalidCredential 且不建任何路由。
 func TestAllocateSubdomainDNSPodBadCredential(t *testing.T) {
 	ctx := context.Background()
 	rc := &stubRouteCreator{}
 	// "dp-token" 无逗号 → 非法 DNSPod 凭据。
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "dp-token"}}, rc, prodDialFactory)
-	p, _ := svc.Create(ctx, CreateInput{Type: "dnspod", Name: "DP", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, _ := svc.Create(ctx, CreateInput{Type: "dnspod", Name: "DP", CredentialID: "cred-1"})
 	_, err := svc.AllocateSubdomain(ctx, AllocateInput{
-		ProviderID: p.ID, ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
+		ProviderID: p.ID, Zone: "example.com",
+		ServerID: "srv-1", UpstreamContainer: "web", UpstreamPort: 80, HostIP: "203.0.113.5",
 	})
 	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("DNSPod 坏凭据应 ErrInvalidCredential, got %v", err)
@@ -370,7 +464,7 @@ func TestProviderViewHasNoToken(t *testing.T) {
 	ctx := context.Background()
 	const secret = "super-secret-cf-token"
 	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": secret}}, nil, prodDialFactory)
-	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1", BaseDomain: "example.com"})
+	p, err := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -391,5 +485,5 @@ func TestProviderViewHasNoToken(t *testing.T) {
 }
 
 func provString(p Provider) string {
-	return strings.Join([]string{p.ID, p.Type, p.Name, p.CredentialID, p.BaseDomain}, "|")
+	return strings.Join([]string{p.ID, p.Type, p.Name, p.CredentialID}, "|")
 }
