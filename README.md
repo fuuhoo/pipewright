@@ -60,6 +60,7 @@
 - **🔐 安全地基** —— 单管理员认证(argon2id + CSRF)· 凭据加密保险库(NaCl secretbox,掩码呈现,绝无明文)· OAuth 应用接入 Gitee / GitHub / GitLab / 自建实例(拿到的 access token 直接存成可复用的保险库凭据)· append-only 审计(SQLite trigger 硬拦 UPDATE/DELETE)+ 可选远端 sink · 按 run 解析真实凭据后对日志 / 诊断 / 通知全链路脱敏。
 - **🧩 项目与流水线** —— 可视化编排画布(阶段 DAG + 阶段内任务级 DAG)· 矩阵构建 · 人工审批门(可直接在通知里点签名链接审批)· 旁挂服务(测试挂 DB/Redis)· 阶段 `when` 条件 + 阶段后置步骤 · 类型化运行参数(枚举/布尔/数字,触发时即校验)· 触发方式:webhook、分支→环境映射、5 字段 cron 定时、上游→下游流水线串联(深度门 + 路径门防环)· 项目级并发上限 + 超限 FIFO 排队 · 复用库:流水线模板 / 变量组 / 自定义节点 · 服务端权威合法性校验。
 - **📝 流水线即代码** —— 把流水线结构写进 `.pipewright.yml`、按分支各自演进,画布配置始终作为兜底回退([详见下文](#流水线即代码gitops))。
+- **🤖 AI 经 MCP 操作平台** —— 同一套 8 个工具挂两种形态(HTTP `/mcp` / `pipewright mcp` stdio),AI 客户端能建项目、存流水线、触发构建、读日志、取消运行;鉴权与审计沿用浏览器那条线([详见下文](#ai-接入mcp))。
 - **🏗 隔离构建与产物** —— 版本钉死的容器内隔离构建(docker/nerdctl/podman)· 代码管理区:本地 bare 镜像 + 增量 fetch,秒级出工作区 · 项目依赖缓存:每项目一个固定目录 bind 进构建容器,Maven/npm/Go/pip 跨运行复用,**流水线里零配置** · 项目缓存清单与一键清除:代码镜像 / 依赖缓存在哪、多大当场看得见,怀疑拿到旧代码或旧 SNAPSHOT 时清掉重跑(逐次留审计) · 任务级构建依赖缓存(按分支 + lockfile hash 寻址)· 内容寻址制品库,jar/dist 存**真字节**供部署(而非占位 reference)· 镜像构建 + 推送私有仓库 + 镜像 GC · 每项目可指定远程构建机(构建经 SSH 下沉到远程,token 只留控制机;远程侧按设计不留常驻缓存)· JUnit + Cobertura 测试报告喂质量门禁,不过则阶段失败、阻断下游部署 · 实时终端日志(SSE)+ 历史回放 · 只读代码浏览(Monaco)。
 - **🚀 多服务器部署** —— 经 SSH 免 Agent 部署 · 产物直铺到指定目录(`jar`/`dist` 落进去就是内容本身)+ 重启命令 + 健康门控 · 镜像部署停旧起新、失败回滚上一镜像 · **compose 整栈交付**(仓库里那份 `docker-compose.yml` 直接交目标机的 compose CLI,与「容器」页管的是同一份栈)· **K8s 发布**(平台直连集群 API,不经跳板机)· 多机并行扇出 + 部分失败可见 · 命令型部署(无产物,直接重启服务)· **环境一等公民**:逐环境部署时间线、当前活跃版本、一键回滚到上一次全成功部署 · 环境晋级流(dev→staging→prod)+ 逐环境变量/密钥 + 审批门。
 - **🌐 自动 HTTPS + 域名反向代理** —— 每台目标主机一个托管 Caddy 容器,复用与容器运维同一套 SSH + docker 手法编排(渲染 Caddyfile → `docker cp` → 优雅 reload)。证书经 Let's Encrypt 自动签发/续期:HTTP-01,或**经 Cloudflare / DNSPod / 阿里云 DNS 走 DNS-01**(通配符必需)。另有:多域名别名、路径路由(`/api`→A、`/`→B)、重定向、访问控制(basic auth、IP 允许/拒绝 CIDR)、HSTS / 安全头 / 压缩、多上游负载均衡 + 主动健康检查故障转移、WebSocket / gRPC(h2c) / TCP 透传(caddy-l4)、按真实 443 握手探测的证书大盘、一键子域名。
@@ -502,6 +503,62 @@ stages:
 ```
 
 > 也可用全局环境变量 `PIPEWRIGHT_PAC_RUNTIME=1` 对**所有项目**强制开启流水线即代码(无视各项目开关),供向后兼容 / 高级用户使用。
+
+## AI 接入(MCP)
+
+让 AI 客户端(Claude Code / Cursor / 任何 MCP 客户端)替你把活干了:建项目、把流水线存进去、触发构建、读日志、必要时取消。
+
+**第一步永远是发一把 API 令牌**:网页「设置 → API 令牌」→ 签发令牌。令牌**代表某个具体账号干活**,权限与那人本人登录时完全一致(默认签给当前登录者,也可以指定归属人);平台只存摘要,明文**只在签发那一次**给出,关掉窗口就再也读不回来,丢了只能撤销重发。
+
+**两种接入形态,同一套工具、同一把令牌**(页面签发后会直接把可复制的片段给你):
+
+```jsonc
+// stdio:客户端拉起 pipewright mcp,由这个进程反向连到平台。
+// 平台在内网、不想给本机开端口时用这条。令牌放 env 别放 args —— 同机其他人 ps 就能看到命令行明文。
+{
+  "mcpServers": {
+    "pipewright": {
+      "command": "pipewright",
+      "args": ["mcp"],
+      "env": { "PIPEWRIGHT_URL": "https://pipewright.example.com", "PIPEWRIGHT_TOKEN": "pwt_…" }
+    }
+  }
+}
+```
+
+```jsonc
+// HTTP:客户端直连平台的 /mcp。能摸到平台端口时用这条,机器上不用装二进制。
+{
+  "mcpServers": {
+    "pipewright": {
+      "type": "http",
+      "url": "https://pipewright.example.com/mcp",
+      "headers": { "Authorization": "Bearer pwt_…" }
+    }
+  }
+}
+```
+
+**工具面刻意只做 8 个**,覆盖「从空项目到一次可复盘的构建」这条链:
+
+| 工具 | 作用 |
+| --- | --- |
+| `list_projects` | 列令牌可见的项目;拿 `id` 供其余工具用 |
+| `create_project` | 建项目(可只给 `name` 建纯发布型;要绑仓库必须同时给 `repoUrl` + `credentialId`) |
+| `list_build_envs` | 列预置构建环境;拿 `id` 填进流水线 `config.buildEnvId` |
+| `set_pipeline` | 用一份 `.pipewright.yml` **整条覆盖**项目流水线(schema 与上面「流水线即代码」同一套) |
+| `trigger_run` | 触发一次运行,**立即返回**不等构建跑完 |
+| `get_run` | 运行详情:整体 status + 每个步骤的状态/耗时 + 产物清单 + 部署落点 |
+| `get_run_logs` | 日志压成纯文本,每行前缀标步骤与流;`sinceSeq` 续读、`maxChars` 控预算 |
+| `cancel_run` | 取消排队/运行中的构建;已结束的返回 409 `run_not_cancelable` |
+
+**为什么不会出现「网页上做不了、AI 却做得了」的口子**:这层工具不另写一套 service 调用,而是带着调用方令牌**回环打平台自己的 REST**——角色功能档位、分组数据范围、错误码、审计 actor 全部沿用浏览器那条线。带 Bearer 令牌的请求天然免 CSRF(那是浏览器会话的防线),其余校验一条不少。
+
+**审计口径**:令牌本身只留两条痕——`api_token_create` / `api_token_revoke`(出事后要能回答「这把泄露的令牌哪天作废的」)。每次用令牌调接口**不**逐条记「谁用了哪把令牌」,那些动作本来就以归属人的 actor 落在各自业务线(`project_create`、`run_trigger_manual`……),再叠一层只会把流水刷满。
+
+**两个坑**(工具描述里也各写了一遍,但值得先知道):
+- 项目若从没配过流水线就触发,平台按默认空流水线跑,结果是「成功但什么都没做」的假绿灯——**先 `set_pipeline` 再 `trigger_run`**。
+- `trigger_run` 返回 `queued` 不等于跑完了,判成败看 `get_run` 的终态 + 各步骤,别只看这一条。
 
 ## 技术栈
 
