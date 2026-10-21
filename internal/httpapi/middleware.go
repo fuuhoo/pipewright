@@ -20,16 +20,45 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/apitoken"
 	"github.com/fuuhoo/pipewright/internal/auth"
 )
 
 // requireAuth 中间件:校验会话 cookie → 注入 Session 到 context;未过 → 401 JSON。
 //
 // 阶段 8 抽出:原位于 router.go。
-func requireAuth(svc auth.Authenticator, next http.Handler) http.Handler {
+//
+// 两条凭据通路,按请求头分流,互不回落:
+//   - `Authorization: Bearer <API 令牌>` → 走 tokens(机器客户端:MCP、脚本)。
+//     校验不过直接 401,**绝不退回试 cookie** —— 同一请求同时带两种凭据时若允许回落,
+//     一个能诱导管理员发请求的页面就能借她的会话冒充「令牌持有者」做事(confused deputy)。
+//   - 其余(带会话 cookie 的浏览器)→ 走 svc.Verify。
+//
+// tokens 为 nil(未装配令牌子系统)时,带 Bearer 的请求一律 401;不带 Bearer 的行为不变。
+func requireAuth(svc auth.Authenticator, tokens bearerVerifier, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if plain, ok := bearerToken(r); ok {
+			if tokens == nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "API 令牌未启用")
+				return
+			}
+			p, err := tokens.Verify(r.Context(), plain)
+			if err != nil {
+				// 领域侧把「不存在 / 已撤销 / 归属人被禁用」抹平成同一个 ErrInvalid,
+				// 这里也一律 401:无效令牌换不到任何关于原因的信息。
+				writeError(w, http.StatusUnauthorized, "invalid_api_token", "API 令牌无效或已撤销")
+				return
+			}
+			// 令牌会话不落 sessions 表:每次调用现查 users,权限改动即时生效,撤销也没有残留。
+			sess := &auth.Session{UserID: p.UserID, Role: p.Role, Username: p.Username}
+			ctx := context.WithValue(r.Context(), contextKeySession, sess)
+			ctx = context.WithValue(ctx, contextKeyAPIToken, p.TokenID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if svc == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
@@ -54,6 +83,59 @@ func requireAuth(svc auth.Authenticator, next http.Handler) http.Handler {
 	})
 }
 
+// bearerVerifier 校验 API 令牌明文并取回归属人。由 *apitoken.Service 实现。
+type bearerVerifier interface {
+	Verify(ctx context.Context, plaintext string) (*apitoken.Principal, error)
+}
+
+// bearerForOption 把 Option 里的具体类型转成中间件要的接口值。
+//
+// 必须经这一手:nil 的 *apitoken.Service 直接赋给 bearerVerifier 得到的是「非 nil 接口 + nil 指针」,
+// requireAuth 里 `tokens == nil` 那道降级判据就形同虚设,带 Bearer 的请求会在解引用处 panic 成 500。
+func bearerForOption(svc *apitoken.Service) bearerVerifier {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+// bearerScheme 是 Authorization 头里令牌凭据的scheme前缀。
+const bearerScheme = "Bearer "
+
+// bearerToken 取请求头里的 Bearer 凭据。第二个返回值为 false 表示这不是令牌请求。
+func bearerToken(r *http.Request) (string, bool) {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, bearerScheme) {
+		return "", false
+	}
+	return strings.TrimSpace(h[len(bearerScheme):]), true
+}
+
+// apiTokenIDFromRequest 返回本次请求所用的 API 令牌 id;非令牌请求为空串。
+//
+// 令牌请求没有对应的 sessions 行,凡是拿 sess.Token 当身份用的端点(如 OAuth 绑定键)
+// 必须先用它挡下来,否则会写出一个「谁都对不上」的绑定。
+func apiTokenIDFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	id, _ := r.Context().Value(contextKeyAPIToken).(string)
+	return id
+}
+
+// requireBrowserSession 挡下「用 API 令牌调用必须依赖浏览器会话的端点」。
+//
+// OAuth 授权流把 state 与会话 token 绑死(防 CSRF),而令牌请求根本没有 sessions 行:
+// 放行只会签发一个绑定键为空、回调时谁也认不回来的 state,不如当场讲清楚该怎么做。
+func requireBrowserSession(w http.ResponseWriter, r *http.Request) bool {
+	if apiTokenIDFromRequest(r) != "" {
+		writeError(w, http.StatusUnprocessableEntity, "browser_session_required",
+			"该操作涉及浏览器跳转,需要用登录会话而不是 API 令牌")
+		return false
+	}
+	return true
+}
+
 // sessionFromContext 从已认证的 context 取 Session。
 func sessionFromContext(ctx context.Context) (*auth.Session, bool) {
 	sess, ok := ctx.Value(contextKeySession).(*auth.Session)
@@ -64,11 +146,20 @@ func sessionFromContext(ctx context.Context) (*auth.Session, bool) {
 //
 // GET/HEAD/OPTIONS 豁免;未注入 session → 403。
 //
+// API 令牌请求整体豁免:CSRF 防的是「浏览器被诱导时自动带上已有凭据」(cookie),而
+// Authorization 头不会由浏览器跨站自动附带 —— 令牌要么调用方自己带,要么根本没有,
+// 威胁模型不成立。更何况 MCP 这类客户端拿不到签发在 cookie 里的 CSRF token,不豁免就等于
+// 把所有写端点锁死成只能浏览器用。
+//
 // 阶段 8 抽出:原位于 router.go。
 func requireCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if apiTokenIDFromRequest(r) != "" {
 			next.ServeHTTP(w, r)
 			return
 		}

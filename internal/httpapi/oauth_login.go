@@ -310,6 +310,9 @@ func makeOAuthBindStartHandler(svc oauth.Service) http.HandlerFunc {
 			writeError(w, http.StatusUnprocessableEntity, "session_unbound", "当前会话无法绑定外部身份,请重新登录")
 			return
 		}
+		if !requireBrowserSession(w, r) {
+			return
+		}
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "OAuth 服务未初始化")
 			return

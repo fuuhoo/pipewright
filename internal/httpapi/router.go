@@ -15,6 +15,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/ai"
 	"github.com/fuuhoo/pipewright/internal/anomaly"
+	"github.com/fuuhoo/pipewright/internal/apitoken"
 	"github.com/fuuhoo/pipewright/internal/approval"
 	"github.com/fuuhoo/pipewright/internal/artifactstore"
 	"github.com/fuuhoo/pipewright/internal/audit"
@@ -63,7 +64,12 @@ const (
 // contextKey 用于 context 值键,避免冲突。
 type contextKey int
 
-const contextKeySession contextKey = 1
+const (
+	contextKeySession contextKey = 1
+	// contextKeyAPIToken 存本次请求所用 API 令牌的行 id(string 类型)。
+	// 只在 requireAuth 走 Bearer 分支时注入:CSRF 豁免与「需要浏览器会话」的门都看它。
+	contextKeyAPIToken contextKey = 2
+)
 
 // Option 配置 New 构建的路由(如注入凭据保险库)。
 type Option func(*options)
@@ -126,6 +132,9 @@ type options struct {
 	buildEnvCheck *buildenv.Checker
 	cpSvc         *configprofile.Service
 	usersSvc      *users.Service
+	// apiTokens 是机器客户端(MCP、脚本)用的 Bearer 凭据领域服务。
+	// nil → 带 Authorization: Bearer 的请求一律 401,/api/admin/api-tokens* 回 503。
+	apiTokens *apitoken.Service
 	// P4 可配置角色:自定义角色的领域服务。nil → /api/admin/roles* 端点 503。
 	roleSvc *role.Service
 	// v6.2 分组权限:分组领域服务 + 判定服务。access 为 nil 时中间件直通(见 access_guard.go)。
@@ -342,6 +351,12 @@ func WithUsers(svc *users.Service) Option {
 	return func(o *options) { o.usersSvc = svc }
 }
 
+// WithAPITokens 注入 API 令牌领域服务:既挂 /api/admin/api-tokens*(发放与撤销),
+// 又让 requireAuth 认 `Authorization: Bearer`。nil → 令牌请求一律 401,管理端点 503。
+func WithAPITokens(svc *apitoken.Service) Option {
+	return func(o *options) { o.apiTokens = svc }
+}
+
 // WithAISettings 注入可配置 AI 提供商服务(Story 7.1),挂载 /api/settings/ai* 路由
 // (GET auth;PUT/test auth + CSRF)。不传则相关端点返回 503;AI 未配置/未启用时
 // 下游优雅禁用,核心 CI/CD 完全不依赖此服务(NFR-10)。
@@ -546,6 +561,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 	r.Get("/version", handleVersion)
 
 	svc := authn
+	// 令牌校验器走这一层转换才有 nil 语义(见 bearerForOption);两处鉴权入口共用同一个值。
+	tokens := bearerForOption(o.apiTokens)
 
 	// Auth 端点:登录/登出/会话探测(见冻结契约)。
 	r.Route("/api/auth", func(ar chi.Router) {
@@ -553,7 +570,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/session", makeSessionHandler(svc, o.usersSvc))
 		// 登出属写操作:先认证后 CSRF。
 		ar.Post("/logout", func(w http.ResponseWriter, r *http.Request) {
-			requireAuth(svc, requireCSRF(makeLogoutHandler(svc))).ServeHTTP(w, r)
+			requireAuth(svc, tokens, requireCSRF(makeLogoutHandler(svc))).ServeHTTP(w, r)
 		})
 		// OAuth 登录(匿名可访问,本组在 requireAuth 之外;GET 免 CSRF)。
 		// 与「已登录用户连接 git 凭据」那条流刻意分开:回调地址不同、应用配置表不同,
@@ -583,7 +600,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 	// 受保护 API 端点(除 /api/auth 与 /api/webhooks 外):requireAuth + 写方法 requireCSRF。
 	r.Route("/api", func(ar chi.Router) {
 		ar.Use(func(next http.Handler) http.Handler {
-			return requireAuth(svc, next)
+			return requireAuth(svc, tokens, next)
 		})
 		ar.Use(func(next http.Handler) http.Handler {
 			return requireCSRF(next)
@@ -659,6 +676,12 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			adminR.Post("/users/{id}/password", makeResetUserPasswordHandler(o.usersSvc, aud, authn))
 			adminR.Patch("/users/{id}", makePatchUserHandler(o.usersSvc, aud, authn))
 			adminR.Delete("/users/{id}", makeDeleteUserHandler(o.usersSvc, aud, authn))
+
+			// API 令牌(Bearer):给 MCP 客户端与脚本发凭据。明文只在创建响应里出现一次,
+			// 之后任何端点都读不回来 —— 所以这里没有「查看」,只有列元数据与撤销。
+			adminR.Get("/api-tokens", makeListAPITokensHandler(o.apiTokens))
+			adminR.Post("/api-tokens", makeCreateAPITokenHandler(o.apiTokens, aud, authn))
+			adminR.Delete("/api-tokens/{id}", makeRevokeAPITokenHandler(o.apiTokens, aud, authn))
 
 			// 角色(P4 可配置角色):内置只剩 admin 一档当模板只读;四档预置(0063 起在库里)
 			// 与自建角色同样可增删改。

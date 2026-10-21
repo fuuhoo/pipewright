@@ -171,6 +171,14 @@ const (
 	// ActionCertCheck 是页面上的「立即检查」:它会就地续期并自动铺发,不只是一次只读扫描,
 	// 所以要留痕 —— 事后看「这张证书什么时候被谁触发的续期」,这一条和后台扫描器能区分开。
 	ActionCertCheck = "cert_check"
+
+	// API 令牌(Bearer,机器客户端用)只记两件事:签发与撤销。
+	// 每次用令牌调接口**不**逐条审计 —— 那些动作本来就以归属人的 actor 落在各自业务线上
+	// (project_create / run_trigger_manual …),再补一层「谁用了哪把令牌」只会把流水刷满,
+	// 而真正要复盘的是「这把令牌什么时候发出去、什么时候收回来」。
+	// 撤销必须留痕且不只在列表里消失:出事后要能回答「这把泄露的令牌是哪天作废的」。
+	ActionAPITokenCreate = "api_token_create"
+	ActionAPITokenRevoke = "api_token_revoke"
 )
 
 // 目标类型枚举(供 TargetType 填值;非强制白名单,便于后续 story 扩展)。
@@ -199,6 +207,9 @@ const (
 	TargetCertDeployment = "cert_target"
 	// TargetACMEAccount 与既有 TargetAccount(用户账户)不通用:这里记的是 CA 侧的账户密钥归属。
 	TargetACMEAccount = "acme_account"
+	// TargetAPIToken 是一枚 API 令牌。与 TargetAccount 分开:令牌能离开浏览器长期活着,
+	// 出事时要单独把「哪把凭据」这条线筛出来,而不是混在账号流水里。
+	TargetAPIToken = "api_token"
 )
 
 // Entry 是一条审计写入入参(冻结契约)。Detail 写库前过 Masker,绝不含明文 secret。

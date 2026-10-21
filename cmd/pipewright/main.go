@@ -22,6 +22,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/ai"
 	"github.com/fuuhoo/pipewright/internal/anomaly"
+	"github.com/fuuhoo/pipewright/internal/apitoken"
 	"github.com/fuuhoo/pipewright/internal/approval"
 	"github.com/fuuhoo/pipewright/internal/artifactstore"
 	"github.com/fuuhoo/pipewright/internal/audit"
@@ -120,6 +121,10 @@ func main() {
 	// 装配认证服务(nil clock → RealClock);userSyncer 注入 users 包,实现
 	// Bootstrap/ChangePassword 时 admin_user 与 users 表双向同步。
 	usersSvc := users.NewService(st.DB)
+
+	// 装配 API 令牌(Bearer):MCP 客户端与脚本用它访问 /api。校验结果每次从 users 现查,
+	// 所以改角色、禁用账号、撤销令牌都在下一次调用即刻生效,不需要任何缓存失效逻辑。
+	apiTokenSvc := apitoken.NewService(st.DB)
 
 	// 装配资源分组(v6.2 分组权限):group.Service 既是 /api/groups 的领域服务,
 	// 也充当 access 判定的归属仓储;两者共用一个实例,避免同一份名册两处缓存。
@@ -723,7 +728,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithProjectCopy(projectCopySvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithProjectCache(repoCache, projectCacheLayout), httpapi.WithArtifactStore(artStore), httpapi.WithServers(targetSvc), httpapi.WithKubeClusters(kubeSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithCerts(certSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithOAuthLogin(identitySvc, authSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithGroups(groupSvc), httpapi.WithRoles(roleSvc), httpapi.WithAccess(accessSvc)),
+		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithProjectCopy(projectCopySvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithProjectCache(repoCache, projectCacheLayout), httpapi.WithArtifactStore(artStore), httpapi.WithServers(targetSvc), httpapi.WithKubeClusters(kubeSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithCerts(certSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithOAuthLogin(identitySvc, authSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithAPITokens(apiTokenSvc), httpapi.WithGroups(groupSvc), httpapi.WithRoles(roleSvc), httpapi.WithAccess(accessSvc)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// WriteTimeout 置 0:SSE 长连接(/api/runs/{id}/events)不可被写超时切断;

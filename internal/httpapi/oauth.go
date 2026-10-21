@@ -141,16 +141,21 @@ type vaultCreator interface {
 // 该 provider 未配置/未启用 → 422(JSON);state 生成失败 → 500。
 func makeOAuthAuthorizeHandler(svc oauth.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if svc == nil {
-			writeError(w, http.StatusServiceUnavailable, "internal", "OAuth 服务未初始化")
-			return
-		}
-		provider := chi.URLParam(r, "provider")
 		sess, ok := sessionFromContext(r.Context())
 		if !ok || sess == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
 		}
+		// 令牌进来的请求一律挡在浏览器流之外,且判在「服务有没有装配」之前:state 要绑会话 token,
+		// 令牌请求没有 token,继续走下去只会写出一个绑键为空的幽灵 state。
+		if !requireBrowserSession(w, r) {
+			return
+		}
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "OAuth 服务未初始化")
+			return
+		}
+		provider := chi.URLParam(r, "provider")
 		// 用会话 token 作 bindKey(state 与发起授权的会话绑死,防 CSRF)。
 		state, err := svc.IssueState(oauth.StateIssue{
 			Intent: oauth.IntentVault, Provider: provider, BindKey: sess.Token,
@@ -201,6 +206,9 @@ func makeOAuthCallbackHandler(d oauthCallbackDeps) http.HandlerFunc {
 		sess, ok := sessionFromContext(r.Context())
 		if !ok || sess == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
+			return
+		}
+		if !requireBrowserSession(w, r) {
 			return
 		}
 		q := r.URL.Query()
