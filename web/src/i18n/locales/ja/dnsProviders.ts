@@ -1,6 +1,6 @@
 export default {
   title: 'DNS プロバイダー',
-  desc: 'Cloudflare / DNSPod / Alibaba Cloud DNS を接続すると DNS-01 でワイルドカード証明書を発行し、ワンクリックでサブドメインを割り当てられます。API トークンは書き込み専用 — ボールトに保存され二度と表示されません。',
+  desc: 'Cloudflare / DNSPod / Alibaba Cloud / Tencent Cloud / Baidu Cloud / Volcengine DNS を接続すると DNS-01 でワイルドカード証明書を発行し、ワンクリックでサブドメインを割り当てられます。API トークンは書き込み専用 — ボールトに保存され二度と表示されません。',
   addProvider: 'DNS プロバイダーを追加',
   addFirstProvider: '最初の DNS プロバイダーを追加',
   panelTitle: 'DNS プロバイダー',
@@ -9,6 +9,9 @@ export default {
   typeCloudflare: 'Cloudflare',
   typeDnspod: 'DNSPod',
   typeAlidns: 'Alibaba Cloud DNS',
+  typeTencentcloud: 'Tencent Cloud DNS',
+  typeBaidudns: 'Baidu Cloud DNS',
+  typeVolcengine: 'Volcengine クラウド DNS',
   // 列表列
   colName: '名前',
   colType: '種類',
@@ -47,6 +50,15 @@ export default {
   tokenHintCloudflare: 'このゾーンの DNS レコードへの読み書き権限が必要です。作成時に一度だけ送信され、返却されません。',
   tokenHintDnspod: 'DNSPod の「ID,Token」(カンマ区切り)を入力します。DNSPod コンソールの「キー管理」で作成。作成時に一度だけ送信され、返却されません。',
   tokenHintAlidns: 'Alibaba Cloud RAM の「AccessKeyId,AccessKeySecret」(カンマ区切り)を入力します。Alidns の読み書き権限が必要です。作成時に一度だけ送信され、返却されません。',
+  fieldTokenTencentcloud: 'API クレデンシャル (SecretId,SecretKey)',
+  tokenPlaceholderTencentcloud: 'SecretId,SecretKey',
+  tokenHintTencentcloud: 'Tencent Cloud の「SecretId,SecretKey」(カンマ区切り)を入力します。コンソールの「アクセス管理 CAM → API キー管理」で作成し、クラウド DNS の読み書き権限を付けてください。作成時に一度だけ送信され、再表示されません。',
+  fieldTokenBaidudns: 'API クレデンシャル (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderBaidudns: 'AccessKeyID,SecretAccessKey',
+  tokenHintBaidudns: 'Baidu Cloud の「AccessKeyID,SecretAccessKey」(カンマ区切り)を入力します。コンソールの「セキュリティと認証 → 認証情報管理」で作成し、クラウド DNS の読み書き権限を付けてください。注意: Baidu は DNS-01 での証明書発行のみで、マネージドリバースプロキシのルートにはまだ紐付けできません。作成時に一度だけ送信され、再表示されません。',
+  fieldTokenVolcengine: 'API クレデンシャル (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderVolcengine: 'AccessKeyID,SecretAccessKey',
+  tokenHintVolcengine: 'Volcengine の「AccessKeyID,SecretAccessKey」(カンマ区切り)を入力します。コンソールの「アクセス管理 IAM → API アクセスキー」で作成し、クラウド DNS の読み書き権限を付けてください。Volcengine のレコード反映は約 3〜6 分かかり、発行が遅れるのは想定内です。作成時に一度だけ送信され、再表示されません。',
   // 校验
   valNameRequired: '名前を入力してください。',
   valBaseDomainRequired: 'ベースドメインを入力してください。',

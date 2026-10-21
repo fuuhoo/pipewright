@@ -1,6 +1,6 @@
 export default {
   title: 'DNS 공급자',
-  desc: 'Cloudflare / DNSPod / Alibaba Cloud DNS를 연결하면 DNS-01 검증으로 와일드카드 인증서를 발급하고 서브도메인을 원클릭으로 할당할 수 있습니다. API 토큰은 쓰기 전용 — 보관소에 저장되며 다시 표시되지 않습니다.',
+  desc: 'Cloudflare / DNSPod / Alibaba Cloud / Tencent Cloud / Baidu Cloud / Volcengine DNS를 연결하면 DNS-01 검증으로 와일드카드 인증서를 발급하고 서브도메인을 원클릭으로 할당할 수 있습니다. API 토큰은 쓰기 전용 — 보관소에 저장되며 다시 표시되지 않습니다.',
   addProvider: 'DNS 공급자 추가',
   addFirstProvider: '첫 DNS 공급자 추가',
   panelTitle: 'DNS 공급자',
@@ -9,6 +9,9 @@ export default {
   typeCloudflare: 'Cloudflare',
   typeDnspod: 'DNSPod',
   typeAlidns: 'Alibaba Cloud DNS',
+  typeTencentcloud: 'Tencent Cloud DNS',
+  typeBaidudns: 'Baidu Cloud DNS',
+  typeVolcengine: 'Volcengine 클라우드 DNS',
   // 列表列
   colName: '이름',
   colType: '유형',
@@ -47,6 +50,15 @@ export default {
   tokenHintCloudflare: '이 존의 DNS 레코드에 대한 읽기/쓰기 권한이 필요합니다. 생성 시 한 번만 전송되며 반환되지 않습니다.',
   tokenHintDnspod: 'DNSPod의 "ID,Token"(쉼표 구분)을 입력하세요. DNSPod 콘솔의 "키 관리"에서 생성합니다. 생성 시 한 번만 전송되며 반환되지 않습니다.',
   tokenHintAlidns: 'Alibaba Cloud RAM의 "AccessKeyId,AccessKeySecret"(쉼표 구분)을 입력하세요. Alidns 읽기/쓰기 권한이 필요합니다. 생성 시 한 번만 전송되며 반환되지 않습니다.',
+  fieldTokenTencentcloud: 'API 자격 증명 (SecretId,SecretKey)',
+  tokenPlaceholderTencentcloud: 'SecretId,SecretKey',
+  tokenHintTencentcloud: 'Tencent Cloud의 "SecretId,SecretKey"(쉼표로 구분)을 입력합니다. 콘솔의 \'접근 관리 CAM > API 키 관리\'에서 생성하고 클라우드 DNS 읽기/쓰기 권한을 부여하세요. 생성 시 한 번만 전송되며 다시 표시되지 않습니다.',
+  fieldTokenBaidudns: 'API 자격 증명 (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderBaidudns: 'AccessKeyID,SecretAccessKey',
+  tokenHintBaidudns: 'Baidu Cloud의 "AccessKeyID,SecretAccessKey"(쉼표로 구분)을 입력합니다. 콘솔의 \'보안 및 인증 > 인증 정보 관리\'에서 생성하고 클라우드 DNS 읽기/쓰기 권한을 부여하세요. 참고: Baidu는 DNS-01 인증서 발급에만 사용할 수 있고, 관리형 리버스 프록시 라우팅에는 아직 연결할 수 없습니다. 생성 시 한 번만 전송되며 다시 표시되지 않습니다.',
+  fieldTokenVolcengine: 'API 자격 증명 (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderVolcengine: 'AccessKeyID,SecretAccessKey',
+  tokenHintVolcengine: 'Volcengine의 "AccessKeyID,SecretAccessKey"(쉼표로 구분)을 입력합니다. 콘솔의 \'접근 관리 IAM > API 접근 키\'에서 생성하고 클라우드 DNS 읽기/쓰기 권한을 부여하세요. Volcengine 레코드 반영에는 약 3~6분이 걸리므로 발급이 느린 것은 정상입니다. 생성 시 한 번만 전송되며 다시 표시되지 않습니다.',
   // 校验
   valNameRequired: '이름을 입력하세요.',
   valBaseDomainRequired: '기본 도메인을 입력하세요.',

@@ -2,12 +2,13 @@
 /*
   SettingsDnsProviders.vue — DNS 提供商管理(R3 / E3.1 · 零 DNS 体验)。
 
-  挂接 Cloudflare / DNSPod / 阿里云 DNS,解锁两件事:① 路由走 DNS-01 验证 → 通配符证书;
-  ② 一键分配子域名(app-xxxx.<根域> + 自动 A 记录 + 路由)。API Token 只写不读 —— 存入保险库,
-  列表只显示「已配置 / 未配置」,绝不回显。
+  挂接 Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎的托管域名,解锁两件事:
+  ① 路由走 DNS-01 验证 → 通配符证书;② 一键分配子域名(app-xxxx.<根域> + 自动 A 记录 + 路由)。
+  另有一条独立通路:证书管理页可直接用其中任一提供商落 DNS-01 的 TXT 记录。
+  API Token 只写不读 —— 存入保险库,列表只显示「已配置 / 未配置」,绝不回显。
 
   - 列表:类型徽章、名称、根域、凭据状态;每行「验证」(探测 token 是否能触达该 zone)+ 删除。
-  - 添加弹窗:类型(三选一)+ 名称 + 根域(FQDN 校验)+ API Token(必填,password)。
+  - 添加弹窗:类型(六选一)+ 名称 + 根域(FQDN 校验)+ API Token(必填,password)。
   - 删除二次确认。验证结果以 toast 反馈。
   数据来自 GET /api/dns/providers(只读聚合,从不含 token)。
 */
@@ -36,11 +37,14 @@ const loadState = ref<LoadState>('idle')
 const loadError = ref('')
 const providers = ref<DnsProvider[]>([])
 
-const PROVIDER_TYPES: DnsProviderType[] = ['cloudflare', 'dnspod', 'alidns']
+const PROVIDER_TYPES: DnsProviderType[] = ['cloudflare', 'dnspod', 'alidns', 'tencentcloud', 'baidudns', 'volcengine']
 const typeLabels = computed<Record<DnsProviderType, string>>(() => ({
   cloudflare: t('dnsProviders.typeCloudflare'),
   dnspod: t('dnsProviders.typeDnspod'),
   alidns: t('dnsProviders.typeAlidns'),
+  tencentcloud: t('dnsProviders.typeTencentcloud'),
+  baidudns: t('dnsProviders.typeBaidudns'),
+  volcengine: t('dnsProviders.typeVolcengine'),
 }))
 
 // 凭据是单字串字段;按提供商类型给出格式占位 + 提示(后端按逗号切分多段凭据)。
@@ -48,16 +52,25 @@ const tokenPlaceholders = computed<Record<DnsProviderType, string>>(() => ({
   cloudflare: t('dnsProviders.tokenPlaceholderCloudflare'),
   dnspod: t('dnsProviders.tokenPlaceholderDnspod'),
   alidns: t('dnsProviders.tokenPlaceholderAlidns'),
+  tencentcloud: t('dnsProviders.tokenPlaceholderTencentcloud'),
+  baidudns: t('dnsProviders.tokenPlaceholderBaidudns'),
+  volcengine: t('dnsProviders.tokenPlaceholderVolcengine'),
 }))
 const tokenHints = computed<Record<DnsProviderType, string>>(() => ({
   cloudflare: t('dnsProviders.tokenHintCloudflare'),
   dnspod: t('dnsProviders.tokenHintDnspod'),
   alidns: t('dnsProviders.tokenHintAlidns'),
+  tencentcloud: t('dnsProviders.tokenHintTencentcloud'),
+  baidudns: t('dnsProviders.tokenHintBaidudns'),
+  volcengine: t('dnsProviders.tokenHintVolcengine'),
 }))
 const tokenLabels = computed<Record<DnsProviderType, string>>(() => ({
   cloudflare: t('dnsProviders.fieldTokenCloudflare'),
   dnspod: t('dnsProviders.fieldTokenDnspod'),
   alidns: t('dnsProviders.fieldTokenAlidns'),
+  tencentcloud: t('dnsProviders.fieldTokenTencentcloud'),
+  baidudns: t('dnsProviders.fieldTokenBaidudns'),
+  volcengine: t('dnsProviders.fieldTokenVolcengine'),
 }))
 
 async function load(): Promise<void> {
@@ -605,6 +618,21 @@ async function confirmDelete(): Promise<void> {
   border-color: var(--color-amber-line);
   background: var(--color-amber-soft);
 }
+.type-badge--tencentcloud {
+  color: oklch(62% 0.19 258);
+  border-color: oklch(62% 0.19 258 / 0.4);
+  background: oklch(62% 0.19 258 / 0.1);
+}
+.type-badge--baidudns {
+  color: oklch(58% 0.21 288);
+  border-color: oklch(58% 0.21 288 / 0.4);
+  background: oklch(58% 0.21 288 / 0.1);
+}
+.type-badge--volcengine {
+  color: oklch(62% 0.2 25);
+  border-color: oklch(62% 0.2 25 / 0.4);
+  background: oklch(62% 0.2 25 / 0.1);
+}
 
 .dns-name {
   font-size: 0.85rem;
@@ -965,9 +993,11 @@ async function confirmDelete(): Promise<void> {
   line-height: 1.4;
 }
 
-/* segmented */
+/* segmented —— 六个厂商一行三列两行放:单行 flex 时「腾讯云 DNS 解析」这类长标签会在
+   520px 弹窗里换行,而 height 固定 30px 会把第二行裁掉。改 grid + min-height 两者都避免。 */
 .segmented {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   background: var(--color-inset);
   border-radius: var(--rounded);
   padding: 3px;
@@ -975,8 +1005,10 @@ async function confirmDelete(): Promise<void> {
   width: 100%;
 }
 .seg-item {
-  flex: 1;
-  height: 30px;
+  min-height: 30px;
+  padding: 4px 6px;
+  line-height: 1.25;
+  text-align: center;
   border: none;
   background: transparent;
   color: var(--color-dim);

@@ -2,8 +2,9 @@
  * DNS providers API client (R3 / E3.1 — 零 DNS 体验).
  *
  * A `DnsProvider` ties a managed DNS zone (a base domain) to a provider account
- * (Cloudflare / DNSPod / 阿里云 DNS). Its API token is **write-only** — supplied
- * once on creation, stored via the backend vault, and **never** returned. The DTO
+ * (Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎). Its API token is
+ * **write-only** — supplied once on creation, stored via the backend vault, and
+ * **never** returned. The DTO
  * only reflects whether a credential is configured (`credentialConfigured`).
  *
  * Providers unlock two zero-DNS capabilities:
@@ -22,7 +23,25 @@
 import { http } from './http'
 
 /** Supported managed-DNS backends for DNS-01 + instant subdomains. */
-export type DnsProviderType = 'cloudflare' | 'dnspod' | 'alidns'
+export type DnsProviderType =
+  | 'cloudflare'
+  | 'dnspod'
+  | 'alidns'
+  | 'tencentcloud'
+  | 'baidudns'
+  | 'volcengine'
+
+/**
+ * 能被挂到托管反代路由上做 DNS-01 的类型 —— 与后端 proxy.validateDNSProviderRef 同一份名单,
+ * 也和 deploy/caddy/Dockerfile 里捆的 caddy-dns 插件一一对应。
+ * baidudns 只在证书管理那条线可用(平台自己调百度 API 落 TXT);Caddy 没有可信的百度 DNS 插件,
+ * 绑进路由会让整份 Caddyfile 因未知模块起不来。
+ */
+const ROUTE_CAPABLE: readonly DnsProviderType[] = ['cloudflare', 'dnspod', 'alidns', 'tencentcloud', 'volcengine']
+
+export function canAttachToRoute(type: DnsProviderType): boolean {
+  return ROUTE_CAPABLE.includes(type)
+}
 
 /** One managed DNS zone + provider account. The API token is never returned. */
 export interface DnsProvider {

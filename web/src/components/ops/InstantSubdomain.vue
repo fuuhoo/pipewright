@@ -15,7 +15,7 @@ import { RouterLink } from 'vue-router'
 import { NIcon } from 'naive-ui'
 import { Wand, World, ExternalLink, X, Confetti, ArrowRight } from '@vicons/tabler'
 import { allocateSubdomain, type ProxyRoute } from '../../api/reverseProxy'
-import { listDnsProviders, type DnsProvider } from '../../api/dnsProviders'
+import { listDnsProviders, canAttachToRoute, type DnsProvider } from '../../api/dnsProviders'
 import type { ContainerInfo } from '../../api/containers'
 import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
@@ -41,7 +41,8 @@ const providers = ref<DnsProvider[]>([])
 const providersLoaded = ref(false)
 async function loadProviders(): Promise<void> {
   try {
-    providers.value = await listDnsProviders()
+    // 一键分配会同时建路由,故同样只列能挂路由的类型(百度在 Caddy 侧没有可信插件)。
+    providers.value = (await listDnsProviders()).filter((p) => canAttachToRoute(p.type))
   } catch {
     providers.value = []
   } finally {

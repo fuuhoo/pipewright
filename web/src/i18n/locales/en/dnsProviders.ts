@@ -1,6 +1,6 @@
 export default {
   title: 'DNS Providers',
-  desc: 'Attach Cloudflare / DNSPod / Alibaba Cloud DNS to issue wildcard certs via DNS-01 and allocate subdomains in one click. The API token is write-only — stored in the vault, never shown again.',
+  desc: 'Attach Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS to issue wildcard certs via DNS-01 and allocate subdomains in one click. The API token is write-only — stored in the vault, never shown again.',
   addProvider: 'Add DNS provider',
   addFirstProvider: 'Add your first DNS provider',
   panelTitle: 'DNS providers',
@@ -9,6 +9,9 @@ export default {
   typeCloudflare: 'Cloudflare',
   typeDnspod: 'DNSPod',
   typeAlidns: 'Alibaba Cloud DNS',
+  typeTencentcloud: 'TencentCloud DNS',
+  typeBaidudns: 'Baidu Cloud DNS',
+  typeVolcengine: 'Volcengine Cloud DNS',
   // Table columns
   colName: 'Name',
   colType: 'Type',
@@ -47,6 +50,15 @@ export default {
   tokenHintCloudflare: 'Needs read/write access to DNS records for this zone. Sent once on creation, never returned.',
   tokenHintDnspod: 'Enter the DNSPod "ID,Token" (comma-separated), created under "KeyManage" in the DNSPod console. Sent once on creation, never returned.',
   tokenHintAlidns: 'Enter the Alibaba Cloud RAM "AccessKeyId,AccessKeySecret" (comma-separated) with Alidns read/write access. Sent once on creation, never returned.',
+  fieldTokenTencentcloud: 'API credentials (SecretId,SecretKey)',
+  tokenPlaceholderTencentcloud: 'SecretId,SecretKey',
+  tokenHintTencentcloud: 'Enter TencentCloud "SecretId,SecretKey" (comma separated), created under CAM > API Key Management. It needs read/write access to Cloud DNS. Sent once on creation, never shown again.',
+  fieldTokenBaidudns: 'API credentials (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderBaidudns: 'AccessKeyID,SecretAccessKey',
+  tokenHintBaidudns: 'Enter Baidu Cloud "AccessKeyID,SecretAccessKey" (comma separated), created under Security, Authentication > Manage Security Credentials. It needs read/write access to Cloud DNS. Note: Baidu works for DNS-01 issuance only and cannot yet be attached to managed reverse-proxy routes. Sent once on creation, never shown again.',
+  fieldTokenVolcengine: 'API credentials (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderVolcengine: 'AccessKeyID,SecretAccessKey',
+  tokenHintVolcengine: 'Enter Volcengine "AccessKeyID,SecretAccessKey" (comma separated), created under IAM > API Access Key. It needs read/write access to Cloud DNS. Volcengine records take about 3-6 minutes to propagate, so issuance is expected to be slow. Sent once on creation, never shown again.',
   // Validation
   valNameRequired: 'Please enter a name.',
   valBaseDomainRequired: 'Please enter a base domain.',

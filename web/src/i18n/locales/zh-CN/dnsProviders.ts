@@ -1,6 +1,6 @@
 export default {
   title: 'DNS 提供商',
-  desc: '挂接 Cloudflare / DNSPod / 阿里云 DNS,即可走 DNS-01 验证签发通配符证书,并一键分配子域名。API Token 只写不读 —— 存入保险库,绝不回显。',
+  desc: '挂接 Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎 DNS,即可走 DNS-01 验证签发通配符证书,并一键分配子域名。API Token 只写不读 —— 存入保险库,绝不回显。',
   addProvider: '添加 DNS 提供商',
   addFirstProvider: '添加第一个 DNS 提供商',
   panelTitle: 'DNS 提供商',
@@ -9,6 +9,9 @@ export default {
   typeCloudflare: 'Cloudflare',
   typeDnspod: 'DNSPod',
   typeAlidns: '阿里云 DNS',
+  typeTencentcloud: '腾讯云 DNS 解析',
+  typeBaidudns: '百度智能云 DNS',
+  typeVolcengine: '火山引擎云解析',
   // 列表列
   colName: '名称',
   colType: '类型',
@@ -47,6 +50,15 @@ export default {
   tokenHintCloudflare: '需有对该根域的 DNS 记录读写权限。仅在创建时发送一次,绝不回显。',
   tokenHintDnspod: '填 DNSPod 的「ID,Token」(逗号分隔):在 DNSPod 控制台「密钥管理」创建。仅在创建时发送一次,绝不回显。',
   tokenHintAlidns: '填阿里云 RAM 的「AccessKeyId,AccessKeySecret」(逗号分隔),需有云解析 DNS 读写权限。仅在创建时发送一次,绝不回显。',
+  fieldTokenTencentcloud: 'API 密钥(SecretId,SecretKey)',
+  tokenPlaceholderTencentcloud: 'SecretId,SecretKey',
+  tokenHintTencentcloud: '填腾讯云的「SecretId,SecretKey」(逗号分隔):在控制台「访问管理 CAM → API 密钥管理」创建,需有云解析 DNS 读写权限。仅在创建时发送一次,绝不回显。',
+  fieldTokenBaidudns: 'API 凭据(AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderBaidudns: 'AccessKeyID,SecretAccessKey',
+  tokenHintBaidudns: '填百度智能云的「AccessKeyID,SecretAccessKey」(逗号分隔):在控制台「安全与认证 → 管理安全认证」创建,需云解析 DNS 读写权限。注意:百度走 DNS-01 签证书,暂不支持绑到托管反代的路由上。仅在创建时发送一次,绝不回显。',
+  fieldTokenVolcengine: 'API 凭据(AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderVolcengine: 'AccessKeyID,SecretAccessKey',
+  tokenHintVolcengine: '填火山引擎的「AccessKeyID,SecretAccessKey」(逗号分隔):在控制台「访问管理 IAM → API 访问密钥」创建,需云解析 DNS 读写权限。火山记录生效约 3-6 分钟,签发慢属正常。仅在创建时发送一次,绝不回显。',
   // 校验
   valNameRequired: '请填写名称。',
   valBaseDomainRequired: '请填写根域。',

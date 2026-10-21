@@ -27,7 +27,7 @@ import {
   type LbPolicy,
   type TcpPassthrough,
 } from '../../api/reverseProxy'
-import { listDnsProviders, type DnsProvider } from '../../api/dnsProviders'
+import { listDnsProviders, canAttachToRoute, type DnsProvider } from '../../api/dnsProviders'
 import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
 
@@ -102,7 +102,8 @@ function resetFromRoute(): void {
 const dnsProviders = ref<DnsProvider[]>([])
 async function loadDnsProviders(): Promise<void> {
   try {
-    dnsProviders.value = await listDnsProviders()
+    // 只列能挂路由的那几种:Caddy 没有对应的 DNS 插件的类型(如百度)挂上去会让整份配置起不来。
+    dnsProviders.value = (await listDnsProviders()).filter((p) => canAttachToRoute(p.type))
   } catch {
     // 非致命:拉不到就当作没有提供商,下拉只剩「不挂接」。
     dnsProviders.value = []

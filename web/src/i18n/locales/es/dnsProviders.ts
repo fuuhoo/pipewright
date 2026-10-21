@@ -1,6 +1,6 @@
 export default {
   title: 'Proveedores DNS',
-  desc: 'Conecta Cloudflare / DNSPod / Alibaba Cloud DNS para emitir certificados comodín por DNS-01 y asignar subdominios con un clic. El token de API es de solo escritura: se guarda en la bóveda y nunca se vuelve a mostrar.',
+  desc: 'Conecta Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS para emitir certificados comodín por DNS-01 y asignar subdominios con un clic. El token de API es de solo escritura: se guarda en la bóveda y nunca se vuelve a mostrar.',
   addProvider: 'Añadir proveedor DNS',
   addFirstProvider: 'Añadir tu primer proveedor DNS',
   panelTitle: 'Proveedores DNS',
@@ -9,6 +9,9 @@ export default {
   typeCloudflare: 'Cloudflare',
   typeDnspod: 'DNSPod',
   typeAlidns: 'Alibaba Cloud DNS',
+  typeTencentcloud: 'DNS de TencentCloud',
+  typeBaidudns: 'DNS de Baidu Cloud',
+  typeVolcengine: 'DNS de Volcengine',
   // Columnas de la lista
   colName: 'Nombre',
   colType: 'Tipo',
@@ -47,6 +50,15 @@ export default {
   tokenHintCloudflare: 'Necesita permisos de lectura/escritura sobre los registros DNS de esta zona. Se envía una sola vez al crear y nunca se devuelve.',
   tokenHintDnspod: 'Introduce el "ID,Token" de DNSPod (separados por coma), creados en "Gestión de claves" de la consola de DNSPod. Se envía una sola vez al crear y nunca se devuelve.',
   tokenHintAlidns: 'Introduce el "AccessKeyId,AccessKeySecret" de RAM de Alibaba Cloud (separados por coma) con acceso de lectura/escritura a Alidns. Se envía una sola vez al crear y nunca se devuelve.',
+  fieldTokenTencentcloud: 'Credenciales de API (SecretId,SecretKey)',
+  tokenPlaceholderTencentcloud: 'SecretId,SecretKey',
+  tokenHintTencentcloud: 'Introduce «SecretId,SecretKey» de TencentCloud (separados por coma), creados en CAM > Gestión de claves API. Requiere permisos de lectura y escritura en Cloud DNS. Solo se envía al crear y nunca se vuelve a mostrar.',
+  fieldTokenBaidudns: 'Credenciales de API (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderBaidudns: 'AccessKeyID,SecretAccessKey',
+  tokenHintBaidudns: 'Introduce «AccessKeyID,SecretAccessKey» de Baidu Cloud (separados por coma), creados en Seguridad y autenticación > Gestionar credenciales. Requiere permisos de lectura y escritura en Cloud DNS. Nota: Baidu solo sirve para emitir por DNS-01 y de momento no puede vincularse a rutas del proxy gestionado. Solo se envía al crear y nunca se vuelve a mostrar.',
+  fieldTokenVolcengine: 'Credenciales de API (AccessKeyID,SecretAccessKey)',
+  tokenPlaceholderVolcengine: 'AccessKeyID,SecretAccessKey',
+  tokenHintVolcengine: 'Introduce «AccessKeyID,SecretAccessKey» de Volcengine (separados por coma), creados en IAM > Clave de acceso a la API. Requiere permisos de lectura y escritura en Cloud DNS. Los registros de Volcengine tardan entre 3 y 6 minutos en propagarse, así que la emisión lenta es esperable. Solo se envía al crear y nunca se vuelve a mostrar.',
   // Validación
   valNameRequired: 'Introduce un nombre.',
   valBaseDomainRequired: 'Introduce un dominio base.',
