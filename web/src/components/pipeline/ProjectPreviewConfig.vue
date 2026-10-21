@@ -43,7 +43,6 @@ const providers = ref<DnsProvider[]>([])
 
 const FQDN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
 const baseDomainValid = computed(() => FQDN_RE.test(baseDomain.value.trim().toLowerCase()))
-const selectedProvider = computed(() => providers.value.find((p) => p.id === dnsProviderId.value))
 
 // 开启预览必须:选定提供商 + 合法根域。关闭态不校验(可随时保存关闭)。
 const enabledConfigInvalid = computed(
@@ -74,13 +73,6 @@ async function load(): Promise<void> {
 
 onMounted(load)
 watch(() => props.projectId, load)
-
-// 选定提供商时,若根域还空着,顺手填上提供商根域(常见就是它)。
-watch(dnsProviderId, () => {
-  if (selectedProvider.value && !baseDomain.value.trim()) {
-    baseDomain.value = selectedProvider.value.baseDomain
-  }
-})
 
 // ─── 保存 ──────────────────────────────────────────────────────────────────────
 const saving = ref(false)
@@ -156,7 +148,7 @@ const examplePreview = computed(() => {
           <label class="pvc__lbl">{{ t('previewEnvs.config.providerLabel') }}</label>
           <select v-model="dnsProviderId" class="pvc__in">
             <option value="">{{ t('previewEnvs.config.providerNone') }}</option>
-            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }} · {{ p.baseDomain }}</option>
+            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
           <p v-if="providers.length === 0" class="pvc__hint">{{ t('previewEnvs.config.noProviders') }}</p>
         </div>

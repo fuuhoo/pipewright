@@ -1,23 +1,24 @@
 /**
  * DNS providers API client (R3 / E3.1 — 零 DNS 体验).
  *
- * A `DnsProvider` ties a managed DNS zone (a base domain) to a provider account
- * (Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎). Its API token is
- * **write-only** — supplied once on creation, stored via the backend vault, and
- * **never** returned. The DTO
- * only reflects whether a credential is configured (`credentialConfigured`).
+ * A `DnsProvider` is a provider account + the API token stored for it. There is **no**
+ * base domain on this record: which zones a provider can manage lives in the provider
+ * account itself, so the list is read live from the服务商 (`GET /dns/providers/{id}/zones`)
+ * and the zone a record belongs to is derived from the record name at write time.
+ * The token is **write-only** — supplied once on creation, stored via the backend vault,
+ * and **never** returned; the DTO only says whether a credential is configured.
  *
  * Providers unlock two zero-DNS capabilities:
  *  - DNS-01 ACME on a route (wildcard certs `*.example.com`), and
- *  - instant subdomain allocation (`app-xxxx.basedomain` + auto A record + route).
+ *  - instant subdomain allocation (`app-xxxx.<zone>` + auto A record + route).
  *
  * GET    /api/dns/providers              → { items: DnsProvider[] }
  * POST   /api/dns/providers              → DnsProvider           (needs CSRF)
  * DELETE /api/dns/providers/{id}         → { ok: true }          (needs CSRF)
- * POST   /api/dns/providers/{id}/verify  → { ok, message? }      (needs CSRF)
+ * POST   /api/dns/providers/{id}/verify  → { ok, zones }         (needs CSRF)
+ * GET    /api/dns/providers/{id}/zones   → { items: string[] }
  *
- * Writes go through the shared `http` wrapper (auto CSRF + locale). Never returns
- * a token.
+ * Writes go through the shared `http` wrapper (auto CSRF + locale). Never returns a token.
  */
 
 import { http } from './http'
@@ -43,14 +44,12 @@ export function canAttachToRoute(type: DnsProviderType): boolean {
   return ROUTE_CAPABLE.includes(type)
 }
 
-/** One managed DNS zone + provider account. The API token is never returned. */
+/** A provider account + its write-only token. The token is never returned. */
 export interface DnsProvider {
   id: string
   type: DnsProviderType
   /** Human-readable label, e.g. "生产区 Cloudflare". */
   name: string
-  /** The managed zone / apex domain, e.g. `example.com`. Subdomains live under it. */
-  baseDomain: string
   /** Server-derived: whether an API token is stored in the vault. Never the token itself. */
   credentialConfigured: boolean
   createdAt: string
@@ -60,16 +59,15 @@ export interface DnsProvider {
 export interface CreateDnsProviderInput {
   type: DnsProviderType
   name: string
-  baseDomain: string
   /** Provider API token (write-only). Stored via the vault; never returned. */
   token: string
 }
 
-/** Result of a verify call: whether the token can reach the zone, plus a reason. */
+/** Result of a verify call: the zones this provider account actually hosts. */
 export interface VerifyDnsProviderResult {
   ok: boolean
-  /** Human-readable detail (zone name on success, failure reason otherwise). */
-  message?: string
+  /** Hosted zones, normalised + sorted. Empty = valid credential but no hosted domain. */
+  zones: string[]
 }
 
 /** List all configured DNS providers. Tokens are never included. */
@@ -88,7 +86,17 @@ export async function deleteDnsProvider(id: string): Promise<{ ok: boolean }> {
   return http.delete<{ ok: boolean }>(`/api/dns/providers/${encodeURIComponent(id)}`)
 }
 
-/** Verify a provider's token reaches its zone (read-only probe). Returns ok + message. */
+/** Verify a provider: list the zones its account hosts (read-only probe, audited as a deliberate check). */
 export async function verifyDnsProvider(id: string): Promise<VerifyDnsProviderResult> {
   return http.post<VerifyDnsProviderResult>(`/api/dns/providers/${encodeURIComponent(id)}/verify`, {})
+}
+
+/**
+ * The zones this provider account hosts, straight from the服务商. Feeds the root-domain
+ * picker in「一键瞬时子域名」— a random `app-xxxx` prefix can't say which zone owns it,
+ * so the caller picks one here and the backend still re-checks it against this same list.
+ */
+export async function listProviderZones(id: string): Promise<string[]> {
+  const res = await http.get<{ items: string[] }>(`/api/dns/providers/${encodeURIComponent(id)}/zones`)
+  return res.items ?? []
 }

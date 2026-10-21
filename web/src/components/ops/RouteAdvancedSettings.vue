@@ -111,10 +111,6 @@ async function loadDnsProviders(): Promise<void> {
 }
 onMounted(loadDnsProviders)
 
-// 当前选中的提供商(用于在 UI 里提示其根域)。
-const selectedProvider = computed(() =>
-  dnsProviders.value.find((p) => p.id === dnsProviderId.value),
-)
 // 挂接了 DNS 提供商 → 允许通配符域名/别名。
 const wildcardAllowed = computed(() => dnsProviderId.value.length > 0)
 
@@ -399,12 +395,9 @@ async function save(): Promise<void> {
         <select v-model="dnsProviderId" class="advin">
           <option value="">{{ t('reverseProxy.adv.dnsProviderNone') }}</option>
           <option v-for="p in dnsProviders" :key="p.id" :value="p.id">
-            {{ p.name }} · {{ p.baseDomain }}
+            {{ p.name }}
           </option>
         </select>
-        <p v-if="selectedProvider" class="advhint">
-          {{ t('reverseProxy.adv.dnsProviderUnderDomain', { domain: selectedProvider.baseDomain }) }}
-        </p>
         <p v-if="wildcardAllowed" class="advhint">{{ t('reverseProxy.adv.wildcardHint') }}</p>
       </section>
 

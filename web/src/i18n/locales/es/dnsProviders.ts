@@ -1,6 +1,6 @@
 export default {
   title: 'Proveedores DNS',
-  desc: 'Conecta Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS para emitir certificados comodín por DNS-01 y asignar subdominios con un clic. El token de API es de solo escritura: se guarda en la bóveda y nunca se vuelve a mostrar.',
+  desc: 'Conecta una cuenta DNS de Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine para emitir certificados wildcard con DNS-01 y asignar subdominios con un clic. No hace falta escribir un dominio base: los dominios que puedes gestionar salen de la lista de la cuenta en el proveedor. El token de API es de solo escritura: se guarda en la bóveda y nunca se vuelve a mostrar.',
   addProvider: 'Añadir proveedor DNS',
   addFirstProvider: 'Añadir tu primer proveedor DNS',
   panelTitle: 'Proveedores DNS',
@@ -15,7 +15,6 @@ export default {
   // Columnas de la lista
   colName: 'Nombre',
   colType: 'Tipo',
-  colBaseDomain: 'Dominio base',
   colCredential: 'Credencial',
   // Estado de la credencial
   credConfigured: 'Configurado',
@@ -26,7 +25,8 @@ export default {
   // Acciones
   verify: 'Verificar',
   verifying: 'Verificando…',
-  verifyOk: 'Verificado',
+  verifyOk: 'Verificado — {n} dominio(s) alojados',
+  verifyOkNoZones: 'La credencial funciona, pero esta cuenta aún no aloja dominios',
   verifyFail: 'Error de verificación',
   deleteTitle: 'Eliminar proveedor {name}',
   deleteAria: 'Eliminar proveedor DNS {name}',
@@ -38,8 +38,7 @@ export default {
   fieldType: 'Tipo de proveedor',
   fieldName: 'Nombre',
   namePlaceholder: 'p. ej. Cloudflare de producción',
-  fieldBaseDomain: 'Dominio base (zona)',
-  baseDomainPlaceholder: 'example.com',
+  zonesAutoHint: 'No hay que escribir ningún dominio: los dominios que gestiona esta cuenta los decide el proveedor, y el botón Verificar los lista.',
   // Campo de credencial: Cloudflare usa un solo token; los otros cinco proveedores tienen dos partes (ID + secreto). El formulario muestra dos campos y los vuelve a unir como "ID,Secret" al enviar, así que la cadena única guardada en la bóveda no cambia.
   fieldTokenCloudflare: 'Token de API',
   tokenPlaceholderCloudflare: 'Pega el token de API de Cloudflare',
@@ -61,7 +60,7 @@ export default {
   secretPlaceholder: 'Pega el secreto; usa el ojo de la derecha para revisarlo',
   showSecret: 'Mostrar el secreto',
   hideSecret: 'Ocultar el secreto',
-  tokenHintCloudflare: 'Necesita permisos de lectura/escritura sobre los registros DNS de esta zona. Se envía una sola vez al crear y nunca se devuelve.',
+  tokenHintCloudflare: 'Necesita acceso de lectura y escritura a los registros DNS de los dominios alojados por esta cuenta. Se envía una sola vez al crearla y nunca se devuelve.',
   tokenHintDnspod: 'Rellene ambos campos por separado, creados en "Gestión de claves" de la consola de DNSPod. Se envía una sola vez al crear y nunca se devuelve.',
   tokenHintAlidns: 'Rellene ambos campos por separado con el AccessKey de RAM de Alibaba Cloud, con acceso de lectura/escritura a Alidns. Se envía una sola vez al crear y nunca se devuelve.',
   tokenHintTencentcloud: 'Rellene ambos campos por separado con los valores creados en CAM > Gestión de claves API. Requiere permisos de lectura y escritura en Cloud DNS. Solo se envía al crear y nunca se vuelve a mostrar.',
@@ -69,8 +68,6 @@ export default {
   tokenHintVolcengine: 'Rellene ambos campos por separado con los valores creados en IAM > Clave de acceso a la API. Requiere permisos de lectura y escritura en Cloud DNS. Los registros de Volcengine tardan entre 3 y 6 minutos en propagarse, así que la emisión lenta es esperable. Solo se envía al crear y nunca se vuelve a mostrar.',
   // Validación
   valNameRequired: 'Introduce un nombre.',
-  valBaseDomainRequired: 'Introduce un dominio base.',
-  valBaseDomainInvalid: 'Introduce un dominio base válido, p. ej. example.com.',
   valIdRequired: 'Introduce el ID de la credencial.',
   valIdComma: 'El ID no puede llevar coma; rellena las dos partes por separado.',
   valSecretRequired: 'Introduce el secreto.',

@@ -328,13 +328,15 @@ export async function getProxyOverview(): Promise<ProxyRouteOverview[]> {
 
 /**
  * Body for `allocateSubdomain` (R3 / E3.3-E3.4 — the "wow" flow). The backend
- * mints a fresh `app-xxxx.<baseDomain>` under the chosen provider's zone, creates
- * the A record pointing at the host, and binds a route to the upstream — all in
- * one call.
+ * mints a fresh `app-xxxx.<zone>` under the zone you picked from the provider's
+ * hosted-domain list, creates the A record pointing at the host, and binds a
+ * route to the upstream — all in one call.
  */
 export interface AllocateSubdomainInput {
-  /** DNS provider whose zone the subdomain is minted under. */
+  /** DNS provider whose account hosts the zone. */
   providerId: string
+  /** Zone (apex domain) minted into — must come from that provider's zone list. */
+  zone: string
   /** Target host the new route binds on (and the A record points to). */
   serverId: string
   /** Upstream container the route reverse-proxies to. */
@@ -344,7 +346,7 @@ export interface AllocateSubdomainInput {
 }
 
 /**
- * Instant subdomain (R3 / E3.3-E3.4): allocate `app-xxxx.<baseDomain>`, create the
+ * Instant subdomain (R3 / E3.3-E3.4): allocate `app-xxxx.<zone>`, create the
  * A record via the provider, and bind a route to the upstream — atomically. Returns
  * the freshly created route (cert issuance proceeds asynchronously as usual).
  */

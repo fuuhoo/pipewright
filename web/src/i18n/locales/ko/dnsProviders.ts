@@ -1,6 +1,6 @@
 export default {
   title: 'DNS 공급자',
-  desc: 'Cloudflare / DNSPod / Alibaba Cloud / Tencent Cloud / Baidu Cloud / Volcengine DNS를 연결하면 DNS-01 검증으로 와일드카드 인증서를 발급하고 서브도메인을 원클릭으로 할당할 수 있습니다. API 토큰은 쓰기 전용 — 보관소에 저장되며 다시 표시되지 않습니다.',
+  desc: 'Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS 계정을 연결하면 DNS-01 로 와일드카드 인증서를 발급하고 서브도메인을 원클릭으로 배정할 수 있습니다. 기본 도메인은 입력하지 않아도 됩니다 — 관리 가능한 도메인은 서비스 쪽 계정에 등록된 목록이 결정합니다. API 토큰은 쓰기 전용이며, 볼트에 저장된 뒤에는 다시 표시되지 않습니다.',
   addProvider: 'DNS 공급자 추가',
   addFirstProvider: '첫 DNS 공급자 추가',
   panelTitle: 'DNS 공급자',
@@ -15,7 +15,6 @@ export default {
   // 列表列
   colName: '이름',
   colType: '유형',
-  colBaseDomain: '기본 도메인',
   colCredential: '자격 증명',
   // 凭据状态
   credConfigured: '설정됨',
@@ -26,7 +25,8 @@ export default {
   // 操作
   verify: '검증',
   verifying: '검증 중…',
-  verifyOk: '검증 성공',
+  verifyOk: '확인 통과 — 계정에 관리 도메인 {n}개',
+  verifyOkNoZones: '자격 증명은 유효하지만, 이 계정에는 관리 도메인이 아직 없습니다',
   verifyFail: '검증 실패',
   deleteTitle: '공급자 {name} 삭제',
   deleteAria: 'DNS 공급자 {name} 삭제',
@@ -38,8 +38,7 @@ export default {
   fieldType: '공급자 유형',
   fieldName: '이름',
   namePlaceholder: '예: 프로덕션 Cloudflare',
-  fieldBaseDomain: '기본 도메인(존)',
-  baseDomainPlaceholder: 'example.com',
+  zonesAutoHint: '도메인을 입력할 필요가 없습니다 — 이 계정이 관리하는 도메인은 공급자 쪽에서 정해지며, 확인 버튼을 누르면 목록을 볼 수 있습니다.',
   // 자격 증명 필드: Cloudflare는 단일 토큰, 나머지 다섯 공급자는 "ID + 시크릿" 두 부분입니다. 폼은 두 칸으로 나누고 전송 시 "ID,Secret"으로 다시 합쳐 볼트에 저장합니다(단일 문자열 규약은 그대로).
   fieldTokenCloudflare: 'API 토큰',
   tokenPlaceholderCloudflare: 'Cloudflare API 토큰 붙여넣기',
@@ -61,7 +60,7 @@ export default {
   secretPlaceholder: '시크릿 붙여넣기 (오른쪽 눈 아이콘으로 확인)',
   showSecret: '시크릿 표시',
   hideSecret: '시크릿 숨기기',
-  tokenHintCloudflare: '이 존의 DNS 레코드에 대한 읽기/쓰기 권한이 필요합니다. 생성 시 한 번만 전송되며 반환되지 않습니다.',
+  tokenHintCloudflare: '이 계정이 관리하는 도메인의 DNS 레코드에 대한 읽기/쓰기 권한이 필요합니다. 생성 시 한 번만 전송되며 다시 표시되지 않습니다.',
   tokenHintDnspod: '두 칸에 나누어 입력하세요. DNSPod 콘솔의 "키 관리"에서 생성합니다. 생성 시 한 번만 전송되며 반환되지 않습니다.',
   tokenHintAlidns: '두 칸에 나누어 입력하세요. Alibaba Cloud RAM AccessKey에 Alidns 읽기/쓰기 권한이 필요합니다. 생성 시 한 번만 전송되며 반환되지 않습니다.',
   tokenHintTencentcloud: '두 칸에 나누어 입력하세요. 콘솔의 \'접근 관리 CAM > API 키 관리\'에서 생성하고 클라우드 DNS 읽기/쓰기 권한을 부여하세요. 생성 시 한 번만 전송되며 다시 표시되지 않습니다.',
@@ -69,8 +68,6 @@ export default {
   tokenHintVolcengine: '두 칸에 나누어 입력하세요. 콘솔의 \'접근 관리 IAM > API 접근 키\'에서 생성하고 클라우드 DNS 읽기/쓰기 권한을 부여하세요. Volcengine 레코드 반영에는 약 3~6분이 걸리므로 발급이 느린 것은 정상입니다. 생성 시 한 번만 전송되며 다시 표시되지 않습니다.',
   // 校验
   valNameRequired: '이름을 입력하세요.',
-  valBaseDomainRequired: '기본 도메인을 입력하세요.',
-  valBaseDomainInvalid: '유효한 기본 도메인을 입력하세요. 예: example.com.',
   valIdRequired: '자격 증명 ID를 입력하세요.',
   valIdComma: 'ID에는 쉼표를 쓸 수 없습니다. 두 부분을 나누어 입력하세요.',
   valSecretRequired: '시크릿을 입력하세요.',

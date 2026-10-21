@@ -1,6 +1,6 @@
 export default {
   title: 'DNS 提供商',
-  desc: '挂接 Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎 DNS,即可走 DNS-01 验证签发通配符证书,并一键分配子域名。API Token 只写不读 —— 存入保险库,绝不回显。',
+  desc: '挂上 Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎的 DNS 账号,就能用 DNS-01 签通配符证书、一键分配子域名。根域不用填 —— 这个账号能管哪些域名,由服务商侧的托管清单决定。API Token 只写不读,存进保险库后绝不回显。',
   addProvider: '添加 DNS 提供商',
   addFirstProvider: '添加第一个 DNS 提供商',
   panelTitle: 'DNS 提供商',
@@ -15,7 +15,6 @@ export default {
   // 列表列
   colName: '名称',
   colType: '类型',
-  colBaseDomain: '根域',
   colCredential: '凭据',
   // 凭据状态
   credConfigured: '已配置',
@@ -26,7 +25,8 @@ export default {
   // 操作
   verify: '验证',
   verifying: '验证中…',
-  verifyOk: '验证通过',
+  verifyOk: '验证通过 —— 账号里托管了 {n} 个域名',
+  verifyOkNoZones: '凭据可用,但这个账号里还没有托管的域名',
   verifyFail: '验证失败',
   deleteTitle: '删除提供商 {name}',
   deleteAria: '删除 DNS 提供商 {name}',
@@ -38,8 +38,7 @@ export default {
   fieldType: '提供商类型',
   fieldName: '名称',
   namePlaceholder: '例:生产区 Cloudflare',
-  fieldBaseDomain: '根域(托管区)',
-  baseDomainPlaceholder: 'example.com',
+  zonesAutoHint: '不用填根域 —— 这个账号能管哪些域名由服务商侧决定,保存后点「验证」就能看到清单。',
   // 凭据字段:Cloudflare 是单段 token;其余五家都是「ID + 密钥」两段,表单拆成两个框,
   // 提交时拼回 "ID,Secret" 存进保险库(vault 单字串约定不变),所以提示里不再讲逗号分隔。
   fieldTokenCloudflare: 'API Token',
@@ -62,7 +61,7 @@ export default {
   secretPlaceholder: '粘贴密钥,可点右侧眼睛核对',
   showSecret: '显示明文',
   hideSecret: '隐藏明文',
-  tokenHintCloudflare: '需有对该根域的 DNS 记录读写权限。仅在创建时发送一次,绝不回显。',
+  tokenHintCloudflare: '需要对账号里这些域名的 DNS 记录读写权限。只在创建时提交一次,绝不回显。',
   tokenHintDnspod: '两栏分开填:在 DNSPod 控制台「密钥管理」创建。仅在创建时发送一次,绝不回显。',
   tokenHintAlidns: '两栏分开填:阿里云 RAM 用户的 AccessKey,需有云解析 DNS 读写权限。仅在创建时发送一次,绝不回显。',
   tokenHintTencentcloud: '两栏分开填:在控制台「访问管理 CAM → API 密钥管理」创建,需有云解析 DNS 读写权限。仅在创建时发送一次,绝不回显。',
@@ -70,8 +69,6 @@ export default {
   tokenHintVolcengine: '两栏分开填:在控制台「访问管理 IAM → API 访问密钥」创建,需云解析 DNS 读写权限。火山记录生效约 3-6 分钟,签发慢属正常。仅在创建时发送一次,绝不回显。',
   // 校验
   valNameRequired: '请填写名称。',
-  valBaseDomainRequired: '请填写根域。',
-  valBaseDomainInvalid: '请填写合法的根域,例:example.com。',
   valIdRequired: '请填写 API 凭据 ID。',
   valIdComma: 'ID 里不能有逗号,请把两段分开填。',
   valSecretRequired: '请填写密钥。',

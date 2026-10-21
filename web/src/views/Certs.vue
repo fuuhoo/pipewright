@@ -924,7 +924,7 @@ const hasAccountForCa = computed(() => {
               :disabled="createBusy"
             >
               <option value="" disabled>{{ dnsProviders.length ? t('certs.dnsPlaceholder') : t('certs.dnsNone') }}</option>
-              <option v-for="p in dnsProviders" :key="p.id" :value="p.id">{{ p.name }} · {{ p.baseDomain }}</option>
+              <option v-for="p in dnsProviders" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
             <span v-if="createErrors.dnsProviderId" class="field-error" role="alert">{{ createErrors.dnsProviderId }}</span>
             <span class="field-hint">{{ t('certs.dnsHint') }}</span>
@@ -1035,7 +1035,7 @@ const hasAccountForCa = computed(() => {
             <label class="field-label" for="pem-dns">{{ t('certs.fieldDnsOptional') }}</label>
             <select id="pem-dns" v-model="pemForm.dnsProviderId" class="field-input" :disabled="pemBusy">
               <option value="">{{ t('certs.dnsSkip') }}</option>
-              <option v-for="p in dnsProviders" :key="p.id" :value="p.id">{{ p.name }} · {{ p.baseDomain }}</option>
+              <option v-for="p in dnsProviders" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
             <span class="field-hint">{{ t('certs.dnsOptionalHint') }}</span>
           </div>

@@ -2,16 +2,17 @@
 /*
   SettingsDnsProviders.vue — DNS 提供商管理(R3 / E3.1 · 零 DNS 体验)。
 
-  挂接 Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎的托管域名,解锁两件事:
-  ① 路由走 DNS-01 验证 → 通配符证书;② 一键分配子域名(app-xxxx.<根域> + 自动 A 记录 + 路由)。
+  挂接 Cloudflare / DNSPod / 阿里云 / 腾讯云 / 百度智能云 / 火山引擎的 DNS 账号,解锁两件事:
+  ① 路由走 DNS-01 验证 → 通配符证书;② 一键分配子域名(app-xxxx.<托管域> + 自动 A 记录 + 路由)。
   另有一条独立通路:证书管理页可直接用其中任一提供商落 DNS-01 的 TXT 记录。
+  根域不用填 —— 能管哪些域由凭据在服务商侧的域名清单决定,添加只要「类型 + 名称 + 凭据」。
   API Token 只写不读 —— 存入保险库,列表只显示「已配置 / 未配置」,绝不回显。
 
-  - 列表:类型徽章、名称、根域、凭据状态;每行「验证」(探测 token 是否能触达该 zone)+ 删除。
-  - 添加弹窗:类型(下拉六选一)+ 名称 + 根域(FQDN 校验)+ 凭据。除 Cloudflare 是单段 token 外,
+  - 列表:类型徽章、名称、凭据状态;每行「验证」(拿凭据列一次账号托管域名)+ 删除。
+  - 添加弹窗:类型(下拉六选一)+ 名称 + 凭据。除 Cloudflare 是单段 token 外,
     其余五家都是「ID + 密钥」两段,拆成两个框填(ID 明文可见、密钥可点眼睛核对),提交时拼回一段。
-  - 删除二次确认。验证结果以 toast 反馈。
-  数据来自 GET /api/dns/providers(只读聚合,从不含 token)。
+  - 删除二次确认。验证结果以 toast 反馈(列出账号里托管的域名,空清单如实说)。
+  数据来自 GET /api/dns/providers(只读聚合,从不含 token);域名清单来自 GET /api/dns/providers/{id}/zones。
 */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -116,16 +117,14 @@ const modalOpen = ref(false)
 const submitting = ref(false)
 const formBanner = ref('')
 // credId 只用于两段式类型;secret 两类都用(Cloudflare 时它就是那枚 API Token)。
-const form = ref<{ type: DnsProviderType; name: string; baseDomain: string; credId: string; secret: string }>({
+const form = ref<{ type: DnsProviderType; name: string; credId: string; secret: string }>({
   type: 'cloudflare',
   name: '',
-  baseDomain: '',
   credId: '',
   secret: '',
 })
-const errors = ref<{ name: string; baseDomain: string; credId: string; secret: string }>({
+const errors = ref<{ name: string; credId: string; secret: string }>({
   name: '',
-  baseDomain: '',
   credId: '',
   secret: '',
 })
@@ -140,12 +139,9 @@ function onTypeChange(e: Event): void {
   errors.value.secret = ''
 }
 
-// 根域:与路由域名相同的 FQDN 校验(根域本身不带通配符)。
-const FQDN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
-
 function openAdd(): void {
-  form.value = { type: 'cloudflare', name: '', baseDomain: '', credId: '', secret: '' }
-  errors.value = { name: '', baseDomain: '', credId: '', secret: '' }
+  form.value = { type: 'cloudflare', name: '', credId: '', secret: '' }
+  errors.value = { name: '', credId: '', secret: '' }
   formBanner.value = ''
   showSecret.value = false
   modalOpen.value = true
@@ -160,18 +156,10 @@ function closeModal(): void {
 }
 
 function validate(): boolean {
-  errors.value = { name: '', baseDomain: '', credId: '', secret: '' }
+  errors.value = { name: '', credId: '', secret: '' }
   let ok = true
   if (!form.value.name.trim()) {
     errors.value.name = t('dnsProviders.valNameRequired')
-    ok = false
-  }
-  const dom = form.value.baseDomain.trim().toLowerCase()
-  if (!dom) {
-    errors.value.baseDomain = t('dnsProviders.valBaseDomainRequired')
-    ok = false
-  } else if (!FQDN_RE.test(dom)) {
-    errors.value.baseDomain = t('dnsProviders.valBaseDomainInvalid')
     ok = false
   }
   if (isTwoPart.value) {
@@ -201,7 +189,6 @@ async function submit(): Promise<void> {
     const payload: CreateDnsProviderInput = {
       type: form.value.type,
       name: form.value.name.trim(),
-      baseDomain: form.value.baseDomain.trim().toLowerCase(),
       token: isTwoPart.value ? `${form.value.credId.trim()},${secret}` : secret,
     }
     const created = await createDnsProvider(payload)
@@ -226,10 +213,11 @@ async function verify(p: DnsProvider): Promise<void> {
   verifyingId.value = p.id
   try {
     const res = await verifyDnsProvider(p.id)
-    if (res.ok) {
-      toast.success(t('dnsProviders.verifyOk'), { detail: res.message ?? p.baseDomain })
+    // 空清单不算失败(新账号确实可能一条域名都没加),但要如实说「凭据能用、暂无托管域」。
+    if (res.zones.length === 0) {
+      toast.success(t('dnsProviders.verifyOkNoZones'), { detail: p.name })
     } else {
-      toast.error(t('dnsProviders.verifyFail'), { detail: res.message ?? p.name })
+      toast.success(t('dnsProviders.verifyOk', { n: res.zones.length }), { detail: res.zones.join(' · ') })
     }
   } catch (err) {
     toast.error(t('dnsProviders.verifyFail'), {
@@ -327,14 +315,12 @@ async function confirmDelete(): Promise<void> {
         <div class="dns-row dns-row--head" aria-hidden="true">
           <span>{{ t('dnsProviders.colType') }}</span>
           <span>{{ t('dnsProviders.colName') }}</span>
-          <span>{{ t('dnsProviders.colBaseDomain') }}</span>
           <span>{{ t('dnsProviders.colCredential') }}</span>
           <span />
         </div>
         <div v-for="p in providers" :key="p.id" class="dns-row">
           <span class="type-badge" :class="`type-badge--${p.type}`">{{ typeLabels[p.type] }}</span>
           <strong class="dns-name">{{ p.name }}</strong>
-          <span class="dns-domain mono">{{ p.baseDomain }}</span>
           <span class="cred-state" :class="p.credentialConfigured ? 'cred-state--ok' : 'cred-state--missing'">
             <NIcon :size="13"><CircleCheck v-if="p.credentialConfigured" /><CircleX v-else /></NIcon>
             {{ p.credentialConfigured ? t('dnsProviders.credConfigured') : t('dnsProviders.credMissing') }}
@@ -412,24 +398,7 @@ async function confirmDelete(): Promise<void> {
               @input="errors.name = ''"
             />
             <span v-if="errors.name" class="field-error" role="alert">{{ errors.name }}</span>
-          </div>
-
-          <!-- base domain -->
-          <div class="field">
-            <label class="field-label" for="dns-domain">{{ t('dnsProviders.fieldBaseDomain') }}</label>
-            <input
-              id="dns-domain"
-              v-model="form.baseDomain"
-              class="field-input field-input--mono"
-              :class="{ 'field-input--error': errors.baseDomain }"
-              type="text"
-              :placeholder="t('dnsProviders.baseDomainPlaceholder')"
-              :disabled="submitting"
-              autocomplete="off"
-              spellcheck="false"
-              @input="errors.baseDomain = ''"
-            />
-            <span v-if="errors.baseDomain" class="field-error" role="alert">{{ errors.baseDomain }}</span>
+            <span class="field-hint">{{ t('dnsProviders.zonesAutoHint') }}</span>
           </div>
 
           <!-- 两段式凭据第一段:ID 明文可见(它本就不是秘密,分开填才好核对) -->
@@ -637,7 +606,7 @@ async function confirmDelete(): Promise<void> {
 /* table */
 .dns-row {
   display: grid;
-  grid-template-columns: 120px minmax(140px, 1.3fr) minmax(140px, 1.4fr) 130px auto;
+  grid-template-columns: 120px minmax(160px, 1.4fr) 130px auto;
   align-items: center;
   gap: 14px;
   padding: 13px 18px;
@@ -715,17 +684,6 @@ async function confirmDelete(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dns-domain {
-  font-size: 0.78rem;
-  color: var(--color-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mono {
-  font-family: var(--font-mono);
-}
-
 .cred-state {
   display: inline-flex;
   align-items: center;

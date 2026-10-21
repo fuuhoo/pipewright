@@ -1,6 +1,6 @@
 export default {
   title: 'DNS プロバイダー',
-  desc: 'Cloudflare / DNSPod / Alibaba Cloud / Tencent Cloud / Baidu Cloud / Volcengine DNS を接続すると DNS-01 でワイルドカード証明書を発行し、ワンクリックでサブドメインを割り当てられます。API トークンは書き込み専用 — ボールトに保存され二度と表示されません。',
+  desc: 'Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine の DNS アカウントを繋ぐと、DNS-01 でワイルドカード証明書を発行でき、サブドメインもワンクリックで割り当てられます。ベースドメインの入力は不要 —— 管理できるドメインは、サービス側アカウントのドメイン一覧が決めます。API トークンは書き込み専用で、ボールトに保存後は二度と表示されません。',
   addProvider: 'DNS プロバイダーを追加',
   addFirstProvider: '最初の DNS プロバイダーを追加',
   panelTitle: 'DNS プロバイダー',
@@ -15,7 +15,6 @@ export default {
   // 列表列
   colName: '名前',
   colType: '種類',
-  colBaseDomain: 'ベースドメイン',
   colCredential: '認証情報',
   // 凭据状态
   credConfigured: '設定済み',
@@ -26,7 +25,8 @@ export default {
   // 操作
   verify: '検証',
   verifying: '検証中…',
-  verifyOk: '検証成功',
+  verifyOk: '検証OK — アカウントに {n} 件のドメイン',
+  verifyOkNoZones: '認証情報は有効ですが、このアカウントにはまだ管理ドメインがありません',
   verifyFail: '検証失敗',
   deleteTitle: '{name} を削除',
   deleteAria: 'DNS プロバイダー {name} を削除',
@@ -38,8 +38,7 @@ export default {
   fieldType: 'プロバイダーの種類',
   fieldName: '名前',
   namePlaceholder: '例:本番 Cloudflare',
-  fieldBaseDomain: 'ベースドメイン(ゾーン)',
-  baseDomainPlaceholder: 'example.com',
+  zonesAutoHint: 'ドメインの入力は不要 —— このアカウントが管理できるドメインはプロバイダー側が決まり、「検証」ボタンで一覧を確認できます。',
   // 認証情報フィールド:Cloudflare は単一トークン、他 5 社は「ID + シークレット」の 2 要素。フォームは 2 つの欄に分け、送信時に "ID,Secret" へ戻してボールトに保存します(単一文字列の約束はそのまま)。
   fieldTokenCloudflare: 'API トークン',
   tokenPlaceholderCloudflare: 'Cloudflare API トークンを貼り付け',
@@ -61,7 +60,7 @@ export default {
   secretPlaceholder: 'シークレットを貼り付け(右目のアイコンで確認)',
   showSecret: 'シークレットを表示',
   hideSecret: 'シークレットを隠す',
-  tokenHintCloudflare: 'このゾーンの DNS レコードへの読み書き権限が必要です。作成時に一度だけ送信され、返却されません。',
+  tokenHintCloudflare: 'このアカウントが管理するドメインの DNS レコードに対する読み取り・書き込み権限が必要です。作成時に一度だけ送信され、再度表示されることはありません。',
   tokenHintDnspod: '2 つの欄に分けて入力します。DNSPod コンソールの「キー管理」で作成。作成時に一度だけ送信され、返却されません。',
   tokenHintAlidns: '2 つの欄に分けて入力します。Alibaba Cloud RAM の AccessKey に Alidns の読み書き権限が必要です。作成時に一度だけ送信され、返却されません。',
   tokenHintTencentcloud: '2 つの欄に分けて入力します。コンソールの「アクセス管理 CAM → API キー管理」で作成し、クラウド DNS の読み書き権限を付けてください。作成時に一度だけ送信され、再表示されません。',
@@ -69,8 +68,6 @@ export default {
   tokenHintVolcengine: '2 つの欄に分けて入力します。コンソールの「アクセス管理 IAM → API アクセスキー」で作成し、クラウド DNS の読み書き権限を付けてください。Volcengine のレコード反映は約 3〜6 分かかり、発行が遅れるのは想定内です。作成時に一度だけ送信され、再表示されません。',
   // 校验
   valNameRequired: '名前を入力してください。',
-  valBaseDomainRequired: 'ベースドメインを入力してください。',
-  valBaseDomainInvalid: '有効なベースドメインを入力してください(例:example.com)。',
   valIdRequired: '認証情報の ID を入力してください。',
   valIdComma: 'ID にカンマは使えません。2 つの欄に分けて入力してください。',
   valSecretRequired: 'シークレットを入力してください。',

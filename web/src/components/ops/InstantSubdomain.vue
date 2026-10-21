@@ -2,20 +2,22 @@
 /*
   InstantSubdomain.vue — 「一键分配子域名」(R3 / E3.3-E3.4 · 零 DNS 的招牌体验)。
 
-  反代面板顶部的醒目入口:点开后选 DNS 提供商(显示其根域)+ 上游容器/端口,
-  点「分配」→ 后端在该根域下铸造 app-xxxx 子域、写 A 记录、绑路由,一步到位。
+  反代面板顶部的醒目入口:点开后选 DNS 提供商 → 选它账号里托管的域名 → 上游容器/端口,
+  点「分配」→ 后端在该域下铸造 app-xxxx 子域、写 A 记录、绑路由,一步到位。
   成功后进入庆祝态:大字展示生成的子域 + 实时可点链接(https://…)。
 
+  域名清单实时取自 GET /api/dns/providers/{id}/zones —— 根域不再由用户预先登记,
+  所以这一步是必选项:随机子域名前缀推不出所属根域。
   本组件只负责发起分配与展示结果;serverId 由父(单机面板)提供。分配成功后
   emit('allocated', 新路由) 让父把新路由插进列表。
 */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import { NIcon } from 'naive-ui'
 import { Wand, World, ExternalLink, X, Confetti, ArrowRight } from '@vicons/tabler'
 import { allocateSubdomain, type ProxyRoute } from '../../api/reverseProxy'
-import { listDnsProviders, canAttachToRoute, type DnsProvider } from '../../api/dnsProviders'
+import { listDnsProviders, listProviderZones, canAttachToRoute, type DnsProvider } from '../../api/dnsProviders'
 import type { ContainerInfo } from '../../api/containers'
 import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
@@ -59,7 +61,42 @@ const upstreamContainer = ref('')
 const upstreamPort = ref('')
 const allocating = ref(false)
 
-const selectedProvider = computed(() => providers.value.find((p) => p.id === providerId.value))
+// 域名(根域)清单实时取自这份凭据在服务商侧托管的域,所以「选提供商 → 选域名」是两步。
+const zones = ref<string[]>([])
+const zone = ref('')
+type ZonesState = 'idle' | 'loading' | 'error' | 'empty'
+const zonesState = ref<ZonesState>('idle')
+const zonesError = ref('')
+// 用户可能连着换提供商,只认最后一次请求的结果。
+let zonesSeq = 0
+
+async function loadZones(): Promise<void> {
+  const seq = ++zonesSeq
+  zone.value = ''
+  zones.value = []
+  zonesError.value = ''
+  if (!providerId.value) {
+    zonesState.value = 'idle'
+    return
+  }
+  zonesState.value = 'loading'
+  try {
+    const list = await listProviderZones(providerId.value)
+    if (seq !== zonesSeq) return
+    zones.value = list
+    zonesState.value = list.length === 0 ? 'empty' : 'idle'
+    if (list.length === 1) zone.value = list[0]
+  } catch (err) {
+    if (seq !== zonesSeq) return
+    zonesState.value = 'error'
+    zonesError.value =
+      err instanceof HttpError
+        ? (err.apiError?.message ?? t('reverseProxy.errReq', { status: err.status }))
+        : t('reverseProxy.errNetwork')
+  }
+}
+
+watch(providerId, loadZones)
 
 const runningContainers = computed(() =>
   props.containers.filter((c) => c.state === 'running').map((c) => c.names),
@@ -89,6 +126,7 @@ const canAllocate = computed(
   () =>
     !allocating.value &&
     providerId.value.length > 0 &&
+    zone.value.length > 0 &&
     upstreamContainer.value.trim().length > 0 &&
     portValid.value,
 )
@@ -97,11 +135,14 @@ const canAllocate = computed(
 const result = ref<ProxyRoute | null>(null)
 
 function openModal(): void {
-  providerId.value = providers.value.length === 1 ? providers.value[0].id : ''
   upstreamContainer.value = ''
   upstreamPort.value = ''
   result.value = null
   open.value = true
+  const next = providers.value.length === 1 ? providers.value[0].id : ''
+  // 换提供商由 watch 负责拉域名;没变(含首次空→空)才手动刷一次,避免同一份清单请求两次。
+  if (next === providerId.value) void loadZones()
+  else providerId.value = next
 }
 function closeModal(): void {
   if (allocating.value) return
@@ -115,6 +156,7 @@ async function allocate(): Promise<void> {
   try {
     const route = await allocateSubdomain({
       providerId: providerId.value,
+      zone: zone.value,
       serverId: props.serverId,
       upstreamContainer: upstreamContainer.value.trim(),
       upstreamPort: portNum.value,
@@ -219,10 +261,26 @@ async function allocate(): Promise<void> {
               <label class="field-label">{{ t('reverseProxy.sub.providerLabel') }}</label>
               <select v-model="providerId" class="field-input">
                 <option value="">{{ t('reverseProxy.sub.providerPick') }}</option>
-                <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }} · {{ p.baseDomain }}</option>
+                <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
-              <span v-if="selectedProvider" class="field-hint">
-                {{ t('reverseProxy.sub.providerUnderDomain', { domain: selectedProvider.baseDomain }) }}
+            </div>
+
+            <!-- 域名:凭据账号里托管的根域,清单实时取自服务商 API -->
+            <div class="field">
+              <label class="field-label">{{ t('reverseProxy.sub.zoneLabel') }}</label>
+              <select
+                v-model="zone"
+                class="field-input field-input--mono"
+                :disabled="!providerId || zonesState === 'loading' || zones.length === 0"
+              >
+                <option value="">{{ t('reverseProxy.sub.zonePick') }}</option>
+                <option v-for="z in zones" :key="z" :value="z">{{ z }}</option>
+              </select>
+              <span v-if="zonesState === 'loading'" class="field-hint">{{ t('reverseProxy.sub.zoneLoading') }}</span>
+              <span v-else-if="zonesState === 'empty'" class="field-hint">{{ t('reverseProxy.sub.zoneEmpty') }}</span>
+              <span v-else-if="zonesState === 'error'" class="field-error">
+                {{ zonesError }}
+                <button type="button" class="field-retry" @click="loadZones">↻ {{ t('reverseProxy.sub.zoneRetry') }}</button>
               </span>
             </div>
 
@@ -471,6 +529,10 @@ async function allocate(): Promise<void> {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
+.field-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .field-input--mono {
   font-family: var(--font-mono);
   font-size: 0.8rem;
@@ -487,6 +549,16 @@ async function allocate(): Promise<void> {
   font-size: 0.76rem;
   color: var(--color-red);
   line-height: 1.4;
+}
+.field-retry {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 6px;
+  font-family: inherit;
+  font-size: 0.76rem;
+  color: var(--color-primary);
+  cursor: pointer;
 }
 
 /* ── 庆祝态 ── */

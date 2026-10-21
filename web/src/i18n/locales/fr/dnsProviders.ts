@@ -1,6 +1,6 @@
 export default {
   title: 'Fournisseurs DNS',
-  desc: 'Connectez Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS pour émettre des certificats génériques via DNS-01 et attribuer des sous-domaines en un clic. Le jeton d’API est en écriture seule — stocké dans le coffre, jamais réaffiché.',
+  desc: 'Connectez un compte DNS Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine pour émettre des certificats wildcard via DNS-01 et allouer des sous-domaines en un clic. Aucun domaine de base à saisir : les domaines gérables viennent de la liste hébergée par le compte chez le fournisseur. Le jeton d’API est à écriture seule — stocké dans le coffre, il n’est jamais réaffiché.',
   addProvider: 'Ajouter un fournisseur DNS',
   addFirstProvider: 'Ajouter votre premier fournisseur DNS',
   panelTitle: 'Fournisseurs DNS',
@@ -15,7 +15,6 @@ export default {
   // Colonnes de la liste
   colName: 'Nom',
   colType: 'Type',
-  colBaseDomain: 'Domaine de base',
   colCredential: 'Identifiant',
   // Statut de l’identifiant
   credConfigured: 'Configuré',
@@ -26,7 +25,8 @@ export default {
   // Actions
   verify: 'Vérifier',
   verifying: 'Vérification…',
-  verifyOk: 'Vérifié',
+  verifyOk: 'Vérifié — {n} domaine(s) hébergé(s)',
+  verifyOkNoZones: 'L’identifiant fonctionne, mais ce compte n’héberge encore aucun domaine',
   verifyFail: 'Échec de la vérification',
   deleteTitle: 'Supprimer le fournisseur {name}',
   deleteAria: 'Supprimer le fournisseur DNS {name}',
@@ -38,8 +38,7 @@ export default {
   fieldType: 'Type de fournisseur',
   fieldName: 'Nom',
   namePlaceholder: 'ex. Cloudflare de production',
-  fieldBaseDomain: 'Domaine de base (zone)',
-  baseDomainPlaceholder: 'example.com',
+  zonesAutoHint: 'Aucun domaine à saisir : les domaines gérés par ce compte dépendent du fournisseur, et le bouton Vérifier les liste.',
   // Champ d’identifiant : Cloudflare utilise un jeton unique ; les cinq autres fournisseurs ont deux parties (ID + secret). Le formulaire présente deux champs et les recolle en "ID,Secret" à l'envoi — la chaîne unique stockée dans le coffre reste inchangée.
   fieldTokenCloudflare: 'Jeton d’API',
   tokenPlaceholderCloudflare: 'Collez le jeton d’API Cloudflare',
@@ -61,7 +60,7 @@ export default {
   secretPlaceholder: 'Collez le secret — vérifiez-le avec l\'icône œil',
   showSecret: 'Afficher le secret',
   hideSecret: 'Masquer le secret',
-  tokenHintCloudflare: 'Nécessite un accès lecture/écriture aux enregistrements DNS de cette zone. Envoyé une seule fois à la création, jamais renvoyé.',
+  tokenHintCloudflare: 'Doit disposer d’un accès en lecture/écriture aux enregistrements DNS des domaines hébergés par ce compte. Envoyé une seule fois à la création, jamais réaffiché.',
   tokenHintDnspod: 'Renseignez les deux champs séparément, créés sous « Gestion des clés » dans la console DNSPod. Envoyé une seule fois à la création, jamais renvoyé.',
   tokenHintAlidns: 'Renseignez les deux champs séparément avec l\'AccessKey RAM Alibaba Cloud, doté d\'un accès lecture/écriture à Alidns. Envoyé une seule fois à la création, jamais renvoyé.',
   tokenHintTencentcloud: 'Renseignez les deux champs séparément avec les valeurs créées dans CAM > Gestion des clés API. Accès lecture/écriture au DNS Cloud requis. Envoyé une seule fois à la création, jamais réaffiché.',
@@ -69,8 +68,6 @@ export default {
   tokenHintVolcengine: 'Renseignez les deux champs séparément avec les valeurs créées dans IAM > Clé d\'accès API. Accès lecture/écriture au DNS Cloud requis. Les enregistrements Volcengine mettent environ 3 à 6 minutes à se propager, une émission lente est donc normale. Envoyé une seule fois à la création, jamais réaffiché.',
   // Validation
   valNameRequired: 'Saisissez un nom.',
-  valBaseDomainRequired: 'Saisissez un domaine de base.',
-  valBaseDomainInvalid: 'Saisissez un domaine de base valide, ex. example.com.',
   valIdRequired: 'Saisissez l\'ID de l\'identifiant.',
   valIdComma: 'L\'ID ne peut pas contenir de virgule — remplissez les deux parties séparément.',
   valSecretRequired: 'Saisissez le secret.',

@@ -1,6 +1,6 @@
 export default {
   title: 'DNS Providers',
-  desc: 'Attach Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS to issue wildcard certs via DNS-01 and allocate subdomains in one click. The API token is write-only — stored in the vault, never shown again.',
+  desc: 'Attach a Cloudflare / DNSPod / Alibaba Cloud / TencentCloud / Baidu Cloud / Volcengine DNS account to issue wildcard certs via DNS-01 and allocate subdomains in one click. No base domain to fill in — which domains you can manage comes from the account itself. The API token is write-only — stored in the vault, never shown again.',
   addProvider: 'Add DNS provider',
   addFirstProvider: 'Add your first DNS provider',
   panelTitle: 'DNS providers',
@@ -15,7 +15,6 @@ export default {
   // Table columns
   colName: 'Name',
   colType: 'Type',
-  colBaseDomain: 'Base domain',
   colCredential: 'Credential',
   // Credential status
   credConfigured: 'Configured',
@@ -26,7 +25,8 @@ export default {
   // Actions
   verify: 'Verify',
   verifying: 'Verifying…',
-  verifyOk: 'Verified',
+  verifyOk: 'Verified — {n} hosted domain(s)',
+  verifyOkNoZones: 'Credential works, but this account hosts no domains yet',
   verifyFail: 'Verification failed',
   deleteTitle: 'Delete provider {name}',
   deleteAria: 'Delete DNS provider {name}',
@@ -38,8 +38,7 @@ export default {
   fieldType: 'Provider type',
   fieldName: 'Name',
   namePlaceholder: 'e.g. Production Cloudflare',
-  fieldBaseDomain: 'Base domain (zone)',
-  baseDomainPlaceholder: 'example.com',
+  zonesAutoHint: 'No domain to fill in — which domains this account manages is read from the provider; the Verify button lists them.',
   // Credential fields: Cloudflare takes a single token; the other five use a two-part
   // "ID + secret". The form shows two inputs and joins them back into "ID,Secret" on submit,
   // so the vault's single-string convention is unchanged and the hints no longer talk about commas.
@@ -63,7 +62,7 @@ export default {
   secretPlaceholder: 'Paste the secret — use the eye icon to check it',
   showSecret: 'Show secret',
   hideSecret: 'Hide secret',
-  tokenHintCloudflare: 'Needs read/write access to DNS records for this zone. Sent once on creation, never returned.',
+  tokenHintCloudflare: 'Needs read/write access to the DNS records of the domains hosted by this account. Sent once on creation, never returned.',
   tokenHintDnspod: 'Fill both fields separately, created under "KeyManage" in the DNSPod console. Sent once on creation, never returned.',
   tokenHintAlidns: 'Fill both fields separately with the Alibaba Cloud RAM AccessKey, which needs Alidns read/write access. Sent once on creation, never returned.',
   tokenHintTencentcloud: 'Fill both fields separately with values created under CAM > API Key Management. It needs read/write access to Cloud DNS. Sent once on creation, never shown again.',
@@ -71,8 +70,6 @@ export default {
   tokenHintVolcengine: 'Fill both fields separately with values created under IAM > API Access Key. It needs read/write access to Cloud DNS. Volcengine records take about 3-6 minutes to propagate, so issuance is expected to be slow. Sent once on creation, never shown again.',
   // Validation
   valNameRequired: 'Please enter a name.',
-  valBaseDomainRequired: 'Please enter a base domain.',
-  valBaseDomainInvalid: 'Please enter a valid base domain, e.g. example.com.',
   valIdRequired: 'Please enter the credential ID.',
   valIdComma: 'The ID cannot contain a comma — fill the two parts separately.',
   valSecretRequired: 'Please enter the secret.',
