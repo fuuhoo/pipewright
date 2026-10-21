@@ -6,6 +6,7 @@ export default {
   navOauth: 'OAuth Apps',
   navNotifications: 'Notifications',
   navVault: 'Credential Vault',
+  navApiTokens: 'API Tokens',
   navDnsProviders: 'DNS Providers',
   navAccount: 'Account',
   navServers: 'Servers',

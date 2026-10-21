@@ -6,6 +6,7 @@ export default {
   navOauth: 'OAuth 应用',
   navNotifications: '通知',
   navVault: '凭据保险库',
+  navApiTokens: 'API 令牌',
   navDnsProviders: 'DNS 提供商',
   navAccount: '账户',
   navServers: '服务器',
