@@ -31,6 +31,19 @@ func subDomain(name, zone string) string {
 	return n
 }
 
+// rrEqual 比较 API 回显的主机头与目标 sub 是否同一条记录。
+//
+// 顶点写法各家不统一:腾讯云 3.0 的 RecordList[].Name 对根域记录回空串,DNSPod / 阿里云回 "@",
+// 火山回 "@"。归一成「@ 与空串等价」,否则顶点上的 TXT/A 记录会被判成不存在而重复创建一条。
+func rrEqual(existing, want string) bool {
+	e := strings.ToLower(strings.TrimSpace(existing))
+	w := strings.ToLower(strings.TrimSpace(want))
+	if w == "@" {
+		return e == "@" || e == ""
+	}
+	return e == w
+}
+
 // txtEqual 比较既有 TXT 内容是否已是目标值:各家 API 回显时可能带外层引号或多余空白
 // (Cloudflare 会回 `"text"` 形式),归一后再比,免得每次 renew 都白发一次 PUT/Modify。
 func txtEqual(existing, want string) bool {

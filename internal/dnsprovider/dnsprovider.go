@@ -6,14 +6,16 @@
 //
 // 能力:
 //   - DNSClient 抽象「为某域建/改 A 记录」「校验某 zone 可管理」(注入便于单测,不触真网络)。
-//     Cloudflare / DNSPod / 阿里云 DNS 三家均经 net/http 直连各自 API 真实实现(无 SDK):
-//     Cloudflare 用 v4 REST(Bearer token);DNSPod 用经典 dnsapi.cn form-POST(login_token=id,token);
-//     阿里云用 RPC v1(HMAC-SHA1 签名,凭据 accessKeyId,accessKeySecret)。
-//     三家的 DNS-01 通配符证书签发也都能用(走 Caddy 镜像内的 DNS 插件,与自动建 A 记录正交)。
+//     六家提供商均经 net/http 直连各自 API 真实实现(无 SDK):Cloudflare 用 v4 REST(Bearer token);
+//     DNSPod 用经典 dnsapi.cn form-POST(login_token=id,token);阿里云用 RPC v1(HMAC-SHA1 签名);
+//     腾讯云用 DNS 解析 API 3.0(JSON + TC3-HMAC-SHA256);百度用 BCE REST(bce-auth-v1);
+//     火山用 RPC(HMAC-SHA256 签名,与 AWS SigV4 同构)。
+//     六家的 DNS-01 通配符证书签发也都能用(走 Caddy 镜像内的 DNS 插件,与自动建 A 记录正交)——
+//     例外是百度:镜像里没有可用插件,故它只能服务「平台自己签证书」,不能绑反代路由。
 //   - AllocateSubdomain:瞬时挑一个可读子域名 app-<6char>.<baseDomain> → 自动建 A 记录指向宿主机
 //     公网 IP → 创建一条 DNS-01 的反代路由(证书即刻可签)。
 //   - TXTClient / EnsureTXTRecord:为**平台自己**经 ACME DNS-01 签证书写校验用 TXT 记录
-//     (internal/cert 那条线;三家提供商均经各自 API 真实实现)。
+//     (internal/cert 那条线;六家提供商均经各自 API 真实实现)。
 //
 // AC-SEC:写入解析的 IP 是宿主机的(由调用方传入,非用户自由文本);zone/name 服务端严格校验;
 // 命令 / API 入参严格归一,杜绝注入。
@@ -35,6 +37,16 @@ const (
 	TypeDNSPod = "dnspod"
 	// TypeAliDNS 是阿里云 DNS(自动 A 记录已真实实现;凭据格式 "accessKeyId,accessKeySecret")。
 	TypeAliDNS = "alidns"
+	// TypeTencentCloud 是腾讯云「云解析」DNS 解析 API 3.0(凭据格式 "SecretId,SecretKey")。
+	// 与 TypeDNSPod 分开保留:2.0(dnsapi.cn + login_token)只覆盖 DNSPod 控制台的域名,
+	// 腾讯云控制台添加的域名用 2.0 拿不到,两套账号体系不同。
+	TypeTencentCloud = "tencentcloud"
+	// TypeBaiduDNS 是百度智能云智能云解析 DNS(公网 DNS,BCE REST;凭据格式 "AccessKeyID,SecretAccessKey")。
+	// 只走「平台自己经 ACME 签证书」那条路:官方 Caddy 镜像里没有可靠的 baidudns DNS 插件,
+	// 故不允许把它绑到反代路由(proxy 侧硬拒),详见 internal/proxy.validateDNSProviderRef。
+	TypeBaiduDNS = "baidudns"
+	// TypeVolcengine 是火山引擎云解析 TrafficRoute DNS(凭据格式 "AccessKeyID,SecretAccessKey")。
+	TypeVolcengine = "volcengine"
 )
 
 // 领域错误(人话由 httpapi 层映射状态码;错误体绝不含敏感信息)。
@@ -128,12 +140,15 @@ type TXTClient interface {
 	DeleteTXTRecord(ctx context.Context, zone, name string) error
 }
 
-// 三家真实客户端必须同时实现 DNSClient 与 TXTClient。编译期钉住:漏一个方法不会等到签证书
+// 各家真实客户端必须同时实现 DNSClient 与 TXTClient。编译期钉住:漏一个方法不会等到签证书
 // 那天才由类型断言失败暴露,而是 `go build` 直接不过。
 var (
 	_ TXTClient = (*cloudflareClient)(nil)
 	_ TXTClient = (*dnspodClient)(nil)
 	_ TXTClient = (*alidnsClient)(nil)
+	_ TXTClient = (*tencentCloudClient)(nil)
+	_ TXTClient = (*baiduDNSClient)(nil)
+	_ TXTClient = (*volcengineClient)(nil)
 )
 
 // Service 定义 DNS 提供商领域对外接口(冻结契约;httpapi 消费)。
@@ -202,9 +217,11 @@ type RouteRef struct {
 var baseDomainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 
 // ValidType 报告提供商类型是否为受支持枚举(供 proxy 校验 DNS-01 引用时复用)。
+// 注意:这里只管「登记得过」,不管「Caddy 镜像里有没有对应的 DNS 插件」——后者由
+// proxy.validateDNSProviderRef 把关(百度就是登记得起、但不能绑路由的类型)。
 func ValidType(t string) bool {
 	switch t {
-	case TypeCloudflare, TypeDNSPod, TypeAliDNS:
+	case TypeCloudflare, TypeDNSPod, TypeAliDNS, TypeTencentCloud, TypeBaiduDNS, TypeVolcengine:
 		return true
 	default:
 		return false

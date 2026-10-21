@@ -56,7 +56,7 @@ func writeDNSProviderError(w http.ResponseWriter, err error) {
 	case errors.Is(err, dnsprovider.ErrNotFound):
 		writeError(w, http.StatusNotFound, "dns_provider_not_found", "DNS 提供商不存在")
 	case errors.Is(err, dnsprovider.ErrInvalidType):
-		writeError(w, http.StatusBadRequest, "invalid_dns_provider", "DNS 提供商类型非法(仅支持 cloudflare / dnspod / alidns)")
+		writeError(w, http.StatusBadRequest, "invalid_dns_provider", "DNS 提供商类型非法(仅支持 cloudflare / dnspod / alidns / tencentcloud / baidudns / volcengine)")
 	case errors.Is(err, dnsprovider.ErrEmptyName):
 		writeError(w, http.StatusBadRequest, "invalid_dns_provider", "请填写 DNS 提供商展示名")
 	case errors.Is(err, dnsprovider.ErrEmptyCredentialID):
