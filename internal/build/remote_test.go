@@ -3,6 +3,8 @@ package build
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/fuuhoo/pipewright/internal/pipeline"
@@ -10,17 +12,54 @@ import (
 )
 
 // fakeRemoteExecer 是可控的 RemoteExecer:记录被投递的命令,按注入返回结果/错误。
+// streamChunks 非空时,流式通路按这些块逐次回调(块边界刻意不等于行边界,用来验残行拼接)。
 type fakeRemoteExecer struct {
-	gotServerID string
-	gotCmds     [][]string
-	result      *target.ExecResult
-	err         error
+	gotServerID  string
+	gotCmds      [][]string
+	result       *target.ExecResult
+	err          error
+	gotStdin     []byte
+	streamChunks []string
 }
 
 func (f *fakeRemoteExecer) Exec(_ context.Context, serverID string, cmd []string) (*target.ExecResult, error) {
 	f.gotServerID = serverID
 	f.gotCmds = append(f.gotCmds, cmd)
 	return f.result, f.err
+}
+
+func (f *fakeRemoteExecer) ExecWithStdin(_ context.Context, serverID string, cmd []string, stdin io.Reader) (*target.ExecResult, error) {
+	f.gotServerID = serverID
+	f.gotCmds = append(f.gotCmds, cmd)
+	if stdin != nil {
+		f.gotStdin, _ = io.ReadAll(stdin)
+	}
+	return f.result, f.err
+}
+
+func (f *fakeRemoteExecer) ExecStreamWithExit(_ context.Context, serverID string, cmd []string, onChunk func(stream string, chunk []byte)) (int, error) {
+	f.gotServerID = serverID
+	f.gotCmds = append(f.gotCmds, cmd)
+	if f.err != nil {
+		return -1, f.err
+	}
+	if onChunk != nil {
+		for _, c := range f.streamChunks {
+			onChunk(target.StreamStdout, []byte(c))
+		}
+	}
+	if f.result == nil {
+		return 0, nil // 只喂了 streamChunks 的用例:退出码默认 0
+	}
+	if onChunk != nil && len(f.streamChunks) == 0 {
+		if f.result.Stdout != "" {
+			onChunk(target.StreamStdout, []byte(f.result.Stdout))
+		}
+		if f.result.Stderr != "" {
+			onChunk(target.StreamStderr, []byte(f.result.Stderr))
+		}
+	}
+	return f.result.ExitCode, nil
 }
 
 func TestSSHCommanderRunMapsResult(t *testing.T) {
@@ -44,19 +83,25 @@ func TestSSHCommanderRunMapsResult(t *testing.T) {
 	}
 }
 
-func TestSSHCommanderRunRejectsStdin(t *testing.T) {
-	f := &fakeRemoteExecer{result: &target.ExecResult{}}
+// TestSSHCommanderRunStreamsStdin 验远程模式的 secret-stdin:口令经管道送达,绝不进 argv。
+// (docker login --password-stdin 走的就是这条,所以远程模式不再需要「预先在远程机登录」。)
+func TestSSHCommanderRunStreamsStdin(t *testing.T) {
+	f := &fakeRemoteExecer{result: &target.ExecResult{Stdout: "Login Succeeded\n", ExitCode: 0}}
 	c := NewRemoteCommander(f, "srv-1")
-	_, _, code, err := c.Run(context.Background(), "docker", []string{"login"}, "secret-password")
-	if !errors.Is(err, ErrRemoteStdinUnsupported) {
-		t.Fatalf("err = %v, want ErrRemoteStdinUnsupported", err)
+
+	stdout, _, code, err := c.Run(context.Background(), "docker",
+		[]string{"login", "registry.example.com", "-u", "bot", "--password-stdin"}, "hunter2")
+	if err != nil {
+		t.Fatalf("Run err: %v", err)
 	}
-	if code != -1 {
-		t.Fatalf("code = %d, want -1", code)
+	if code != 0 || !strings.Contains(stdout, "Login Succeeded") {
+		t.Fatalf("登录结果未按原样取回: code=%d stdout=%q", code, stdout)
 	}
-	// 关键:带 stdin(口令)的命令**绝不投递到远程**(避免 secret 处理面)。
-	if len(f.gotCmds) != 0 {
-		t.Fatalf("stdin 命令不应投递,实际投了 %v", f.gotCmds)
+	if string(f.gotStdin) != "hunter2" {
+		t.Fatalf("口令未作为 stdin 送达:%q", f.gotStdin)
+	}
+	if strings.Contains(strings.Join(f.gotCmds[0], " "), "hunter2") {
+		t.Fatalf("口令漏进 argv:%v", f.gotCmds[0])
 	}
 }
 
@@ -101,6 +146,28 @@ func TestSSHCommanderStreamReplaysLines(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("line %d = %v, want %v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestSSHCommanderStreamSplitsAcrossChunks 验残行拼接:块边界落在行中间时,
+// 半行先进缓冲、补全了才成行,末尾无换行的一段也在结束时放出(不因分块而丢字或多出空行)。
+func TestSSHCommanderStreamSplitsAcrossChunks(t *testing.T) {
+	f := &fakeRemoteExecer{streamChunks: []string{"npm htt", "p 200", " https://x\nnext line", "\nno newline tail"}}
+	c := NewRemoteCommander(f, "srv-1")
+
+	var got []string
+	code, err := c.Stream(context.Background(), "sh", []string{"-c", "npm ci"}, "", func(_, line string) {
+		got = append(got, line)
+	})
+	if err != nil {
+		t.Fatalf("Stream err: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	want := []string{"npm http 200 https://x", "next line", "no newline tail"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("逐行还原 = %v, want %v", got, want)
 	}
 }
 

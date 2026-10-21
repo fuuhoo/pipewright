@@ -489,7 +489,7 @@ func (b *Builder) build(ctx context.Context, sink run.StepSink, ordinal int, pro
 		if rerr != nil {
 			return "", nil, rerr
 		}
-		b.loginForImage(ctx, resolved.Image, resolved.CredentialID, onLine)
+		b.loginForImage(ctx, b.driver, resolved.Image, resolved.CredentialID, onLine)
 		env := append(buildArgs, secretArgs...) // 工具链构建经 -e 注入(secret 回显只列 key)
 		buildCmd := toolchainBuildCmd(resolved.Env.Language)
 		mounts, merr := b.checkMountFiles(resolved.Mounts)

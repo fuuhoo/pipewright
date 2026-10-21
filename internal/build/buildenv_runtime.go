@@ -52,7 +52,10 @@ func (b *Builder) buildEnvSnapshot(stage, job string) (pipeline.BuildEnvSnapshot
 //
 // 口令经 driver.Login 的 --password-stdin 注入,不进 argv/日志。登录失败只记一行日志、
 // 不判失败:镜像可能已在远程/本地缓存或是公开的,真拉不到时 docker 自己会给出准确错误。
-func (b *Builder) loginForImage(ctx context.Context, image, credentialID string, onLine func(stream, line string)) {
+//
+// driver 由调用方给定:本地路径传 b.driver,远程 runner 传那台机上的远程 driver ——
+// 登录必须发生在**要拉镜像的那台机器**上,在中控机登录对远程机的拉取没有任何帮助。
+func (b *Builder) loginForImage(ctx context.Context, driver Driver, image, credentialID string, onLine func(stream, line string)) {
 	if credentialID == "" || image == "" {
 		return
 	}
@@ -66,7 +69,7 @@ func (b *Builder) loginForImage(ctx context.Context, image, credentialID string,
 		return
 	}
 	onLine(streamStdout, "→ 登录镜像仓库 "+host+" 以拉取构建镜像…")
-	code, err := b.driver.Login(ctx, host, user, pass, onLine)
+	code, err := driver.Login(ctx, host, user, pass, onLine)
 	pass = ""
 	if err != nil && code < 0 {
 		onLine(streamStdout, "⚠ 无法调用容器 CLI 登录,继续尝试拉取")

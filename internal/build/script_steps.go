@@ -77,7 +77,7 @@ func (b *Builder) runScriptStep(ctx context.Context, sink run.StepSink, ordinal 
 	cmd := []string{"sh", "-c", script}
 
 	// 私有构建镜像:先按环境绑定的凭据登录(#9),再 docker run(它负责按需拉取)。
-	b.loginForImage(ctx, step.Image, step.ImageCredentialID, onLine)
+	b.loginForImage(ctx, b.driver, step.Image, step.ImageCredentialID, onLine)
 
 	code, err := b.driver.RunToolchain(ctx, step.Image, workspace, scriptWorkspaceMount, workdir, env, cmd, res, onLine)
 	if err != nil && code < 0 {

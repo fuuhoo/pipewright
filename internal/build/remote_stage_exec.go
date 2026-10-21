@@ -7,7 +7,9 @@ package build
 //  1. 控制机本地克隆源码(复用 b.cloner;若装了 repocache 则走本地镜像增量,快)。
 //  2. 把本地工作区打成 tar.gz,经 SSH(target.Upload = stdin 流,无 argv 长度限)传到远程临时目录并解包。
 //  3. 在远程机用容器跑 script job(NewRemoteDriver:shellDriver 经 SSH Commander → 远程 `docker run`),
-//     日志经 reporterSink 回流。
+//     日志经 reporterSink 回流。**边跑边回流**(target.ExecStreamWithExit:stdout/stderr 分流 + 真退出码),
+//     所以远程构建在执行详情里看到的是实时进度,不是一整块跑完才砸出来的日志。
+//     私有仓库登录发生在**远程机**上(driver 是远程 driver,口令经 SSH stdin 管道)。
 //  4. 把 job 声明的文件产物从远程工作区 tar 流回中控机同一相对路径,交给本地收集器归档(见 remote_artifacts.go)。
 //  5. 收尾删远程工作区(尽力)。
 //
@@ -35,9 +37,15 @@ type RunnerLookup interface {
 	RunnerFor(ctx context.Context, projectID string) (serverID string, ok bool)
 }
 
-// remoteExec 抽象远程执行所需的 target 能力(Exec + Upload + ExecStream;target.Service 即满足;便于 fake 单测)。
+// remoteContainerCLI 是远程 runner 上默认使用的容器 CLI 名。远程 driver 的 `docker run`、镜像推送的
+// `docker load` 与私仓登录都经它投递(runner 机器上装的是 docker;换 podman 时只需改这一处)。
+const remoteContainerCLI = "docker"
+
+// remoteExec 抽象远程执行所需的 target 能力(target.Service 即满足;便于 fake 单测):
+// Exec / ExecWithStdin(stdin 喂口令与镜像字节) / ExecStreamWithExit(stdout+stderr 分流 + 真退出码)
+// 三个由 RemoteExecer 提供,Upload(工作区上远程)与 ExecStream(产物 tar 流回中控机)是本路径另需的两条。
 type remoteExec interface {
-	RemoteExecer // Exec(ctx, serverID, cmd) (*target.ExecResult, error)
+	RemoteExecer
 	Upload(ctx context.Context, serverID string, content io.Reader, remotePath string) error
 	// ExecStream 流式取回命令的 stdout(回传产物归档用;Exec 会把整段 stdout 缓冲进内存)。
 	ExecStream(ctx context.Context, serverID string, cmd []string) (io.ReadCloser, error)
@@ -120,37 +128,23 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 	defer func() { _, _ = tgt.Exec(context.WithoutCancel(ctx), serverID, []string{"rm", "-rf", remoteWS}) }()
 
 	// 3) 在远程机用容器跑 script job(远程 driver:docker run 经 SSH)。
-	driver := NewRemoteDriver(tgt, serverID, "docker")
-	onLine := func(stream, line string) { _ = rep.Log(ctx, stream, line) }
+	driver := NewRemoteDriver(tgt, serverID, remoteContainerCLI)
 	for _, jb := range scriptJobs {
 		if canceled(ctx) {
 			return run.ErrCanceled
 		}
-		step, verr := b.scriptStepFromJob(jb, stage.Name)
-		if verr != nil {
-			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」配置无效:%v", jb.Name, verr))
-			return ErrBuildFailed
+		// 节点级 step:与本地执行器同一口径 —— 跑前标 running、日志归本节点、结束标终态。
+		// 少了这三步,远程构建的整段日志会全挤在阶段第一个节点上,第二个节点看起来「没动」。
+		_ = rep.JobRunning(ctx, jb.ID)
+		jrep := rep.JobReporter(jb.ID)
+		jerr := b.runRemoteJob(ctx, driver, tgt, serverID, jrep, r, stage, jb, workspace, remoteWS)
+		status := run.StepSuccess
+		if jerr != nil {
+			status = run.StepFailed
 		}
-		step.Env = append(runParamsAsEnv(r.Trigger.Params), step.Env...)
-		// 仓库来源的 env 读的是控制机工作区(它刚被整份 tar 上远程),Nacos 来源同样由控制机出网去取,
-		// 所以远程机上的容器拿到的是同一份内容 —— 代价是「能不能访问配置中心」按控制机的网络算,
-		// 只有远程机可达的 Nacos 会在这一步连不上(错误话术里点名主机:端口)。
-		if err := b.applyJobEnv(ctx, &step, jb, workspace, func(stream, line string) { _ = rep.Log(ctx, stream, line) }); err != nil {
-			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
-			return ErrBuildFailed
-		}
-		// 配置资源注入是「宿主文件 → 容器」的 bind;远程 runner 的容器在另一台机器上,
-		// 中控机上的配置资源文件对它不可见 → 诚实跳过并说明,不假装注入成功。
-		if n := len(step.Resource.Mounts); n > 0 {
-			_ = rep.Log(ctx, streamStdout, fmt.Sprintf("⚠ 远程 runner 跳过 %d 个配置资源挂载(文件在中控机,远程机不可见);需注入配置资源的节点请用本地 runner", n))
-			step.Resource.Mounts = nil
-		}
-		// 同理:登录私有镜像仓要经 stdin 喂口令,SSH 通道不收 stdin → 说明并要求远程机预先登录。
-		if step.ImageCredentialID != "" {
-			_ = rep.Log(ctx, streamStdout, "⚠ 远程 runner 跳过镜像仓库登录(SSH 通道不支持 stdin 口令);私有构建镜像请在远程机预先 docker login")
-		}
-		if err := b.runScriptOnDriver(ctx, driver, onLine, step, remoteWS); err != nil {
-			return err
+		_ = rep.JobDone(ctx, jb.ID, status)
+		if jerr != nil {
+			return jerr
 		}
 	}
 
@@ -161,6 +155,36 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 
 	_ = rep.Log(ctx, streamStdout, fmt.Sprintf("✓ 远程 runner(%s)执行完成;测试报告/质量门禁在远程模式暂不回采(后续增量)", serverID))
 	return nil
+}
+
+// runRemoteJob 在远程 runner 上执行一个 script job:准备工作区路径/环境变量/镜像,再经远程 driver 跑容器。
+// 日志一律归本节点(jrep 的 ordinal)。返回 nil 表示该节点成功;ErrBuildFailed / run.ErrCanceled 如实上抛。
+func (b *Builder) runRemoteJob(ctx context.Context, driver Driver, tgt remoteExec, serverID string, jrep dagrun.StageReporter, r *run.Run, stage pipeline.Stage, jb pipeline.Job, workspace, remoteWS string) error {
+	onLine := func(stream, line string) { _ = jrep.Log(ctx, stream, line) }
+
+	step, verr := b.scriptStepFromJob(jb, stage.Name)
+	if verr != nil {
+		_ = jrep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」配置无效:%v", jb.Name, verr))
+		return ErrBuildFailed
+	}
+	step.Env = append(runParamsAsEnv(r.Trigger.Params), step.Env...)
+	// 仓库来源的 env 读的是控制机工作区(它刚被整份 tar 上远程),Nacos 来源同样由控制机出网去取,
+	// 所以远程机上的容器拿到的是同一份内容 —— 代价是「能不能访问配置中心」按控制机的网络算,
+	// 只有远程机可达的 Nacos 会在这一步连不上(错误话术里点名主机:端口)。
+	if err := b.applyJobEnv(ctx, &step, jb, workspace, onLine); err != nil {
+		_ = jrep.Log(ctx, streamStderr, fmt.Sprintf("script job「%s」环境变量导入失败:%v", jb.Name, err))
+		return ErrBuildFailed
+	}
+	// 配置资源注入是「宿主文件 → 容器」的 bind;远程 runner 的容器在另一台机器上,
+	// 中控机上的配置资源文件对它不可见 → 诚实跳过并说明,不假装注入成功。
+	if n := len(step.Resource.Mounts); n > 0 {
+		onLine(streamStdout, fmt.Sprintf("⚠ 远程 runner 跳过 %d 个配置资源挂载(文件在中控机,远程机不可见);需注入配置资源的节点请用本地 runner", n))
+		step.Resource.Mounts = nil
+	}
+	// 登录要发生在**要拉镜像的那台机器**上:远程 driver 的 Login 经 SSH 投递 `docker login` 到 runner,
+	// 口令走 stdin 管道(不进 argv/日志)。私有构建镜像因此不再要求「预先在远程机手工登录」。
+	b.loginForImage(ctx, driver, step.Image, step.ImageCredentialID, onLine)
+	return b.runScriptOnDriver(ctx, driver, onLine, step, remoteWS)
 }
 
 // runScriptOnDriver 用给定 driver(本地或远程)跑一条 script 步骤;remoteWS 为容器挂载的工作区(远程机上的路径)。
