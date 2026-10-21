@@ -8,7 +8,7 @@
   API Token 只写不读 —— 存入保险库,列表只显示「已配置 / 未配置」,绝不回显。
 
   - 列表:类型徽章、名称、根域、凭据状态;每行「验证」(探测 token 是否能触达该 zone)+ 删除。
-  - 添加弹窗:类型(六选一)+ 名称 + 根域(FQDN 校验)+ API Token(必填,password)。
+  - 添加弹窗:类型(下拉六选一)+ 名称 + 根域(FQDN 校验)+ API Token(必填,password)。
   - 删除二次确认。验证结果以 toast 反馈。
   数据来自 GET /api/dns/providers(只读聚合,从不含 token)。
 */
@@ -105,6 +105,11 @@ const errors = ref<{ name: string; baseDomain: string; token: string }>({
   baseDomain: '',
   token: '',
 })
+
+// select 回传的是 string,这里收窄回 DnsProviderType(值必然来自 PROVIDER_TYPES)。
+function onTypeChange(e: Event): void {
+  form.value.type = (e.target as HTMLSelectElement).value as DnsProviderType
+}
 
 // 根域:与路由域名相同的 FQDN 校验(根域本身不带通配符)。
 const FQDN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
@@ -341,18 +346,10 @@ async function confirmDelete(): Promise<void> {
         <form class="modal-form" novalidate @submit.prevent="submit">
           <!-- type -->
           <div class="field">
-            <label class="field-label">{{ t('dnsProviders.fieldType') }}</label>
-            <div class="segmented" role="group">
-              <button
-                v-for="opt in PROVIDER_TYPES"
-                :key="opt"
-                type="button"
-                class="seg-item"
-                :class="{ 'seg-item--active': form.type === opt }"
-                :disabled="submitting"
-                @click="form.type = opt"
-              >{{ typeLabels[opt] }}</button>
-            </div>
+            <label class="field-label" for="dns-type">{{ t('dnsProviders.fieldType') }}</label>
+            <select id="dns-type" class="field-input" :value="form.type" :disabled="submitting" @change="onTypeChange">
+              <option v-for="opt in PROVIDER_TYPES" :key="opt" :value="opt">{{ typeLabels[opt] }}</option>
+            </select>
           </div>
 
           <!-- name -->
@@ -991,46 +988,6 @@ async function confirmDelete(): Promise<void> {
   font-size: 0.74rem;
   color: var(--color-faint);
   line-height: 1.4;
-}
-
-/* segmented —— 六个厂商一行三列两行放:单行 flex 时「腾讯云 DNS 解析」这类长标签会在
-   520px 弹窗里换行,而 height 固定 30px 会把第二行裁掉。改 grid + min-height 两者都避免。 */
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  background: var(--color-inset);
-  border-radius: var(--rounded);
-  padding: 3px;
-  gap: 2px;
-  width: 100%;
-}
-.seg-item {
-  min-height: 30px;
-  padding: 4px 6px;
-  line-height: 1.25;
-  text-align: center;
-  border: none;
-  background: transparent;
-  color: var(--color-dim);
-  font-family: var(--font-sans);
-  font-size: 0.8rem;
-  font-weight: 500;
-  border-radius: var(--rounded-md);
-  cursor: pointer;
-  transition: color var(--duration-fast), background-color var(--duration-fast), box-shadow var(--duration-fast);
-}
-.seg-item:hover:not(:disabled) {
-  color: var(--color-text);
-  background: oklch(100% 0 0 / 0.04);
-}
-.seg-item--active {
-  background: var(--color-card);
-  color: var(--color-text);
-  box-shadow: var(--shadow);
-}
-.seg-item:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* delete body */
