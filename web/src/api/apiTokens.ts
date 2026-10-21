@@ -1,0 +1,56 @@
+/**
+ * API 令牌 —— 机器客户端(MCP、脚本)用的 Bearer 凭据。
+ *
+ *   GET    /api/admin/api-tokens       → { items: APIToken[] }
+ *   POST   /api/admin/api-tokens       → { item, plaintext }   (needs CSRF)
+ *   DELETE /api/admin/api-tokens/:id   → 204                   (needs CSRF)
+ *
+ * 明文只在这次 POST 的响应体里出现一次,之后再没有第二个端点读得回来(库里只有摘要),
+ * 所以这里既没有「查看」也不该有 —— 列表拿到的 APIToken 结构里根本没有明文字段。
+ * 忘了存 = 只能撤销重发,因此创建弹窗要把明文单独成卡并强提示「只显示这一次」。
+ *
+ * 没有编辑:令牌是「一把凭据 = 一个机器身份」,改名不改变它能干什么,改归属更是不存在
+ * 的操作(事后追查问的是「谁用它跑过构建」)。撤销 = 删行,下一笔带它的请求直接 401。
+ *
+ * 三个端点都收在 RequireAdmin 后面(与审计、用户管理同一道门),这页也因此只给管理员看。
+ */
+
+import { http } from './http'
+
+export interface APIToken {
+  id: string
+  name: string
+  /** 归属人:机器凭据真正要能回答「代表谁跑的」,所以这把令牌始终挂在一个具体账号上。 */
+  userId: string
+  ownerName: string
+  /** 发放者(会话用户名)。管理员替他人签发时,这一列与 ownerName 不同。 */
+  createdBy: string
+  createdAt: string
+  /** RFC3339;'' = 从没被用过 —— 发出去没动过的通常就是该删的那种。 */
+  lastUsedAt: string
+}
+
+export interface CreateAPITokenInput {
+  name: string
+  /** 留空 = 后端默认签给当前登录者自己。会话载荷里没有 userId,所以「给我自己」只能靠省略实现。 */
+  userId?: string
+}
+
+/** 创建响应:元数据 + 一次性明文。 */
+export interface CreatedAPIToken {
+  item: APIToken
+  plaintext: string
+}
+
+export async function listAPITokens(): Promise<APIToken[]> {
+  const res = await http.get<{ items: APIToken[] }>('/api/admin/api-tokens')
+  return res.items ?? []
+}
+
+export async function createAPIToken(input: CreateAPITokenInput): Promise<CreatedAPIToken> {
+  return http.post<CreatedAPIToken>('/api/admin/api-tokens', input)
+}
+
+export async function revokeAPIToken(id: string): Promise<void> {
+  return http.delete<void>(`/api/admin/api-tokens/${id}`)
+}

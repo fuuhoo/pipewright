@@ -40,6 +40,8 @@ const SettingsAccount = () => import('../views/settings/SettingsAccount.vue')
 const SettingsServers = () => import('../views/settings/SettingsServers.vue')
 // K8s 发布那条腿:集群登记(kubeconfig 凭据 + 默认命名空间)
 const SettingsKubeClusters = () => import('../views/settings/SettingsKubeClusters.vue')
+// 机器客户端(MCP、脚本)用的 Bearer 凭据发放台
+const SettingsAPITokens = () => import('../views/settings/SettingsAPITokens.vue')
 // Story 5-1: notification channels (FR-19)
 const SettingsNotifications = () => import('../views/settings/SettingsNotifications.vue')
 // Story 7-5: diagnosis feedback-loop stats (FR-26)
@@ -238,6 +240,8 @@ const router = createRouter({
             // 用户管理并进了「用户与权限」页(左栏一级入口);旧路径重定向,书签不失效。
             { path: 'users', redirect: { name: 'permissions-users' } },
             { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', requires: { settings: true } } },
+            // API 令牌:三端点同样收在 RequireAdmin 后(与审计、用户管理同一道门)。
+            { path: 'api-tokens', name: 'settings-api-tokens', component: SettingsAPITokens, meta: { title: 'API 令牌', requires: { settings: true } } },
 
             // ─── v6.2 §3.6:个人设置(所有登录用户)───
             { path: 'my-credentials', name: 'settings-my-credentials', component: MyCredentials, meta: { title: '我的凭据' } },

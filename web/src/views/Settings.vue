@@ -3,7 +3,7 @@
  * Settings shell with secondary nav — v6.2 §3.6 权限隔离。
  *
  * 分两组:
- *   - 全局设置(仅管理员):AI / OAuth / 通知 / 凭据保险库 / DNS / 服务器 / 诊断反馈 /
+ *   - 全局设置(仅管理员):AI / OAuth / 通知 / 凭据保险库 / API 令牌 / DNS / 服务器 / 诊断反馈 /
  *     系统 / 全局凭据 / 审计日志
  *     (构建环境与配置资源已提升为左栏一级页面,不在此列;用户管理并入了左栏「用户与权限」)
  *   - 个人设置(所有登录用户):账户 / 我的凭据
@@ -11,7 +11,7 @@
  * role 来自 session store(后端 /api/auth/session 回显);普通用户看不到全局组。
  * 后端 RequireAdmin 仍是权威校验,这里只是不渲染无权限入口。
  *
- * 布局:宽屏(≥1000px)时导航走左侧竖排 —— 全局 11 项 + 个人 2 项横排会换行成三四排,
+ * 布局:宽屏(≥1000px)时导航走左侧竖排 —— 全局 12 项 + 个人 2 项横排会换行成三四排,
  * 光导航就吃掉约 300px 纵向空间,内容被推到首屏之外。窄屏不收成竖排(那时竖排会把内容
  * 挤成一条),而是收成一个原生 select:分组靠 optgroup 保住语义,一行的钱都不多花。
  * 两组用同一条 nav + 组标题,而不是两条 nav —— 竖排时两组之间靠标题分隔就够了。
@@ -41,6 +41,7 @@ interface SettingsNavItem {
 const globalItems: SettingsNavItem[] = [
   { to: '/settings/credentials', key: 'navCredentials', requires: { settings: true } },
   { to: '/settings/vault', key: 'navVault' },
+  { to: '/settings/api-tokens', key: 'navApiTokens', requires: { settings: true } },
   { to: '/settings/audit', key: 'navAudit', requires: { settings: true } },
   { to: '/settings/servers', key: 'navServers' },
   { to: '/settings/kube-clusters', key: 'navKubeClusters' },

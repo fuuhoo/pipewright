@@ -72,6 +72,8 @@ const ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'password_change', label: 'password_change' },
   { value: 'profile_update', label: 'profile_update' },
   { value: 'session_revoke', label: 'session_revoke' },
+  { value: 'api_token_create', label: 'api_token_create' },
+  { value: 'api_token_revoke', label: 'api_token_revoke' },
 ]
 
 async function load(): Promise<void> {
