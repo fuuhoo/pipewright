@@ -10,6 +10,7 @@ package build
 //     日志经 reporterSink 回流。**边跑边回流**(target.ExecStreamWithExit:stdout/stderr 分流 + 真退出码),
 //     所以远程构建在执行详情里看到的是实时进度,不是一整块跑完才砸出来的日志。
 //     私有仓库登录发生在**远程机**上(driver 是远程 driver,口令经 SSH stdin 管道)。
+//     远程机缺这个构建镜像时,由 ensureRemoteImage 从控制机推过去(架构一致才推,不一致只提醒,见 remote_image.go)。
 //  4. 把 job 声明的文件产物从远程工作区 tar 流回中控机同一相对路径,交给本地收集器归档(见 remote_artifacts.go)。
 //  5. 收尾删远程工作区(尽力)。
 //
@@ -184,6 +185,8 @@ func (b *Builder) runRemoteJob(ctx context.Context, driver Driver, tgt remoteExe
 	// 登录要发生在**要拉镜像的那台机器**上:远程 driver 的 Login 经 SSH 投递 `docker login` 到 runner,
 	// 口令走 stdin 管道(不进 argv/日志)。私有构建镜像因此不再要求「预先在远程机手工登录」。
 	b.loginForImage(ctx, driver, step.Image, step.ImageCredentialID, onLine)
+	// 远程机没有这个构建镜像 → 控制机推过去(架构一致才推;不一致或推不动只提醒,交远程自己拉)。
+	b.ensureRemoteImage(ctx, tgt, serverID, step.Image, onLine)
 	return b.runScriptOnDriver(ctx, driver, onLine, step, remoteWS)
 }
 

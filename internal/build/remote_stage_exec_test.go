@@ -24,6 +24,8 @@ type fakeRemoteTarget struct {
 	stdinEcho    string   // ExecWithStdin 回显到 stdout 的内容(模拟远端命令的输出)
 	streamChunks []string // ExecStreamWithExit 逐块回调的 stdout 片段
 	exitCode     int      // ExecStreamWithExit 的退出码
+	imageAbsent  bool     // 远程「没有」这个构建镜像(让推送用例能走缺镜像那条岔路)
+	runnerArch   string   // 远程 uname -m 的输出(镜像推送的架构门用)
 }
 
 func (f *fakeRemoteTarget) Exec(_ context.Context, serverID string, cmd []string) (*target.ExecResult, error) {
@@ -32,6 +34,16 @@ func (f *fakeRemoteTarget) Exec(_ context.Context, serverID string, cmd []string
 	}
 	f.serverIDs[serverID] = true
 	f.cmds = append(f.cmds, cmd)
+	// 镜像推送的两条探测命令可按用例编排;其余命令一律回成功(与远程执行路径原状一致)。
+	if len(cmd) == 4 && cmd[0] == "docker" && cmd[1] == "image" && cmd[2] == "inspect" {
+		if f.imageAbsent {
+			return &target.ExecResult{ExitCode: 1, Stderr: "Error: No such image: " + cmd[3]}, nil
+		}
+		return &target.ExecResult{}, nil
+	}
+	if len(cmd) == 2 && cmd[0] == "uname" && cmd[1] == "-m" {
+		return &target.ExecResult{ExitCode: 0, Stdout: f.runnerArch + "\n"}, nil
+	}
 	return &target.ExecResult{ExitCode: 0}, nil
 }
 
