@@ -8,14 +8,15 @@
   API Token 只写不读 —— 存入保险库,列表只显示「已配置 / 未配置」,绝不回显。
 
   - 列表:类型徽章、名称、根域、凭据状态;每行「验证」(探测 token 是否能触达该 zone)+ 删除。
-  - 添加弹窗:类型(下拉六选一)+ 名称 + 根域(FQDN 校验)+ API Token(必填,password)。
+  - 添加弹窗:类型(下拉六选一)+ 名称 + 根域(FQDN 校验)+ 凭据。除 Cloudflare 是单段 token 外,
+    其余五家都是「ID + 密钥」两段,拆成两个框填(ID 明文可见、密钥可点眼睛核对),提交时拼回一段。
   - 删除二次确认。验证结果以 toast 反馈。
   数据来自 GET /api/dns/providers(只读聚合,从不含 token)。
 */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NIcon } from 'naive-ui'
-import { World, Plus, Trash, CircleCheck, CircleX, ShieldCheck } from '@vicons/tabler'
+import { World, Plus, Trash, CircleCheck, CircleX, ShieldCheck, Eye, EyeOff } from '@vicons/tabler'
 import {
   listDnsProviders,
   createDnsProvider,
@@ -47,14 +48,42 @@ const typeLabels = computed<Record<DnsProviderType, string>>(() => ({
   volcengine: t('dnsProviders.typeVolcengine'),
 }))
 
-// 凭据是单字串字段;按提供商类型给出格式占位 + 提示(后端按逗号切分多段凭据)。
-const tokenPlaceholders = computed<Record<DnsProviderType, string>>(() => ({
+// 除 Cloudflare(单段 API Token)外,五家的凭据都是两段。vault 里仍只存**一个字串**、按第一个
+// 逗号切分(alidns.go 等各自的解析),所以表单拆两个框、提交时拼回 "ID,Secret":后端约定与
+// 已登记的提供商都不受影响,而用户终于能分开填、分开核对。
+const TWO_PART_TYPES: readonly DnsProviderType[] = ['dnspod', 'alidns', 'tencentcloud', 'baidudns', 'volcengine']
+// 凭据字段按提供商类型切换标签/占位/提示;Cloudflare 没有 ID 段,留空串(该框不渲染)。
+const idLabels = computed<Record<DnsProviderType, string>>(() => ({
+  cloudflare: '',
+  dnspod: t('dnsProviders.fieldIdDnspod'),
+  alidns: t('dnsProviders.fieldIdAlidns'),
+  tencentcloud: t('dnsProviders.fieldIdTencentcloud'),
+  baidudns: t('dnsProviders.fieldIdBaidudns'),
+  volcengine: t('dnsProviders.fieldIdVolcengine'),
+}))
+const idPlaceholders = computed<Record<DnsProviderType, string>>(() => ({
+  cloudflare: '',
+  dnspod: t('dnsProviders.idPlaceholderDnspod'),
+  alidns: t('dnsProviders.idPlaceholderAlidns'),
+  tencentcloud: t('dnsProviders.idPlaceholderTencentcloud'),
+  baidudns: t('dnsProviders.idPlaceholderBaidudns'),
+  volcengine: t('dnsProviders.idPlaceholderVolcengine'),
+}))
+const secretLabels = computed<Record<DnsProviderType, string>>(() => ({
+  cloudflare: t('dnsProviders.fieldTokenCloudflare'),
+  dnspod: t('dnsProviders.fieldSecretDnspod'),
+  alidns: t('dnsProviders.fieldSecretAlidns'),
+  tencentcloud: t('dnsProviders.fieldSecretTencentcloud'),
+  baidudns: t('dnsProviders.fieldSecretBaidudns'),
+  volcengine: t('dnsProviders.fieldSecretVolcengine'),
+}))
+const secretPlaceholders = computed<Record<DnsProviderType, string>>(() => ({
   cloudflare: t('dnsProviders.tokenPlaceholderCloudflare'),
-  dnspod: t('dnsProviders.tokenPlaceholderDnspod'),
-  alidns: t('dnsProviders.tokenPlaceholderAlidns'),
-  tencentcloud: t('dnsProviders.tokenPlaceholderTencentcloud'),
-  baidudns: t('dnsProviders.tokenPlaceholderBaidudns'),
-  volcengine: t('dnsProviders.tokenPlaceholderVolcengine'),
+  dnspod: t('dnsProviders.secretPlaceholder'),
+  alidns: t('dnsProviders.secretPlaceholder'),
+  tencentcloud: t('dnsProviders.secretPlaceholder'),
+  baidudns: t('dnsProviders.secretPlaceholder'),
+  volcengine: t('dnsProviders.secretPlaceholder'),
 }))
 const tokenHints = computed<Record<DnsProviderType, string>>(() => ({
   cloudflare: t('dnsProviders.tokenHintCloudflare'),
@@ -63,14 +92,6 @@ const tokenHints = computed<Record<DnsProviderType, string>>(() => ({
   tencentcloud: t('dnsProviders.tokenHintTencentcloud'),
   baidudns: t('dnsProviders.tokenHintBaidudns'),
   volcengine: t('dnsProviders.tokenHintVolcengine'),
-}))
-const tokenLabels = computed<Record<DnsProviderType, string>>(() => ({
-  cloudflare: t('dnsProviders.fieldTokenCloudflare'),
-  dnspod: t('dnsProviders.fieldTokenDnspod'),
-  alidns: t('dnsProviders.fieldTokenAlidns'),
-  tencentcloud: t('dnsProviders.fieldTokenTencentcloud'),
-  baidudns: t('dnsProviders.fieldTokenBaidudns'),
-  volcengine: t('dnsProviders.fieldTokenVolcengine'),
 }))
 
 async function load(): Promise<void> {
@@ -94,41 +115,52 @@ onMounted(load)
 const modalOpen = ref(false)
 const submitting = ref(false)
 const formBanner = ref('')
-const form = ref<{ type: DnsProviderType; name: string; baseDomain: string; token: string }>({
+// credId 只用于两段式类型;secret 两类都用(Cloudflare 时它就是那枚 API Token)。
+const form = ref<{ type: DnsProviderType; name: string; baseDomain: string; credId: string; secret: string }>({
   type: 'cloudflare',
   name: '',
   baseDomain: '',
-  token: '',
+  credId: '',
+  secret: '',
 })
-const errors = ref<{ name: string; baseDomain: string; token: string }>({
+const errors = ref<{ name: string; baseDomain: string; credId: string; secret: string }>({
   name: '',
   baseDomain: '',
-  token: '',
+  credId: '',
+  secret: '',
 })
+const isTwoPart = computed(() => TWO_PART_TYPES.includes(form.value.type))
+// 密钥默认仍是密文,但用户要能当场核对刚敲进去的字符(纯前端切换,不涉及库里的密文)。
+const showSecret = ref(false)
 
 // select 回传的是 string,这里收窄回 DnsProviderType(值必然来自 PROVIDER_TYPES)。
 function onTypeChange(e: Event): void {
   form.value.type = (e.target as HTMLSelectElement).value as DnsProviderType
+  errors.value.credId = ''
+  errors.value.secret = ''
 }
 
 // 根域:与路由域名相同的 FQDN 校验(根域本身不带通配符)。
 const FQDN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
 
 function openAdd(): void {
-  form.value = { type: 'cloudflare', name: '', baseDomain: '', token: '' }
-  errors.value = { name: '', baseDomain: '', token: '' }
+  form.value = { type: 'cloudflare', name: '', baseDomain: '', credId: '', secret: '' }
+  errors.value = { name: '', baseDomain: '', credId: '', secret: '' }
   formBanner.value = ''
+  showSecret.value = false
   modalOpen.value = true
 }
 
 function closeModal(): void {
   if (submitting.value) return
   modalOpen.value = false
-  form.value.token = ''
+  form.value.credId = ''
+  form.value.secret = ''
+  showSecret.value = false
 }
 
 function validate(): boolean {
-  errors.value = { name: '', baseDomain: '', token: '' }
+  errors.value = { name: '', baseDomain: '', credId: '', secret: '' }
   let ok = true
   if (!form.value.name.trim()) {
     errors.value.name = t('dnsProviders.valNameRequired')
@@ -142,8 +174,19 @@ function validate(): boolean {
     errors.value.baseDomain = t('dnsProviders.valBaseDomainInvalid')
     ok = false
   }
-  if (!form.value.token) {
-    errors.value.token = t('dnsProviders.valTokenRequired')
+  if (isTwoPart.value) {
+    const id = form.value.credId.trim()
+    if (!id) {
+      errors.value.credId = t('dnsProviders.valIdRequired')
+      ok = false
+    } else if (id.includes(',')) {
+      // 后端按**第一个逗号**切段:ID 里带逗号会把后半截当成密钥,静默错到 API 才报错。
+      errors.value.credId = t('dnsProviders.valIdComma')
+      ok = false
+    }
+  }
+  if (!form.value.secret.trim()) {
+    errors.value.secret = t('dnsProviders.valSecretRequired')
     ok = false
   }
   return ok
@@ -154,15 +197,17 @@ async function submit(): Promise<void> {
   submitting.value = true
   formBanner.value = ''
   try {
+    const secret = form.value.secret.trim()
     const payload: CreateDnsProviderInput = {
       type: form.value.type,
       name: form.value.name.trim(),
       baseDomain: form.value.baseDomain.trim().toLowerCase(),
-      token: form.value.token,
+      token: isTwoPart.value ? `${form.value.credId.trim()},${secret}` : secret,
     }
     const created = await createDnsProvider(payload)
     providers.value = [created, ...providers.value]
-    form.value.token = ''
+    form.value.credId = ''
+    form.value.secret = ''
     modalOpen.value = false
   } catch (err) {
     formBanner.value =
@@ -387,21 +432,52 @@ async function confirmDelete(): Promise<void> {
             <span v-if="errors.baseDomain" class="field-error" role="alert">{{ errors.baseDomain }}</span>
           </div>
 
-          <!-- token (write-only) — 标签/占位/提示按提供商类型切换 -->
-          <div class="field">
-            <label class="field-label" for="dns-token">{{ tokenLabels[form.type] }}</label>
+          <!-- 两段式凭据第一段:ID 明文可见(它本就不是秘密,分开填才好核对) -->
+          <div v-if="isTwoPart" class="field">
+            <label class="field-label" for="dns-cred-id">{{ idLabels[form.type] }}</label>
             <input
-              id="dns-token"
-              v-model="form.token"
+              id="dns-cred-id"
+              v-model="form.credId"
               class="field-input field-input--mono"
-              :class="{ 'field-input--error': errors.token }"
-              type="password"
-              :placeholder="tokenPlaceholders[form.type]"
+              :class="{ 'field-input--error': errors.credId }"
+              type="text"
+              :placeholder="idPlaceholders[form.type]"
               :disabled="submitting"
-              autocomplete="new-password"
-              @input="errors.token = ''"
+              autocomplete="off"
+              spellcheck="false"
+              @input="errors.credId = ''"
             />
-            <span v-if="errors.token" class="field-error" role="alert">{{ errors.token }}</span>
+            <span v-if="errors.credId" class="field-error" role="alert">{{ errors.credId }}</span>
+          </div>
+
+          <!-- 凭据密钥段(只写):默认密文,可点眼睛核对刚输入的内容;提交后只进保险库,绝不回显 -->
+          <div class="field">
+            <label class="field-label" for="dns-token">{{ secretLabels[form.type] }}</label>
+            <div class="field-secret">
+              <input
+                id="dns-token"
+                v-model="form.secret"
+                class="field-input field-input--mono"
+                :class="{ 'field-input--error': errors.secret }"
+                :type="showSecret ? 'text' : 'password'"
+                :placeholder="secretPlaceholders[form.type]"
+                :disabled="submitting"
+                autocomplete="new-password"
+                spellcheck="false"
+                @input="errors.secret = ''"
+              />
+              <button
+                type="button"
+                class="secret-toggle"
+                :aria-label="showSecret ? t('dnsProviders.hideSecret') : t('dnsProviders.showSecret')"
+                :aria-pressed="showSecret"
+                :disabled="submitting"
+                @click="showSecret = !showSecret"
+              >
+                <NIcon :size="15"><EyeOff v-if="showSecret" /><Eye v-else /></NIcon>
+              </button>
+            </div>
+            <span v-if="errors.secret" class="field-error" role="alert">{{ errors.secret }}</span>
             <span class="field-hint">{{ tokenHints[form.type] }}</span>
           </div>
 
@@ -978,6 +1054,41 @@ async function confirmDelete(): Promise<void> {
 .field-input--mono {
   font-family: var(--font-mono);
   font-size: 0.8rem;
+}
+/* 密钥框:眼睛按钮浮在输入框右内缘,输入文字要留出它的宽度才不会压在按钮下 */
+.field-secret {
+  position: relative;
+  display: flex;
+}
+.field-secret .field-input {
+  padding-right: 38px;
+}
+.secret-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--rounded);
+  background: transparent;
+  color: var(--color-faint);
+  cursor: pointer;
+}
+.secret-toggle:hover:not(:disabled) {
+  color: var(--color-dim);
+}
+.secret-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.secret-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .field-error {
   font-size: 0.76rem;
