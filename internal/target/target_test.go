@@ -475,3 +475,146 @@ func TestExecStreamEmptyCmd(t *testing.T) {
 		t.Fatalf("空命令应被拒")
 	}
 }
+
+// TestExecWithStdin 验证带 stdin 的执行:命令 array 原样传递、字节流完整交给拨号器、退出码据实回传。
+// 这是远程 `docker login --password-stdin`(口令只进管道)与 `docker load`(镜像字节进管道)的地基。
+func TestExecWithStdin(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	credID := newSSHCred(t, v, "pw")
+	dialer := &capturingDialer{res: &ExecResult{Stdout: "Login Succeeded\n", ExitCode: 0}}
+	svc := New(db, v, dialer)
+
+	srv, err := svc.Create(context.Background(), CreateInput{Name: "n", Host: "h", User: "u", CredentialID: credID})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	cmd := []string{"docker", "login", "registry.example.com", "-u", "bot", "--password-stdin"}
+	res, err := svc.ExecWithStdin(context.Background(), srv.ID, cmd, strings.NewReader("hunter2\n"))
+	if err != nil {
+		t.Fatalf("ExecWithStdin: %v", err)
+	}
+	if res == nil || res.ExitCode != 0 || res.Stdout != "Login Succeeded\n" {
+		t.Fatalf("结果未按原样回传: %+v", res)
+	}
+	if string(dialer.gotStdin) != "hunter2\n" {
+		t.Fatalf("stdin 未完整交给远端: %q", dialer.gotStdin)
+	}
+	if len(dialer.gotCmd) != len(cmd) || strings.Contains(strings.Join(dialer.gotCmd, " "), "hunter2") {
+		t.Fatalf("命令未被 array 原样传递或口令漏进 argv: %v", dialer.gotCmd)
+	}
+}
+
+// TestExecWithStdinGuards 验证空命令与 nil stdin 被拒(不落到网络)。
+func TestExecWithStdinGuards(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	credID := newSSHCred(t, v, "pw")
+	svc := New(db, v, &capturingDialer{})
+	srv, _ := svc.Create(context.Background(), CreateInput{Name: "n", Host: "h", User: "u", CredentialID: credID})
+
+	if _, err := svc.ExecWithStdin(context.Background(), srv.ID, nil, strings.NewReader("x")); err == nil {
+		t.Fatalf("空命令应被拒")
+	}
+	if _, err := svc.ExecWithStdin(context.Background(), srv.ID, []string{"docker", "load"}, nil); err == nil {
+		t.Fatalf("nil stdin 应被拒")
+	}
+}
+
+// exitStreamDialer 是实现可选扩展 streamExitDialer 的假拨号器(模拟真 sshDialer 的分流流式)。
+type exitStreamDialer struct {
+	capturingDialer
+	chunks  []string // 假拨号器吐出的内容(依次作为 stdout 块回调)
+	code    int
+	sawLive bool // Service 是否走了分流流式通路(而非退回 Run)
+}
+
+func (d *exitStreamDialer) RunStreamWithExit(_ context.Context, addr string, cfg SSHConfig, cmd []string, onChunk func(stream string, chunk []byte)) (int, error) {
+	d.gotAddr = addr
+	d.gotCfg = cfg
+	d.gotCmd = append([]string(nil), cmd...)
+	d.sawLive = true
+	for _, c := range d.chunks {
+		onChunk(StreamStdout, []byte(c))
+	}
+	return d.code, nil
+}
+
+// TestExecStreamWithExitLive 验证支持分流流式的拨号器被直接走:命令 array 原样、块逐次回调、退出码取真值。
+func TestExecStreamWithExitLive(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	credID := newSSHCred(t, v, "pw")
+	dialer := &exitStreamDialer{chunks: []string{"step-1\n", "step-2\n"}, code: 7}
+	svc := New(db, v, dialer)
+
+	srv, err := svc.Create(context.Background(), CreateInput{Name: "n", Host: "h", User: "u", CredentialID: credID})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var got []string
+	code, err := svc.ExecStreamWithExit(context.Background(), srv.ID, []string{"docker", "run", "img"}, func(stream string, chunk []byte) {
+		got = append(got, stream+"="+string(chunk))
+	})
+	if err != nil {
+		t.Fatalf("ExecStreamWithExit: %v", err)
+	}
+	if !dialer.sawLive {
+		t.Fatalf("应走分流流式通路,而非退回 Run")
+	}
+	if code != 7 {
+		t.Fatalf("退出码 = %d, want 7", code)
+	}
+	if len(got) != 2 || got[0] != "stdout=step-1\n" || got[1] != "stdout=step-2\n" {
+		t.Fatalf("块未按序回调: %v", got)
+	}
+}
+
+// TestExecStreamWithExitFallback 验证不支持分流流式的拨号器(测试假件)退回 Run:
+// 内容仍按 stdout/stderr **分流**回调、退出码一致 —— 只是不实时,调用方语义不变。
+func TestExecStreamWithExitFallback(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	credID := newSSHCred(t, v, "pw")
+	dialer := &capturingDialer{res: &ExecResult{Stdout: "out-line\n", Stderr: "err-line\n", ExitCode: 125}}
+	svc := New(db, v, dialer)
+
+	srv, err := svc.Create(context.Background(), CreateInput{Name: "n", Host: "h", User: "u", CredentialID: credID})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var streams []string
+	code, err := svc.ExecStreamWithExit(context.Background(), srv.ID, []string{"docker", "run", "img"}, func(stream string, chunk []byte) {
+		streams = append(streams, stream+"="+string(chunk))
+	})
+	if err != nil {
+		t.Fatalf("ExecStreamWithExit: %v", err)
+	}
+	if code != 125 {
+		t.Fatalf("退出码 = %d, want 125", code)
+	}
+	want := []string{"stdout=out-line\n", "stderr=err-line\n"}
+	if strings.Join(streams, "|") != strings.Join(want, "|") {
+		t.Fatalf("分流回调 = %v, want %v", streams, want)
+	}
+}
+
+// TestExecStreamWithExitErrorNoLeak 验证失败错误体不含凭据明文。
+func TestExecStreamWithExitErrorNoLeak(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	credID := newSSHCred(t, v, leakMarker)
+	svc := New(db, v, &capturingDialer{err: ErrUnreachable})
+	srv, _ := svc.Create(context.Background(), CreateInput{Name: "n", Host: "h", User: "u", CredentialID: credID})
+
+	_, err := svc.ExecStreamWithExit(context.Background(), srv.ID, []string{"docker", "run", "img"}, nil)
+	if err == nil {
+		t.Fatalf("want error")
+	}
+	if strings.Contains(err.Error(), leakMarker) {
+		t.Fatalf("错误体泄漏凭据明文: %v", err)
+	}
+}

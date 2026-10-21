@@ -102,3 +102,61 @@ func TestE2EContainerTargetExec(t *testing.T) {
 	}
 	t.Logf("真容器目标 Exec/Test/ExecStream OK;uname=%s", strings.TrimSpace(tr.Output))
 }
+
+// TestE2EContainerTargetStreamExit 验真 SSH 通道上的两条新通路(远程构建地基):
+//   - ExecStreamWithExit:stdout/stderr **分流**逐块回调 + 远端命令真实退出码;
+//   - ExecWithStdin:字节流进管道(口令/镜像 tar 这类绝不进 argv 的内容)。
+func TestE2EContainerTargetStreamExit(t *testing.T) {
+	c := startSSHContainer(t)
+	svc, id := newE2EService(t, c)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var outLines, errLines []string
+	code, err := svc.ExecStreamWithExit(ctx, id,
+		[]string{"sh", "-c", `echo O1; echo O2; echo E1 >&2; exit 41`},
+		func(stream string, chunk []byte) {
+			for _, ln := range strings.Split(strings.TrimRight(string(chunk), "\n"), "\n") {
+				if stream == StreamStderr {
+					errLines = append(errLines, ln)
+				} else {
+					outLines = append(outLines, ln)
+				}
+			}
+		})
+	if err != nil {
+		t.Fatalf("ExecStreamWithExit: %v", err)
+	}
+	if code != 41 {
+		t.Fatalf("退出码 = %d, want 41(真退出码透传)", code)
+	}
+	if strings.Join(outLines, ",") != "O1,O2" || strings.Join(errLines, ",") != "E1" {
+		t.Fatalf("stdout/stderr 未分流: out=%v err=%v", outLines, errLines)
+	}
+
+	// stdin 通路:字节流喂给远端 `cat > 文件`,落盘内容一致(供 docker load / --password-stdin)。
+	payload := "line-a\nline-b\n"
+	res, err := svc.ExecWithStdin(ctx, id,
+		[]string{"sh", "-c", `mkdir -p /tmp/pw-stdin && cat > /tmp/pw-stdin/probe.txt`}, strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("ExecWithStdin: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("写入应成功,got %d stderr=%q", res.ExitCode, res.Stderr)
+	}
+	back, err := svc.Exec(ctx, id, []string{"cat", "/tmp/pw-stdin/probe.txt"})
+	if err != nil {
+		t.Fatalf("Exec cat: %v", err)
+	}
+	if back.Stdout != payload {
+		t.Fatalf("stdin 落盘内容不符:%q", back.Stdout)
+	}
+	// 远端读自己 stdin 的退出码也真透传(docker login 失败就是这个形状)。
+	r2, e2 := svc.ExecWithStdin(ctx, id, []string{"sh", "-c", "exit 7"}, strings.NewReader("x"))
+	if e2 != nil {
+		t.Fatalf("ExecWithStdin(非零退出)不应报传输错: %v", e2)
+	}
+	if r2 == nil || r2.ExitCode != 7 {
+		t.Fatalf("ExecWithStdin 退出码未透传: %+v", r2)
+	}
+}

@@ -210,3 +210,9 @@ func (fakeHookTarget) ExecInteractive(context.Context, string, []string) (target
 	return nil, nil
 }
 func (fakeHookTarget) Upload(context.Context, string, io.Reader, string) error { return nil }
+func (fakeHookTarget) ExecWithStdin(context.Context, string, []string, io.Reader) (*target.ExecResult, error) {
+	return nil, nil
+}
+func (fakeHookTarget) ExecStreamWithExit(context.Context, string, []string, func(string, []byte)) (int, error) {
+	return 0, nil
+}

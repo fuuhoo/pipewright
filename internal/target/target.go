@@ -115,6 +115,13 @@ type ExecResult struct {
 	ExitCode int
 }
 
+// 流式回调的通道标识(ExecStreamWithExit 的 onChunk 第一参)。取值即日志流名,与 build/run
+// 两侧的 "stdout"/"stderr" 口径一致,便于上层直接透传。
+const (
+	StreamStdout = "stdout"
+	StreamStderr = "stderr"
+)
+
 // TestResult 是测试连接的结果(冻结契约)。Output 为探测命令的截断输出。
 type TestResult struct {
 	OK        bool
@@ -165,6 +172,22 @@ type Service interface {
 	// 大文件友好;remotePath 作 array 参数 shell 转义(AC-SEC-02),不拼 shell。远端非零退出 / 连接失败
 	// → 人读错误(绝无凭据明文)。供部署把制品库里的 jar/dist 真字节落到目标机。
 	Upload(ctx context.Context, serverID string, content io.Reader, remotePath string) error
+	// ExecWithStdin 经 SSH 跑 cmd,并把 stdin 的字节流接到远端命令的标准输入,返回
+	// stdout/stderr/exitCode(语义同 Exec:array 化、脱敏、凭据即用即弃)。
+	//
+	// 存在的理由:Upload 已经把这条通路走通了,但它把命令钉死成 `cat > 路径`(落盘)。
+	// 还有一类需求是「字节进管道,而不是进文件」:远程构建机上 `docker login --password-stdin`
+	// 的口令、把中控机镜像 `docker load` 进远端 daemon。口令这类内容绝不能进 argv(会留在
+	// 远端进程表和日志里),只能走 stdin。
+	ExecWithStdin(ctx context.Context, serverID string, cmd []string, stdin io.Reader) (*ExecResult, error)
+	// ExecStreamWithExit 流式跑 cmd,stdout/stderr **分流**逐块交给 onChunk,并在命令结束后
+	// 回传真退出码。与 ExecStream 的区别:后者只回 stdout 且没有退出码(供 tail -f 这类
+	// 「只看不问」的场合);这里有退出码,可用于「远端跑一条会失败的命令」的判定(如 docker run)。
+	//
+	// onChunk 只会在单个 goroutine 里被串行调用(两路读在内部合流),上层无需自己加锁,
+	// 也不需要按行切块 —— 块的边界是 TCP 读到的边界,不是行边界。
+	// ctx 取消即 SIGKILL 远端进程并释放 session/client,返回 ctx 的错误。
+	ExecStreamWithExit(ctx context.Context, serverID string, cmd []string, onChunk func(stream string, chunk []byte)) (int, error)
 }
 
 // Session 是一个双向交互式 SSH/PTY 会话(Story 6.4;FR-18)。
@@ -204,6 +227,13 @@ type SSHDialer interface {
 // 契约同 Run:非零退出不算 error;连接/上下文层面的失败才算 error。
 type batchDialer interface {
 	RunBatch(ctx context.Context, addr string, cfg SSHConfig, cmds [][]string) ([]*ExecResult, error)
+}
+
+// streamExitDialer 是 SSHDialer 的可选扩展:流式跑 cmd,stdout/stderr 分流回调,并回传退出码。
+// 真拨号器(sshDialer)实现它;测试里的假拨号器没有,Service 会退回「Run 后整段回调」——
+// 内容、退出码、分流都一样,只是不实时。契约同 Run:非零退出不是 error,落在返回的退出码里。
+type streamExitDialer interface {
+	RunStreamWithExit(ctx context.Context, addr string, cfg SSHConfig, cmd []string, onChunk func(stream string, chunk []byte)) (int, error)
 }
 
 // SSHConfig 是拨号所需的最小认证材料(进程内,用完即弃)。
@@ -627,6 +657,66 @@ func (s *service) Upload(ctx context.Context, serverID string, content io.Reader
 		return fmt.Errorf("target: upload 失败(退出码 %d):%s", res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 	return nil
+}
+
+// ExecWithStdin 经 SSH 跑 cmd 并把 stdin 接到远端标准输入(语义同 Exec,详见接口注释)。
+// 凭据即用即弃:明文只在 sshTarget 返回的 cfg 里,调用拨号器前用完立即清引用。
+func (s *service) ExecWithStdin(ctx context.Context, serverID string, cmd []string, stdin io.Reader) (*ExecResult, error) {
+	if len(cmd) == 0 {
+		return nil, fmt.Errorf("target: empty command")
+	}
+	if stdin == nil {
+		return nil, fmt.Errorf("target: nil stdin")
+	}
+	addr, cfg, err := s.sshTarget(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+
+	res, runErr := s.dialer.RunWithStdin(ctx, addr, cfg, cmd, stdin)
+
+	cfg.PrivateKey = ""
+	cfg.Password = ""
+
+	if runErr != nil {
+		return nil, runErr
+	}
+	return res, nil
+}
+
+// ExecStreamWithExit 流式跑 cmd(stdout/stderr 分流 + 真退出码,详见接口注释)。
+//
+// 拨号器不支持分流流式(测试里的假拨号器)时退回 Run + 整段回调:结果一致,只是不实时。
+func (s *service) ExecStreamWithExit(ctx context.Context, serverID string, cmd []string, onChunk func(stream string, chunk []byte)) (int, error) {
+	if len(cmd) == 0 {
+		return -1, fmt.Errorf("target: empty command")
+	}
+	addr, cfg, err := s.sshTarget(ctx, serverID)
+	if err != nil {
+		return -1, err
+	}
+	defer func() { cfg.PrivateKey = ""; cfg.Password = "" }()
+
+	if sd, ok := s.dialer.(streamExitDialer); ok {
+		return sd.RunStreamWithExit(ctx, addr, cfg, cmd, onChunk)
+	}
+
+	res, runErr := s.dialer.Run(ctx, addr, cfg, cmd)
+	if runErr != nil {
+		return -1, runErr
+	}
+	if res == nil {
+		return -1, nil
+	}
+	if onChunk != nil {
+		if res.Stdout != "" {
+			onChunk(StreamStdout, []byte(res.Stdout))
+		}
+		if res.Stderr != "" {
+			onChunk(StreamStderr, []byte(res.Stderr))
+		}
+	}
+	return res.ExitCode, nil
 }
 
 // ExecStream 取凭据明文装配 SSH 配置并流式跑 array 命令(供实时 tail)。

@@ -89,6 +89,15 @@ func (s *stubTarget) ExecInteractive(context.Context, string, []string) (target.
 	return nil, errors.New("execinteractive not supported in stub")
 }
 
+// ExecWithStdin / ExecStreamWithExit 满足 target.Service(远程构建用);部署不走这两条。
+func (s *stubTarget) ExecWithStdin(context.Context, string, []string, io.Reader) (*target.ExecResult, error) {
+	return nil, errors.New("execwithstdin not supported in stub")
+}
+
+func (s *stubTarget) ExecStreamWithExit(context.Context, string, []string, func(string, []byte)) (int, error) {
+	return -1, errors.New("execstreamwithexit not supported in stub")
+}
+
 // Upload 满足 target.Service(Story 8-16 制品库部署);桩捕获上传字节供断言「部署的是真字节」。
 func (s *stubTarget) Upload(_ context.Context, serverID string, content io.Reader, remotePath string) error {
 	b, _ := io.ReadAll(content)

@@ -113,6 +113,12 @@ func (f *fakeTarget) Test(context.Context, string) (*target.TestResult, error) {
 func (f *fakeTarget) ExecStream(context.Context, string, []string) (io.ReadCloser, error) {
 	return nil, nil
 }
+func (f *fakeTarget) ExecWithStdin(context.Context, string, []string, io.Reader) (*target.ExecResult, error) {
+	return nil, nil
+}
+func (f *fakeTarget) ExecStreamWithExit(context.Context, string, []string, func(string, []byte)) (int, error) {
+	return 0, nil
+}
 func (f *fakeTarget) ExecInteractive(context.Context, string, []string) (target.Session, error) {
 	return nil, nil
 }
@@ -434,8 +440,14 @@ func (e *errTarget) ExecBatch(context.Context, string, [][]string) ([]*target.Ex
 	return nil, e.err
 }
 func (e *errTarget) Upload(context.Context, string, io.Reader, string) error { return e.err }
-func (e *errTarget) Get(context.Context, string) (*target.Server, error)     { return nil, nil }
-func (e *errTarget) List(context.Context) ([]*target.Server, error)          { return nil, nil }
+func (e *errTarget) ExecWithStdin(context.Context, string, []string, io.Reader) (*target.ExecResult, error) {
+	return nil, e.err
+}
+func (e *errTarget) ExecStreamWithExit(context.Context, string, []string, func(string, []byte)) (int, error) {
+	return -1, e.err
+}
+func (e *errTarget) Get(context.Context, string) (*target.Server, error) { return nil, nil }
+func (e *errTarget) List(context.Context) ([]*target.Server, error)      { return nil, nil }
 func (e *errTarget) ListScoped(context.Context, target.ListFilter) ([]*target.Server, error) {
 	return nil, nil
 }

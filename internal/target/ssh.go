@@ -314,6 +314,124 @@ func (sshDialer) RunStream(ctx context.Context, addr string, cfg SSHConfig, cmd 
 	return rc, nil
 }
 
+// RunStreamWithExit 建连后启动 cmd,把 stdout/stderr **分流**逐块交给 onChunk,命令结束后回传退出码
+// (实现 Service.ExecStreamWithExit;远程构建既要实时日志,又要 docker run 的真实退出码)。
+//
+// 与 RunStream 的差别:RunStream 只接 stdout 且不取退出码(tail -f 这类「只看不问」够用),
+// 这里两路都要、还要退出码,故单独一条通路。
+//
+// 两路读经同一个 channel 串行化后回调:onChunk 恒在单 goroutine 内被调用,上层可放心累积状态,
+// 日志顺序也稳定。读完(两路 EOF)才 Wait —— 否则 x/crypto 会把管道提前关掉截掉尾部输出。
+// ctx 取消即 SIGKILL 远端进程并关 session/client,两路读随即结束,返回 ctx 错误(不泄漏)。
+func (sshDialer) RunStreamWithExit(ctx context.Context, addr string, cfg SSHConfig, cmd []string, onChunk func(stream string, chunk []byte)) (int, error) {
+	auth, err := authMethods(cfg)
+	if err != nil {
+		return -1, err
+	}
+	clientCfg := &ssh.ClientConfig{
+		User:            cfg.User,
+		Auth:            auth,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // dev-only;生产固定 known_hosts(deferred)
+		Timeout:         resolveTimeout(ctx),
+	}
+
+	d := net.Dialer{Timeout: clientCfg.Timeout}
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return -1, fmt.Errorf("%w", classifyDialErr(err))
+	}
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, clientCfg)
+	if err != nil {
+		_ = conn.Close()
+		return -1, fmt.Errorf("%w", classifyHandshakeErr(err))
+	}
+	client := ssh.NewClient(sshConn, chans, reqs)
+
+	session, err := client.NewSession()
+	if err != nil {
+		_ = client.Close()
+		return -1, fmt.Errorf("%w", ErrUnreachable)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = client.Close()
+		return -1, fmt.Errorf("%w", ErrUnreachable)
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = client.Close()
+		return -1, fmt.Errorf("%w", ErrUnreachable)
+	}
+	if err := session.Start(quoteArgs(cmd)); err != nil {
+		_ = session.Close()
+		_ = client.Close()
+		return -1, fmt.Errorf("%w", ErrUnreachable)
+	}
+
+	type chunk struct {
+		stream string
+		b      []byte
+	}
+	out := make(chan chunk, 16)
+	var wg sync.WaitGroup
+	drain := func(stream string, r io.Reader) {
+		defer wg.Done()
+		buf := make([]byte, 32*1024)
+		for {
+			n, rerr := r.Read(buf)
+			if n > 0 {
+				b := make([]byte, n)
+				copy(b, buf[:n])
+				out <- chunk{stream: stream, b: b}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}
+	wg.Add(2)
+	go drain(StreamStdout, stdout)
+	go drain(StreamStderr, stderr)
+	go func() { wg.Wait(); close(out) }()
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = session.Signal(ssh.SIGKILL)
+			_ = session.Close()
+			_ = client.Close()
+		case <-stop:
+		}
+	}()
+
+	for c := range out {
+		if onChunk != nil {
+			onChunk(c.stream, c.b)
+		}
+	}
+
+	waitErr := session.Wait()
+	_ = session.Close()
+	_ = client.Close()
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return -1, ctxErr
+	}
+	if waitErr != nil {
+		var exitErr *ssh.ExitError
+		if errors.As(waitErr, &exitErr) {
+			return exitErr.ExitStatus(), nil
+		}
+		// 拿不到退出码(连接被切断 / ExitMissingError):按不可达上报,调用方据此降级。
+		return -1, fmt.Errorf("%w", ErrUnreachable)
+	}
+	return 0, nil
+}
+
 // RunInteractive 建连后请求 PTY、接好 stdin/stdout/stderr,启动 cmd 并返回双向 Session
 // (Story 6.4;FR-18)。底层 client/session 的生命周期绑定到返回的 Session:Close()(或
 // ctx 取消)即关 session + client,释放远端 PTY/进程与 TCP(不泄漏)。
