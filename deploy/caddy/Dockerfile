@@ -2,6 +2,8 @@
 # CI/CD 王牌(R4)所需、stock caddy:2 不含的插件:
 #   - DNS-01 提供商插件(通配符 *.example.com 证书签发必需,HTTP-01 做不到):
 #       caddy-dns/cloudflare · caddy-dns/alidns · caddy-dns/tencentcloud(腾讯云 / DNSPod)
+#       · caddy-dns/volcengine(火山引擎)
+#     百度智能云**不在**此列:没有可信的 Caddy DNS 插件,故 proxy 侧也不允许把 baidudns 绑到路由上。
 #   - mholt/caddy-ratelimit:站点级限流(R2/R4 滥用防护)
 #   - mholt/caddy-l4(layer4):四层(TCP/UDP)反代,R4 预留(Per-PR 预览环境的非 HTTP 服务)
 #
@@ -23,6 +25,7 @@ RUN xcaddy build \
     --with github.com/caddy-dns/cloudflare \
     --with github.com/caddy-dns/alidns \
     --with github.com/caddy-dns/tencentcloud \
+    --with github.com/caddy-dns/volcengine \
     --with github.com/mholt/caddy-ratelimit \
     --with github.com/mholt/caddy-l4
 
@@ -34,5 +37,5 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 
 # 沿用官方镜像的 ENTRYPOINT/CMD(caddy run ...);Pipewright 起容器时显式传 --config/--adapter。
 LABEL org.opencontainers.image.source="https://github.com/fuuhoo/pipewright" \
-      org.opencontainers.image.description="Caddy with DNS-01 (cloudflare/alidns/tencentcloud), ratelimit and layer4 plugins for Pipewright reverse proxy" \
+      org.opencontainers.image.description="Caddy with DNS-01 (cloudflare/alidns/tencentcloud/volcengine), ratelimit and layer4 plugins for Pipewright reverse proxy" \
       org.opencontainers.image.licenses="Apache-2.0"

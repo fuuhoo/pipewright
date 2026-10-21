@@ -219,6 +219,61 @@ func TestCreateBadDNSProviderRejected(t *testing.T) {
 	}
 }
 
+// 腾讯云 API3 / 火山都是「id,secret」两字段块;caddy-dns 那两个模块不认单 token。
+func TestRenderDNS01TwoFieldBlocks(t *testing.T) {
+	cases := []struct {
+		typ, token, want string
+	}{
+		{"tencentcloud", "tc-id, tc-key",
+			"        dns tencentcloud {\n            secret_id tc-id\n            secret_key tc-key\n        }\n"},
+		{"volcengine", "volc-id, volc-key",
+			"        dns volcengine {\n            access_key_id volc-id\n            access_key_secret volc-key\n        }\n"},
+	}
+	for _, c := range cases {
+		out := renderCaddyfile([]Route{{
+			Domain: "*.example.com", UpstreamContainer: "web", UpstreamPort: 80,
+			Config: RouteConfig{DNSProviderID: "prov-1"},
+		}}, map[string]dnsCred{"prov-1": {Type: c.typ, Token: c.token}})
+		if !strings.Contains(out, c.want) {
+			t.Fatalf("%s 的 dns 块不符:\n--- got ---\n%s\n--- want ---\n%s", c.typ, out, c.want)
+		}
+	}
+}
+
+// 提供商类型白名单:能绑路由的必须就是镜像里捆了插件的那几种。
+// baidudns 有意排除 —— 百度的 DNS 凭据只用于证书管理那条 DNS-01 通路(平台自己调 API),
+// 渲染进 Caddyfile 会因未知模块让整份配置起不来,连累同机其它站点。
+func TestDNSProviderRefTypeWhitelist(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.OpenDB(t)
+	types := map[string]string{
+		"p-cf": "cloudflare", "p-dp": "dnspod", "p-ali": "alidns",
+		"p-tc": "tencentcloud", "p-vc": "volcengine", "p-bd": "baidudns",
+	}
+	creds := map[string]dnsCred{}
+	for id, tp := range types {
+		creds[id] = dnsCred{Type: tp, Token: "id,secret"}
+	}
+	ft := &fakeTarget{}
+	svc := &service{store: NewStore(st), tg: ft, prober: fakeProber{}, dns: stubDNSResolver{types: types, creds: creds}}
+
+	for _, id := range []string{"p-cf", "p-dp", "p-ali", "p-tc", "p-vc"} {
+		_, err := svc.Create(ctx, CreateInput{
+			ServerID: "srv-1", Domain: id + ".example.com", UpstreamContainer: "web", UpstreamPort: 80,
+			DNSProviderID: id,
+		})
+		if err != nil {
+			t.Fatalf("类型 %s 应可绑路由: %v", id, err)
+		}
+	}
+	if _, err := svc.Create(ctx, CreateInput{
+		ServerID: "srv-1", Domain: "bd.example.com", UpstreamContainer: "web", UpstreamPort: 80,
+		DNSProviderID: "p-bd",
+	}); err != ErrInvalidDNSProvider {
+		t.Fatalf("baidudns 绑路由应 ErrInvalidDNSProvider, got %v", err)
+	}
+}
+
 func TestUpdateRejectsBadPathRule(t *testing.T) {
 	ctx := context.Background()
 	st := storetest.OpenDB(t)

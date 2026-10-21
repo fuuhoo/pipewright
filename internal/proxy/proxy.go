@@ -1009,9 +1009,12 @@ func (s *service) validateDNSProviderRef(ctx context.Context, providerID string)
 		return ErrInvalidDNSProvider
 	}
 	switch pt {
-	case "cloudflare", "dnspod", "alidns":
+	case "cloudflare", "dnspod", "alidns", "tencentcloud", "volcengine":
 		return nil
 	default:
+		// baidudns 有意不在此列:百度智能云没有可信的 Caddy DNS 插件,渲染进去会让整份
+		// Caddyfile 因未知模块而起不来(殃及同机其它站点)。百度凭据仍可用于证书管理那条
+		// DNS-01 通路(dnsprovider 自己调 API),只是不许绑到托管 Caddy 的路由上。
 		return ErrInvalidDNSProvider
 	}
 }

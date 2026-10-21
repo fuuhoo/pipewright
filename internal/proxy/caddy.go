@@ -38,7 +38,7 @@ const (
 // dnsCred 是一条 DNS 提供商的渲染材料(类型 + token 明文)。token 仅在 apply 渲染时存在于内存,
 // 注入 0600 临时 Caddyfile,绝不日志/回库/回 API。
 type dnsCred struct {
-	Type  string // cloudflare | dnspod | alidns
+	Type  string // cloudflare | dnspod | alidns | tencentcloud | volcengine(与 validateDNSProviderRef 同一份名单)
 	Token string // 凭据明文(进程内,用完即弃)
 }
 
@@ -148,8 +148,17 @@ func renderSite(b *strings.Builder, r Route, dnsCreds map[string]dnsCred) {
 				b.WriteString("            secret_id " + id + "\n")
 				b.WriteString("            secret_key " + secret + "\n")
 				b.WriteString("        }\n")
+			case "volcengine":
+				// 火山引擎:凭据 = "AccessKeyId,AccessKeySecret";caddy-dns/volcengine 要两字段块。
+				// 火山解析记录生效约 3-6 分钟,签发慢属预期,不是卡死。
+				id, secret := splitDNSCred(cred.Token)
+				b.WriteString("        dns volcengine {\n")
+				b.WriteString("            access_key_id " + id + "\n")
+				b.WriteString("            access_key_secret " + secret + "\n")
+				b.WriteString("        }\n")
 			default:
 				// cloudflare 等单 token 厂商:dns <type> <token> 即正确。
+				// 能走到这儿的类型都由 validateDNSProviderRef 放行过,即镜像里确实捆了对应插件。
 				b.WriteString("        dns " + cred.Type + " " + cred.Token + "\n")
 			}
 			b.WriteString("    }\n")
