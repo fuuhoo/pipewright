@@ -32,6 +32,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/i18n"
 	"github.com/fuuhoo/pipewright/internal/kube"
 	"github.com/fuuhoo/pipewright/internal/library"
+	"github.com/fuuhoo/pipewright/internal/mcpsrv"
 	"github.com/fuuhoo/pipewright/internal/metrics"
 	"github.com/fuuhoo/pipewright/internal/notify"
 	"github.com/fuuhoo/pipewright/internal/oauth"
@@ -1243,6 +1244,17 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 
 		// 后续 story 在此挂载其他 API 路由。
 	})
+
+	// MCP 工具面(挂在 /mcp):让 AI 客户端用同一把 API 令牌建项目、配流水线、跑构建。
+	// 这里传给自己的是正在构造的 r —— 回环调用只在请求发生时发生,不存在自引用问题。
+	// 未装配令牌服务时干脆不挂:那套实例连「谁能进来」都答不了,挂上去只会多一个 401 面。
+	// /mcp 与 /mcp/* 都注册:客户端配置的就是 /mcp 这个精确地址,而 Mount 会把 /mcp
+	// 301 到 /mcp/,POST 正文在重定向后就丢了。
+	if o.apiTokens != nil {
+		mcpHandler := mcpsrv.New(o.apiTokens, r).Handler()
+		r.Handle("/mcp", mcpHandler)
+		r.Handle("/mcp/*", mcpHandler)
+	}
 
 	// 其余路径交给 SPA:存在的静态文件直接返回,否则回退 index.html。
 	r.Handle("/*", spaHandler(webFS))
