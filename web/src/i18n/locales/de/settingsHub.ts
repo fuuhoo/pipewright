@@ -6,7 +6,7 @@ export default {
   navOauth: 'OAuth-Apps',
   navNotifications: 'Benachrichtigungen',
   navVault: 'Anmeldedaten-Tresor',
-  navApiTokens: 'API-Token',
+  navApiTokens: 'MCP-Endpunkte',
   navDnsProviders: 'DNS-Anbieter',
   navAccount: 'Konto',
   navServers: 'Server',

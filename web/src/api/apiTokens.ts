@@ -1,8 +1,9 @@
 /**
- * API 令牌 —— 机器客户端(MCP、脚本)用的 Bearer 凭据。
+ * API 令牌 —— 机器客户端(MCP、脚本)用的 Bearer 凭据,页面上按「MCP 端点」呈现。
  *
  *   GET    /api/admin/api-tokens       → { items: APIToken[] }
  *   POST   /api/admin/api-tokens       → { item, plaintext }   (needs CSRF)
+ *   PATCH  /api/admin/api-tokens/:id   → { item }              (needs CSRF,只改两把尺)
  *   DELETE /api/admin/api-tokens/:id   → 204                   (needs CSRF)
  *   GET    /api/admin/mcp-tools        → { items: MCPTool[] }  (工具名册,勾选用)
  *
@@ -10,16 +11,21 @@
  * 所以这里既没有「查看」也不该有 —— 列表拿到的 APIToken 结构里根本没有明文字段。
  * 忘了存 = 只能撤销重发,因此创建弹窗要把明文单独成卡并强提示「只显示这一次」。
  *
- * 没有编辑:令牌是「一把凭据 = 一个机器身份」,改名不改变它能干什么,改归属更是不存在
- * 的操作(事后追查问的是「谁用它跑过构建」)。撤销 = 删行,下一笔带它的请求直接 401。
+ * 能改的只有范围(工具面 + 数据面),名称与归属改不了:令牌是「一把凭据 = 一个机器身份」,
+ * 改归属在事后追查里等于换了一个人跑构建,撤销重发才是那条正路。
  *
- * 三个端点都收在 RequireAdmin 后面(与审计、用户管理同一道门),这页也因此只给管理员看。
+ * PATCH 的空数组语义与 POST **相反**,这是刻意的(口径见 internal/apitoken/scopes.go 与
+ * httpapi/apitokens.go):签发时显式 [] 会被当入参错误拒签,编辑时 [] 表示「把这把尺解开回不限」。
+ * 省略某个键 = 不动它,所以调用方只发真的改过的那一把。
+ *
+ * 五个端点都收在 RequireAdmin 后面(与审计、用户管理同一道门),这页也因此只给管理员看。
  */
 
 import { http } from './http'
 import type { MCPToolDef } from '../lib/apiTokens'
 
 export interface APIToken {
+  /** = 端点地址里那一段(`/mcp/<id>`),后端直接拿主键当端点号,没有第二张端点表。 */
   id: string
   name: string
   /** 归属人:机器凭据真正要能回答「代表谁跑的」,所以这把令牌始终挂在一个具体账号上。 */
@@ -51,6 +57,12 @@ export interface CreatedAPIToken {
   plaintext: string
 }
 
+/** 编辑范围的入参:省略 = 不动;显式空数组 = 解开回不限;非空 = 收窄到这些。 */
+export interface UpdateTokenScopesInput {
+  allowedTools?: string[]
+  groupScope?: string[]
+}
+
 export async function listAPITokens(): Promise<APIToken[]> {
   const res = await http.get<{ items: APIToken[] }>('/api/admin/api-tokens')
   return res.items ?? []
@@ -58,6 +70,12 @@ export async function listAPITokens(): Promise<APIToken[]> {
 
 export async function createAPIToken(input: CreateAPITokenInput): Promise<CreatedAPIToken> {
   return http.post<CreatedAPIToken>('/api/admin/api-tokens', input)
+}
+
+/** 改两把尺,返回改完的元数据(不含明文 —— 明文本来也读不回来)。 */
+export async function updateTokenScopes(id: string, input: UpdateTokenScopesInput): Promise<APIToken> {
+  const res = await http.patch<{ item: APIToken }>(`/api/admin/api-tokens/${id}`, input)
+  return res.item
 }
 
 export async function revokeAPIToken(id: string): Promise<void> {

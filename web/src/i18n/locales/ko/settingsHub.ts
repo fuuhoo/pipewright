@@ -6,7 +6,7 @@ export default {
   navOauth: 'OAuth 앱',
   navNotifications: '알림',
   navVault: '자격 증명 보관소',
-  navApiTokens: 'API 토큰',
+  navApiTokens: 'MCP 엔드포인트',
   navDnsProviders: 'DNS 공급자',
   navAccount: '계정',
   navServers: '서버',

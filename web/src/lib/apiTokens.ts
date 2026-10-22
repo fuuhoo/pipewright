@@ -1,5 +1,5 @@
 /**
- * apiTokens.ts —— API 令牌页的纯逻辑(名称校验 + 归属人候选 + 端点两把尺 + 客户端配置片段)。
+ * apiTokens.ts —— MCP 端点页的纯逻辑(名称校验 + 归属人候选 + 端点两把尺 + 客户端配置片段)。
  *
  * 刻意不 import vue-i18n:校验只回「哪一种毛病」,文案由调用方按键取。
  *
@@ -11,8 +11,10 @@
  *
  * 配置片段对应 MCP 的两条接入线,同一把令牌、同一套工具:
  *   - stdio:客户端在**本机**拉起 `pipewright mcp`,由这个进程出去连平台(平台在内网、
- *     本机不监听任何东西时用这条);
- *   - HTTP:客户端直接连平台上的 `/mcp`(客户端本来就该得到 443 那个口时用这条)。
+ *     本机不监听任何东西时用这条);它只填平台地址,范围由远端那把令牌决定;
+ *   - HTTP:客户端直接连这条端点自己的地址 `/mcp/<令牌id>`(客户端本来就该得到 443 那个口时用这条)。
+ *     地址里带 id 是有意的:一条地址认一把凭据,拿别人的令牌打这条会被 403 挡下,
+ *     比「所有端点共用 /mcp、只有令牌区分」更接近 Weknora 那种端点形态。
  * 令牌在这里只出现一次,由页面配「只显示这一次」的提示一起呈现 —— 复制走之后平台再也回显不回来。
  */
 
@@ -75,9 +77,16 @@ export function trimBaseURL(raw: string): string {
   return raw.replace(/\/+$/, '')
 }
 
-/** 平台上的 MCP 端点地址(后端把 /mcp 与 /mcp/* 都注册了,这里给精确的 /mcp)。 */
-export function mcpEndpointURL(baseUrl: string): string {
-  return `${trimBaseURL(baseUrl)}/mcp`
+/**
+ * 平台上的 MCP 端点地址。
+ *
+ * 给了令牌 id 就指到它自己的那条(`/mcp/<id>`),没给则回公共入口 `/mcp` —— 后端两个都注册了,
+ * 差别只在「地址指名端点」时它还会核对 Bearer 是不是同一把(配错回 403)。
+ * 页面上每条端点都该带 id 调用:一条地址对应一个端点,才是「端点」这个概念能被贴在客户端里的形态。
+ */
+export function mcpEndpointURL(baseUrl: string, tokenId = ''): string {
+  const id = tokenId.trim()
+  return `${trimBaseURL(baseUrl)}${id ? `/mcp/${id}` : '/mcp'}`
 }
 
 /**
@@ -102,14 +111,14 @@ export function mcpStdioSnippet(baseUrl: string, plaintext: string): string {
   )
 }
 
-/** HTTP 接入片段:客户端直连平台 /mcp,同一把令牌换成 Authorization 头。 */
-export function mcpHttpSnippet(baseUrl: string, plaintext: string): string {
+/** HTTP 接入片段:客户端直连平台端点,同一把令牌换成 Authorization 头。 */
+export function mcpHttpSnippet(baseUrl: string, plaintext: string, tokenId = ''): string {
   return JSON.stringify(
     {
       mcpServers: {
         pipewright: {
           type: 'http',
-          url: mcpEndpointURL(baseUrl),
+          url: mcpEndpointURL(baseUrl, tokenId),
           headers: { Authorization: `Bearer ${plaintext}` },
         },
       },
@@ -166,17 +175,24 @@ export function activeToolPreset(selected: string[], catalog: MCPToolDef[]): Too
 }
 
 /**
- * 勾选/取消一个工具。
+ * 勾选/取消一个值,结果按 order 排;order 里没有的(名册已删但范围里还挂着)留末尾。
  *
- * 返回值按名册顺序排,不按点击顺序:限工具这把尺的效果与顺序无关,但列表要是跟着点击
- * 乱跳(勾掉再勾回就跑到末尾),人会以为顺序有含义。
+ * 不按点击顺序回写:限工具/限分组的效果与顺序无关,但列表要是跟着点击乱跳(勾掉再勾回
+ * 就跑到末尾),人会以为顺序有含义。留末尾而不是直接丢掉,是因为丢掉等于「界面上看不见、
+ * 发出去却少了一项」,而编辑弹窗恰恰需要用户能亲眼看见这些失效项。
+ */
+export function toggleValue(order: string[], selected: string[], value: string): string[] {
+  const next = new Set(selected)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return order.filter((x) => next.has(x)).concat([...next].filter((x) => !order.includes(x)))
+}
+
+/**
+ * 勾选/取消一个工具。
  */
 export function toggleTool(catalog: MCPToolDef[], selected: string[], name: string): string[] {
-  const next = new Set(selected)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
-  const order = catalog.map((tool) => tool.name)
-  return order.filter((x) => next.has(x)).concat([...next].filter((x) => !order.includes(x)))
+  return toggleValue(catalog.map((tool) => tool.name), selected, name)
 }
 
 // ─── 分组范围(端点收窄的第二把尺)────────────────────────────────────────────
@@ -193,6 +209,70 @@ export interface GroupCandidate {
 export function groupScopeNames(selected: string[], groups: GroupCandidate[]): string[] {
   const index = new Map(groups.map((g) => [g.id, g.name]))
   return selected.map((id) => index.get(id) ?? id)
+}
+
+// ─── 再编辑两把尺(端点页的 PATCH)────────────────────────────────────────────
+
+/**
+ * 两个范围是否等价(集合相等,忽略顺序与重复)。
+ *
+ * 编辑弹窗用它决定「这一把尺要不要发出去」:PATCH 里不带键 = 不动,带 [] = 改回不限,
+ * 两种「看起来一样」的请求结果完全不同,所以必须按当前值 vs 原值判,不能一律回传两个键 ——
+ * 一律回传会把「存过一个已被删掉的分组」也原样送回后端,换回一个 400,而用户其实只改了工具。
+ */
+export function sameScope(a: string[], b: string[]): boolean {
+  const setA = new Set(a.map((x) => x.trim()).filter(Boolean))
+  const setB = new Set(b.map((x) => x.trim()).filter(Boolean))
+  if (setA.size !== setB.size) return false
+  for (const item of setA) if (!setB.has(item)) return false
+  return true
+}
+
+/** 一个带「已失效」标记的候选行(编辑弹窗用):missing 为真时后端会拒绝这个值,必须先取消勾选。 */
+export interface EditableOption {
+  value: string
+  label: string
+  /** 名册/组清单里已经没有它了 —— 行仍要渲染出来,否则用户没法把它从范围里去掉。 */
+  missing: boolean
+  /** 附注:工具用「只读」标签,分组用「N 个项目」。缺失项没有附注。 */
+  noteKey?: string
+}
+
+/**
+ * 工具候选 = 名册全量 + 这把端点已勾选但名册里没有的名字。
+ *
+ * 名册外的名字不该被静默丢掉:它就摆在范围里,丢了等于「界面上看不到但仍在发出去」,
+ * 而那正是后端会 400 的那一项 —— 看得见才能改得掉。
+ */
+export function editableToolOptions(selected: string[], catalog: MCPToolDef[]): EditableOption[] {
+  const out: EditableOption[] = catalog.map((tool) => ({
+    value: tool.name,
+    label: tool.title,
+    missing: false,
+    noteKey: tool.readOnly ? 'readOnly' : '',
+  }))
+  const known = new Set(catalog.map((tool) => tool.name))
+  for (const name of selected) {
+    if (known.has(name)) continue
+    out.push({ value: name, label: name, missing: true, noteKey: 'gone' })
+  }
+  return out
+}
+
+/** 分组候选 = 现有分组 + 这把端点已勾选但已被删掉的组 ID(同理:要能取消勾选才改得掉)。 */
+export function editableGroupOptions(selected: string[], groups: GroupCandidate[]): EditableOption[] {
+  const out: EditableOption[] = groups.map((g) => ({
+    value: g.id,
+    label: g.name,
+    missing: false,
+    noteKey: 'projectCount',
+  }))
+  const known = new Set(groups.map((g) => g.id))
+  for (const id of selected) {
+    if (known.has(id)) continue
+    out.push({ value: id, label: id, missing: true, noteKey: 'gone' })
+  }
+  return out
 }
 
 // ─── 逐客户端接入片段 ────────────────────────────────────────────────────────
@@ -214,8 +294,8 @@ export interface SnippetEntry {
   code: string
 }
 
-export function clientSnippets(baseUrl: string, plaintext: string): SnippetEntry[] {
-  const url = mcpEndpointURL(baseUrl)
+export function clientSnippets(baseUrl: string, plaintext: string, tokenId = ''): SnippetEntry[] {
+  const url = mcpEndpointURL(baseUrl, tokenId)
   const base = trimBaseURL(baseUrl)
   const server = { type: 'http', url, headers: { Authorization: `Bearer ${plaintext}` } }
   const stringify = (v: unknown) => JSON.stringify(v, null, 2)
@@ -248,13 +328,13 @@ export function clientSnippets(baseUrl: string, plaintext: string): SnippetEntry
       client: 'generic',
       labelKey: 'snippetWhere.generic',
       lang: 'json',
-      code: mcpHttpSnippet(base, plaintext),
+      code: mcpHttpSnippet(base, plaintext, tokenId),
     },
   ]
 }
 
 /** Claude Code 的命令行形态:与 .mcp.json 同一个结果,写给不想建文件的人。 */
-export function claudeCodeAddCommand(baseUrl: string, plaintext: string): string {
+export function claudeCodeAddCommand(baseUrl: string, plaintext: string, tokenId = ''): string {
   // 头部值里有空格,必须整体加双引号;令牌本身不会有双引号(后端字符集是 [A-Za-z0-9_])。
-  return `claude mcp add --transport http pipewright ${mcpEndpointURL(baseUrl)} --header "Authorization: Bearer ${plaintext}"`
+  return `claude mcp add --transport http pipewright ${mcpEndpointURL(baseUrl, tokenId)} --header "Authorization: Bearer ${plaintext}"`
 }

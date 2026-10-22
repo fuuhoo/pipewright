@@ -74,6 +74,7 @@ const ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'profile_update', label: 'profile_update' },
   { value: 'session_revoke', label: 'session_revoke' },
   { value: 'api_token_create', label: 'api_token_create' },
+  { value: 'api_token_update', label: 'api_token_update' },
   { value: 'api_token_revoke', label: 'api_token_revoke' },
 ]
 

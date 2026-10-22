@@ -240,8 +240,8 @@ const router = createRouter({
             // 用户管理并进了「用户与权限」页(左栏一级入口);旧路径重定向,书签不失效。
             { path: 'users', redirect: { name: 'permissions-users' } },
             { path: 'audit', name: 'settings-audit', component: AdminAudit, meta: { title: '审计日志', requires: { settings: true } } },
-            // API 令牌:三端点同样收在 RequireAdmin 后(与审计、用户管理同一道门)。
-            { path: 'api-tokens', name: 'settings-api-tokens', component: SettingsAPITokens, meta: { title: 'API 令牌', requires: { settings: true } } },
+            // MCP 端点(库里仍是 api_tokens 一张表):端点 = 令牌,三端点同样收在 RequireAdmin 后(与审计、用户管理同一道门)。
+            { path: 'api-tokens', name: 'settings-api-tokens', component: SettingsAPITokens, meta: { title: 'MCP 端点', requires: { settings: true } } },
 
             // ─── v6.2 §3.6:个人设置(所有登录用户)───
             { path: 'my-credentials', name: 'settings-my-credentials', component: MyCredentials, meta: { title: '我的凭据' } },

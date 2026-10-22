@@ -5,14 +5,18 @@ import {
   activeToolPreset,
   claudeCodeAddCommand,
   clientSnippets,
+  editableGroupOptions,
+  editableToolOptions,
   groupScopeNames,
   mcpEndpointURL,
   mcpHttpSnippet,
   mcpStdioSnippet,
   normalizeTokenName,
   ownerOptions,
+  sameScope,
   tokenNameProblem,
   toggleTool,
+  toggleValue,
   toolPresetNames,
   trimBaseURL,
 } from './apiTokens'
@@ -188,6 +192,14 @@ describe('工具范围(allowedTools)', () => {
     expect(toggleTool(catalog, ['gone_tool'], 'list_projects')).toEqual(['list_projects', 'gone_tool'])
     expect(toggleTool(catalog, ['get_run', 'gone_tool'], 'gone_tool')).toEqual(['get_run'])
   })
+
+  it('toggleValue 与它同一条规矩:order 外的留末尾,勾掉即从末尾消失(编辑分组用同一个它)', () => {
+    const order = ['g1', 'g2']
+    expect(toggleValue(order, [], 'g2')).toEqual(['g2'])
+    expect(toggleValue(order, ['g2'], 'g1')).toEqual(['g1', 'g2'])
+    expect(toggleValue(order, ['g1', 'g-deleted'], 'g2')).toEqual(['g1', 'g2', 'g-deleted'])
+    expect(toggleValue(order, ['g2', 'g-deleted'], 'g2')).toEqual(['g-deleted'])
+  })
 })
 
 describe('分组范围(groupScope)', () => {
@@ -203,5 +215,86 @@ describe('分组范围(groupScope)', () => {
 
   it('空选择就是空列表(页面上按「不限」渲染)', () => {
     expect(groupScopeNames([], groups)).toEqual([])
+  })
+})
+
+describe('端点地址(一条端点一条 URL)', () => {
+  it('有令牌 id 就把它拼进路径,没有则退回公共入口 /mcp', () => {
+    expect(mcpEndpointURL('https://pw.example.com', 'f47ac10b-58cc-4372-a567-0e02b2c3d479')).toBe(
+      'https://pw.example.com/mcp/f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    )
+    expect(mcpEndpointURL('https://pw.example.com/')).toBe('https://pw.example.com/mcp')
+    expect(mcpEndpointURL('https://pw.example.com', '  ')).toBe('https://pw.example.com/mcp')
+  })
+
+  it('片段跟着端点走:同一把令牌在 cursor/vscode/generic 三条里地址都是那条独立的,只有 stdio 填平台根地址', () => {
+    const id = 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+    const got = clientSnippets('https://pw.example.com', 'pwt_abc', id)
+    const expectURL = (client: string) =>
+      JSON.parse(got.find((s) => s.client === client)?.code ?? '{}').mcpServers?.pipewright?.url ??
+      JSON.parse(got.find((s) => s.client === client)?.code ?? '{}').servers?.pipewright?.url
+    for (const client of ['cursor', 'vscode', 'claudeCode', 'generic']) {
+      expect(expectURL(client)).toBe(`https://pw.example.com/mcp/${id}`)
+    }
+    const desktop = JSON.parse(got.find((s) => s.client === 'claudeDesktop')?.code ?? '{}')
+    expect(desktop.mcpServers.pipewright.env.PIPEWRIGHT_URL).toBe('https://pw.example.com')
+    expect(desktop.mcpServers.pipewright.env.PIPEWRIGHT_TOKEN).toBe('pwt_abc')
+  })
+
+  it('Claude Code 的一行命令也用端点地址', () => {
+    expect(claudeCodeAddCommand('https://pw.example.com', 'pwt_abc', 'tok-1')).toContain(
+      'https://pw.example.com/mcp/tok-1 --header',
+    )
+  })
+
+  it('HTTP 片段带 id 时 url 指向端点,不带时指向公共入口(两种都合法,后端都注册了)', () => {
+    const parsed = JSON.parse(mcpHttpSnippet('https://pw.example.com', 'pwt_abc', 'tok-1')) as {
+      mcpServers: { pipewright: { url: string } }
+    }
+    expect(parsed.mcpServers.pipewright.url).toBe('https://pw.example.com/mcp/tok-1')
+    const bare = JSON.parse(mcpHttpSnippet('https://pw.example.com', 'pwt_abc')) as {
+      mcpServers: { pipewright: { url: string } }
+    }
+    expect(bare.mcpServers.pipewright.url).toBe('https://pw.example.com/mcp')
+  })
+})
+
+describe('再编辑两把尺', () => {
+  const catalog: MCPToolDef[] = [
+    { name: 'list_projects', title: '项目列表', readOnly: true },
+    { name: 'trigger_run', title: '触发运行', readOnly: false },
+  ]
+  const groups = [
+    { id: 'g1', name: '前端组', projectCount: 3 },
+    { id: 'g2', name: '后端组', projectCount: 0 },
+  ]
+
+  it('sameScope 判集合相等:顺序、重复、首尾空白都不算改动;[] 与 [x] 算改动', () => {
+    expect(sameScope(['a', 'b'], ['b', 'a', 'a'])).toBe(true)
+    expect(sameScope([], [])).toBe(true)
+    expect(sameScope(['a'], ['a', ' '])).toBe(true)
+    expect(sameScope([], ['a'])).toBe(false)
+    expect(sameScope(['a'], ['a', 'b'])).toBe(false)
+  })
+
+  it('名册里没了的工具仍出现在候选里,并标成可取消勾选(否则一次 400 就再也改不动)', () => {
+    expect(editableToolOptions(['list_projects', 'old_tool'], catalog)).toEqual([
+      { value: 'list_projects', label: '项目列表', missing: false, noteKey: 'readOnly' },
+      { value: 'trigger_run', label: '触发运行', missing: false, noteKey: '' },
+      { value: 'old_tool', label: 'old_tool', missing: true, noteKey: 'gone' },
+    ])
+  })
+
+  it('已删分组同理:名字回落到 ID,missing 为真', () => {
+    expect(editableGroupOptions(['g-deleted'], groups)).toEqual([
+      { value: 'g1', label: '前端组', missing: false, noteKey: 'projectCount' },
+      { value: 'g2', label: '后端组', missing: false, noteKey: 'projectCount' },
+      { value: 'g-deleted', label: 'g-deleted', missing: true, noteKey: 'gone' },
+    ])
+  })
+
+  it('勾选范围恰好为空时候选就是名册本身(不给一行假的「已删除」)', () => {
+    expect(editableToolOptions([], catalog).every((o) => !o.missing)).toBe(true)
+    expect(editableGroupOptions([], groups).every((o) => !o.missing)).toBe(true)
   })
 })
