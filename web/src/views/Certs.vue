@@ -883,8 +883,8 @@ const hasAccountForCa = computed(() => {
           </span>
           <span class="cert-expire">
             <span class="cert-expire-days">{{ expiryText(c) }}</span>
+            <!-- 没正文时上面那行已经是「尚未签发」,再补一行就成了同样的字说两遍。 -->
             <span v-if="c.notAfter" class="cert-expire-date mono">{{ fmtDate(c.notAfter) }}</span>
-            <span v-else class="cert-expire-date">{{ t('certs.notIssued') }}</span>
           </span>
           <span class="cert-auto">
             <button
@@ -1758,9 +1758,13 @@ const hasAccountForCa = computed(() => {
 }
 
 /* 列表 */
+/* 每一行都是各自独立的 grid,所以除域名外的列必须钉死宽度:最后一列原本用 auto,
+   某一行少一个按钮(导入的证书没有「续期/发布」)就会让前面 fr 列的分配跟着变,
+   整行的列线就错位。定值按 8 语种实测量出来:操作列最宽是西语「发布」转圈那一下 285px,
+   到期列是日语「まだ発行されていません」129px,最近检查列是「2026-10-22 10:31:01」124px。 */
 .cert-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1.4fr) 110px 92px minmax(120px, 1fr) 62px 128px auto;
+  grid-template-columns: minmax(140px, 1fr) 110px 92px 132px 62px 140px 300px;
   align-items: center;
   gap: 12px;
   padding: 12px 18px;
@@ -1784,6 +1788,14 @@ const hasAccountForCa = computed(() => {
   letter-spacing: 0.04em;
   background: var(--color-card-2);
   pointer-events: none;
+}
+/* 表头只是装饰(aria-hidden),但大写字距下的法语「自动续期」有 143px,比 62px 的开关列宽一倍多,
+   不裁掉就会压到隔壁「到期」列的字上。宁可显示成「RENOUVELLEM…」,也不要两列叠在一起。 */
+.cert-row--head > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cert-domain {
@@ -1818,6 +1830,8 @@ const hasAccountForCa = computed(() => {
   flex-direction: column;
   font-size: 0.76rem;
   color: var(--color-dim);
+  white-space: nowrap;
+  overflow: hidden;
 }
 .cert-ca {
   font-size: 0.68rem;
@@ -1869,6 +1883,9 @@ const hasAccountForCa = computed(() => {
 .cert-checked {
   font-size: 0.72rem;
   color: var(--color-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mono {
   font-family: var(--font-mono);
