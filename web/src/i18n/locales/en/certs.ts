@@ -171,6 +171,7 @@ export default {
   serverPlaceholder: 'Choose a host',
   serverNone: 'No hosts available — add one on the Servers page first',
   serversPicked: '{n} host(s) selected — one target saved per host',
+  serverNonePick: 'You can tick several hosts — one target each. No hosts are registered yet; add one on the Servers page first',
   targetsOnHost: '{n} existing',
   fieldCertPath: 'Certificate path on host',
   certPathPlaceholder: '/etc/nginx/tls/example.com.pem',

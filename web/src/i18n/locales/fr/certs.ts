@@ -171,6 +171,7 @@ export default {
   serverPlaceholder: 'Choisir un hôte',
   serverNone: 'Aucun hôte disponible — ajoutez-en un depuis la page Serveurs',
   serversPicked: '{n} hôte(s) sélectionné(s) — une cible par hôte',
+  serverNonePick: 'Sélection multiple — une cible par hôte coché. Aucun hôte enregistré : ajoutez-en d’abord depuis la page Serveurs',
   targetsOnHost: '{n} existante(s)',
   fieldCertPath: 'Chemin de destination du certificat',
   certPathPlaceholder: '/etc/nginx/tls/example.com.pem',

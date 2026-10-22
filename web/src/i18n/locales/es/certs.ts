@@ -171,6 +171,7 @@ export default {
   serverPlaceholder: 'Elige un host',
   serverNone: 'No hay hosts disponibles; añádelo primero en la página de servidores',
   serversPicked: '{n} host(s) seleccionados: se guarda un destino por host',
+  serverNonePick: 'Selección múltiple: un destino por host marcado. Aún no hay hosts registrados; añádelos primero en la página de servidores',
   targetsOnHost: '{n} ya existentes',
   fieldCertPath: 'Ruta de destino del certificado',
   certPathPlaceholder: '/etc/nginx/tls/example.com.pem',

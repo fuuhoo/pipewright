@@ -171,6 +171,7 @@ export default {
   serverPlaceholder: '호스트 선택',
   serverNone: '사용 가능한 호스트가 없습니다. 서버 페이지에서 추가하세요',
   serversPicked: '{n}개 호스트 선택 — 각 호스트에 배포 대상 1개를 저장합니다',
+  serverNonePick: '여러 대를 선택할 수 있습니다 — 체크한 대수만큼 배포 대상이 저장됩니다. 등록된 호스트가 없으니 먼저 서버 페이지에서 추가하세요',
   targetsOnHost: '기존 {n}개',
   fieldCertPath: '인증서 기록 경로',
   certPathPlaceholder: '/etc/nginx/tls/example.com.pem',

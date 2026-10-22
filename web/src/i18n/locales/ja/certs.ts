@@ -171,6 +171,7 @@ export default {
   serverPlaceholder: 'ホストを選択',
   serverNone: '利用可能なホストがありません。サーバーページで追加してください',
   serversPicked: '{n} 台を選択中 — 各台に配置先を 1 件保存します',
+  serverNonePick: '複数選択できます — 選択した台数ぶん配置先を保存します。現在ホストが 1 台もないため、先にサーバーページで追加してください',
   targetsOnHost: '既存 {n} 件',
   fieldCertPath: '証明書の保存パス',
   certPathPlaceholder: '/etc/nginx/tls/example.com.pem',

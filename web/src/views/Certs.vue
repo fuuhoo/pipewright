@@ -1461,7 +1461,7 @@ const hasAccountForCa = computed(() => {
                   <code class="server-pick-host">{{ s.user }}@{{ s.host }}:{{ s.port }}</code>
                   <span v-if="targetsOnHost(s.id)" class="server-pick-dup">{{ t('certs.targetsOnHost', { n: targetsOnHost(s.id) }) }}</span>
                 </label>
-                <p v-if="servers.length === 0" class="field-hint">{{ t('certs.serverNone') }}</p>
+                <p v-if="servers.length === 0" class="field-hint">{{ t('certs.serverNonePick') }}</p>
                 <p v-else class="field-hint">{{ t('certs.serversPicked', { n: pickedServerIds.length }) }}</p>
               </div>
               <span v-if="targetErrors.serverId" class="field-error" role="alert">{{ targetErrors.serverId }}</span>

@@ -171,6 +171,7 @@ export default {
   serverPlaceholder: '选择主机',
   serverNone: '还没有可用主机,请先到服务器页添加',
   serversPicked: '已选 {n} 台,每台各存一个落点',
+  serverNonePick: '这里是多选:勾几台就存几个落点。当前一台主机都没有,请先到服务器页添加',
   targetsOnHost: '已有 {n} 个落点',
   fieldCertPath: '证书落盘路径',
   certPathPlaceholder: '/etc/nginx/tls/example.com.pem',
