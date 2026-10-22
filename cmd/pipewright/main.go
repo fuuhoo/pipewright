@@ -89,6 +89,12 @@ func main() {
 
 	cfg := config.Load()
 
+	// `pipewright reset-admin-password` 需要同一份配置(库路径、驱动),所以分派点在
+	// config.Load 之后、绑端口与装配平台之前:它只碰数据库,不该顺手把平台起起来。
+	if len(os.Args) > 1 && os.Args[1] == "reset-admin-password" {
+		os.Exit(runResetPasswordCommand(os.Args[2:], cfg))
+	}
+
 	// 监听地址允许用命令行覆盖环境变量,优先级 --addr/--port > PIPEWRIGHT_ADDR > :8080。
 	// 解析逻辑与平台无关,所以 Windows 上 `pipewright.exe --port 9090` 和 Linux 的 `--port 9090` 行为一致。
 	listenAddr, addrErr := listenAddrFromArgs(os.Args[1:], cfg.Addr)

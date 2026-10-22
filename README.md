@@ -350,7 +350,7 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
-| `PIPEWRIGHT_ADMIN_PASSWORD` | 首次启动管理员口令 | 无(须设置) |
+| `PIPEWRIGHT_ADMIN_PASSWORD` | 首次启动管理员口令(库里已有管理员时忽略;忘了口令见下方「忘了管理员口令」) | 无(须设置) |
 | `PIPEWRIGHT_MASTER_KEY` | 凭据保险库主密钥(base64 的 32 字节);或用 `PIPEWRIGHT_MASTER_KEY_FILE` 指文件 | 未配则保险库禁用 |
 | `PIPEWRIGHT_ADDR` | HTTP 监听地址 | `:8080` |
 | `PIPEWRIGHT_PUBLIC_URL` | 外部可访问的基址(如 `https://ci.example.com`)。webhook 回调、OAuth 回跳、通知里的签名审批链接、PR 状态跳转链接都需要它 | 无 |
@@ -359,6 +359,15 @@ make build          # 前端构建 → go:embed → 单个静态二进制 ./pipe
 | `PIPEWRIGHT_RELEASE_REPO` | 检查更新所查的 GitHub 仓库(fork 可改) | `fuuhoo/pipewright` |
 | `PIPEWRIGHT_RUNTIME` | 设 `docker` 显式声明容器部署形态(影响自更新方式);否则经 `/.dockerenv` 自动探测 | 自动探测 |
 | `PIPEWRIGHT_AUDIT_SINK` | 远端审计 sink:`http(s)://` 端点,或填其它值作为第二份本地 JSON Lines 文件路径。本地库被删后审计仍完整 | 无 |
+
+**忘了管理员口令**:`PIPEWRIGHT_ADMIN_PASSWORD` 只在库里还没有管理员那次生效,之后改它不会动账号。在**装本平台的那台机器**上跑一条子命令即可,它只开本机库、不占端口,新口令下一次登录就生效:
+
+```bash
+pipewright reset-admin-password --stdin < newpass.txt   # 也支持 --password-file / --generate
+docker exec -it <容器名> /pipewright reset-admin-password --stdin   # compose 形态:二进制在镜像根的 /pipewright
+```
+
+口令只从标准输入/文件/`--generate` 进,刻意不做 `--password` 参数(ps 与 shell 历史都会留一份),也不回读 `PIPEWRIGHT_ADMIN_PASSWORD`。它只处理内置管理员;别的账号要用另一个管理员登录后在「用户管理」里重置。
 
 **数据库**
 
