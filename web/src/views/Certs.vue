@@ -911,7 +911,9 @@ const hasAccountForCa = computed(() => {
               <option v-for="opt in caOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
             <span v-if="createErrors.ca" class="field-error" role="alert">{{ createErrors.ca }}</span>
-            <span v-else-if="selectedCa && !hasAccountForCa(selectedCa.id)" class="field-hint">
+            <!-- 免 EAB 的 CA(LE / LE 测试环境)在签发时会自动注册账户,这里不用再提醒;
+                 只有需要 EAB 的三家没法替用户造凭据,才要求先到「ACME 账户」注册。 -->
+            <span v-else-if="selectedCa && selectedCa.requiresEab && !hasAccountForCa(selectedCa.id)" class="field-hint">
               {{ t('certs.caNoAccount', { name: selectedCa.name }) }}
               <button type="button" class="link-btn" @click="modal = 'accounts'; openAccounts()">{{ t('certs.btnAccounts') }}</button>
               {{ t('certs.caNoAccountEnd') }}
