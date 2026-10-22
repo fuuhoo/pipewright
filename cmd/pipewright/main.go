@@ -651,7 +651,7 @@ func main() {
 	// 续期、按落点配置自动铺发,并通过通知事件说出去(cert_expiring / cert_renewed /
 	// cert_renew_failed,7 天节流,见 internal/cert/monitor.go)。
 	// 后台**只续不首签**:登记了但还没签出正文的证书一律不动,首次签发必须是用户明确点的。
-	// 间隔 env PIPEWRIGHT_CERT_MONITOR_INTERVAL(整数秒)覆盖,默认 6h;置 0 关闭定时
+	// 间隔 env PIPEWRIGHT_CERT_MONITOR_INTERVAL(整数秒)覆盖,默认一天一次;置 0 关闭定时
 	// (页面「立即检查」与每张证书自己的「签发」按钮都仍可手动触发)。
 	certMonitorInterval := envDurationSeconds("PIPEWRIGHT_CERT_MONITOR_INTERVAL", cert.DefaultMonitorInterval)
 	certMonitor := cert.NewMonitor(certSvc, httpapi.NewCertNotifier(notifySvc), certMonitorInterval)

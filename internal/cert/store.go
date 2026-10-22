@@ -105,7 +105,7 @@ func (s *Store) updateCert(ctx context.Context, r *certRow) error {
 // markCertChecked 刷新一张证书的「上次看过」时刻与状态(到期扫描每轮一笔)。
 // 为什么连 status 一起写:一张再没人动的证书跨过到期线之后,库里那一行不会自己变,而页面读的
 // 就是这一列 —— 不随扫描刷新,「已过期」会永远显示成「已签发」。
-// 刻意不动 updated_at:那是「配置被人改过」的口径,每 6 小时被扫描器摸一下就跳,页面上的
+// 刻意不动 updated_at:那是「配置被人改过」的口径,每天被扫描器摸一下就跳,页面上的
 // 「最近修改」就没有意义了。也刻意不整行 UPDATE:扫描器手里那份是本轮开头读的,期间签发
 // 可能已经把正文换新,拿旧行覆盖回去会把刚签出来的证书签掉。
 func (s *Store) markCertChecked(ctx context.Context, id string, at time.Time, status string) error {

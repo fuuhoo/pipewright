@@ -204,10 +204,13 @@ type checkRunner interface {
 	CheckOnce(ctx context.Context, notifier Notifier) (*CheckReport, error)
 }
 
-// DefaultMonitorInterval 是到期扫描的默认节奏。取 6 小时:续期窗口有 30 天,
-// 每 6 小时看一次意味着一次续期失败还有上百轮重试,而每次扫描只有几条 SQL(没有网络动作),
-// 再密只是白白写 checked_at。
-const DefaultMonitorInterval = 6 * time.Hour
+// DefaultMonitorInterval 是到期扫描的默认节奏:一天一次。
+//
+// 为什么够用:续期窗口与提醒节流都按「天」计(窗口 30 天、节流 7 天),一天一扫就意味着
+// 一张证书在整个窗口里最多被判定 30 次、被提醒 4 次,而一次续期失败也有几十天重试余地 ——
+// 再密只是把 checked_at 刷得更勤,并不会让证书早一天续上。
+// 需要更勤可用 PIPEWRIGHT_CERT_MONITOR_INTERVAL(整数秒)覆盖。
+const DefaultMonitorInterval = 24 * time.Hour
 
 // Monitor 是证书到期监控的后台周期器(ticker + ctx 取消 + Stop 幂等 + 单轮 panic 兜住)。
 // 形态对齐 internal/previewenv.Sweeper:启动后先等一会儿再扫,避开启动高峰与端口还没就绪的时候。
