@@ -74,16 +74,21 @@ import {
   certTone,
   checkBucketCount,
   checkReportClean,
+  checkTargetDraft,
   checkTargetPaths,
+  compactTargetDrafts,
+  emptyTargetDraft,
   filterAttentions,
   filterCerts,
   invalidDomains,
+  isBlankTargetDraft,
   isValidRenewBeforeDays,
   needsAttention,
   parseDomains,
   parseRenewDays,
   renewWindowDays,
   type CheckBucket,
+  type TargetDraft,
 } from '../lib/certRows'
 import type { CertTone } from '../lib/certRows'
 
@@ -311,6 +316,9 @@ const createForm = ref<{ domain: string; sans: string; ca: string; dnsProviderId
 const createErrors = ref({ domain: '', sans: '', ca: '', dnsProviderId: '', renewBeforeDays: '' })
 const cas = ref<CaOption[]>([])
 const dnsProviders = ref<DnsProvider[]>([])
+// 申请时就顺手配好的落点:签出来直接能铺到这几台机器上,省得再进详情一台台加。
+const createTargets = ref<TargetDraft[]>([emptyTargetDraft()])
+const createTargetErrors = ref<string[]>([''])
 
 /** 下拉里的 CA:测试环境标注出来,免得有人拿它签生产域名。 */
 const caOptions = computed(() =>
@@ -327,6 +335,8 @@ async function openCreate(): Promise<void> {
     domain: '', sans: '', ca: cas.value[0]?.id ?? '', dnsProviderId: '', autoRenew: true, renewBeforeDaysText: '',
   }
   createErrors.value = { domain: '', sans: '', ca: '', dnsProviderId: '', renewBeforeDays: '' }
+  createTargets.value = [emptyTargetDraft()]
+  createTargetErrors.value = ['']
   createBanner.value = ''
   modal.value = 'create'
   try {
@@ -336,9 +346,22 @@ async function openCreate(): Promise<void> {
     // 提醒「这家 CA 还没注册 ACME 账户」要靠这份名单判断;不加载就会对已注册的 CA 误报。
     // 拉失败不影响登记本身(后端签发时仍会 422 说清),所以这里吞掉错误,不打断弹窗。
     if (accounts.value.length === 0) accounts.value = await listAcmeAccounts().catch(() => accounts.value)
+    // 主机清单给「发布落点」那段用;拉不到同样不影响登记,只是那几行没得选。
+    if (servers.value.length === 0) await listServers().then((s) => (servers.value = s)).catch(() => undefined)
   } catch (err) {
     createBanner.value = errText(err, t('certs.errLoadChoices'))
   }
+}
+
+function addCreateTarget(): void {
+  createTargets.value.push(emptyTargetDraft())
+  createTargetErrors.value.push('')
+}
+
+function removeCreateTarget(i: number): void {
+  createTargets.value.splice(i, 1)
+  createTargetErrors.value.splice(i, 1)
+  if (createTargets.value.length === 0) addCreateTarget()
 }
 
 function validateCreate(): boolean {
@@ -354,8 +377,18 @@ function validateCreate(): boolean {
   if (!isValidRenewBeforeDays(days)) {
     e.renewBeforeDays = t('certs.valRenewDays', { min: MIN_RENEW_BEFORE_DAYS, max: MAX_RENEW_BEFORE_DAYS })
   }
+  // 落点逐行判:空白行是不想加,半填的行必须说清缺哪一格。
+  const rowErrs = createTargets.value.map((row) => {
+    if (isBlankTargetDraft(row)) return ''
+    const issue = checkTargetDraft(row)
+    if (issue === 'noServer') return t('certs.valServerRequired')
+    if (issue === 'notAbsolute') return t('certs.valPathNotAbsolute')
+    if (issue === 'same') return t('certs.valPathSame')
+    return ''
+  })
+  createTargetErrors.value = rowErrs
   createErrors.value = e
-  return !e.domain && !e.sans && !e.ca && !e.dnsProviderId && !e.renewBeforeDays
+  return !e.domain && !e.sans && !e.ca && !e.dnsProviderId && !e.renewBeforeDays && rowErrs.every((x) => x === '')
 }
 
 async function submitCreate(): Promise<void> {
@@ -372,8 +405,27 @@ async function submitCreate(): Promise<void> {
       renewBeforeDays: parseRenewDays(createForm.value.renewBeforeDaysText),
     })
     upsertRow(c)
+    // 落点是逐条 POST 的:证书已经登记成功,不能因为某台机器没权限就把整个流程当成失败,
+    // 所以这里只把没存上的那些数出来告诉用户,行本身照常留在列表里。
+    const drafts = compactTargetDrafts(createTargets.value)
+    let saved = 0
+    let failed = 0
+    for (const d of drafts) {
+      try {
+        await addCertTarget(c.id, d)
+        saved += 1
+      } catch {
+        failed += 1
+      }
+    }
     modal.value = ''
-    toast.success(t('certs.created'), { detail: t('certs.createdDetail', { domain: c.domain }) })
+    if (failed > 0) {
+      toast.warn(t('certs.createdPartial', { ok: saved, bad: failed }), { detail: t('certs.createdPartialDetail') })
+    } else if (saved > 0) {
+      toast.success(t('certs.createdWithTargets', { n: saved }), { detail: c.domain })
+    } else {
+      toast.success(t('certs.created'), { detail: t('certs.createdDetail', { domain: c.domain }) })
+    }
   } catch (err) {
     createBanner.value = errText(err, t('certs.errSave'))
   } finally {
@@ -901,7 +953,7 @@ const hasAccountForCa = computed(() => {
       @keydown.esc="createBusy || (modal = '')"
       @click.self="!createBusy && (modal = '')"
     >
-      <div class="modal">
+      <div class="modal modal--wide">
         <div class="modal-head">
           <div class="modal-icon" aria-hidden="true"><NIcon :size="18"><Certificate /></NIcon></div>
           <div>
@@ -1012,6 +1064,85 @@ const hasAccountForCa = computed(() => {
             />
             <span v-if="createErrors.renewBeforeDays" class="field-error" role="alert">{{ createErrors.renewBeforeDays }}</span>
             <span v-else class="field-hint">{{ t('certs.renewDaysHint', { days: RENEW_WINDOW_DAYS }) }}</span>
+          </div>
+
+          <div class="field-group">
+            <div class="group-head">
+              <div>
+                <span class="group-title">{{ t('certs.createTargetsTitle') }}</span>
+                <span class="group-desc">{{ t('certs.createTargetsDesc') }}</span>
+              </div>
+              <button type="button" class="btn-secondary btn-sm" :disabled="createBusy" @click="addCreateTarget">
+                + {{ t('certs.createTargetAdd') }}
+              </button>
+            </div>
+            <div v-for="(row, i) in createTargets" :key="i" class="target-row">
+              <div class="target-row-head">
+                <span class="target-row-index">{{ t('certs.targetRowLabel', { n: i + 1 }) }}</span>
+                <button
+                  v-if="createTargets.length > 1"
+                  type="button"
+                  class="op-btn op-btn--danger op-btn--icon"
+                  :disabled="createBusy"
+                  :aria-label="t('certs.removeTargetRow')"
+                  @click="removeCreateTarget(i)"
+                >
+                  <NIcon :size="12"><Trash /></NIcon>
+                </button>
+              </div>
+              <div class="target-row-grid">
+                <div class="field">
+                  <label class="field-label">{{ t('certs.fieldServer') }}</label>
+                  <select v-model="row.serverId" class="field-input" :disabled="createBusy">
+                    <option value="" disabled>{{ servers.length ? t('certs.serverPlaceholder') : t('certs.serverNone') }}</option>
+                    <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.name }} · {{ s.host }}</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label">{{ t('certs.fieldCertPath') }}</label>
+                  <input
+                    v-model="row.certPath"
+                    class="field-input field-input--mono"
+                    type="text"
+                    :placeholder="t('certs.certPathPlaceholder')"
+                    :disabled="createBusy"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="field">
+                  <label class="field-label">{{ t('certs.fieldKeyPath') }}</label>
+                  <input
+                    v-model="row.keyPath"
+                    class="field-input field-input--mono"
+                    type="text"
+                    :placeholder="t('certs.keyPathPlaceholder')"
+                    :disabled="createBusy"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="field">
+                  <label class="field-label">{{ t('certs.fieldPostCommand') }}</label>
+                  <input
+                    v-model="row.postCommand"
+                    class="field-input field-input--mono"
+                    type="text"
+                    :placeholder="t('certs.postCommandPlaceholder')"
+                    :disabled="createBusy"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                </div>
+                <label class="check-line">
+                  <input v-model="row.autoDeploy" type="checkbox" :disabled="createBusy" />
+                  <span>{{ t('certs.autoDeployLabel') }}</span>
+                </label>
+              </div>
+              <span v-if="createTargetErrors[i]" class="field-error" role="alert">
+                {{ t('certs.targetRowError', { n: i + 1, msg: createTargetErrors[i] }) }}
+              </span>
+            </div>
           </div>
 
           <div class="modal-footer">
@@ -2142,6 +2273,64 @@ const hasAccountForCa = computed(() => {
 }
 .field-input--num {
   max-width: 140px;
+}
+
+/* 申请弹窗里的「发布落点」分组:一台一行,行内两列铺开 */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+.group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.group-title {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.group-desc {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.73rem;
+  color: var(--color-faint);
+  line-height: 1.45;
+}
+.target-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded);
+  background: var(--color-inset);
+}
+.target-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.target-row-index {
+  margin-right: auto;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-faint);
+}
+.target-row-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.target-row-grid .check-line {
+  grid-column: 1 / -1;
 }
 
 /* 详情里的「到期前 N 天」一格 */

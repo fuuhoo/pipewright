@@ -118,6 +118,51 @@ export function checkTargetPaths(certPath: string, keyPath: string): PathIssue {
   return ''
 }
 
+/** 申请弹窗里的一行落点草稿:字段与 `CertTargetInput` 同形,但允许整行留空(= 不想加这个落点)。 */
+export interface TargetDraft {
+  serverId: string
+  certPath: string
+  keyPath: string
+  postCommand: string
+  autoDeploy: boolean
+}
+
+export function emptyTargetDraft(): TargetDraft {
+  return { serverId: '', certPath: '', keyPath: '', postCommand: '', autoDeploy: false }
+}
+
+/** 整行没填 = 用户只是点了「再加一台」又放弃,提交时跳过而不是报错。 */
+export function isBlankTargetDraft(d: TargetDraft): boolean {
+  return (
+    d.serverId === '' &&
+    d.certPath.trim() === '' &&
+    d.keyPath.trim() === '' &&
+    d.postCommand.trim() === '' &&
+    !d.autoDeploy
+  )
+}
+
+/** 落点草稿逐行判:先要主机,再要两条路径。'' = 这行可以提交。 */
+export type DraftIssue = '' | 'noServer' | PathIssue
+
+export function checkTargetDraft(d: TargetDraft): DraftIssue {
+  if (d.serverId === '') return 'noServer'
+  return checkTargetPaths(d.certPath, d.keyPath)
+}
+
+/** 丢掉空行、把两条路径与指令两端空白清掉,得到能逐条 POST /targets 的清单。 */
+export function compactTargetDrafts(list: TargetDraft[]): TargetDraft[] {
+  return list
+    .filter((d) => !isBlankTargetDraft(d))
+    .map((d) => ({
+      serverId: d.serverId,
+      certPath: d.certPath.trim(),
+      keyPath: d.keyPath.trim(),
+      postCommand: d.postCommand.trim(),
+      autoDeploy: d.autoDeploy,
+    }))
+}
+
 /** 搜索命中判定:域名、SAN、签发者与 CA 都参与,大小写不敏感。 */
 export function matchesQuery(cert: Cert, query: string): boolean {
   const q = query.trim().toLowerCase()

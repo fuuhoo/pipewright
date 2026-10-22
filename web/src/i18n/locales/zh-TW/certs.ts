@@ -61,6 +61,16 @@ export default {
   renewDaysNow: '目前:剩 {days} 天起開始續',
   saveRenewDays: '儲存天數',
   renewWindowSaved: '續期窗口已更新',
+  // 申請時就順手配好的發佈落點
+  createTargetsTitle: '發佈落點(可留空)',
+  createTargetsDesc: '先填幾台,簽出來就能直接鋪過去;每台的路徑與發佈後指令都由你填。留空則簽完再到詳情裡加。',
+  createTargetAdd: '再加一台',
+  targetRowLabel: '落點 {n}',
+  removeTargetRow: '刪掉這一行',
+  targetRowError: '第 {n} 行:{msg}',
+  createdWithTargets: '已登記,並配好 {n} 個落點',
+  createdPartial: '憑證已登記,但 {bad} 個落點沒存上(成功 {ok} 個)',
+  createdPartialDetail: '進詳情把那幾台補上再發佈',
   // 各操作結果
   issueOk: '簽發完成',
   issuePending: '簽發尚未完成',

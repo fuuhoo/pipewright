@@ -61,6 +61,16 @@ export default {
   renewDaysNow: 'Actuel : à partir de {days} jours restants',
   saveRenewDays: 'Enregistrer les jours',
   renewWindowSaved: 'Fenêtre de renouvellement mise à jour',
+  // Cibles de déploiement réglées dès la demande
+  createTargetsTitle: 'Cibles de déploiement (facultatif)',
+  createTargetsDesc: 'Renseignez-en quelques-unes : le certificat y sera déposé dès l’émission. Chaque chemin et chaque commande viennent de votre saisie. Laisser vide = à ajouter plus tard dans les détails.',
+  createTargetAdd: 'Ajouter un hôte',
+  targetRowLabel: 'Cible {n}',
+  removeTargetRow: 'Retirer cette ligne',
+  targetRowError: 'Ligne {n} : {msg}',
+  createdWithTargets: 'Enregistré, {n} cibles configurées',
+  createdPartial: 'Certificat enregistré, mais {bad} cibles n’ont pas été enregistrées ({ok} réussies)',
+  createdPartialDetail: 'Complétez ces hôtes dans les détails avant de déployer',
   // Résultats par action
   issueOk: 'Certificat émis',
   issuePending: 'Émission non terminée',

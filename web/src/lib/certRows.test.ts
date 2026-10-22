@@ -8,10 +8,14 @@ import {
   canIssue,
   certTone,
   checkReportClean,
+  checkTargetDraft,
   checkTargetPaths,
+  compactTargetDrafts,
+  emptyTargetDraft,
   filterAttentions,
   filterCerts,
   invalidDomains,
+  isBlankTargetDraft,
   isValidDomain,
   isValidRenewBeforeDays,
   matchesQuery,
@@ -206,6 +210,42 @@ describe('checkTargetPaths', () => {
   it('两条同路径单独报错:那会把公开证书覆盖成私钥', () => {
     expect(checkTargetPaths('/etc/a.pem', '/etc/a.pem')).toBe('same')
     expect(checkTargetPaths(' /etc/a.pem ', '/etc/a.pem')).toBe('same')
+  })
+})
+
+describe('落点草稿行(申请弹窗里一次填多台)', () => {
+  it('整行没填 = 空白行,只填了空格也算空白', () => {
+    expect(isBlankTargetDraft(emptyTargetDraft())).toBe(true)
+    expect(isBlankTargetDraft({ ...emptyTargetDraft(), certPath: '  ' })).toBe(true)
+    expect(isBlankTargetDraft({ ...emptyTargetDraft(), autoDeploy: true })).toBe(false)
+  })
+
+  it('逐行判:先要主机,再看两条路径(半填的行不能悄悄丢掉)', () => {
+    expect(checkTargetDraft(emptyTargetDraft())).toBe('noServer')
+    expect(checkTargetDraft({ ...emptyTargetDraft(), serverId: 's-1' })).toBe('notAbsolute')
+    expect(
+      checkTargetDraft({ ...emptyTargetDraft(), serverId: 's-1', certPath: '/etc/a.pem', keyPath: '/etc/a.pem' }),
+    ).toBe('same')
+    expect(
+      checkTargetDraft({ ...emptyTargetDraft(), serverId: 's-1', certPath: '/etc/a.pem', keyPath: '/etc/a.key' }),
+    ).toBe('')
+  })
+
+  it('汇总时去掉空行并修剪两侧空白,留下的就是要逐条提交的', () => {
+    const rows = [
+      emptyTargetDraft(),
+      {
+        ...emptyTargetDraft(),
+        serverId: 's-1',
+        certPath: ' /etc/a.pem ',
+        keyPath: ' /etc/a.key ',
+        postCommand: '  systemctl reload nginx  ',
+      },
+      emptyTargetDraft(),
+    ]
+    expect(compactTargetDrafts(rows)).toEqual([
+      { serverId: 's-1', certPath: '/etc/a.pem', keyPath: '/etc/a.key', postCommand: 'systemctl reload nginx', autoDeploy: false },
+    ])
   })
 })
 

@@ -61,6 +61,16 @@ export default {
   renewDaysNow: 'Aktuell: ab {days} Resttagen',
   saveRenewDays: 'Tage speichern',
   renewWindowSaved: 'Erneuerungsfenster aktualisiert',
+  // Verteilziele, die Sie schon bei der Anfrage setzen können
+  createTargetsTitle: 'Verteilziele (optional)',
+  createTargetsDesc: 'Hosts jetzt eintragen und das Zertifikat geht nach der Ausstellung direkt raus. Pfade und Befehle schreiben Sie selbst; leer lassen, um Ziele später zu pflegen.',
+  createTargetAdd: 'Weiteren Host hinzufügen',
+  targetRowLabel: 'Ziel {n}',
+  removeTargetRow: 'Diese Zeile entfernen',
+  targetRowError: 'Zeile {n}: {msg}',
+  createdWithTargets: 'Registriert, mit {n} Verteilziel(en)',
+  createdPartial: 'Zertifikat registriert, aber {bad} Ziel(e) nicht gespeichert ({ok} ok)',
+  createdPartialDetail: 'Öffnen Sie die Details, ergänzen Sie die Hosts und verteilen Sie dann',
   // Ergebnisse je Aktion
   issueOk: 'Ausgestellt',
   issuePending: 'Ausstellung noch nicht abgeschlossen',

@@ -61,6 +61,16 @@ export default {
   renewDaysNow: 'Now: renews with {days} days left',
   saveRenewDays: 'Save days',
   renewWindowSaved: 'Renewal window updated',
+  // Deploy targets you can fill in while requesting
+  createTargetsTitle: 'Deploy targets (optional)',
+  createTargetsDesc: 'List the hosts now and the certificate goes straight to them once issued. You write every path and every post-deploy command; leave this empty to add targets later.',
+  createTargetAdd: 'Add another host',
+  targetRowLabel: 'Target {n}',
+  removeTargetRow: 'Remove this row',
+  targetRowError: 'Row {n}: {msg}',
+  createdWithTargets: 'Registered with {n} deploy target(s)',
+  createdPartial: 'Certificate registered, but {bad} target(s) were not saved ({ok} ok)',
+  createdPartialDetail: 'Open the details to add them, then deploy',
   // Per-action results
   issueOk: 'Issued',
   issuePending: 'Issuance not finished',

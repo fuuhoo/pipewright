@@ -61,6 +61,16 @@ export default {
   renewDaysNow: '현재: {days}일 남을 때부터 갱신',
   saveRenewDays: '일수 저장',
   renewWindowSaved: '갱신 윈도우를 바꿨습니다',
+  // 신청할 때 함께 정하는 배포 배치 위치
+  createTargetsTitle: '배포 배치 위치(비워 둘 수 있음)',
+  createTargetsDesc: '몇 대를 먼저 적어 두면 발급되는 대로 바로 전달됩니다. 각 경로는 사용자가 입력합니다. 비워 두면 발급 후 상세에서 추가할 수 있습니다.',
+  createTargetAdd: '한 대 더 추가',
+  targetRowLabel: '배치 {n}',
+  removeTargetRow: '이 줄 삭제',
+  targetRowError: '{n}번째 줄: {msg}',
+  createdWithTargets: '등록했고 배치 위치 {n}개를 함께 설정했습니다',
+  createdPartial: '인증서는 등록했지만 배치 위치 {bad}개를 저장하지 못했습니다(성공 {ok}개)',
+  createdPartialDetail: '상세에서 해당 몇 대를 채운 뒤 배포하세요',
   // 작업별 결과
   issueOk: '발급 완료',
   issuePending: '발급이 완료되지 않았습니다',

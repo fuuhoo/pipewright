@@ -61,6 +61,16 @@ export default {
   renewDaysNow: '現在:残り {days} 日から更新',
   saveRenewDays: '日数を保存',
   renewWindowSaved: '更新ウィンドウを更新しました',
+  // 申請時についで設定する配信配置先
+  createTargetsTitle: '配信配置先(空欄可)',
+  createTargetsDesc: '先に何台か書いておくと、発行されたと同時に展開できます。パスも発行後のコマンドもすべてあなたの入力です。空欄なら発行後に詳細画面で追加できます。',
+  createTargetAdd: 'もう 1 台追加',
+  targetRowLabel: '配置先 {n}',
+  removeTargetRow: 'この行を削除',
+  targetRowError: '{n} 行目:{msg}',
+  createdWithTargets: '登録し、{n} 件の配置先を設定しました',
+  createdPartial: '証明書は登録しましたが、{bad} 件の配置先は保存できませんでした(成功 {ok} 件)',
+  createdPartialDetail: '詳細画面でその数台を追加してから配信してください',
   // 操作結果
   issueOk: '発行完了',
   issuePending: '発行は完了していません',

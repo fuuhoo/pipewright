@@ -61,6 +61,16 @@ export default {
   renewDaysNow: 'Ahora: renueva con {days} días restantes',
   saveRenewDays: 'Guardar días',
   renewWindowSaved: 'Ventana de renovación actualizada',
+  // Destinos de despliegue que puede dejar puestos al solicitar
+  createTargetsTitle: 'Destinos de despliegue (opcional)',
+  createTargetsDesc: 'Indique los hosts ahora y el certificado salta en cuanto se emite. Usted escribe cada ruta y cada comando; déjelo vacío para añadir destinos después.',
+  createTargetAdd: 'Añadir otro host',
+  targetRowLabel: 'Destino {n}',
+  removeTargetRow: 'Quitar esta fila',
+  targetRowError: 'Fila {n}: {msg}',
+  createdWithTargets: 'Registrado con {n} destino(s) de despliegue',
+  createdPartial: 'Certificado registrado, pero {bad} destino(s) no se guardaron ({ok} correctos)',
+  createdPartialDetail: 'Abra los detalles, añada esos hosts y despliegue después',
   // Resultados por acción
   issueOk: 'Emitido',
   issuePending: 'La emisión no ha terminado',

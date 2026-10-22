@@ -61,6 +61,16 @@ export default {
   renewDaysNow: '当前:剩 {days} 天起开始续',
   saveRenewDays: '保存天数',
   renewWindowSaved: '续期窗口已更新',
+  // 申请时就顺手配好的发布落点
+  createTargetsTitle: '发布落点(可留空)',
+  createTargetsDesc: '先填几台,签出来就能直接铺过去;每台的路径与发布后指令都由你填。留空则签完再到详情里加。',
+  createTargetAdd: '再加一台',
+  targetRowLabel: '落点 {n}',
+  removeTargetRow: '删掉这一行',
+  targetRowError: '第 {n} 行:{msg}',
+  createdWithTargets: '已登记,并配好 {n} 个落点',
+  createdPartial: '证书已登记,但 {bad} 个落点没存上(成功 {ok} 个)',
+  createdPartialDetail: '进详情把那几台补上再发布',
   // 逐操作结果
   issueOk: '签发完成',
   issuePending: '签发尚未完成',
