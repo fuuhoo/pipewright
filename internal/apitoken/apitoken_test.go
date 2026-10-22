@@ -311,6 +311,111 @@ func TestNoPlaintextInDB(t *testing.T) {
 	}
 }
 
+// TestScopes_RoundTrip 验两个范围穿过「写 → 读 → 校验」三条路都保持同一份内容,
+// 且入库前做了归一化:空白清掉、重复去掉、顺序按首次出现。
+func TestScopes_RoundTrip(t *testing.T) {
+	db := storetest.OpenDB(t)
+	ctx := context.Background()
+	svc := apitoken.NewService(db)
+	uid := newUserService(t, db, "kate", "user")
+
+	created, err := svc.Create(ctx, apitoken.CreateInput{
+		Name:         "只读巡检",
+		UserID:       uid,
+		AllowedTools: []string{"list_projects", " get_run ", "list_projects", ""},
+		GroupScope:   []string{"grp-a", "grp-b", "grp-a"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	wantTools := []string{"list_projects", "get_run"}
+	wantGroups := []string{"grp-a", "grp-b"}
+
+	if got := created.Token.AllowedTools; !equalStrings(got, wantTools) {
+		t.Fatalf("签发视图的工具范围 = %v,想要 %v", got, wantTools)
+	}
+	if got := created.Token.GroupScope; !equalStrings(got, wantGroups) {
+		t.Fatalf("签发视图的分组范围 = %v,想要 %v", got, wantGroups)
+	}
+
+	got, err := svc.Get(ctx, created.Token.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !equalStrings(got.AllowedTools, wantTools) || !equalStrings(got.GroupScope, wantGroups) {
+		t.Fatalf("Get 读回的范围变了: %+v", got)
+	}
+
+	// Verify 是 MCP/脚本唯一拿得到范围的地方:漏带就等于范围形同不存在。
+	p, err := svc.Verify(ctx, created.Plaintext)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !equalStrings(p.AllowedTools, wantTools) || !equalStrings(p.GroupScope, wantGroups) {
+		t.Fatalf("Verify 的 Principal 范围不对: %+v", p)
+	}
+
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || !equalStrings(list[0].AllowedTools, wantTools) {
+		t.Fatalf("列表没带出范围: %+v", list)
+	}
+}
+
+// TestScopes_EmptyMeansUnrestricted 钉住「空 = 不限」这一态:不传范围时库里必须是
+// 空数组而不是 null,且读回来是空 —— 0078 之前的存量令牌靠这个保持不变的行为。
+func TestScopes_EmptyMeansUnrestricted(t *testing.T) {
+	db := storetest.OpenDB(t)
+	ctx := context.Background()
+	svc := apitoken.NewService(db)
+	uid := newUserService(t, db, "leo", "user")
+
+	created, err := svc.Create(ctx, apitoken.CreateInput{Name: "n", UserID: uid, AllowedTools: []string{"  "}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var tools, groups string
+	if err := db.QueryRow(`SELECT allowed_tools, group_scope FROM api_tokens WHERE id = ?`, created.Token.ID).
+		Scan(&tools, &groups); err != nil {
+		t.Fatalf("读原始列: %v", err)
+	}
+	if tools != "[]" || groups != "[]" {
+		t.Fatalf("不限必须落成了空数组字面量,得 %q / %q", tools, groups)
+	}
+	p, err := svc.Verify(ctx, created.Plaintext)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if len(p.AllowedTools) != 0 || len(p.GroupScope) != 0 {
+		t.Fatalf("不限读回来应为空,得 %v / %v", p.AllowedTools, p.GroupScope)
+	}
+}
+
+// TestScopes_BadJSONFailsClosed 验库里被写坏时校验是报错而不是退化成「不限」:
+// 后者等于把一把该废的令牌升级成全站通行证。
+func TestScopes_BadJSONFailsClosed(t *testing.T) {
+	db := storetest.OpenDB(t)
+	ctx := context.Background()
+	svc := apitoken.NewService(db)
+	uid := newUserService(t, db, "mona", "user")
+
+	created, err := svc.Create(ctx, apitoken.CreateInput{Name: "n", UserID: uid, AllowedTools: []string{"get_run"}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE api_tokens SET allowed_tools = ? WHERE id = ?`, `not-json`, created.Token.ID); err != nil {
+		t.Fatalf("写坏列: %v", err)
+	}
+	if _, err := svc.Verify(ctx, created.Plaintext); err == nil {
+		t.Fatalf("范围列坏掉时应拒绝校验,却放行了")
+	}
+	if _, err := svc.Get(ctx, created.Token.ID); err == nil {
+		t.Fatalf("范围列坏掉时 Get 也该报错,却返回了成功")
+	}
+}
+
 func readLastUsed(t *testing.T, db *sql.DB, id string) string {
 	t.Helper()
 	var v string
@@ -327,4 +432,17 @@ func countTokens(t *testing.T, db *sql.DB) int {
 		t.Fatalf("数令牌: %v", err)
 	}
 	return n
+}
+
+// equalStrings 按「顺序敏感」比较,nil 与空切片视为相等(两侧的「不限」都是空)。
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

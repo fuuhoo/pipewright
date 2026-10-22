@@ -59,22 +59,32 @@ type Token struct {
 	CreatedAt time.Time
 	// LastUsedAt 为零值表示从未使用过。
 	LastUsedAt time.Time
+	// AllowedTools 是端点暴露的 MCP 工具名;len==0 表示不限(见 scopes.go 的三态说明)。
+	AllowedTools []string
+	// GroupScope 是端点可见的分组 ID;len==0 表示不限。空串不可能出现在这里。
+	GroupScope []string
 }
 
 // Principal 是一次令牌校验的成功结果:令牌背后那个人的身份(每次从 users 现查,
-// 所以改角色、禁用账号都在下一次调用即刻生效,不存在「令牌还带着旧权限」的窗口)。
+// 所以改角色、禁用账号都在下一次调用即刻生效,不存在「令牌还带着旧权限」的窗口)+
+// 这把令牌自带范围。两个范围只在原有权限上取交集,永远不会放大。
 type Principal struct {
 	TokenID  string
 	UserID   string
 	Username string
 	Role     string
+	// AllowedTools / GroupScope 口径同 Token:len==0 = 不限。
+	AllowedTools []string
+	GroupScope   []string
 }
 
-// CreateInput 是签发入参。
+// CreateInput 是签发入参。两个范围由调用方(HTTP 层)校验过合法性再传进来。
 type CreateInput struct {
-	Name      string
-	UserID    string
-	CreatedBy string
+	Name         string
+	UserID       string
+	CreatedBy    string
+	AllowedTools []string
+	GroupScope   []string
 }
 
 // CreatedToken 是签发结果:Plaintext 只在这里出现一次。
@@ -126,10 +136,21 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*CreatedToken, er
 	now := time.Now().UTC()
 	id := uuid.NewString()
 
+	toolsJSON, err := marshalScope(in.AllowedTools)
+	if err != nil {
+		return nil, fmt.Errorf("apitoken: 编码工具范围: %w", err)
+	}
+	groupsJSON, err := marshalScope(in.GroupScope)
+	if err != nil {
+		return nil, fmt.Errorf("apitoken: 编码分组范围: %w", err)
+	}
+
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO api_tokens (id, name, token_hash, user_id, created_by, last_used_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, '', ?)`,
-		id, name, hash, userID, strings.TrimSpace(in.CreatedBy), now.Format(time.RFC3339))
+		`INSERT INTO api_tokens (id, name, token_hash, user_id, created_by, last_used_at, created_at,
+		                         allowed_tools, group_scope)
+		 VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`,
+		id, name, hash, userID, strings.TrimSpace(in.CreatedBy), now.Format(time.RFC3339),
+		toolsJSON, groupsJSON)
 	if err != nil {
 		return nil, fmt.Errorf("apitoken: insert token: %w", err)
 	}
@@ -186,7 +207,7 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
-// Verify 按明文取回归属人身份。任何不可用的原因(不含摘要、不存在、归属用户被删或被禁用)
+// Verify 按明文取回归属人身份与这把令牌的范围。任何不可用的原因(不含摘要、不存在、归属用户被删或被禁用)
 // 一律回 ErrInvalid。成功时按节流刷新 last_used_at —— 这一步失败不影响本次校验结果。
 func (s *Service) Verify(ctx context.Context, plaintext string) (*Principal, error) {
 	plain := strings.TrimSpace(plaintext)
@@ -194,17 +215,26 @@ func (s *Service) Verify(ctx context.Context, plaintext string) (*Principal, err
 		return nil, ErrInvalid
 	}
 	var p Principal
+	var toolsJSON, groupsJSON string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT t.id, t.user_id, u.username, u.role
+		`SELECT t.id, t.user_id, u.username, u.role, t.allowed_tools, t.group_scope
 		   FROM api_tokens t JOIN users u ON u.id = t.user_id
 		  WHERE t.token_hash = ? AND u.enabled = 1`,
 		digest(plain),
-	).Scan(&p.TokenID, &p.UserID, &p.Username, &p.Role)
+	).Scan(&p.TokenID, &p.UserID, &p.Username, &p.Role, &toolsJSON, &groupsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalid
 	}
 	if err != nil {
 		return nil, fmt.Errorf("apitoken: verify: %w", err)
+	}
+	// 范围列解析不动(手改过库、迁移没跑全)就当这次校验失败:与其带着坏数据按「不限」
+	// 放行,不如让这把令牌立刻不可用,逼操作人重签。
+	if p.AllowedTools, err = unmarshalScope(toolsJSON); err != nil {
+		return nil, fmt.Errorf("apitoken: verify token %s allowed_tools: %w", p.TokenID, err)
+	}
+	if p.GroupScope, err = unmarshalScope(groupsJSON); err != nil {
+		return nil, fmt.Errorf("apitoken: verify token %s group_scope: %w", p.TokenID, err)
 	}
 	// 条件 UPDATE 自带节流:只有超过间隔的行才写,因此不必先读一遍 last_used_at。
 	cutoff := time.Now().UTC().Add(-lastUsedWriteInterval).Format(time.RFC3339)
@@ -219,7 +249,7 @@ func (s *Service) Verify(ctx context.Context, plaintext string) (*Principal, err
 
 // tokenSelect 是列表/取单条共用的投影(明文与摘要刻意不选)。
 const tokenSelect = `SELECT t.id, t.name, t.user_id, u.username, t.created_by,
-		                    t.last_used_at, t.created_at
+		                    t.last_used_at, t.created_at, t.allowed_tools, t.group_scope
 		           FROM api_tokens t JOIN users u ON u.id = t.user_id`
 
 // rowScanner 让 *sql.Row 与 *sql.Rows 共用同一段投影解析(两类型的 Scan 签名一致)。
@@ -229,9 +259,17 @@ type rowScanner interface {
 
 func scanToken(row rowScanner) (*Token, error) {
 	var t Token
-	var lastUsed, created string
-	if err := row.Scan(&t.ID, &t.Name, &t.UserID, &t.OwnerName, &t.CreatedBy, &lastUsed, &created); err != nil {
+	var lastUsed, created, toolsJSON, groupsJSON string
+	if err := row.Scan(&t.ID, &t.Name, &t.UserID, &t.OwnerName, &t.CreatedBy,
+		&lastUsed, &created, &toolsJSON, &groupsJSON); err != nil {
 		return nil, err
+	}
+	var err error
+	if t.AllowedTools, err = unmarshalScope(toolsJSON); err != nil {
+		return nil, fmt.Errorf("apitoken: token %s allowed_tools: %w", t.ID, err)
+	}
+	if t.GroupScope, err = unmarshalScope(groupsJSON); err != nil {
+		return nil, fmt.Errorf("apitoken: token %s group_scope: %w", t.ID, err)
 	}
 	return fillTimes(&t, lastUsed, created)
 }
