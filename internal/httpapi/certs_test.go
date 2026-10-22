@@ -1026,6 +1026,59 @@ func TestCertAutoRenewAndDelete(t *testing.T) {
 	}
 }
 
+// TestCertRenewWindow 验「到期前 N 天自动续期」:登记带得进、改得动、读得回,越界与导入来源当场拒。
+// 这个数决定平台什么时候去 CA 下一单,所以改它必须有一条审计 —— 和开关同理。
+func TestCertRenewWindow(t *testing.T) {
+	env := setupCertsAPI(t, true)
+
+	code, body := certCall(t, env.admin, env.adminCS, http.MethodPost, env.srv.URL+"/api/certs", certBody(t, map[string]any{
+		"domain": "window.example.com", "ca": "letsencrypt_staging", "dnsProviderId": "dns-1",
+		"autoRenew": true, "renewBeforeDays": 45,
+	}))
+	if code != http.StatusCreated {
+		t.Fatalf("登记 = %d %s, want 201", code, body)
+	}
+	created := decodeJSONBody(t, body)
+	id, _ := created["id"].(string)
+	if created["renewBeforeDays"] != float64(45) {
+		t.Fatalf("登记响应 renewBeforeDays = %v, want 45", created["renewBeforeDays"])
+	}
+	// 列表也带这个字段:页面上的阈值回显读的是列表那一趟。
+	code, body = certCall(t, env.admin, env.adminCS, http.MethodGet, env.srv.URL+"/api/certs", "")
+	if code != http.StatusOK || !strings.Contains(body, `"renewBeforeDays":45`) {
+		t.Fatalf("列表未回显阈值: %d %s", code, body)
+	}
+
+	code, body = certCall(t, env.admin, env.adminCS, http.MethodPost, env.srv.URL+"/api/certs/"+id+"/renew-window", `{"renewBeforeDays":7}`)
+	if code != http.StatusOK || decodeJSONBody(t, body)["renewBeforeDays"] != float64(7) {
+		t.Fatalf("改阈值 = %d %s, want 200 renewBeforeDays=7", code, body)
+	}
+	if n, detail := auditRow(t, env.db, audit.ActionCertRenewWindow); n != 1 {
+		t.Errorf("cert_renew_window 审计 %d 条, want 1", n)
+	} else if !strings.Contains(detail, "window.example.com") {
+		t.Errorf("阈值审计没留域名: %s", detail)
+	}
+
+	// 0 = 交回默认窗口(页面显示「30 天(默认)」)。
+	if code, body = certCall(t, env.admin, env.adminCS, http.MethodPost, env.srv.URL+"/api/certs/"+id+"/renew-window", `{"renewBeforeDays":0}`); code != http.StatusOK ||
+		decodeJSONBody(t, body)["renewBeforeDays"] != float64(0) {
+		t.Fatalf("恢复默认 = %d %s, want 200 renewBeforeDays=0", code, body)
+	}
+
+	for _, bad := range []string{`{"renewBeforeDays":400}`, `{"renewBeforeDays":-1}`} {
+		code, body = certCall(t, env.admin, env.adminCS, http.MethodPost, env.srv.URL+"/api/certs/"+id+"/renew-window", bad)
+		if code != http.StatusBadRequest || decodeCode(t, decodeJSONBody(t, body)) != "invalid_cert" {
+			t.Errorf("越界 %s = %d %s, want 400 invalid_cert", bad, code, body)
+		}
+	}
+
+	imported := importCert(t, env, env.admin, env.adminCS, newCertMaterial(t, "window-upload.example.com", 112))
+	code, body = certCall(t, env.admin, env.adminCS, http.MethodPost, env.srv.URL+"/api/certs/"+imported+"/renew-window", `{"renewBeforeDays":7}`)
+	if code != http.StatusConflict || decodeCode(t, decodeJSONBody(t, body)) != "not_acme" {
+		t.Errorf("给导入证书设阈值 = %d %s, want 409 not_acme", code, body)
+	}
+}
+
 // TestCertTargets_CascadeOnDelete 验删证书把落点配置一并带走(领域层级联,HTTP 层要能观测到)。
 func TestCertTargets_CascadeOnDelete(t *testing.T) {
 	env := setupCertsAPI(t, true)

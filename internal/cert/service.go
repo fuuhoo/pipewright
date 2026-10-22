@@ -55,6 +55,8 @@ type Service interface {
 	Delete(ctx context.Context, id string) error
 	// SetAutoRenew 打开/关闭这张证书的自动续期。
 	SetAutoRenew(ctx context.Context, id string, on bool) (*Certificate, error)
+	// SetRenewWindow 设置这张证书「到期前 N 天开始自动续期」;0 = 改回默认窗口(30 天)。
+	SetRenewWindow(ctx context.Context, id string, days int) (*Certificate, error)
 	// Bundle 解封私钥,返回可直接下载/落盘的证书包。无证书正文或无私钥 → 相应错误。
 	Bundle(ctx context.Context, id string) (*Bundle, error)
 
@@ -253,6 +255,29 @@ func (s *service) SetAutoRenew(ctx context.Context, id string, on bool) (*Certif
 		return nil, ErrNotACME
 	}
 	r.AutoRenew = on
+	r.UpdatedAt = s.now().UTC()
+	if err := s.store.updateCert(ctx, r); err != nil {
+		return nil, err
+	}
+	out := r.Certificate
+	return &out, nil
+}
+
+// SetRenewWindow 改的是「到期前 N 天动手」这个阈值本身;0 = 「没意见,用默认窗口」。
+// 和 SetAutoRenew 同样只放行 acme 来源:导入的证书平台续不了,给它设窗口就是设一个永不生效的
+// 数字,页面上的回显会沦为谎话。
+func (s *service) SetRenewWindow(ctx context.Context, id string, days int) (*Certificate, error) {
+	if !ValidRenewBeforeDays(days) {
+		return nil, ErrBadRenewWindow
+	}
+	r, err := s.store.getCert(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if r.Source != SourceACME {
+		return nil, ErrNotACME
+	}
+	r.RenewBeforeDays = days
 	r.UpdatedAt = s.now().UTC()
 	if err := s.store.updateCert(ctx, r); err != nil {
 		return nil, err

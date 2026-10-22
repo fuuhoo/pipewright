@@ -38,8 +38,8 @@ type accountRow struct {
 	eabKeySealed     []byte
 }
 
-const certCols = `id, domain, sans, source, status, ca, dns_provider_id, auto_renew, key_algo,
-	not_before, not_after, issuer, serial, cert_pem, chain_pem, key_sealed, last_error,
+const certCols = `id, domain, sans, source, status, ca, dns_provider_id, auto_renew, renew_before_days,
+	key_algo, not_before, not_after, issuer, serial, cert_pem, chain_pem, key_sealed, last_error,
 	issued_at, checked_at, remind_at, created_at, updated_at`
 
 // certArgs 把一行证书摊平成 certCols 顺序的入参。
@@ -48,7 +48,7 @@ const certCols = `id, domain, sans, source, status, ca, dns_provider_id, auto_re
 func certArgs(r *certRow) []any {
 	return []any{
 		r.ID, r.Domain, sansJSON(r.SANs), r.Source, r.Status, r.CA, r.DNSProviderID,
-		b2i(r.AutoRenew), r.KeyAlgo, ts(r.NotBefore), ts(r.NotAfter), r.Issuer, r.Serial,
+		b2i(r.AutoRenew), r.RenewBeforeDays, r.KeyAlgo, ts(r.NotBefore), ts(r.NotAfter), r.Issuer, r.Serial,
 		r.CertPEM, r.ChainPEM, nilIfEmpty(r.keySealed), r.LastError,
 		ts(r.IssuedAt), ts(r.CheckedAt), ts(r.RemindAt), ts(r.CreatedAt), ts(r.UpdatedAt),
 	}
@@ -58,14 +58,14 @@ func certArgs(r *certRow) []any {
 func certUpdateArgs(r *certRow) []any {
 	return []any{
 		r.Domain, sansJSON(r.SANs), r.Source, r.Status, r.CA, r.DNSProviderID,
-		b2i(r.AutoRenew), r.KeyAlgo, ts(r.NotBefore), ts(r.NotAfter), r.Issuer, r.Serial,
+		b2i(r.AutoRenew), r.RenewBeforeDays, r.KeyAlgo, ts(r.NotBefore), ts(r.NotAfter), r.Issuer, r.Serial,
 		r.CertPEM, r.ChainPEM, nilIfEmpty(r.keySealed), r.LastError,
 		ts(r.IssuedAt), ts(r.CheckedAt), ts(r.RemindAt), ts(r.UpdatedAt),
 	}
 }
 
 const certSet = `domain=?, sans=?, source=?, status=?, ca=?, dns_provider_id=?, auto_renew=?,
-	key_algo=?, not_before=?, not_after=?, issuer=?, serial=?, cert_pem=?, chain_pem=?,
+	renew_before_days=?, key_algo=?, not_before=?, not_after=?, issuer=?, serial=?, cert_pem=?, chain_pem=?,
 	key_sealed=?, last_error=?, issued_at=?, checked_at=?, remind_at=?, updated_at=?`
 
 // insertCert 落库一张新证书(id 由这里生成)。domain 已有记录 → ErrDomainExists:
@@ -73,7 +73,7 @@ const certSet = `domain=?, sans=?, source=?, status=?, ca=?, dns_provider_id=?, 
 func (s *Store) insertCert(ctx context.Context, r *certRow) error {
 	r.ID = uuid.NewString()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO certificates (`+certCols+`) VALUES (`+placeholders(22)+`)`,
+		`INSERT INTO certificates (`+certCols+`) VALUES (`+placeholders(23)+`)`,
 		certArgs(r)...)
 	if err != nil {
 		if store.IsUniqueErr(err) {
@@ -198,10 +198,10 @@ func scanCert(sc rowScanner) (*certRow, error) {
 		notBefore, notAfter, issuedAt, checkedAt            string
 		remindAt                                            string
 		created, updated                                    string
-		autoRenew                                           int64
+		autoRenew, renewBeforeDays                          int64
 		keySealed                                           []byte
 	)
-	err := sc.Scan(&id, &domain, &sans, &source, &status, &ca, &providerID, &autoRenew, &keyAlgo,
+	err := sc.Scan(&id, &domain, &sans, &source, &status, &ca, &providerID, &autoRenew, &renewBeforeDays, &keyAlgo,
 		&notBefore, &notAfter, &issuer, &serial, &certPEM, &chainPEM, &keySealed, &lastError,
 		&issuedAt, &checkedAt, &remindAt, &created, &updated)
 	if err != nil {
@@ -211,6 +211,7 @@ func scanCert(sc rowScanner) (*certRow, error) {
 	r.DNSProviderID, r.KeyAlgo, r.Issuer, r.Serial = providerID, keyAlgo, issuer, serial
 	r.CertPEM, r.ChainPEM, r.LastError = certPEM, chainPEM, lastError
 	r.AutoRenew = autoRenew != 0
+	r.RenewBeforeDays = int(renewBeforeDays)
 	r.SANs = parseSans(sans)
 	r.HasKey = len(keySealed) > 0
 	r.keySealed = keySealed

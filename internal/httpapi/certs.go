@@ -46,11 +46,13 @@ type certDTO struct {
 	CA            string   `json:"ca"`
 	DNSProviderID string   `json:"dnsProviderId"`
 	AutoRenew     bool     `json:"autoRenew"`
-	KeyAlgo       string   `json:"keyAlgo"`
-	NotBefore     string   `json:"notBefore"`
-	NotAfter      string   `json:"notAfter"`
-	Issuer        string   `json:"issuer"`
-	Serial        string   `json:"serial"`
+	// RenewBeforeDays 是「到期前 N 天自动续期」;0 = 用默认窗口(前端把默认值当占位符显示)。
+	RenewBeforeDays int    `json:"renewBeforeDays"`
+	KeyAlgo         string `json:"keyAlgo"`
+	NotBefore       string `json:"notBefore"`
+	NotAfter        string `json:"notAfter"`
+	Issuer          string `json:"issuer"`
+	Serial          string `json:"serial"`
 	// HasKey 决定「发布 / 下载证书包」按钮能不能点亮:没有私钥,这两件事都做不了。
 	HasKey    bool   `json:"hasKey"`
 	LastError string `json:"lastError"`
@@ -67,7 +69,8 @@ func toCertDTO(c *cert.Certificate, detail bool) certDTO {
 	now := time.Now().UTC()
 	out := certDTO{
 		ID: c.ID, Domain: c.Domain, SANs: c.SANs, Source: c.Source, Status: c.Status,
-		CA: c.CA, DNSProviderID: c.DNSProviderID, AutoRenew: c.AutoRenew, KeyAlgo: c.KeyAlgo,
+		CA: c.CA, DNSProviderID: c.DNSProviderID, AutoRenew: c.AutoRenew,
+		RenewBeforeDays: c.RenewBeforeDays, KeyAlgo: c.KeyAlgo,
 		NotBefore: fmtCertTime(c.NotBefore), NotAfter: fmtCertTime(c.NotAfter),
 		Issuer: c.Issuer, Serial: c.Serial, HasKey: c.HasKey, LastError: c.LastError,
 		DaysLeft: c.DaysLeft(now),
@@ -195,6 +198,8 @@ func writeCertError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_cert", "请选择受支持的 CA")
 	case errors.Is(err, cert.ErrNoDNSProvider):
 		writeError(w, http.StatusBadRequest, "invalid_cert", "DNS-01 签发要先选一个 DNS 提供商")
+	case errors.Is(err, cert.ErrBadRenewWindow):
+		writeError(w, http.StatusBadRequest, "invalid_cert", "续期提前天数要填 1~365,或 0 表示用默认 30 天")
 	case errors.Is(err, cert.ErrEmptyPEM):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_pem", "证书正文 PEM 不能为空")
 	case errors.Is(err, cert.ErrNoCertBlock):
@@ -357,11 +362,12 @@ func makeCreateCertHandler(svc cert.Service, aud audit.Recorder, ac auth.Authent
 			return
 		}
 		var req struct {
-			Domain        string   `json:"domain"`
-			SANs          []string `json:"sans"`
-			CA            string   `json:"ca"`
-			DNSProviderID string   `json:"dnsProviderId"`
-			AutoRenew     bool     `json:"autoRenew"`
+			Domain          string   `json:"domain"`
+			SANs            []string `json:"sans"`
+			CA              string   `json:"ca"`
+			DNSProviderID   string   `json:"dnsProviderId"`
+			AutoRenew       bool     `json:"autoRenew"`
+			RenewBeforeDays int      `json:"renewBeforeDays"`
 		}
 		if !decodeCertBody(w, r, &req) {
 			return
@@ -369,6 +375,7 @@ func makeCreateCertHandler(svc cert.Service, aud audit.Recorder, ac auth.Authent
 		c, err := svc.Create(r.Context(), cert.CreateInput{
 			Domain: req.Domain, SANs: req.SANs, CA: req.CA,
 			DNSProviderID: req.DNSProviderID, AutoRenew: req.AutoRenew,
+			RenewBeforeDays: req.RenewBeforeDays,
 		})
 		if err != nil {
 			writeCertError(w, err)
@@ -530,6 +537,41 @@ func makeSetAutoRenewHandler(svc cert.Service, aud audit.Recorder, ac auth.Authe
 			TargetType: audit.TargetCert,
 			TargetID:   c.ID,
 			Detail:     map[string]any{"domain": c.Domain, "autoRenew": c.AutoRenew},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, toCertDTO(c, false))
+	}
+}
+
+// makeSetRenewWindowHandler 返回 POST /api/certs/{id}/renew-window handler:改这张证书的
+// 「到期前 N 天自动续期」阈值(0 = 回到默认 30 天)。
+// 与 auto-renew 分成两个端点而不是合一个:开关是「要不要续」,阈值是「什么时候开始续」,
+// 合成一个 body 就得让前端每次把两个字段都读齐才能改其中一个。
+func makeSetRenewWindowHandler(svc cert.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeCertUnconfigured(w)
+			return
+		}
+		if !requireCertPerm(w, r, permCertManage) {
+			return
+		}
+		var req struct {
+			RenewBeforeDays int `json:"renewBeforeDays"`
+		}
+		if !decodeCertBody(w, r, &req) {
+			return
+		}
+		c, err := svc.SetRenewWindow(r.Context(), chi.URLParam(r, "id"), req.RenewBeforeDays)
+		if err != nil {
+			writeCertError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionCertRenewWindow,
+			TargetType: audit.TargetCert,
+			TargetID:   c.ID,
+			Detail:     map[string]any{"domain": c.Domain, "renewBeforeDays": c.RenewBeforeDays},
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusOK, toCertDTO(c, false))

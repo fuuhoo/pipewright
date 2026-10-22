@@ -989,6 +989,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Post("/certs/{id}/replace", makeReplaceCertHandler(cs, aud, authn))
 		ar.Post("/certs/{id}/issue", makeIssueCertHandler(cs, aud, authn))
 		ar.Post("/certs/{id}/auto-renew", makeSetAutoRenewHandler(cs, aud, authn))
+		ar.Post("/certs/{id}/renew-window", makeSetRenewWindowHandler(cs, aud, authn))
 		ar.Get("/certs/{id}/bundle", makeCertBundleHandler(cs, aud, authn))
 		ar.Get("/certs/{id}/targets", makeListCertTargetsHandler(cs))
 		ar.Post("/certs/{id}/targets", makeAddCertTargetHandler(cs, o.access, aud, authn))

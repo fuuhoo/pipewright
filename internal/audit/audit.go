@@ -156,12 +156,15 @@ const (
 	// 证书这条线:登记/导入/替换/签发/删除各留一条,发布与取证书包单独留 —— 后两者分别是
 	// 「往目标机写私钥并跑用户填的指令」和「把私钥放进出站响应」,事后追查泄露路径时
 	// 只有这两类需要复盘到「谁在什么时候拿到了私钥」,不能藏在 cert_update 里。
-	ActionCertCreate          = "cert_create"
-	ActionCertImport          = "cert_import"
-	ActionCertReplace         = "cert_replace"
-	ActionCertIssue           = "cert_issue"
-	ActionCertDelete          = "cert_delete"
-	ActionCertAutoRenew       = "cert_auto_renew"
+	ActionCertCreate    = "cert_create"
+	ActionCertImport    = "cert_import"
+	ActionCertReplace   = "cert_replace"
+	ActionCertIssue     = "cert_issue"
+	ActionCertDelete    = "cert_delete"
+	ActionCertAutoRenew = "cert_auto_renew"
+	// ActionCertRenewWindow 改的是「到期前 N 天动手」这个阈值:它决定平台什么时候会去 CA
+	// 那里下一单,和开关一样属于「会自己往外发请求」的配置变更,单独一条才查得到是谁改的。
+	ActionCertRenewWindow     = "cert_renew_window"
 	ActionCertTargetCreate    = "cert_target_create"
 	ActionCertTargetUpdate    = "cert_target_update"
 	ActionCertTargetDelete    = "cert_target_delete"

@@ -85,7 +85,7 @@ func (s *service) CheckOnce(ctx context.Context, notifier Notifier) (*CheckRepor
 		// 本轮对这张证书的判定结果(只有 issued / expired 两种:能走到这里的行必然有正文)。
 		// 直接改写手里这份,下面汇总与事件里说的状态就和库里落的一致。
 		c.Status = DeriveStatus(true, c.NotAfter, now)
-		if !now.Add(IssuanceWindow).After(c.NotAfter) {
+		if !now.Add(c.RenewWindow()).After(c.NotAfter) {
 			// 离到期还远,本轮什么都没做 —— 但仍要留下「看过」的痕迹(页面的「上次检查」读它)。
 			// 写不动就是库出问题了,后面每张的提醒时刻也会跟着不准,直接停下让下一轮重来。
 			if err := s.store.markCertChecked(ctx, c.ID, now, c.Status); err != nil {

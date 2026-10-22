@@ -199,6 +199,44 @@ func TestDeriveStatusAndRenew(t *testing.T) {
 	}
 }
 
+// TestRenewWindowPerCert 验「到期前 N 天」这张自己的阈值:0 走默认 30 天,设了就用设的。
+// 三态都取在 31 天这个位置(默认窗口外、45 天窗口内、7 天窗口外),这样调大调小都必须有反应 ——
+// 只验一个方向会漏掉「阈值算反了」这类错。
+func TestRenewWindowPerCert(t *testing.T) {
+	day := 24 * time.Hour
+	notAfter := testNow.Add(31 * day)
+	cases := []struct {
+		name       string
+		days       int
+		wantWindow time.Duration
+		wantRenew  bool
+	}{
+		{"没设置用默认 30 天", 0, IssuanceWindow, false},
+		{"设 45 天:31 天剩量已经该续", 45, 45 * day, true},
+		{"设 7 天:再等几天才动手", 7, 7 * day, false},
+	}
+	for _, c := range cases {
+		cert := &Certificate{Source: SourceACME, AutoRenew: true, NotAfter: notAfter, RenewBeforeDays: c.days}
+		if got := cert.RenewWindow(); got != c.wantWindow {
+			t.Errorf("%s: RenewWindow = %v, 期望 %v", c.name, got, c.wantWindow)
+		}
+		if got := NeedsRenew(cert, testNow); got != c.wantRenew {
+			t.Errorf("%s: NeedsRenew = %v, 期望 %v", c.name, got, c.wantRenew)
+		}
+	}
+	// 可填区间:0(= 用默认)与 1~365 合法;负数和超上限不行。
+	for _, n := range []int{0, MinRenewBeforeDays, MaxRenewBeforeDays} {
+		if !ValidRenewBeforeDays(n) {
+			t.Errorf("%d 天应当可填", n)
+		}
+	}
+	for _, n := range []int{-1, 366, 100000} {
+		if ValidRenewBeforeDays(n) {
+			t.Errorf("%d 天不该放行", n)
+		}
+	}
+}
+
 // —— 导入:解析、校验、密封 ————————————————————————————
 
 func TestImportValid(t *testing.T) {
@@ -481,6 +519,63 @@ func TestCreatePending(t *testing.T) {
 	}
 	if got, err := svc.SetAutoRenew(ctx, c.ID, true); err != nil || !got.AutoRenew {
 		t.Errorf("开自动续期 = %v(err=%v), 期望 true", got.AutoRenew, err)
+	}
+}
+
+// TestRenewWindowPersists 验这个阈值真走了一趟库:Create 带进去的值读得回来,改完再读也是新值
+// —— 页面回显与到期扫描读的都是库里这一份,内存里算对了没用。
+func TestRenewWindowPersists(t *testing.T) {
+	st := storetest.Open(t)
+	svc := newSvc(t, st.DB, fakeSeal{})
+	ctx := context.Background()
+	seedProvider(t, st.DB, "dns-1")
+
+	c, err := svc.Create(ctx, CreateInput{
+		Domain: "window.example.com", CA: CALetsEncryptStaging, DNSProviderID: "dns-1",
+		AutoRenew: true, RenewBeforeDays: 45,
+	})
+	if err != nil {
+		t.Fatalf("登记待签证书: %v", err)
+	}
+	if c.RenewBeforeDays != 45 {
+		t.Errorf("Create 回填 = %d, 期望 45", c.RenewBeforeDays)
+	}
+	if got, err := svc.Get(ctx, c.ID); err != nil || got.RenewBeforeDays != 45 {
+		t.Fatalf("读回 = %+v(err=%v), 期望 45", got, err)
+	}
+
+	// 改回 0 = 把决定权交回默认窗口(页面显示「30 天(默认)」,判定也按 30 天走)。
+	if got, err := svc.SetRenewWindow(ctx, c.ID, 0); err != nil || got.RenewBeforeDays != 0 {
+		t.Errorf("恢复默认 = %+v(err=%v), 期望 0", got, err)
+	}
+	if got, err := svc.Get(ctx, c.ID); err != nil || got.RenewWindow() != IssuanceWindow {
+		t.Errorf("库里窗口 = %v(err=%v), 期望默认 %v", got.RenewWindow(), err, IssuanceWindow)
+	}
+
+	// 越界与导入来源当场拒:前者会让扫描每轮都想续(白吃 CA 限流),后者是个永不生效的数字。
+	if _, err := svc.SetRenewWindow(ctx, c.ID, MaxRenewBeforeDays+1); !errors.Is(err, ErrBadRenewWindow) {
+		t.Errorf("超上限 = %v, 期望 %v", err, ErrBadRenewWindow)
+	}
+	if _, err := svc.SetRenewWindow(ctx, c.ID, -1); !errors.Is(err, ErrBadRenewWindow) {
+		t.Errorf("负数 = %v, 期望 %v", err, ErrBadRenewWindow)
+	}
+	if _, err := svc.Create(ctx, CreateInput{
+		Domain: "bad-window.example.com", CA: CALetsEncryptStaging, DNSProviderID: "dns-1", RenewBeforeDays: 400,
+	}); !errors.Is(err, ErrBadRenewWindow) {
+		t.Errorf("登记时越界 = %v, 期望 %v", err, ErrBadRenewWindow)
+	}
+
+	key := newKey(t)
+	uploaded, err := svc.Import(ctx, ImportInput{
+		Domain:  "window-imp.example.com",
+		CertPEM: selfCertPEM(t, []string{"window-imp.example.com"}, testNow.AddDate(0, 0, -1), testNow.AddDate(0, 0, 89), key, 7002),
+		KeyPEM:  keyPEMFor(t, key, "pkcs8"),
+	})
+	if err != nil {
+		t.Fatalf("导入: %v", err)
+	}
+	if _, err := svc.SetRenewWindow(ctx, uploaded.ID, 7); !errors.Is(err, ErrNotACME) {
+		t.Errorf("给导入证书设窗口 = %v, 期望 %v", err, ErrNotACME)
 	}
 }
 

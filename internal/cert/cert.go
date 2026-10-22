@@ -85,6 +85,8 @@ var (
 	ErrDomainMismatch = errors.New("cert: certificate does not cover the domain")
 	// ErrNotACME 表示这张证书不是 ACME 签的(upload 来源),平台签不出也续不了。
 	ErrNotACME = errors.New("cert: only ACME-issued certificates can be renewed by the platform")
+	// ErrBadRenewWindow 表示「到期前多少天续期」超出可填区间(1~365;0 表示用默认)。
+	ErrBadRenewWindow = errors.New("cert: renewal window must be between 1 and 365 days (0 = use default)")
 	// ErrEmptyPath 表示落点路径为空或非绝对路径。
 	ErrEmptyPath = errors.New("cert: certificate and key paths must be absolute")
 	// ErrSamePath 表示证书与私钥落在同一个路径(会把公开证书覆盖成私钥,或反之)。
@@ -118,17 +120,20 @@ type Certificate struct {
 	CA            string // ACME CA 枚举;upload 为 ''
 	DNSProviderID string
 	AutoRenew     bool
-	KeyAlgo       string // 展示用(ECDSA-P256 / RSA-2048 …)
-	NotBefore     time.Time
-	NotAfter      time.Time
-	Issuer        string
-	Serial        string
-	CertPEM       string
-	ChainPEM      string
-	HasKey        bool // 有私钥才能发布/导出完整证书包;upload 时必为 true,acme 签成功后也是
-	LastError     string
-	IssuedAt      time.Time
-	CheckedAt     time.Time
+	// RenewBeforeDays 是「到期前多少天开始自动续期」;0 = 没设置过,按默认窗口(IssuanceWindow)。
+	// 每张证书各一份:同一台机器上「省 CA 配额」和「只要最后 7 天」两种诉求不该互相迁就。
+	RenewBeforeDays int
+	KeyAlgo         string // 展示用(ECDSA-P256 / RSA-2048 …)
+	NotBefore       time.Time
+	NotAfter        time.Time
+	Issuer          string
+	Serial          string
+	CertPEM         string
+	ChainPEM        string
+	HasKey          bool // 有私钥才能发布/导出完整证书包;upload 时必为 true,acme 签成功后也是
+	LastError       string
+	IssuedAt        time.Time
+	CheckedAt       time.Time
 	// RemindAt 是到期扫描器上次为这张证书发提醒的时刻(零值 = 从没发过)。
 	// 只有「反复会出现」的提醒(即将到期、续期失败)受它节流;续期成功一次就是一次,不拦。
 	RemindAt  time.Time
@@ -153,6 +158,15 @@ func (c *Certificate) DaysLeft(now time.Time) int {
 // 否则「快到期了」和「续期没成功」两条通知前后脚发出去,用户看不出到底该做什么。
 func (c *Certificate) ReminderDue(now time.Time) bool {
 	return c.RemindAt.IsZero() || !now.Before(c.RemindAt.Add(ReminderInterval))
+}
+
+// RenewWindow 返回这张证书的续期触发窗口:填过「到期前 N 天」就用它,没填(0)用默认 IssuanceWindow。
+// 走方法而不是字段本身,是为了让 NeedsRenew 与页面「还剩几天就开始续」共用同一个口径。
+func (c *Certificate) RenewWindow() time.Duration {
+	if c.RenewBeforeDays > 0 {
+		return time.Duration(c.RenewBeforeDays) * 24 * time.Hour
+	}
+	return IssuanceWindow
 }
 
 // DeployTarget 是一张证书的一个发布落点(可复用配置 + 最近一次结果)。
@@ -203,6 +217,8 @@ type CreateInput struct {
 	CA            string
 	DNSProviderID string
 	AutoRenew     bool
+	// RenewBeforeDays 是「到期前 N 天自动续期」;0 = 用默认窗口(30 天)。
+	RenewBeforeDays int
 }
 
 // DeployTargetInput 是新建/更新一个发布落点的入参。
@@ -402,10 +418,22 @@ func DeriveStatus(hasCert bool, notAfter, now time.Time) string {
 	return StatusIssued
 }
 
-// IssuanceWindow 是自动续期的触发窗口:剩余寿命不足该时长就续期。
-// 取 30 天是 LE/ZeroSSL 90 天证书的行业惯例(certbot 默认同为 30 天),
+// IssuanceWindow 是自动续期的**默认**触发窗口:剩余寿命不足该时长就续期(每张证书可用
+// RenewBeforeDays 覆盖它)。取 30 天是 LE/ZeroSSL 90 天证书的行业惯例(certbot 默认同为 30 天),
 // 给 DNS-01 失败留够重试余地,又不会让 LE 的续期窗口(30 天)提前太多。
 const IssuanceWindow = 30 * 24 * time.Hour
+
+// 用户可填的「到期前 N 天」区间。0 有专门含义(= 用 IssuanceWindow 默认),所以不能当正常值放行。
+// 上限 365:再大就等于「从头到尾每轮都想续」,白白吃 CA 的速率限制;下限 1:0 已经留给默认了。
+const (
+	MinRenewBeforeDays = 1
+	MaxRenewBeforeDays = 365
+)
+
+// ValidRenewBeforeDays 报告 n 是否是合法的可填值(0 或区间内)。
+func ValidRenewBeforeDays(n int) bool {
+	return n == 0 || (n >= MinRenewBeforeDays && n <= MaxRenewBeforeDays)
+}
 
 // ReminderInterval 是「同一件事多久再提醒一次」的节流窗口。
 //
@@ -416,13 +444,14 @@ const IssuanceWindow = 30 * 24 * time.Hour
 const ReminderInterval = 7 * 24 * time.Hour
 
 // NeedsRenew 报告这张证书是否该由到期扫描器尝试续期:
-// 必须是 ACME 来源、开了自动续期、有证书正文且落在续期窗口内(或已过期)。
-// upload 来源一律 false —— 平台签不出来,提醒用户手工换就是了(那由监控事件负责,不由这里)。
+// 必须是 ACME 来源、开了自动续期、有证书正文且落在续期窗口内(或已过期)。窗口按每张自己的
+// RenewWindow 算(没设置就是默认 30 天)。upload 来源一律 false —— 平台签不出来,
+// 提醒用户手工换就是了(那由监控事件负责,不由这里)。
 func NeedsRenew(c *Certificate, now time.Time) bool {
 	if c.Source != SourceACME || !c.AutoRenew || c.NotAfter.IsZero() {
 		return false
 	}
-	return now.Add(IssuanceWindow).After(c.NotAfter)
+	return now.Add(c.RenewWindow()).After(c.NotAfter)
 }
 
 // Import 校验并解析「用户粘贴的已有证书」,产出一张可直接入库的证书。
@@ -499,6 +528,9 @@ func NewPending(in CreateInput, now time.Time) (*Certificate, error) {
 	if strings.TrimSpace(in.DNSProviderID) == "" {
 		return nil, ErrNoDNSProvider
 	}
+	if !ValidRenewBeforeDays(in.RenewBeforeDays) {
+		return nil, ErrBadRenewWindow
+	}
 	sans := normalizeDomains(in.SANs)
 	if len(sans) == 0 {
 		sans = []string{domain}
@@ -507,15 +539,16 @@ func NewPending(in CreateInput, now time.Time) (*Certificate, error) {
 		sans = append([]string{domain}, sans...)
 	}
 	return &Certificate{
-		Domain:        domain,
-		SANs:          sans,
-		Source:        SourceACME,
-		Status:        StatusPending,
-		CA:            caID.ID,
-		DNSProviderID: strings.TrimSpace(in.DNSProviderID),
-		AutoRenew:     in.AutoRenew,
-		CreatedAt:     now.UTC(),
-		UpdatedAt:     now.UTC(),
+		Domain:          domain,
+		SANs:            sans,
+		Source:          SourceACME,
+		Status:          StatusPending,
+		CA:              caID.ID,
+		DNSProviderID:   strings.TrimSpace(in.DNSProviderID),
+		AutoRenew:       in.AutoRenew,
+		RenewBeforeDays: in.RenewBeforeDays,
+		CreatedAt:       now.UTC(),
+		UpdatedAt:       now.UTC(),
 	}, nil
 }
 
