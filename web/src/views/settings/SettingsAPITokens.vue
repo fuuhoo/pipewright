@@ -9,10 +9,16 @@
  * 归属人默认「我自己」:请求里省略 userId,由后端落到当前会话账号(会话载荷里没有 userId,
  * 前端拿不到「我自己的 id」,只有用户名)。下拉刻意不再列出自己那一行,免得同一件事有两条
  * 通往不同请求体的路。
+ *
+ * 签发时还能给这把令牌套两把尺:能碰哪些 MCP 工具(allowedTools)、能看哪些分组(groupScope)。
+ * 两把尺都只做交集、只收窄不放大,且**不勾 = 不限**(与后端 apitoken 的口径一致);
+ * 所以界面上的「全部工具」发出去的是不带这个键,不是空数组 —— 空数组会被后端拒签。
  */
 import { computed, onMounted, ref } from 'vue'
-import { listAPITokens, createAPIToken, revokeAPIToken } from '../../api/apiTokens'
+import { listAPITokens, createAPIToken, revokeAPIToken, listMCPTools } from '../../api/apiTokens'
 import type { APIToken } from '../../api/apiTokens'
+import { listGroups } from '../../api/groups'
+import type { Group } from '../../api/groups'
 import { listUsers } from '../../api/users'
 import type { User } from '../../api/users'
 import { useSessionStore } from '../../stores/session'
@@ -20,12 +26,18 @@ import { HttpError } from '../../api/http'
 import { useI18n } from 'vue-i18n'
 import {
   TOKEN_NAME_MAX,
-  mcpHttpSnippet,
-  mcpStdioSnippet,
+  activeToolPreset,
+  claudeCodeAddCommand,
+  clientSnippets,
+  groupScopeNames,
+  mcpEndpointURL,
   normalizeTokenName,
   ownerOptions,
   tokenNameProblem,
+  toolPresetNames,
+  toggleTool,
 } from '../../lib/apiTokens'
+import type { MCPToolDef, SnippetClient, ToolPresetKey } from '../../lib/apiTokens'
 
 const { t, locale } = useI18n()
 const sessionStore = useSessionStore()
@@ -36,10 +48,16 @@ const loadState = ref<LoadState>('idle')
 const loadError = ref('')
 const tokens = ref<APIToken[]>([])
 const users = ref<User[]>([])
+/** MCP 工具名册:勾工具的清单与后端签发校验读同一份,页面不会展出后端不认的名字。 */
+const tools = ref<MCPToolDef[]>([])
+const groups = ref<Group[]>([])
 
 const myUsername = computed(() => sessionStore.user?.username ?? '')
 const ownerOpts = computed(() => ownerOptions(users.value, myUsername.value))
 const ownerSelfLabel = computed(() => `${t('settingsAPITokens.ownerSelf')} · @${myUsername.value}`)
+const groupOpts = computed(() =>
+  groups.value.map((g) => ({ id: g.id, name: g.name, projectCount: g.projectCount })),
+)
 
 function errText(err: unknown, keys: { conn: string; status: string; retry: string }): string {
   if (err instanceof HttpError) {
@@ -71,9 +89,16 @@ async function loadAll(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    const [list, us] = await Promise.all([listAPITokens(), listUsers()])
+    const [list, us, cat, gs] = await Promise.all([
+      listAPITokens(),
+      listUsers(),
+      listMCPTools(),
+      listGroups(),
+    ])
     tokens.value = list
     users.value = us
+    tools.value = cat
+    groups.value = gs
     loadState.value = 'idle'
   } catch (err) {
     loadError.value = errText(err, loadKeys)
@@ -88,6 +113,27 @@ function formatTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(locale.value, { hour12: false })
 }
 
+/** 列表行的两把尺摘要:不限时说「不限」,收窄时给数量,完整名单放 title —— 一行放不下两个列表。 */
+function toolScopeLabel(tk: APIToken): string {
+  return tk.allowedTools.length
+    ? t('settingsAPITokens.scopeToolsSome', { n: tk.allowedTools.length })
+    : t('settingsAPITokens.scopeToolsAll')
+}
+function groupScopeLabel(tk: APIToken): string {
+  // 自己 join 而不是把数组交给 vue-i18n:插值到占位符里的数组会被序列化成 JSON 多行,列表行会撑成一坨。
+  return tk.groupScope.length
+    ? t('settingsAPITokens.scopeGroupsSome', { names: groupScopeNames(tk.groupScope, groupOpts.value).join('、') })
+    : t('settingsAPITokens.scopeGroupsAll')
+}
+function scopeTitle(list: string[], names: string[]): string {
+  return names.join('、') || list.join('、')
+}
+/** 工具名换中文标题;名册里没有的(工具已改名)留原名,不静默吞掉。 */
+function toolTitles(names: string[]): string[] {
+  const index = new Map(tools.value.map((x) => [x.name, x.title]))
+  return names.map((n) => index.get(n) ?? n)
+}
+
 // ─── issue ───────────────────────────────────────────────────────────────────
 
 /** 弹窗两步:填表 → 交付明文。第二步没交付完,第一步关不掉(见文件头)。 */
@@ -95,22 +141,53 @@ const modalOpen = ref(false)
 const step = ref<'form' | 'issued'>('form')
 const formSubmitting = ref(false)
 const formBanner = ref('')
-const form = ref({ name: '', ownerId: '' })
+const form = ref({ name: '', ownerId: '', allowedTools: [] as string[], groupScope: [] as string[] })
 const formNameError = ref('')
+
+const presetKeys: ToolPresetKey[] = ['all', 'readonly', 'ops']
+const activePreset = computed(() => activeToolPreset(form.value.allowedTools, tools.value))
+
+function applyPreset(preset: ToolPresetKey): void {
+  form.value.allowedTools = toolPresetNames(preset, tools.value)
+}
+function onToggleTool(name: string): void {
+  form.value.allowedTools = toggleTool(tools.value, form.value.allowedTools, name)
+}
+function onToggleGroup(id: string): void {
+  const next = new Set(form.value.groupScope)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  form.value.groupScope = groups.value.filter((g) => next.has(g.id)).map((g) => g.id)
+}
+/** 名册还没拿到就先把「不限」显示成选中态,免得第一个预设档看起来像没生效。 */
+function isReadOnly(name: string): boolean {
+  return tools.value.find((x) => x.name === name)?.readOnly ?? false
+}
 
 const issuedName = ref('')
 const issuedPlain = ref('')
+/** 签发响应里的元数据:交付页要把「这把被收窄到哪」再念一遍,列表行已经滚出视野了。 */
+const issuedItem = ref<APIToken | null>(null)
 const baseUrl = computed(() => window.location.origin)
-const stdioSnippet = computed(() => mcpStdioSnippet(baseUrl.value, issuedPlain.value))
-const httpSnippet = computed(() => mcpHttpSnippet(baseUrl.value, issuedPlain.value))
+const endpointURL = computed(() => mcpEndpointURL(baseUrl.value))
+const snippets = computed(() => clientSnippets(baseUrl.value, issuedPlain.value))
+const activeClient = ref<SnippetClient>('cursor')
+const activeSnippet = computed(
+  () => snippets.value.find((s) => s.client === activeClient.value) ?? snippets.value[0],
+)
+/** 片段贴到哪儿那句提示的 i18n 键;labelKey 已经带了「snippetWhere.」前缀,这里只补最外层。 */
+const activeWhereKey = computed(() => `settingsAPITokens.${activeSnippet.value?.labelKey ?? ''}`)
+const claudeCodeCmd = computed(() => claudeCodeAddCommand(baseUrl.value, issuedPlain.value))
 
 function openModal(): void {
   step.value = 'form'
-  form.value = { name: '', ownerId: '' }
+  form.value = { name: '', ownerId: '', allowedTools: [], groupScope: [] }
   formNameError.value = ''
   formBanner.value = ''
   issuedName.value = ''
   issuedPlain.value = ''
+  issuedItem.value = null
+  activeClient.value = 'cursor'
   copyFeedback.value = ''
   modalOpen.value = true
 }
@@ -140,13 +217,18 @@ async function handleIssue(): Promise<void> {
   formBanner.value = ''
   try {
     const name = normalizeTokenName(form.value.name)
-    // 留空 = 请求里不带 userId 这个键:后端据此把令牌签给当前会话用户。
-    const created = await createAPIToken(
-      form.value.ownerId ? { name, userId: form.value.ownerId } : { name },
-    )
+    // 三个范围字段都是「不勾就不带这个键」:后端把显式空数组当入参错误拒签(见 apitokens.go)。
+    const created = await createAPIToken({
+      name,
+      ...(form.value.ownerId ? { userId: form.value.ownerId } : {}),
+      ...(form.value.allowedTools.length ? { allowedTools: form.value.allowedTools } : {}),
+      ...(form.value.groupScope.length ? { groupScope: form.value.groupScope } : {}),
+    })
     tokens.value = [created.item, ...tokens.value]
     issuedName.value = created.item.name
     issuedPlain.value = created.plaintext
+    issuedItem.value = created.item
+    activeClient.value = 'cursor'
     copyFeedback.value = ''
     step.value = 'issued'
   } catch (err) {
@@ -161,9 +243,7 @@ async function handleIssue(): Promise<void> {
 const copyFeedback = ref('')
 let copyTimer = 0
 
-async function copyText(key: 'plain' | 'stdio' | 'http'): Promise<void> {
-  const text =
-    key === 'plain' ? issuedPlain.value : key === 'stdio' ? stdioSnippet.value : httpSnippet.value
+async function copyText(key: string, text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text)
     copyFeedback.value = key
@@ -255,6 +335,12 @@ async function confirmRevoke(): Promise<void> {
               <span>{{ t('settingsAPITokens.metaOwner', { owner: tk.ownerName }) }}</span>
               <span>{{ t('settingsAPITokens.metaCreatedBy', { who: tk.createdBy }) }}</span>
               <span>{{ t('settingsAPITokens.metaCreated', { at: formatTime(tk.createdAt) }) }}</span>
+              <span :class="{ 'is-narrow': tk.allowedTools.length }" :title="scopeTitle(tk.allowedTools, toolTitles(tk.allowedTools))">
+                {{ t('settingsAPITokens.metaTools', { scope: toolScopeLabel(tk) }) }}
+              </span>
+              <span :class="{ 'is-narrow': tk.groupScope.length }" :title="scopeTitle(tk.groupScope, groupScopeNames(tk.groupScope, groupOpts))">
+                {{ t('settingsAPITokens.metaGroups', { scope: groupScopeLabel(tk) }) }}
+              </span>
               <span :class="{ 'is-stale': !tk.lastUsedAt }">
                 {{
                   tk.lastUsedAt
@@ -303,6 +389,63 @@ async function confirmRevoke(): Promise<void> {
               <span class="field-hint">{{ t('settingsAPITokens.ownerHint') }}</span>
             </label>
 
+            <div class="field">
+              <span class="field-label">{{ t('settingsAPITokens.fieldTools') }}</span>
+              <div class="preset-row" role="group">
+                <button
+                  v-for="p in presetKeys"
+                  :key="p"
+                  type="button"
+                  class="tpl-chip"
+                  :class="{ 'is-active': activePreset === p }"
+                  @click="applyPreset(p)"
+                >
+                  {{ t(`settingsAPITokens.preset.${p}`) }}
+                </button>
+                <span v-if="activePreset === null" class="preset-custom">
+                  {{ t('settingsAPITokens.presetCustom') }}
+                </span>
+              </div>
+              <ul class="check-list">
+                <li v-for="tool in tools" :key="tool.name">
+                  <label class="check-row">
+                    <input
+                      type="checkbox"
+                      :checked="form.allowedTools.includes(tool.name)"
+                      @change="onToggleTool(tool.name)"
+                    />
+                    <span class="check-name">{{ tool.title }}</span>
+                    <code class="check-id mono">{{ tool.name }}</code>
+                    <span v-if="isReadOnly(tool.name)" class="check-tag">{{ t('settingsAPITokens.tagReadOnly') }}</span>
+                  </label>
+                </li>
+              </ul>
+              <span v-if="!form.allowedTools.length" class="field-hint">{{ t('settingsAPITokens.toolsHintAll') }}</span>
+              <span v-else class="field-hint">
+                {{ t('settingsAPITokens.toolsHintSome', { n: form.allowedTools.length, total: tools.length }) }}
+              </span>
+            </div>
+
+            <div class="field">
+              <span class="field-label">{{ t('settingsAPITokens.fieldGroups') }}</span>
+              <ul v-if="groupOpts.length" class="check-list">
+                <li v-for="g in groupOpts" :key="g.id">
+                  <label class="check-row">
+                    <input
+                      type="checkbox"
+                      :checked="form.groupScope.includes(g.id)"
+                      @change="onToggleGroup(g.id)"
+                    />
+                    <span class="check-name">{{ g.name }}</span>
+                    <span class="check-tag">{{ t('settingsAPITokens.groupProjectCount', { n: g.projectCount }) }}</span>
+                  </label>
+                </li>
+              </ul>
+              <p v-else class="modal-text">{{ t('settingsAPITokens.noGroups') }}</p>
+              <span v-if="!form.groupScope.length" class="field-hint">{{ t('settingsAPITokens.groupsHintAll') }}</span>
+              <span v-else class="field-hint">{{ t('settingsAPITokens.groupsHintSome') }}</span>
+            </div>
+
             <div class="modal-actions">
               <button type="button" class="btn-ghost" :disabled="formSubmitting" @click="closeModal">
                 {{ t('settingsAPITokens.cancel') }}
@@ -323,8 +466,26 @@ async function confirmRevoke(): Promise<void> {
             <span class="field-label">{{ t('settingsAPITokens.plaintextLabel') }} · {{ issuedName }}</span>
             <div class="secret-row">
               <code class="secret mono">{{ issuedPlain }}</code>
-              <button class="btn-ghost" @click="copyText('plain')">
+              <button class="btn-ghost" @click="copyText('plain', issuedPlain)">
                 {{ copyFeedback === 'plain' ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
+              </button>
+            </div>
+            <span v-if="issuedItem" class="field-hint">
+              {{
+                t('settingsAPITokens.scopeEcho', {
+                  tools: toolScopeLabel(issuedItem),
+                  groups: groupScopeLabel(issuedItem),
+                })
+              }}
+            </span>
+          </div>
+
+          <div class="field">
+            <span class="field-label">{{ t('settingsAPITokens.endpointLabel') }}</span>
+            <div class="secret-row">
+              <code class="secret mono">{{ endpointURL }}</code>
+              <button class="btn-ghost" @click="copyText('endpoint', endpointURL)">
+                {{ copyFeedback === 'endpoint' ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
               </button>
             </div>
           </div>
@@ -332,19 +493,32 @@ async function confirmRevoke(): Promise<void> {
           <p class="modal-text">{{ t('settingsAPITokens.howToTitle') }}</p>
 
           <div class="field">
-            <span class="field-label">{{ t('settingsAPITokens.snippetStdioTitle') }}</span>
-            <pre class="snippet mono">{{ stdioSnippet }}</pre>
-            <button class="btn-ghost snippet-copy" @click="copyText('stdio')">
-              {{ copyFeedback === 'stdio' ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
+            <div class="tab-row" role="tablist">
+              <button
+                v-for="s in snippets"
+                :key="s.client"
+                type="button"
+                role="tab"
+                class="tab"
+                :class="{ 'is-active': s.client === activeClient }"
+                :aria-selected="s.client === activeClient"
+                @click="activeClient = s.client"
+              >
+                {{ t(`settingsAPITokens.client.${s.client}`) }}
+              </button>
+            </div>
+            <span class="field-hint">{{ t(activeWhereKey) }}</span>
+            <pre class="snippet mono">{{ activeSnippet?.code }}</pre>
+            <button class="btn-ghost snippet-copy" @click="copyText(activeClient, activeSnippet?.code ?? '')">
+              {{ copyFeedback === activeClient ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
             </button>
-          </div>
-
-          <div class="field">
-            <span class="field-label">{{ t('settingsAPITokens.snippetHttpTitle') }}</span>
-            <pre class="snippet mono">{{ httpSnippet }}</pre>
-            <button class="btn-ghost snippet-copy" @click="copyText('http')">
-              {{ copyFeedback === 'http' ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
-            </button>
+            <template v-if="activeClient === 'claudeCode'">
+              <span class="field-hint">{{ t('settingsAPITokens.snippetWhere.claudeCodeCli') }}</span>
+              <pre class="snippet mono">{{ claudeCodeCmd }}</pre>
+              <button class="btn-ghost snippet-copy" @click="copyText('claudeCodeCmd', claudeCodeCmd)">
+                {{ copyFeedback === 'claudeCodeCmd' ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
+              </button>
+            </template>
           </div>
 
           <p class="field-hint">{{ t('settingsAPITokens.snippetHint') }}</p>
@@ -535,6 +709,94 @@ async function confirmRevoke(): Promise<void> {
 }
 .token-meta .is-stale {
   color: var(--color-warn, #b8860b);
+}
+/* 收窄过的范围值得比「不限」更显眼:一眼扫列表时要能挑出哪些令牌是残缺权限的。 */
+.token-meta .is-narrow {
+  color: var(--color-primary);
+}
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.tpl-chip.is-active {
+  border-style: solid;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-soft, rgba(0, 0, 0, 0.05));
+}
+.preset-custom {
+  font-size: 12px;
+  color: var(--color-faint);
+}
+.check-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.check-list li + li {
+  border-top: 1px solid var(--color-border);
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: var(--text-label);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.check-row:hover {
+  background: var(--color-inset, rgba(0, 0, 0, 0.03));
+}
+.check-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.check-id {
+  font-size: 11px;
+  color: var(--color-faint);
+}
+.check-tag {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--color-dim);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border);
+}
+.tab {
+  padding: 6px 10px;
+  font-size: var(--text-label);
+  color: var(--color-dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover {
+  color: var(--color-text);
+}
+.tab.is-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 600;
 }
 .token-actions {
   display: flex;

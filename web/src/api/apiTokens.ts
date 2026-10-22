@@ -4,6 +4,7 @@
  *   GET    /api/admin/api-tokens       → { items: APIToken[] }
  *   POST   /api/admin/api-tokens       → { item, plaintext }   (needs CSRF)
  *   DELETE /api/admin/api-tokens/:id   → 204                   (needs CSRF)
+ *   GET    /api/admin/mcp-tools        → { items: MCPTool[] }  (工具名册,勾选用)
  *
  * 明文只在这次 POST 的响应体里出现一次,之后再没有第二个端点读得回来(库里只有摘要),
  * 所以这里既没有「查看」也不该有 —— 列表拿到的 APIToken 结构里根本没有明文字段。
@@ -16,6 +17,7 @@
  */
 
 import { http } from './http'
+import type { MCPToolDef } from '../lib/apiTokens'
 
 export interface APIToken {
   id: string
@@ -28,12 +30,19 @@ export interface APIToken {
   createdAt: string
   /** RFC3339;'' = 从没被用过 —— 发出去没动过的通常就是该删的那种。 */
   lastUsedAt: string
+  /** 工具面收窄:后端保证是数组,空数组 = 不限(不是「什么都不能干」)。 */
+  allowedTools: string[]
+  /** 数据面收窄:分组 ID 列表,空数组 = 不限。非空时未归组的项目必然看不见(范围存的是真组 ID)。 */
+  groupScope: string[]
 }
 
 export interface CreateAPITokenInput {
   name: string
   /** 留空 = 后端默认签给当前登录者自己。会话载荷里没有 userId,所以「给我自己」只能靠省略实现。 */
   userId?: string
+  /** 省略或空数组都发不出「限」:后端把显式 [] 当入参错误拒签(400),所以这里用 undefined 表不限。 */
+  allowedTools?: string[]
+  groupScope?: string[]
 }
 
 /** 创建响应:元数据 + 一次性明文。 */
@@ -53,4 +62,10 @@ export async function createAPIToken(input: CreateAPITokenInput): Promise<Create
 
 export async function revokeAPIToken(id: string): Promise<void> {
   return http.delete<void>(`/api/admin/api-tokens/${id}`)
+}
+
+/** MCP 工具名册(与后端 mcpsrv 那份是同一份,页面与签发校验共用)。 */
+export async function listMCPTools(): Promise<MCPToolDef[]> {
+  const res = await http.get<{ items: MCPToolDef[] }>('/api/admin/mcp-tools')
+  return res.items ?? []
 }

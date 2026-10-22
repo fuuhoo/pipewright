@@ -2,14 +2,21 @@ import { describe, expect, it } from 'vitest'
 
 import {
   TOKEN_NAME_MAX,
+  activeToolPreset,
+  claudeCodeAddCommand,
+  clientSnippets,
+  groupScopeNames,
   mcpEndpointURL,
   mcpHttpSnippet,
   mcpStdioSnippet,
   normalizeTokenName,
   ownerOptions,
   tokenNameProblem,
+  toggleTool,
+  toolPresetNames,
   trimBaseURL,
 } from './apiTokens'
+import type { MCPToolDef } from './apiTokens'
 
 describe('normalizeTokenName / tokenNameProblem', () => {
   it('折叠内部连续空白并去首尾(与后端 strings.Fields + Join 同口径)', () => {
@@ -96,5 +103,105 @@ describe('MCP 客户端配置片段', () => {
     const weird = 'pwt_"x\\y'
     expect(() => JSON.parse(mcpStdioSnippet('https://a.b', weird))).not.toThrow()
     expect(mcpHttpSnippet('https://a.b', weird)).toContain('pwt_\\"x\\\\y')
+  })
+})
+
+describe('逐客户端接入片段', () => {
+  it('五个客户端各一条,顺序即 tab 顺序', () => {
+    const got = clientSnippets('https://pw.example.com', 'pwt_abc')
+    expect(got.map((s) => s.client)).toEqual(['cursor', 'vscode', 'claudeCode', 'claudeDesktop', 'generic'])
+    expect(got.every((s) => s.labelKey.startsWith('snippetWhere.'))).toBe(true)
+  })
+
+  it('Cursor 与 VS Code 的根键不同:前者 mcpServers,后者 servers + inputs', () => {
+    const [cursor, vscode] = clientSnippets('https://pw.example.com', 'pwt_abc')
+    expect(JSON.parse(cursor.code)).toEqual({
+      mcpServers: {
+        pipewright: {
+          url: 'https://pw.example.com/mcp',
+          headers: { Authorization: 'Bearer pwt_abc' },
+        },
+      },
+    })
+    expect(JSON.parse(vscode.code)).toEqual({
+      servers: {
+        pipewright: {
+          type: 'http',
+          url: 'https://pw.example.com/mcp',
+          headers: { Authorization: 'Bearer pwt_abc' },
+        },
+      },
+      inputs: [],
+    })
+  })
+
+  it('Claude Desktop 只吃本机 stdio,给它 http 片段等于给了段坏配置', () => {
+    const desktop = clientSnippets('https://pw.example.com/', 'pwt_abc').find((s) => s.client === 'claudeDesktop')
+    expect(JSON.parse(desktop?.code ?? '{}')).toEqual(
+      JSON.parse(mcpStdioSnippet('https://pw.example.com', 'pwt_abc')),
+    )
+  })
+
+  it('Claude Code 的一行命令:地址带 /mcp,带空格的头部值整体加引号', () => {
+    expect(claudeCodeAddCommand('https://pw.example.com', 'pwt_abc')).toBe(
+      'claude mcp add --transport http pipewright https://pw.example.com/mcp --header "Authorization: Bearer pwt_abc"',
+    )
+  })
+})
+
+describe('工具范围(allowedTools)', () => {
+  const catalog: MCPToolDef[] = [
+    { name: 'list_projects', title: '项目列表', readOnly: true },
+    { name: 'create_project', title: '新建项目', readOnly: false },
+    { name: 'trigger_run', title: '触发运行', readOnly: false },
+    { name: 'cancel_run', title: '取消运行', readOnly: false },
+    { name: 'get_run', title: '运行详情', readOnly: true },
+  ]
+
+  it('all 档返回空数组 = 不限(发出去是不带这个键,不是空列表)', () => {
+    expect(toolPresetNames('all', catalog)).toEqual([])
+  })
+
+  it('readonly 档只点名册里标了只读的工具', () => {
+    expect(toolPresetNames('readonly', catalog)).toEqual(['list_projects', 'get_run'])
+  })
+
+  it('ops 档 = 只读 + 触发/取消;名册里没有那两个写工具时退化成只读,不凭空造名字', () => {
+    expect(toolPresetNames('ops', catalog)).toEqual(['list_projects', 'get_run', 'trigger_run', 'cancel_run'])
+    const renamed = catalog.filter((x) => x.name !== 'trigger_run' && x.name !== 'cancel_run')
+    expect(toolPresetNames('ops', renamed)).toEqual(['list_projects', 'get_run'])
+  })
+
+  it('档位识别判的是集合相等:数量相同但换了工具算手改(null)', () => {
+    expect(activeToolPreset([], catalog)).toBe('all')
+    expect(activeToolPreset(['get_run', 'list_projects'], catalog)).toBe('readonly')
+    expect(activeToolPreset(['list_projects', 'get_run', 'trigger_run', 'cancel_run'], catalog)).toBe('ops')
+    expect(activeToolPreset(['list_projects', 'create_project'], catalog)).toBeNull()
+    expect(activeToolPreset(['list_projects', 'get_run', 'create_project'], catalog)).toBeNull()
+  })
+
+  it('勾选按名册顺序回写,不按点击顺序;名册外的名字不静默吞掉', () => {
+    const first = toggleTool(catalog, [], 'get_run')
+    const second = toggleTool(catalog, first, 'list_projects')
+    expect(second).toEqual(['list_projects', 'get_run'])
+    expect(toggleTool(catalog, second, 'list_projects')).toEqual(['get_run'])
+    expect(toggleTool(catalog, ['gone_tool'], 'list_projects')).toEqual(['list_projects', 'gone_tool'])
+    expect(toggleTool(catalog, ['get_run', 'gone_tool'], 'gone_tool')).toEqual(['get_run'])
+  })
+})
+
+describe('分组范围(groupScope)', () => {
+  const groups = [
+    { id: 'g1', name: '前端组', projectCount: 3 },
+    { id: 'g2', name: '后端组', projectCount: 0 },
+  ]
+
+  it('ID 换成展示名;组已删的留原 ID,不静默吞掉', () => {
+    expect(groupScopeNames(['g2', 'g1'], groups)).toEqual(['后端组', '前端组'])
+    expect(groupScopeNames(['g1', 'g-deleted'], groups)).toEqual(['前端组', 'g-deleted'])
+  })
+
+  it('空选择就是空列表(页面上按「不限」渲染)', () => {
+    expect(groupScopeNames([], groups)).toEqual([])
   })
 })
