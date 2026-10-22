@@ -23,6 +23,7 @@ import {
   parseDomains,
   parseRenewDays,
   renewWindowDays,
+  togglePickedServer,
 } from './certRows'
 
 function cert(over: Partial<Cert> = {}): Cert {
@@ -246,6 +247,27 @@ describe('落点草稿行(申请弹窗里一次填多台)', () => {
     expect(compactTargetDrafts(rows)).toEqual([
       { serverId: 's-1', certPath: '/etc/a.pem', keyPath: '/etc/a.key', postCommand: 'systemctl reload nginx', autoDeploy: false },
     ])
+  })
+})
+
+describe('togglePickedServer', () => {
+  it('没勾的追加到末尾,勾选顺序就是保存顺序', () => {
+    let picked: string[] = []
+    picked = togglePickedServer(picked, 's-2')
+    picked = togglePickedServer(picked, 's-1')
+    picked = togglePickedServer(picked, 's-3')
+    expect(picked).toEqual(['s-2', 's-1', 's-3'])
+  })
+
+  it('再点一次只移掉那一项,前后顺序不变', () => {
+    expect(togglePickedServer(['s-2', 's-1', 's-3'], 's-1')).toEqual(['s-2', 's-3'])
+  })
+
+  it('不原地改动传进来的数组,取消与勾选都返回新数组', () => {
+    const current = ['s-1', 's-2']
+    expect(togglePickedServer(current, 's-3')).toEqual(['s-1', 's-2', 's-3'])
+    expect(togglePickedServer(current, 's-1')).toEqual(['s-2'])
+    expect(current).toEqual(['s-1', 's-2'])
   })
 })
 

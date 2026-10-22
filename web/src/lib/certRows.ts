@@ -163,6 +163,14 @@ export function compactTargetDrafts(list: TargetDraft[]): TargetDraft[] {
     }))
 }
 
+/**
+ * 多选主机的勾选切换:新勾选的追加到末尾、取消的整项移除,顺序就是逐条 POST 的保存顺序。
+ * 用 Set 会丢顺序 —— 列表里落点的先后要跟着用户点的次序走,和部署节点多选同一口径。
+ */
+export function togglePickedServer(ids: string[], id: string): string[] {
+  return ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
+}
+
 /** 搜索命中判定:域名、SAN、签发者与 CA 都参与,大小写不敏感。 */
 export function matchesQuery(cert: Cert, query: string): boolean {
   const q = query.trim().toLowerCase()

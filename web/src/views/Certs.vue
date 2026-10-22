@@ -87,6 +87,7 @@ import {
   parseDomains,
   parseRenewDays,
   renewWindowDays,
+  togglePickedServer,
   type CheckBucket,
   type TargetDraft,
 } from '../lib/certRows'
@@ -580,19 +581,33 @@ const targetBanner = ref('')
 const targetErrors = ref({ serverId: '', certPath: '', keyPath: '' })
 const editingTarget = ref<CertTarget | null>(null)
 const targetForm = ref<CertTargetInput>({ serverId: '', certPath: '', keyPath: '', postCommand: '', autoDeploy: false })
+// 新增时主机是多选:一台一个落点,两条路径与指令共用同一份填法。
+// 编辑改的是库里已有的那一条,只能属于一台机器,所以那里仍是单选。
+const pickedServerIds = ref<string[]>([])
+
+/** 这台主机在当前证书下已有几个落点:同一台铺两份(nginx + haproxy)是合法的,
+ *  但用户多半是手滑勾了重复的,所以列出来标一下,不禁止。 */
+function targetsOnHost(serverId: string): number {
+  return detailTargets.value.filter((x) => x.serverId === serverId).length
+}
+
+function togglePicked(id: string): void {
+  pickedServerIds.value = togglePickedServer(pickedServerIds.value, id)
+  if (pickedServerIds.value.length > 0) targetErrors.value.serverId = ''
+}
 
 async function openTargetForm(t2?: CertTarget): Promise<void> {
   editingTarget.value = t2 ?? null
   targetForm.value = t2
     ? { serverId: t2.serverId, certPath: t2.certPath, keyPath: t2.keyPath, postCommand: t2.postCommand, autoDeploy: t2.autoDeploy }
-    : { serverId: servers.value[0]?.id ?? '', certPath: '', keyPath: '', postCommand: '', autoDeploy: false }
+    : { serverId: '', certPath: '', keyPath: '', postCommand: '', autoDeploy: false }
+  pickedServerIds.value = []
   targetErrors.value = { serverId: '', certPath: '', keyPath: '' }
   targetBanner.value = ''
   targetFormOpen.value = true
   if (servers.value.length === 0) {
     try {
       servers.value = await listServers()
-      if (!targetForm.value.serverId) targetForm.value.serverId = servers.value[0]?.id ?? ''
     } catch (err) {
       targetBanner.value = errText(err, t('certs.errLoadServers'))
     }
@@ -606,7 +621,11 @@ function closeTargetForm(): void {
 
 function validateTarget(): boolean {
   const e = { serverId: '', certPath: '', keyPath: '' }
-  if (!targetForm.value.serverId) e.serverId = t('certs.valServerRequired')
+  if (editingTarget.value) {
+    if (!targetForm.value.serverId) e.serverId = t('certs.valServerRequired')
+  } else if (pickedServerIds.value.length === 0) {
+    e.serverId = t('certs.valServersRequired')
+  }
   const issue = checkTargetPaths(targetForm.value.certPath, targetForm.value.keyPath)
   if (issue === 'notAbsolute') {
     e.certPath = t('certs.valPathNotAbsolute')
@@ -622,16 +641,36 @@ async function submitTarget(): Promise<void> {
   if (!detail.value || targetBusy.value || !validateTarget()) return
   targetBusy.value = true
   targetBanner.value = ''
+  const certId = detail.value.id
   try {
     if (editingTarget.value) {
-      const next = await updateCertTarget(detail.value.id, editingTarget.value.id, targetForm.value)
+      const next = await updateCertTarget(certId, editingTarget.value.id, targetForm.value)
       detailTargets.value = detailTargets.value.map((x) => (x.id === next.id ? next : x))
-    } else {
-      detailTargets.value = [...detailTargets.value, await addCertTarget(detail.value.id, targetForm.value)]
+      closeTargetForm()
+      return
+    }
+    // 逐台 POST:后端一个请求存一个落点,也没有 (证书, 主机) 唯一约束,所以这里发 N 次就是 N 行。
+    // 某台失败(通常是那台机器不在用户能管的分组里)不能把已经存上的那些一起吞掉。
+    const saved: CertTarget[] = []
+    let lastErr = ''
+    for (const serverId of pickedServerIds.value) {
+      try {
+        saved.push(await addCertTarget(certId, { ...targetForm.value, serverId }))
+      } catch (err) {
+        lastErr = errText(err, t('certs.errTargetSave'))
+      }
+    }
+    detailTargets.value = [...detailTargets.value, ...saved]
+    const failed = pickedServerIds.value.length - saved.length
+    if (saved.length === 0) {
+      // 一台都没存上:表单留着,让用户看清是路径写错还是没权限,改完能直接再提交。
+      targetBanner.value = lastErr || t('certs.errTargetSave')
+      return
     }
     closeTargetForm()
-  } catch (err) {
-    targetBanner.value = errText(err, t('certs.errTargetSave'))
+    if (failed > 0) {
+      toast.warn(t('certs.targetsPartial', { ok: saved.length, bad: failed }), { detail: lastErr })
+    }
   } finally {
     targetBusy.value = false
   }
@@ -1392,10 +1431,39 @@ const hasAccountForCa = computed(() => {
             <div v-if="targetBanner" class="banner banner--error" role="alert">{{ targetBanner }}</div>
             <div class="field">
               <label class="field-label">{{ t('certs.fieldServer') }}</label>
-              <select v-model="targetForm.serverId" class="field-input" :class="{ 'field-input--error': targetErrors.serverId }" :disabled="targetBusy">
+              <!-- 编辑改的是库里这一条落点属于哪台,只能单选;新增是一台一个落点,所以要能勾多台。 -->
+              <select
+                v-if="editingTarget"
+                v-model="targetForm.serverId"
+                class="field-input"
+                :class="{ 'field-input--error': targetErrors.serverId }"
+                :disabled="targetBusy"
+              >
                 <option value="" disabled>{{ servers.length ? t('certs.serverPlaceholder') : t('certs.serverNone') }}</option>
                 <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.name }} · {{ s.host }}</option>
               </select>
+              <div
+                v-else
+                class="server-picks"
+                :class="{ 'server-picks--empty': servers.length === 0, 'server-picks--error': targetErrors.serverId }"
+                role="group"
+                :aria-label="t('certs.fieldServer')"
+              >
+                <label v-for="s in servers" :key="s.id" class="server-pick">
+                  <input
+                    type="checkbox"
+                    :checked="pickedServerIds.includes(s.id)"
+                    :aria-label="s.name"
+                    :disabled="targetBusy"
+                    @change="togglePicked(s.id)"
+                  />
+                  <span class="server-pick-name">{{ s.name }}</span>
+                  <code class="server-pick-host">{{ s.user }}@{{ s.host }}:{{ s.port }}</code>
+                  <span v-if="targetsOnHost(s.id)" class="server-pick-dup">{{ t('certs.targetsOnHost', { n: targetsOnHost(s.id) }) }}</span>
+                </label>
+                <p v-if="servers.length === 0" class="field-hint">{{ t('certs.serverNone') }}</p>
+                <p v-else class="field-hint">{{ t('certs.serversPicked', { n: pickedServerIds.length }) }}</p>
+              </div>
               <span v-if="targetErrors.serverId" class="field-error" role="alert">{{ targetErrors.serverId }}</span>
             </div>
             <div class="field">
@@ -2515,6 +2583,56 @@ const hasAccountForCa = computed(() => {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--rounded);
   background: var(--color-card-2);
+}
+/* 新增落点的主机多选:主机可能登记了几十台,自己滚,别把整个详情顶出屏幕。 */
+.server-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 208px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--rounded);
+  background: var(--color-card);
+}
+.server-picks--error {
+  border-color: var(--color-red);
+}
+/* 一台主机都没有时不必留这个空壳边框,只把那句提示露出来。 */
+.server-picks--empty {
+  padding: 0;
+  border: none;
+  background: none;
+}
+.server-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  font-size: 0.8rem;
+  color: var(--color-dim);
+  cursor: pointer;
+}
+.server-pick:hover {
+  background: var(--color-card-2);
+}
+.server-pick input {
+  flex: none;
+}
+.server-pick-name {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.server-pick-host {
+  font-size: 0.72rem;
+  color: var(--color-faint);
+}
+.server-pick-dup {
+  flex: none;
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--color-amber);
 }
 .detail-footer {
   display: flex;
