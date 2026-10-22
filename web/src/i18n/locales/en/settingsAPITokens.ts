@@ -103,4 +103,41 @@ export default {
   endpointOwnHint: 'This URL only accepts the token it was created with; any other token gets a 403.',
   errEditStatus: 'Failed to save the scope (HTTP {status})',
   errEditRetry: 'Failed to save the scope. Please retry.',
+  guide: {
+    cta: 'Usage guide',
+    open: 'View the full guide',
+    title: 'Pipewright MCP endpoint — usage guide',
+    hint: 'Copy the whole block and hand it to an AI client or a colleague: the URL, the token, which tools are allowed and the gotchas are all inside.',
+    tokenMissing:
+      'The plaintext token is only shown when the endpoint is created, so the block below carries the placeholder {placeholder} — swap in your own token before pasting it anywhere.',
+    tokenPlaceholder: '<paste the token here>',
+    intro:
+      'This is a Pipewright MCP endpoint. Pipewright is a self-hosted CI/CD platform covering projects, pipelines, builds and releases; through this endpoint you can list projects, configure a pipeline, trigger a build, read run status and logs, and cancel a run. The token acts on behalf of {owner}, with the same permissions that person has when signing in, and this endpoint narrows them further (see "Allowed scope").',
+    connectTitle: 'How to connect',
+    httpNote:
+      'Option 1 — HTTP, direct (recommended). Merge this into the MCP config of your client: Cursor mcp.json and Claude Code .mcp.json use the mcpServers root key, VS Code .vscode/mcp.json uses servers:',
+    stdioNote:
+      'Option 2 — local stdio bridge. Use it when the pipewright binary is installed on this machine and the platform sits on an intranet you do not want to expose:',
+    rawNote:
+      'Option 3 — raw JSON-RPC (scripts and debugging). POST to the endpoint URL with Authorization: Bearer plus the token, Content-Type: application/json and Accept: application/json, text/event-stream; call initialize first, then tools/list, then tools/call. Example:',
+    scopeTitle: 'Allowed scope',
+    toolsAll: 'Tools: all {n} are exposed.',
+    toolsSome: 'Tools: only {n} of {total} are exposed.',
+    groupsAll: 'Groups: no limit — every project the owner can already see stays visible.',
+    groupsSome:
+      'Groups: only these groups are visible — {names}. Ungrouped projects fall outside it, even when the owner is an admin.',
+    scopeNote:
+      'Both scopes only intersect and only ever narrow: tools outside the list do not show up in tools/list, and calling them anyway is refused — that is not a client misconfiguration.',
+    rulesTitle: 'Conventions and gotchas',
+    ruleOnce:
+      'The plaintext token appears once, at creation; the platform stores only a digest and can never return it. If it is lost, revoke and issue a new one instead of digging through repositories or tickets.',
+    ruleBaseURL:
+      'For the stdio form, PIPEWRIGHT_URL must be the site root, not this endpoint URL — the tools call back into the platform REST API by appending /api/..., and an endpoint URL breaks that path.',
+    ruleWrite:
+      'trigger_run, cancel_run, create_project and set_pipeline really change platform state; confirm the project, the branch and the blast radius with the user first.',
+    ruleLogs: 'Build logs can be long — read the tail with get_run_logs instead of pulling the whole output into context.',
+    rulePlain:
+      'Over plain http the token travels unencrypted; use https for anything public, or keep the endpoint inside a trusted network.',
+    tagWrite: 'write',
+  },
 }

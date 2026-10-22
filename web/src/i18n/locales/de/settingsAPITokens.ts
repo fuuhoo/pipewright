@@ -99,4 +99,40 @@ export default {
   endpointOwnHint: 'Diese URL akzeptiert nur den Token, mit dem sie angelegt wurde; jeder andere gibt 403.',
   errEditStatus: 'Umfang konnte nicht gespeichert werden (HTTP {status})',
   errEditRetry: 'Speichern des Umfangs fehlgeschlagen, bitte erneut versuchen.',
+  guide: {
+    cta: 'Anleitung',
+    open: 'Ganzen Text anzeigen',
+    title: 'Pipewright MCP-Endpunkt — Anleitung',
+    hint: 'Den kompletten Block kopieren und einem AI-Client oder Kollegen geben: URL, Token, erlaubte Werkzeuge und Fallstricke stehen schon drin.',
+    tokenMissing:
+      'Das Klartext-Token wird nur beim Anlegen gezeigt, deshalb steht unten der Platzhalter {placeholder} — vor dem Weitergeben durch das eigene Token ersetzen.',
+    tokenPlaceholder: '<Token hier einfügen>',
+    intro:
+      'Das ist ein MCP-Endpunkt von Pipewright, einer selbst gehosteten CI/CD-Plattform für Projekte, Pipelines, Builds und Auslieferungen. Über ihn lassen sich Projekte auflisten, Pipelines konfigurieren, Builds anstoßen, Status und Log eines Laufs lesen sowie Läufe abbrechen. Das Token handelt im Namen von {owner} mit denselben Rechten wie diese Person beim Anmelden, und dieser Endpunkt schränkt zusätzlich ein (siehe "Zulässiger Umfang").',
+    connectTitle: 'Verbindung herstellen',
+    httpNote:
+      'Weg 1 — direkt über HTTP (empfohlen). Diesen Block in die MCP-Konfiguration des Clients übernehmen: mcp.json von Cursor und .mcp.json von Claude Code nutzen den Wurzel-Schlüssel mcpServers, .vscode/mcp.json von VS Code nutzt servers:',
+    stdioNote:
+      'Weg 2 — lokale stdio-Brücke. Nimm sie, wenn die pipewright-Binary auf diesem Rechner liegt und die Plattform im Intranet bleiben soll:',
+    rawNote:
+      'Weg 3 — rohes JSON-RPC (Skripte und Fehlersuche). POST auf die Endpunkt-URL mit Authorization: Bearer plus Token, Content-Type: application/json und Accept: application/json, text/event-stream; erst initialize, dann tools/list, dann tools/call. Beispiel:',
+    scopeTitle: 'Zulässiger Umfang',
+    toolsAll: 'Werkzeuge: alle {n} sind freigegeben.',
+    toolsSome: 'Werkzeuge: nur {n} von {total} sind freigegeben.',
+    groupsAll: 'Gruppen: unbegrenzt — alles, was der Inhaber ohnehin sieht, bleibt sichtbar.',
+    groupsSome: 'Gruppen: nur diese — {names}. Projekte ohne Gruppe fallen raus, auch wenn der Inhaber Admin ist.',
+    scopeNote:
+      'Beide Umfänge schneiden nur und verengen nur: Werkzeuge außerhalb der Liste tauchen nicht einmal in tools/list auf, ein Aufruf wird sofort abgelehnt — das ist kein Konfigurationsfehler des Clients.',
+    rulesTitle: 'Regeln und Fallstricke',
+    ruleOnce:
+      'Das Klartext-Token erscheint genau einmal, beim Anlegen; die Plattform speichert nur den Hash und gibt es nie zurück. Verloren? Widerrufen und neu ausstellen, statt in Repos oder Tickets zu suchen.',
+    ruleBaseURL:
+      'Bei der stdio-Form gehört in PIPEWRIGHT_URL die Wurzel der Seite, nicht diese Endpunkt-URL — die Werkzeuge rufen die REST-API mit /api/... auf, und mit der Endpunkt-URL bricht dieser Pfad.',
+    ruleWrite:
+      'trigger_run, cancel_run, create_project und set_pipeline ändern den Zustand der Plattform wirklich; vorher Projekt, Branch und Auswirkung mit dem Nutzer abstimmen.',
+    ruleLogs: 'Build-Logs können sehr lang sein: mit get_run_logs das Ende lesen, statt die ganze Ausgabe in den Kontext zu ziehen.',
+    rulePlain:
+      'Läuft die Plattform über http, reist das Token im Klartext durchs Netz; öffentlich besser https oder den Endpunkt in einem vertrauten Netz belassen.',
+    tagWrite: 'Schreibrecht',
+  },
 }

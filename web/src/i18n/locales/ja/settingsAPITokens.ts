@@ -95,4 +95,41 @@ export default {
   endpointOwnHint: 'この URL は作成時に発行したトークンだけを認めます。他のもので叩くと 403 になります。',
   errEditStatus: '範囲の保存に失敗(HTTP {status})',
   errEditRetry: '範囲の保存に失敗しました。再試行してください。',
+  guide: {
+    cta: '使い方',
+    open: '説明文をまとめて見る',
+    title: 'Pipewright MCP エンドポイント 使い方',
+    hint: 'そのままコピーして AI クライアントや仲間に貼れば使えます。URL、トークン、使えるツール、注意点がすべて入っています。',
+    tokenMissing:
+      'トークンの平文は新規作成時しか表示されないため、下の文には {placeholder} が入っています。貼り出す前に自分のトークンに置き換えてください。',
+    tokenPlaceholder: '<ここにトークン平文>',
+    intro:
+      'これは Pipewright(セルフホストの CI/CD プラットフォーム)の MCP エンドポイントです。Pipewright はプロジェクト・パイプライン・ビルド・リリースを管理しており、このエンドポイント経由でプロジェクト一覧、パイプライン設定、ビルド実行、実行状況とログの確認、実行のキャンセルができます。このトークンは {owner} として動作し、本人がログインしたときと同じ権限を持ちます。さらにこのエンドポイント自体が範囲を絞っています(「使える範囲」を参照)。',
+    connectTitle: '接続方法',
+    httpNote:
+      '方法 1 · HTTP 直結(推奨)。この JSON をクライアントの MCP 設定に組み込んでください —— Cursor の mcp.json と Claude Code の .mcp.json は mcpServers、VS Code の .vscode/mcp.json は servers がルートキーです:',
+    stdioNote:
+      '方法 2 · ローカル stdio ブリッジ。このマシンに pipewright バイナリが入っていて、プラットフォームを内網に置きたいときに使います:',
+    rawNote:
+      '方法 3 · JSON-RPC を直接叩く(スクリプトや調査用)。エンドポイント URL に POST し、ヘッダーに Authorization: Bearer とトークン、Content-Type: application/json、Accept: application/json, text/event-stream を付けます。initialize → tools/list → tools/call の順。例:',
+    scopeTitle: '使える範囲',
+    toolsAll: 'ツール:{n} 個すべて解放しています。',
+    toolsSome: 'ツール:{total} 個中 {n} 個だけ解放しています。',
+    groupsAll: 'グループ:制限なし。所有者が元から見えるプロジェクトはすべて見えます。',
+    groupsSome:
+      'グループ:このグループのプロジェクトだけ —— {names}。グループを絞ると未分類のプロジェクトは見えなくなります。所有者が管理者でも同じです。',
+    scopeNote:
+      '2 つの範囲は交差のみ・縮小のみで拡大はしません。リスト外のツールは tools/list にすら出ず、無理に呼んでもその場で拒否されます。クライアントの設定ミスではありません。',
+    rulesTitle: '決まりごとと落とし穴',
+    ruleOnce:
+      'トークンの平文は作成時の 1 度だけ表示されます。プラットフォームは要約しか保存しておらず、二度と取り出せません。失くしたら取消して発行し直してください。',
+    ruleBaseURL:
+      'stdio 形式の PIPEWRIGHT_URL にはエンドポイント URL ではなくサイトのルートアドレスを指定してください。ツールは /api/... を付けて REST を叩くため、エンドポイント URL だとパスが壊れます。',
+    ruleWrite:
+      'trigger_run、cancel_run、create_project、set_pipeline は本当にプラットフォームの状態を変えます。実行前にプロジェクト・ブランチ・影響範囲をユーザーに確認してください。',
+    ruleLogs: 'ビルドログは長くなることがあります。get_run_logs は末尾から読み、全出力をコンテキストに放り込まないでください。',
+    rulePlain:
+      'プラットフォームアドレスが http の場合、トークンは平文で通信を流れます。公開網では https を使うか、信頼できる内網に留めてください。',
+    tagWrite: '書き込み',
+  },
 }

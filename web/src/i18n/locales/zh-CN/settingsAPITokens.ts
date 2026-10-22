@@ -99,4 +99,36 @@ export default {
   endpointOwnHint: '这条地址只认签发它时给出的那把令牌:换成别的会当场 403。',
   errEditStatus: '保存范围失败(HTTP {status})',
   errEditRetry: '保存范围失败,请重试',
+  guide: {
+    cta: '使用说明',
+    open: '查看整段说明',
+    title: 'Pipewright MCP 端点使用说明',
+    hint: '整段复制,贴给 AI 客户端或同事就能直接接:地址、令牌、能用哪些工具、有哪些坑都写在里面了。',
+    tokenMissing:
+      '令牌明文只在新增那一次给出,所以下面这段里是占位符 {placeholder} —— 贴出去之前先换成你自己的令牌。',
+    tokenPlaceholder: '<粘贴令牌明文>',
+    intro:
+      '这是一条 Pipewright(自建 CI/CD 平台)的 MCP 端点。Pipewright 管着项目、流水线、构建运行与发布;接上之后可以列出项目、配置流水线、触发构建、查运行状态与日志、取消运行。这把令牌代表 {owner} 干活,权限与他本人登录时一致,而且这条端点还额外收窄过(见「可用范围」)。',
+    connectTitle: '接入方式',
+    httpNote:
+      '方式一 · HTTP 直连(推荐)。把这段并进客户端的 MCP 配置 —— Cursor 的 mcp.json、Claude Code 的 .mcp.json 用 mcpServers 根键,VS Code 的 .vscode/mcp.json 用 servers 根键:',
+    stdioNote: '方式二 · 本机 stdio 桥。这台机器装了 pipewright 二进制、平台在内网不想给本机开端口时用:',
+    rawNote:
+      '方式三 · 直接发 JSON-RPC(写脚本或排查时用)。POST 到端点地址,头带 Authorization: Bearer 令牌、Content-Type: application/json、Accept: application/json, text/event-stream;先 initialize,再 tools/list,然后 tools/call。示例:',
+    scopeTitle: '可用范围',
+    toolsAll: '工具:{n} 个全部放出。',
+    toolsSome: '工具:只放出 {n} / {total} 个。',
+    groupsAll: '分组:不限,归属人本来能看的项目都看得见。',
+    groupsSome: '分组:只看这些分组的项目 —— {names}。限了分组就看不见未归组的项目,归属人是管理员也一样。',
+    scopeNote:
+      '两把尺只做交集、只收窄不放大:清单外的工具在 tools/list 里根本看不见,硬调会被当场挡下,那不是客户端配错了。',
+    rulesTitle: '约定与坑',
+    ruleOnce: '令牌明文只在新增那一次出现过,平台只存摘要、再也读不回来;忘了就撤销重发,别去仓库和工单历史里翻。',
+    ruleBaseURL:
+      'stdio 形态的 PIPEWRIGHT_URL 要填站点根地址,不是这条端点地址 —— 工具回环打平台 REST 时拼的是 /api/... 前缀,填端点地址会拼坏。',
+    ruleWrite: 'trigger_run、cancel_run、create_project、set_pipeline 会真的改平台状态,动手前先跟用户确认项目、分支和影响面。',
+    ruleLogs: '构建日志可能很长,get_run_logs 先看尾部,别一次把整份输出拉进上下文。',
+    rulePlain: '平台地址是 http 时令牌在网络上是明文;公网接入请走 https,或者把它留在可信内网里。',
+    tagWrite: '写操作',
+  },
 }

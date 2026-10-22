@@ -11,6 +11,7 @@ import {
   mcpEndpointURL,
   mcpHttpSnippet,
   mcpStdioSnippet,
+  mcpUsageGuide,
   normalizeTokenName,
   ownerOptions,
   sameScope,
@@ -20,7 +21,7 @@ import {
   toolPresetNames,
   trimBaseURL,
 } from './apiTokens'
-import type { MCPToolDef } from './apiTokens'
+import type { GuideLabels, MCPToolDef } from './apiTokens'
 
 describe('normalizeTokenName / tokenNameProblem', () => {
   it('折叠内部连续空白并去首尾(与后端 strings.Fields + Join 同口径)', () => {
@@ -296,5 +297,72 @@ describe('再编辑两把尺', () => {
   it('勾选范围恰好为空时候选就是名册本身(不给一行假的「已删除」)', () => {
     expect(editableToolOptions([], catalog).every((o) => !o.missing)).toBe(true)
     expect(editableGroupOptions([], groups).every((o) => !o.missing)).toBe(true)
+  })
+})
+
+describe('使用说明(mcpUsageGuide)', () => {
+  const catalog: MCPToolDef[] = [
+    { name: 'list_projects', title: '项目列表', readOnly: true },
+    { name: 'trigger_run', title: '触发运行', readOnly: false },
+  ]
+  const labels: GuideLabels = {
+    title: 'Pipewright MCP 端点使用说明',
+    intro: '这是一条端点。',
+    endpointLabel: 'MCP 端点地址',
+    plaintextLabel: '令牌明文',
+    connectTitle: '接入方式',
+    httpNote: '方式一',
+    stdioNote: '方式二',
+    rawNote: '方式三',
+    scopeTitle: '可用范围',
+    toolsLine: '工具:不限。',
+    groupsLine: '分组:不限。',
+    scopeNote: '范围只做交集。',
+    rulesTitle: '约定与坑',
+    rules: ['第一条', '第二条'],
+    toolReadonly: '只读',
+    toolWrite: '写操作',
+    tokenPlaceholder: '<令牌明文>',
+  }
+  const base = 'https://pw.example.com'
+  const id = 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+  const endpoint = `https://pw.example.com/mcp/${id}`
+
+  const build = (over: Partial<Parameters<typeof mcpUsageGuide>[0]> = {}) =>
+    mcpUsageGuide({ baseUrl: base, tokenId: id, allowedTools: [], groupScope: [], catalog, labels, plaintext: 'pwt_abc', ...over })
+
+  it('三种接入形态都带上这条端点自己的地址,只有 stdio 那块的 PIPEWRIGHT_URL 留站点根地址', () => {
+    const got = build()
+    expect(got).toContain(endpoint)
+    expect(got).toContain('"url": "https://pw.example.com/mcp/f47ac10b-58cc-4372-a567-0e02b2c3d479"')
+    expect(got).toContain('"PIPEWRIGHT_URL": "https://pw.example.com"')
+    expect(got).toContain(`Authorization: Bearer pwt_abc`)
+  })
+
+  it('没有明文时用占位符,而不是留个空令牌让人贴出去', () => {
+    const got = build({ plaintext: '' })
+    expect(got).toContain('"PIPEWRIGHT_TOKEN": "<令牌明文>"')
+    expect(got).toContain('Authorization: Bearer <令牌明文>')
+    expect(got).not.toContain('Bearer \n')
+  })
+
+  it('不限工具时列名册全量(与客户端 tools/list 拿到的对齐),收窄时只列勾选的', () => {
+    const all = build()
+    expect(all).toContain('- list_projects(项目列表 · 只读)')
+    expect(all).toContain('- trigger_run(触发运行 · 写操作)')
+    const narrow = build({ allowedTools: ['trigger_run'] })
+    expect(narrow).toContain('- trigger_run(触发运行 · 写操作)')
+    expect(narrow).not.toContain('- list_projects(')
+  })
+
+  it('名册里查不到的工具只报名字:标题与读写属性无从可考,编一个比留空更坏', () => {
+    expect(build({ allowedTools: ['gone_tool'] })).toContain('- gone_tool\n')
+  })
+
+  it('约定逐条成 bullet,代码块围栏成对(3 块 = 6 个围栏标记)', () => {
+    const got = build()
+    expect(got).toContain('- 第一条')
+    expect(got).toContain('- 第二条')
+    expect(got.replaceAll('```', 'X').match(/X/g)).toHaveLength(6)
   })
 })

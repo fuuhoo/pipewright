@@ -95,4 +95,41 @@ export default {
   endpointOwnHint: '이 주소는 생성할 때 발급한 토큰만 인정합니다. 다른 토큰이면 즉시 403 입니다.',
   errEditStatus: '범위 저장 실패(HTTP {status})',
   errEditRetry: '범위 저장에 실패했습니다. 다시 시도하세요.',
+  guide: {
+    cta: '사용 설명',
+    open: '전체 설명 보기',
+    title: 'Pipewright MCP 엔드포인트 사용 설명',
+    hint: '전체를 복사해 AI 클라이언트나 동료에게 붙여 넣으면 바로 쓸 수 있습니다. 주소, 토큰, 허용된 도구, 주의 사항이 모두 들어 있습니다.',
+    tokenMissing:
+      '토큰 평문은 새로 생성할 때만 표시되므로 아래 문서에는 {placeholder} 자리가 들어 있습니다. 붙여 넣기 전에 자신의 토큰으로 바꾸세요.',
+    tokenPlaceholder: '<여기에 토큰 평문>',
+    intro:
+      '다음은 Pipewright(자체 호스팅 CI/CD 플랫폼)의 MCP 엔드포인트입니다. Pipewright 는 프로젝트, 파이프라인, 빌드, 배포를 관리하며, 이 엔드포인트로 프로젝트 조회, 파이프라인 구성, 빌드 실행, 실행 상태와 로그 확인, 실행 취소를 할 수 있습니다. 이 토큰은 {owner} 계정으로 동작하며 본인이 로그인했을 때와 같은 권한을 갖습니다. 여기에 더해 엔드포인트 자체의 범위가 좁혀져 있습니다(사용 가능 범위 참고).',
+    connectTitle: '연결 방법',
+    httpNote:
+      '방법 1 · HTTP 직접 연결(권장). 아래 내용을 클라이언트의 MCP 설정에 합치면 됩니다 — Cursor 의 mcp.json, Claude Code 의 .mcp.json 은 mcpServers 키를 쓰고, VS Code 의 .vscode/mcp.json 은 servers 키를 씁니다:',
+    stdioNote:
+      '방법 2 · 로컬 stdio 브리지. 이 컴퓨터에 pipewright 실행 파일이 있고 플랫폼을 내부망에 두어 포트를 열고 싶지 않을 때 사용합니다:',
+    rawNote:
+      '방법 3 · JSON-RPC 직접 호출(스크립트·조사용). 엔드포인트 주소로 POST 하고 헤더에 Authorization: Bearer 와 토큰, Content-Type: application/json, Accept: application/json, text/event-stream 을 넣습니다. initialize → tools/list → tools/call 순서로 호출하세요. 예시:',
+    scopeTitle: '사용 가능 범위',
+    toolsAll: '도구: {n}개 전체를 허용합니다.',
+    toolsSome: '도구: {total}개 중 {n}개만 허용합니다.',
+    groupsAll: '그룹: 제한 없음. 소유자가 원래 볼 수 있는 프로젝트는 모두 보입니다.',
+    groupsSome:
+      '그룹: 이 그룹들의 프로젝트만 보입니다 — {names}. 그룹을 제한하면 그룹 미등록 프로젝트는 보이지 않으며, 소유자가 관리자여도 마찬가지입니다.',
+    scopeNote:
+      '두 범위는 교집합만, 축소만 가능합니다. 목록 밖 도구는 tools/list 에도 나타나지 않고 억지로 호출하면 즉시 거부됩니다. 클라이언트 설정이 잘못된 것이 아닙니다.',
+    rulesTitle: '규칙과 함정',
+    ruleOnce:
+      '토큰 평문은 생성할 때 한 번만 노출됩니다. 플랫폼은 요약값만 저장해 다시 볼 수 없으니 잃어버렸으면 취소 후 재발급하세요.',
+    ruleBaseURL:
+      'stdio 형태의 PIPEWRIGHT_URL 에는 엔드포인트 주소가 아니라 사이트 루트 주소를 넣어야 합니다. 도구는 /api/... 를 붙여 REST 를 호출하므로 엔드포인트 주소를 넣으면 경로가 깨집니다.',
+    ruleWrite:
+      'trigger_run, cancel_run, create_project, set_pipeline 은 플랫폼 상태를 실제로 바꿉니다. 실행 전에 프로젝트, 브랜치, 영향 범위를 사용자와 확인하세요.',
+    ruleLogs: '빌드 로그는 매우 길 수 있습니다. get_run_logs 로 끝부분부터 읽고 전체 출력을 컨텍스트에 넣지 마세요.',
+    rulePlain:
+      '플랫폼 주소가 http 이면 토큰이 평문으로 전송됩니다. 외부 네트워크에서는 https 를 쓰거나 신뢰할 수 있는 내부망에만 두세요.',
+    tagWrite: '쓰기',
+  },
 }

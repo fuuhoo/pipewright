@@ -95,4 +95,37 @@ export default {
   endpointOwnHint: '這條網址只認簽發它時給出的那把令牌:換成別的會當場 403。',
   errEditStatus: '儲存範圍失敗(HTTP {status})',
   errEditRetry: '儲存範圍失敗,請重試',
+  guide: {
+    cta: '使用說明',
+    open: '檢視整段說明',
+    title: 'Pipewright MCP 端點使用說明',
+    hint: '整段複製,貼給 AI 客戶端或同事就能直接接上:位址、令牌、能用哪些工具、有哪些坑都寫在裡面了。',
+    tokenMissing:
+      '令牌明文只在新增那一次給出,所以下面這段裡是佔位符 {placeholder} —— 貼出去之前先換成你自己的令牌。',
+    tokenPlaceholder: '<貼上令牌明文>',
+    intro:
+      '這是一條 Pipewright(自建 CI/CD 平台)的 MCP 端點。Pipewright 管著專案、流水線、建置執行與發布;接上之後可以列出專案、配置流水線、觸發建置、查執行狀態與日誌、取消執行。這把令牌代表 {owner} 做事,權限與他本人登入時一致,而且這條端點還額外收窄過(見「可用範圍」)。',
+    connectTitle: '接入方式',
+    httpNote:
+      '方式一 · HTTP 直連(建議)。把這段併進客戶端的 MCP 設定 —— Cursor 的 mcp.json、Claude Code 的 .mcp.json 用 mcpServers 根鍵,VS Code 的 .vscode/mcp.json 用 servers 根鍵:',
+    stdioNote: '方式二 · 本機 stdio 橋。這台機器裝了 pipewright 執行檔、平台在內網不想給本機開埠時使用:',
+    rawNote:
+      '方式三 · 直接送 JSON-RPC(寫腳本或排查時使用)。POST 到位址,標頭帶 Authorization: Bearer 令牌、Content-Type: application/json、Accept: application/json, text/event-stream;先 initialize,再 tools/list,然後 tools/call。示例:',
+    scopeTitle: '可用範圍',
+    toolsAll: '工具:{n} 個全部放出。',
+    toolsSome: '工具:只放出 {n} / {total} 個。',
+    groupsAll: '分組:不限,歸屬人原本能看見的專案全都能看見。',
+    groupsSome: '分組:只看這些分組的專案 —— {names}。限了分組就看不見未歸組的專案,歸屬人是管理員也一樣。',
+    scopeNote:
+      '兩把尺只做交集、只收窄不放大:清單外的工具在 tools/list 裡根本看不見,硬呼叫會被當場擋下,那不是客戶端配錯了。',
+    rulesTitle: '約定與坑',
+    ruleOnce: '令牌明文只在新增那一次出現過,平台只存摘要、再也讀不回來;忘了只能撤銷重發,別去倉庫和工單歷史裡翻。',
+    ruleBaseURL:
+      'stdio 形態的 PIPEWRIGHT_URL 要填網站根位址,不是這條端點位址 —— 工具回環打平台 REST 時拼的是 /api/... 前綴,填端點位址會拼壞。',
+    ruleWrite:
+      'trigger_run、cancel_run、create_project、set_pipeline 會真的改平台狀態,動手前先與使用者確認專案、分支和影響面。',
+    ruleLogs: '建置日誌可能很長,get_run_logs 先看尾部,別一次把整份輸出拉進上下文。',
+    rulePlain: '平台位址是 http 時令牌在網路上是明文;公網接入請走 https,或把它留在可信內網裡。',
+    tagWrite: '寫入操作',
+  },
 }

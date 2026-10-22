@@ -338,3 +338,121 @@ export function claudeCodeAddCommand(baseUrl: string, plaintext: string, tokenId
   // 头部值里有空格,必须整体加双引号;令牌本身不会有双引号(后端字符集是 [A-Za-z0-9_])。
   return `claude mcp add --transport http pipewright ${mcpEndpointURL(baseUrl, tokenId)} --header "Authorization: Bearer ${plaintext}"`
 }
+
+// ─── 整段可复制的使用说明 ───────────────────────────────────────────────────
+
+/**
+ * 使用说明正文里要翻译的部分。全部由调用方 t() 取好再传进来(lib 不 import vue-i18n),
+ * 而且每条都是「已成句」:数字、名单、清单在调用侧就代入完了,lib 只管排版。
+ *
+ * 代码块与 JSON-RPC 示例刻意留在 lib 里拼 —— 它们带字面 `{` `}`,搬进词典会被 @intlify
+ * 当嵌套占位符抛 CompileError(见 web/src/i18n/messageCompile.test.ts 那条 code-9 回归)。
+ */
+export interface GuideLabels {
+  /** 说明的第一行(同时也是弹窗标题)。 */
+  title: string
+  intro: string
+  /** 下面两行是已有键,复用列表页的字段名,免得同一个东西在两个地方两个叫法。 */
+  endpointLabel: string
+  plaintextLabel: string
+  connectTitle: string
+  httpNote: string
+  stdioNote: string
+  rawNote: string
+  scopeTitle: string
+  toolsLine: string
+  groupsLine: string
+  scopeNote: string
+  rulesTitle: string
+  rules: string[]
+  toolReadonly: string
+  toolWrite: string
+  /** 明文只在新增那一次给出;从列表行打开时正文里放这个占位。 */
+  tokenPlaceholder: string
+}
+
+export interface GuideInput {
+  baseUrl: string
+  tokenId: string
+  /** 两把尺,空 = 不限(与库里同一口径)。 */
+  allowedTools: string[]
+  groupScope: string[]
+  catalog: MCPToolDef[]
+  labels: GuideLabels
+  /** 不传或传空 = 手里没有明文,用占位。 */
+  plaintext?: string
+}
+
+/** 纯文本里的代码块:贴进聊天时围栏比缩进稳(缩进四个空格会被 Markdown 吃掉一层)。 */
+function fenced(code: string): string {
+  return '```\n' + code + '\n```'
+}
+
+/**
+ * 把一条端点拼成一段能整段复制、直接贴给 AI 的纯文本说明。
+ *
+ * 三件事按 AI 读顺序排:先是什么(以及它替谁干活)、怎么连(三种形态)、能用哪些工具与
+ * 看得见哪些项目(范围),最后才是约定与坑。范围那节列的是**实际生效**的清单 ——
+ * 不限时列名册全量,因为客户端 tools/list 拿到的就是这份,说明与它对齐才不会让人以为缺了工具。
+ */
+export function mcpUsageGuide(input: GuideInput): string {
+  const labels = input.labels
+  const token = (input.plaintext ?? '').trim() || labels.tokenPlaceholder
+  const url = mcpEndpointURL(input.baseUrl, input.tokenId)
+  const index = new Map(input.catalog.map((tool) => [tool.name, tool]))
+  const effective = input.allowedTools.length
+    ? input.allowedTools
+    : input.catalog.map((tool) => tool.name)
+  const toolLines = effective.map((name) => {
+    const def = index.get(name)
+    // 名册里没有的(工具改名或后端摘了)只报名字:标题与读写属性都无从可考,编一个比留空更坏。
+    if (!def) return `- ${name}`
+    return `- ${name}(${def.title} · ${def.readOnly ? labels.toolReadonly : labels.toolWrite})`
+  })
+  const rawExample = [
+    `POST ${url}`,
+    `Authorization: Bearer ${token}`,
+    'Content-Type: application/json',
+    'Accept: application/json, text/event-stream',
+    '',
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'list_projects', arguments: {} },
+    }),
+  ].join('\n')
+
+  return [
+    labels.title,
+    '',
+    labels.intro,
+    '',
+    `${labels.endpointLabel}: ${url}`,
+    `${labels.plaintextLabel}: ${token}`,
+    '',
+    `## ${labels.connectTitle}`,
+    '',
+    labels.httpNote,
+    fenced(mcpHttpSnippet(input.baseUrl, token, input.tokenId)),
+    '',
+    labels.stdioNote,
+    fenced(mcpStdioSnippet(input.baseUrl, token)),
+    '',
+    labels.rawNote,
+    fenced(rawExample),
+    '',
+    `## ${labels.scopeTitle}`,
+    '',
+    labels.toolsLine,
+    ...toolLines,
+    '',
+    labels.groupsLine,
+    labels.scopeNote,
+    '',
+    `## ${labels.rulesTitle}`,
+    '',
+    ...labels.rules.map((rule) => `- ${rule}`),
+    '',
+  ].join('\n')
+}

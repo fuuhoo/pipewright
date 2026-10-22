@@ -99,4 +99,42 @@ export default {
   endpointOwnHint: 'Esta URL solo acepta el token con el que se creó; cualquier otro recibe un 403.',
   errEditStatus: 'Error al guardar el alcance (HTTP {status})',
   errEditRetry: 'Error al guardar el alcance. Inténtelo de nuevo.',
+  guide: {
+    cta: 'Guía de uso',
+    open: 'Ver la guía completa',
+    title: 'Endpoint MCP de Pipewright — guía de uso',
+    hint: 'Copie todo el bloque y páselo a un cliente de IA o a un compañero: la URL, el token, las herramientas permitidas y las trampas ya están dentro.',
+    tokenMissing:
+      'El token en texto claro solo se muestra al crear el endpoint, así que el texto lleva el marcador {placeholder} — sustitúyalo por su token antes de pegarlo en ningún sitio.',
+    tokenPlaceholder: '<pegue aquí el token>',
+    intro:
+      'Este es un endpoint MCP de Pipewright, una plataforma de CI/CD autoalojada que cubre proyectos, pipelines, compilaciones y despliegues. Con este endpoint puede listar proyectos, configurar un pipeline, lanzar una compilación, consultar el estado y los registros de una ejecución y cancelarla. El token actúa como {owner}, con los mismos permisos que esa persona tiene al iniciar sesión, y este endpoint además reduce el alcance (vea "Alcance permitido").',
+    connectTitle: 'Cómo conectarse',
+    httpNote:
+      'Opción 1 — HTTP directo (recomendada). Integre este fragmento en la configuración MCP de su cliente: el mcp.json de Cursor y el .mcp.json de Claude Code usan la clave raíz mcpServers, mientras que el .vscode/mcp.json de VS Code usa servers:',
+    stdioNote:
+      'Opción 2 — puente stdio local. Úselo cuando el binario pipewright esté instalado en esta máquina y la plataforma viva en una intranet que no quiere exponer:',
+    rawNote:
+      'Opción 3 — JSON-RPC en crudo (scripts y depuración). Haga POST a la URL del endpoint con Authorization: Bearer más el token, Content-Type: application/json y Accept: application/json, text/event-stream; llame primero a initialize, luego tools/list y después tools/call. Ejemplo:',
+    scopeTitle: 'Alcance permitido',
+    toolsAll: 'Herramientas: las {n} están habilitadas.',
+    toolsSome: 'Herramientas: solo {n} de {total} están habilitadas.',
+    groupsAll: 'Grupos: sin límite, se ve todo lo que el propietario ya puede ver.',
+    groupsSome:
+      'Grupos: solo estos — {names}. Los proyectos sin grupo quedan fuera, aunque el propietario sea administrador.',
+    scopeNote:
+      'Los dos alcances solo intersectan y solo se estrechan: las herramientas fuera de la lista ni aparecen en tools/list, y llamarlas se rechaza en el momento; no es un error de configuración del cliente.',
+    rulesTitle: 'Convenciones y trampas',
+    ruleOnce:
+      'El token en texto claro aparece una sola vez, al crearlo; la plataforma guarda solo el resumen y no lo devuelve jamás. Si lo perdió, revoque y emita uno nuevo en vez de buscarlo en repositorios o tickets.',
+    ruleBaseURL:
+      'En la forma stdio, PIPEWRIGHT_URL debe ser la raíz del sitio, no la URL de este endpoint: las herramientas vuelven a llamar a la API REST añadiendo /api/..., y con la URL del endpoint la ruta queda rota.',
+    ruleWrite:
+      'trigger_run, cancel_run, create_project y set_pipeline cambian de verdad el estado de la plataforma; confirme antes con el usuario el proyecto, la rama y el impacto.',
+    ruleLogs:
+      'Los registros de compilación pueden ser enormes: lea la cola con get_run_logs en lugar de meter toda la salida en el contexto.',
+    rulePlain:
+      'Si la URL de la plataforma es http, el token viaja en claro; use https para lo público o deje el endpoint dentro de una red confiable.',
+    tagWrite: 'escritura',
+  },
 }

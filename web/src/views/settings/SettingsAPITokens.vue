@@ -45,6 +45,7 @@ import {
   editableToolOptions,
   groupScopeNames,
   mcpEndpointURL,
+  mcpUsageGuide,
   normalizeTokenName,
   ownerOptions,
   sameScope,
@@ -348,6 +349,87 @@ async function copyText(key: string, text: string): Promise<void> {
   }
 }
 
+// ─── 使用说明(整段复制给 AI)────────────────────────────────────────────────
+
+/**
+ * 这段说明是给「拿到地址但没拿到上下文」的人或 AI 看的:是什么、怎么连、能用哪些工具、有哪些坑。
+ * 排版与代码块由 lib 的 mcpUsageGuide 负责,这里只把每条句子按当前语言取好、把两把尺代进去。
+ *
+ * 两个入口带出的明文不同:交付页刚签发完,手里有明文,说明里就直接填好;列表行只能回占位符
+ * (库里存的是摘要),所以弹窗额外念一句「先替换再贴出去」—— 一份带着空令牌的说明发出去最没用。
+ */
+const guideOpen = ref(false)
+const guideToken = ref<APIToken | null>(null)
+const guidePlain = ref('')
+
+function openGuide(tk: APIToken, plaintext = ''): void {
+  guideToken.value = tk
+  guidePlain.value = plaintext
+  copyFeedback.value = ''
+  guideOpen.value = true
+}
+
+function closeGuide(): void {
+  guideOpen.value = false
+  guideToken.value = null
+  guidePlain.value = ''
+}
+
+// 「会真的改平台状态」这条只对能写的端点有用:只读端点上列它,AI 会去跟用户确认一笔根本不存在的写操作。
+const guideRules = computed(() => {
+  const tk = guideToken.value
+  if (!tk) return []
+  const G = 'settingsAPITokens.guide.'
+  const effective = tk.allowedTools.length ? tk.allowedTools : tools.value.map((x) => x.name)
+  const canWrite = tools.value.some((x) => !x.readOnly && effective.includes(x.name))
+  return [
+    t(G + 'ruleOnce'),
+    t(G + 'ruleBaseURL'),
+    ...(canWrite ? [t(G + 'ruleWrite')] : []),
+    t(G + 'ruleLogs'),
+    t(G + 'rulePlain'),
+  ]
+})
+
+const guideText = computed(() => {
+  const tk = guideToken.value
+  if (!tk) return ''
+  const G = 'settingsAPITokens.guide.'
+  return mcpUsageGuide({
+    baseUrl: baseUrl.value,
+    tokenId: tk.id,
+    allowedTools: tk.allowedTools,
+    groupScope: tk.groupScope,
+    catalog: tools.value,
+    plaintext: guidePlain.value,
+    labels: {
+      title: t(G + 'title'),
+      intro: t(G + 'intro', { owner: tk.ownerName }),
+      endpointLabel: t('settingsAPITokens.endpointLabel'),
+      plaintextLabel: t('settingsAPITokens.plaintextLabel'),
+      connectTitle: t(G + 'connectTitle'),
+      httpNote: t(G + 'httpNote'),
+      stdioNote: t(G + 'stdioNote'),
+      rawNote: t(G + 'rawNote'),
+      scopeTitle: t(G + 'scopeTitle'),
+      toolsLine: tk.allowedTools.length
+        ? t(G + 'toolsSome', { n: tk.allowedTools.length, total: tools.value.length })
+        : t(G + 'toolsAll', { n: tools.value.length }),
+      groupsLine: tk.groupScope.length
+        ? t(G + 'groupsSome', {
+            names: groupScopeNames(tk.groupScope, groupOpts.value).join('、'),
+          })
+        : t(G + 'groupsAll'),
+      scopeNote: t(G + 'scopeNote'),
+      rulesTitle: t(G + 'rulesTitle'),
+      rules: guideRules.value,
+      toolReadonly: t('settingsAPITokens.tagReadOnly'),
+      toolWrite: t(G + 'tagWrite'),
+      tokenPlaceholder: t(G + 'tokenPlaceholder'),
+    },
+  })
+})
+
 // ─── revoke ──────────────────────────────────────────────────────────────────
 
 const revokeOpen = ref(false)
@@ -455,6 +537,7 @@ async function confirmRevoke(): Promise<void> {
             </div>
           </div>
           <div class="token-actions">
+            <button class="btn-ghost" @click="openGuide(tk)">{{ t('settingsAPITokens.guide.cta') }}</button>
             <button class="btn-ghost" @click="openScopeEdit(tk)">{{ t('settingsAPITokens.editScope') }}</button>
             <button class="btn-ghost btn-danger" @click="openRevoke(tk)">{{ t('settingsAPITokens.revoke') }}</button>
           </div>
@@ -682,10 +765,35 @@ async function confirmRevoke(): Promise<void> {
 
           <p class="field-hint">{{ t('settingsAPITokens.snippetHint') }}</p>
 
+          <div v-if="issuedItem" class="field">
+            <span class="field-label">{{ t('settingsAPITokens.guide.cta') }}</span>
+            <span class="field-hint">{{ t('settingsAPITokens.guide.hint') }}</span>
+            <button class="btn-ghost snippet-copy" @click="openGuide(issuedItem, issuedPlain)">
+              {{ t('settingsAPITokens.guide.open') }}
+            </button>
+          </div>
+
           <div class="modal-actions">
             <button type="button" class="btn-primary" @click="closeModal">{{ t('settingsAPITokens.done') }}</button>
           </div>
         </template>
+      </div>
+    </div>
+
+    <div v-if="guideOpen" class="modal-backdrop" @click.self="closeGuide">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="tok-guide-title">
+        <h3 id="tok-guide-title" class="modal-title">{{ t('settingsAPITokens.guide.title') }}</h3>
+        <p class="modal-text">{{ t('settingsAPITokens.guide.hint') }}</p>
+        <p v-if="!guidePlain" class="field-hint">
+          {{ t('settingsAPITokens.guide.tokenMissing', { placeholder: t('settingsAPITokens.guide.tokenPlaceholder') }) }}
+        </p>
+        <pre class="snippet mono guide-body">{{ guideText }}</pre>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" @click="closeGuide">{{ t('settingsAPITokens.cancel') }}</button>
+          <button type="button" class="btn-primary" @click="copyText('guide', guideText)">
+            {{ copyFeedback === 'guide' ? t('settingsAPITokens.copied') : t('settingsAPITokens.copy') }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1092,5 +1200,10 @@ async function confirmRevoke(): Promise<void> {
 }
 .snippet-copy {
   align-self: flex-start;
+}
+/* 使用说明整段是散文,不能像配置片段那样横向滚动 —— 换行才能一眼读完,横向滚会把人带回片段那个工作流。 */
+.guide-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>
