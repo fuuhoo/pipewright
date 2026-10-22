@@ -34,6 +34,25 @@ func endpointFrom(ctx context.Context) (Endpoint, error) {
 	return e, nil
 }
 
+// allowedToolsKeyT 同上,是私有的 context key 类型。
+type allowedToolsKeyT struct{}
+
+// allowedToolsKey 挂的是「这次请求的端点允许暴露哪些工具」(令牌明文对应的 allowed_tools)。
+//
+// 由 Handler 在 Bearer 校验通过后写入,SDK 的 getServer 回调读它来决定注册哪几个工具。
+// 取不到时第二个返回值为 false —— 调用方必须据此拒绝建 server,不能当成「不限」:
+// 「不知道范围」和「范围是全部」是两件事,后者要由令牌自己说出来。
+var allowedToolsKey allowedToolsKeyT
+
+func withAllowedTools(ctx context.Context, allowed []string) context.Context {
+	return context.WithValue(ctx, allowedToolsKey, allowed)
+}
+
+func allowedToolsFrom(ctx context.Context) ([]string, bool) {
+	v, ok := ctx.Value(allowedToolsKey).([]string)
+	return v, ok
+}
+
 // readOnly / write 只是给客户端的提示位:只读工具可被自动放行,写工具需要人确认。
 func annotations(title string, readOnly bool) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
@@ -55,61 +74,71 @@ const (
 	maxLogCharsLimit   = 20000
 )
 
-// registerTools 把八个工具挂到 server 上。名称与 REST 端点的对应关系全在此处,
-// 一处可查;新增工具请同时补进 instructions 与文档。
-func registerTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "list_projects",
-		Description: `列出当前令牌可见的项目,按分组权限收敛(admin 看全部,普通用户只看得到自己被分组的)。返回 projects 数组,外加 page/pageSize/total(总数,用来判断要不要翻页)。每项的 id 就是其余工具要的 projectId。`,
-		Annotations: annotations("项目列表", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listProjectsInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		page, pageSize := clampPage(in.Page, in.PageSize)
-		res, err := e.Do(ctx, http.MethodGet, "/api/projects", url.Values{
-			"page":     {strconv.Itoa(page)},
-			"pageSize": {strconv.Itoa(pageSize)},
-		}, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		out := map[string]any{"projects": passthrough(res), "page": page, "pageSize": pageSize}
-		copyHeader(res, out, "X-Total-Count", "total")
-		return nil, out, nil
-	})
+// registerTools 按这把令牌的端点白名单把工具挂到 server 上(allowed 为空 = 全部)。
+//
+// 判的是「名单里勾了才注册」,不是「注册完再把其余的摘掉」:后者一旦有人新加工具
+// 却忘了同步 catalog.go 的清单,那个新工具就永远不在摘除名单里、对收窄过的端点也照样可见。
+// 名称与 REST 端点的对应关系全在此处,一处可查;新增工具要同时补进 instructions、
+// 文档与清单(漂移由 TestMCP_CatalogMatchesServer 拦下)。
+func registerTools(s *mcp.Server, allowed []string) {
+	f := newToolFilter(allowed)
+	if f.keepTool("list_projects") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "list_projects",
+			Description: `列出当前令牌可见的项目,按分组权限收敛(admin 看全部,普通用户只看得到自己被分组的)。返回 projects 数组,外加 page/pageSize/total(总数,用来判断要不要翻页)。每项的 id 就是其余工具要的 projectId。`,
+			Annotations: annotations("项目列表", true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in listProjectsInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			page, pageSize := clampPage(in.Page, in.PageSize)
+			res, err := e.Do(ctx, http.MethodGet, "/api/projects", url.Values{
+				"page":     {strconv.Itoa(page)},
+				"pageSize": {strconv.Itoa(pageSize)},
+			}, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			out := map[string]any{"projects": passthrough(res), "page": page, "pageSize": pageSize}
+			copyHeader(res, out, "X-Total-Count", "total")
+			return nil, out, nil
+		})
+	}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name: "create_project",
-		Description: `新建项目。只有 name 是必填:不绑仓库也能建(纯发布型项目)。
+	if f.keepTool("create_project") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name: "create_project",
+			Description: `新建项目。只有 name 是必填:不绑仓库也能建(纯发布型项目)。
 要绑 git 仓库就必须同时给 repoUrl 和 credentialId(保险库里的仓库凭据 id),缺一会被拒;这套工具面不提供凭据管理,没有可用凭据时请先在网页端「凭据」页创建,或只建不绑仓库的项目。
 groupId 可选,把项目归进某个资源分组;defaultBranch 可选。返回新建项目 DTO,记下它的 id。`,
-		Annotations: annotations("新建项目", false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createProjectInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		if strings.TrimSpace(in.Name) == "" {
-			return nil, nil, errors.New("项目名不能为空")
-		}
-		res, err := e.Do(ctx, http.MethodPost, "/api/projects", nil, map[string]string{
-			"name":          in.Name,
-			"repoUrl":       in.RepoURL,
-			"credentialId":  in.CredentialID,
-			"defaultBranch": in.DefaultBranch,
-			"groupId":       in.GroupID,
+			Annotations: annotations("新建项目", false),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in createProjectInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			if strings.TrimSpace(in.Name) == "" {
+				return nil, nil, errors.New("项目名不能为空")
+			}
+			res, err := e.Do(ctx, http.MethodPost, "/api/projects", nil, map[string]string{
+				"name":          in.Name,
+				"repoUrl":       in.RepoURL,
+				"credentialId":  in.CredentialID,
+				"defaultBranch": in.DefaultBranch,
+				"groupId":       in.GroupID,
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, passthrough(res), nil
 		})
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, passthrough(res), nil
-	})
+	}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name: "set_pipeline",
-		Description: `用一份 .pipewright.yml 覆盖并保存项目的流水线(整条替换,不是追加)。
+	if f.keepTool("set_pipeline") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name: "set_pipeline",
+			Description: `用一份 .pipewright.yml 覆盖并保存项目的流水线(整条替换,不是追加)。
 
 形状:顶层 version: 1 + stages[]。阶段字段 id/name/kind(source|build|deploy|notify|custom)/needs(引用的是**阶段 id**)/gate/when.branches。阶段下 jobs[],任务字段 name/type/config,脚本类任务还可以用嵌套 script 块写 commands/env/workdir。
 
@@ -140,131 +169,142 @@ groupId 可选,把项目归进某个资源分组;defaultBranch 可选。返回�
   - type: build 必须给 artifactType;deploy/发布类节点必须把它需要的落点字段配全(serverId/集群/命名空间等)。
   - 未绑定仓库的项目不要写 git_source 任务。
 保存成功后返回规范化后的流水线(stages + 规范化 YAML),可据此确认平台实际收到了什么。`,
-		Annotations: annotations("设置流水线", false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPipelineInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		if strings.TrimSpace(in.PipelineYAML) == "" {
-			return nil, nil, errors.New("流水线 YAML 不能为空")
-		}
-		// save:true:这套工具面向「配好就能跑」,预览模式(不落库)对 AI 没有意义。
-		res, err := e.Do(ctx, http.MethodPost, "/api/projects/"+url.PathEscape(in.ProjectID)+"/pipeline/import", nil,
-			map[string]any{"yaml": in.PipelineYAML, "save": true})
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, passthrough(res), nil
-	})
+			Annotations: annotations("设置流水线", false),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPipelineInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			if strings.TrimSpace(in.PipelineYAML) == "" {
+				return nil, nil, errors.New("流水线 YAML 不能为空")
+			}
+			// save:true:这套工具面向「配好就能跑」,预览模式(不落库)对 AI 没有意义。
+			res, err := e.Do(ctx, http.MethodPost, "/api/projects/"+url.PathEscape(in.ProjectID)+"/pipeline/import", nil,
+				map[string]any{"yaml": in.PipelineYAML, "save": true})
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, passthrough(res), nil
+		})
+	}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "list_build_envs",
-		Description: `列出平台预置的、已启用的构建环境(即可用在流水线里的容器镜像)。可按 language 过滤(如 go、java、node)。每项的 id 就是流水线 config 里的 buildEnvId;imageCheckStatus 不是 ok 时说明该镜像尚未就绪,构建会失败。`,
-		Annotations: annotations("构建环境", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listBuildEnvsInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		var query url.Values
-		if lang := strings.TrimSpace(in.Language); lang != "" {
-			query = url.Values{"language": {lang}}
-		}
-		res, err := e.Do(ctx, http.MethodGet, "/api/build-envs", query, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, passthrough(res), nil
-	})
+	if f.keepTool("list_build_envs") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "list_build_envs",
+			Description: `列出平台预置的、已启用的构建环境(即可用在流水线里的容器镜像)。可按 language 过滤(如 go、java、node)。每项的 id 就是流水线 config 里的 buildEnvId;imageCheckStatus 不是 ok 时说明该镜像尚未就绪,构建会失败。`,
+			Annotations: annotations("构建环境", true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in listBuildEnvsInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			var query url.Values
+			if lang := strings.TrimSpace(in.Language); lang != "" {
+				query = url.Values{"language": {lang}}
+			}
+			res, err := e.Do(ctx, http.MethodGet, "/api/build-envs", query, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, passthrough(res), nil
+		})
+	}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name: "trigger_run",
-		Description: `触发一次构建运行,立即返回运行详情(status 通常为 queued),不等构建结束 —— 之后用 get_run 轮询状态、get_run_logs 看日志。
+	if f.keepTool("trigger_run") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name: "trigger_run",
+			Description: `触发一次构建运行,立即返回运行详情(status 通常为 queued),不等构建结束 —— 之后用 get_run 轮询状态、get_run_logs 看日志。
 branch 留空则用项目默认分支。params 是运行参数键值表,项目定义了参数类型时(必填/枚举/类型)会在此刻校验,非法直接报错、不会创建运行。
 重要:项目若从未配置过流水线,平台会按默认空流水线跑,阶段里没有任务,结果是「成功但什么都没做」的假绿灯 —— 先调 set_pipeline 再触发。`,
-		Annotations: annotations("触发运行", false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triggerRunInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		body := map[string]any{"branch": in.Branch, "commit": in.Commit}
-		if len(in.Params) > 0 {
-			body["params"] = in.Params
-		}
-		res, err := e.Do(ctx, http.MethodPost, "/api/projects/"+url.PathEscape(in.ProjectID)+"/runs", nil, body)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, passthrough(res), nil
-	})
-
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_run",
-		Description: `查一次运行的详情:status(queued/running/success/failed/canceled 等)、每个步骤的 name/stage/status/耗时、产物清单 artifacts 与部署落点 targets。判断「这次到底跑成功了什么」看这一条 + get_run_logs,不要只看 status。`,
-		Annotations: annotations("运行详情", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in runIDInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := e.Do(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(in.RunID), nil, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, passthrough(res), nil
-	})
-
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_run_logs",
-		Description: `读一次运行的日志,压成一整段纯文本,每行前缀标了所属步骤序号与流(如 [step3 stdout])。续读:把上次返回的 nextSeq 原样填进 sinceSeq。truncated=true 表示本次因字符预算丢了尾部行,nextSeq 已经退回最后保留的那行之后 —— 用同一个 sinceSeq 配更大的 maxChars 重取即可拿全。complete 说的是运行到没到终态,不是日志读没读完。`,
-		Annotations: annotations("运行日志", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getRunLogsInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		since := in.SinceSeq
-		if since < 0 {
-			since = 0
-		}
-		res, err := e.Do(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(in.RunID)+"/logs",
-			url.Values{"sinceSeq": {strconv.Itoa(since)}}, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		var payload runLogsPayload
-		if len(res.Body) > 0 {
-			if err := json.Unmarshal(res.Body, &payload); err != nil {
-				return nil, nil, fmt.Errorf("日志响应解析失败:%v", err)
+			Annotations: annotations("触发运行", false),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in triggerRunInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
 			}
-		}
-		budget := in.MaxChars
-		switch {
-		case budget <= 0:
-			budget = maxLogCharsDefault
-		case budget > maxLogCharsLimit:
-			budget = maxLogCharsLimit
-		}
-		return nil, foldLogs(payload, since, budget), nil
-	})
+			body := map[string]any{"branch": in.Branch, "commit": in.Commit}
+			if len(in.Params) > 0 {
+				body["params"] = in.Params
+			}
+			res, err := e.Do(ctx, http.MethodPost, "/api/projects/"+url.PathEscape(in.ProjectID)+"/runs", nil, body)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, passthrough(res), nil
+		})
+	}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "cancel_run",
-		Description: `取消一次正在排队或运行的构建。已经结束的运行会返回 409(run_not_cancelable),这不是错误,无需重试。取消本身会留审计记录。`,
-		Annotations: annotations("取消运行", false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in runIDInput) (*mcp.CallToolResult, any, error) {
-		e, err := endpointFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := e.Do(ctx, http.MethodPost, "/api/runs/"+url.PathEscape(in.RunID)+"/cancel", nil, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, passthrough(res), nil
-	})
+	if f.keepTool("get_run") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "get_run",
+			Description: `查一次运行的详情:status(queued/running/success/failed/canceled 等)、每个步骤的 name/stage/status/耗时、产物清单 artifacts 与部署落点 targets。判断「这次到底跑成功了什么」看这一条 + get_run_logs,不要只看 status。`,
+			Annotations: annotations("运行详情", true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in runIDInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			res, err := e.Do(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(in.RunID), nil, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, passthrough(res), nil
+		})
+	}
+
+	if f.keepTool("get_run_logs") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "get_run_logs",
+			Description: `读一次运行的日志,压成一整段纯文本,每行前缀标了所属步骤序号与流(如 [step3 stdout])。续读:把上次返回的 nextSeq 原样填进 sinceSeq。truncated=true 表示本次因字符预算丢了尾部行,nextSeq 已经退回最后保留的那行之后 —— 用同一个 sinceSeq 配更大的 maxChars 重取即可拿全。complete 说的是运行到没到终态,不是日志读没读完。`,
+			Annotations: annotations("运行日志", true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in getRunLogsInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			since := in.SinceSeq
+			if since < 0 {
+				since = 0
+			}
+			res, err := e.Do(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(in.RunID)+"/logs",
+				url.Values{"sinceSeq": {strconv.Itoa(since)}}, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			var payload runLogsPayload
+			if len(res.Body) > 0 {
+				if err := json.Unmarshal(res.Body, &payload); err != nil {
+					return nil, nil, fmt.Errorf("日志响应解析失败:%v", err)
+				}
+			}
+			budget := in.MaxChars
+			switch {
+			case budget <= 0:
+				budget = maxLogCharsDefault
+			case budget > maxLogCharsLimit:
+				budget = maxLogCharsLimit
+			}
+			return nil, foldLogs(payload, since, budget), nil
+		})
+	}
+
+	if f.keepTool("cancel_run") {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "cancel_run",
+			Description: `取消一次正在排队或运行的构建。已经结束的运行会返回 409(run_not_cancelable),这不是错误,无需重试。取消本身会留审计记录。`,
+			Annotations: annotations("取消运行", false),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in runIDInput) (*mcp.CallToolResult, any, error) {
+			e, err := endpointFrom(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			res, err := e.Do(ctx, http.MethodPost, "/api/runs/"+url.PathEscape(in.RunID)+"/cancel", nil, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, passthrough(res), nil
+		})
+	}
 }
 
 // ---- 入参 ----

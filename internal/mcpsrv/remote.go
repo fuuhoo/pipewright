@@ -33,7 +33,10 @@ func NewRemote(baseURL, token string) (*Service, error) {
 	// 免得两处超时互相遮盖(连接慢时被外层先到期,报出来的错就不是真原因)。
 	fixed := &httpEndpoint{base: base, token: plain, client: &http.Client{}}
 	return &Service{
-		server: buildServer(),
+		// 工具按「全量」注册:范围写在远端那把令牌的库里,这里既验不了令牌也读不到它的范围。
+		// 越界的调用到了对面会被逐次拦下(tools/call 报未知工具),所以这不是放行口子,
+		// 只是本地 tools/list 会多显示几个用不了的工具。
+		stdioServer: buildServer(nil),
 		// 令牌已经在 fixed 里,不随请求变;这两个入参只有进程内形态用得到。
 		endpoint: func(string, string) Endpoint { return fixed },
 		stdio:    fixed,
@@ -53,7 +56,7 @@ func (s *Service) RunStdio(ctx context.Context) error {
 	if s.stdio == nil {
 		return errors.New("stdio 形态只用于连远端平台;这个实例是进程内形态,请把 /mcp 挂到路由上")
 	}
-	return s.server.Run(s.withStdioEndpoint(ctx), &mcp.StdioTransport{})
+	return s.stdioServer.Run(s.withStdioEndpoint(ctx), &mcp.StdioTransport{})
 }
 
 // withStdioEndpoint 把「一份通道管整条会话」这件事收到一处:RunStdio 用它,

@@ -82,7 +82,7 @@ func TestNewRemoteCarriesConfiguredToken(t *testing.T) {
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	// 与 RunStdio 同一处注入:那条线没有 HTTP 请求,身份不跟着请求走,是启动时定好的一份配置。
-	serverSession, err := svc.server.Connect(svc.withStdioEndpoint(context.Background()), serverTransport, nil)
+	serverSession, err := svc.stdioServer.Connect(svc.withStdioEndpoint(context.Background()), serverTransport, nil)
 	if err != nil {
 		t.Fatalf("server connect: %v", err)
 	}

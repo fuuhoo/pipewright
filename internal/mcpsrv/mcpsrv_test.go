@@ -77,13 +77,17 @@ func (s *stubAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // fakeVerifier 只认 goodToken,其余一律 apitoken.ErrInvalid(与真实服务同口径)。
-type fakeVerifier struct{}
+// allowed 模拟这把令牌所属端点的工具白名单:留空即「不限」,与 apitoken 同口径。
+type fakeVerifier struct {
+	allowed []string
+}
 
-func (fakeVerifier) Verify(_ context.Context, plain string) (*apitoken.Principal, error) {
+func (v fakeVerifier) Verify(_ context.Context, plain string) (*apitoken.Principal, error) {
 	if plain != goodToken {
 		return nil, apitoken.ErrInvalid
 	}
-	return &apitoken.Principal{TokenID: "tok-1", UserID: "u-1", Username: "admin", Role: "admin"}, nil
+	return &apitoken.Principal{TokenID: "tok-1", UserID: "u-1", Username: "admin", Role: "admin",
+		AllowedTools: v.allowed}, nil
 }
 
 // errVerifier 模拟「校验器本身故障」(库连不上):同样只能判失败,不能放行。
@@ -331,6 +335,178 @@ func TestMCP_ToolsListed(t *testing.T) {
 	}
 }
 
+// scopedVerifier 按令牌明文给出不同范围,模拟「两把属于不同端点的令牌打同一个 /mcp」。
+// 这是 per-请求建 server 的反向守卫:一旦有人把 server 收成单例,第二个连上来的端点
+// 就会沿用第一个的工具面。
+type scopedVerifier struct {
+	byToken map[string][]string
+}
+
+func (v scopedVerifier) Verify(_ context.Context, plain string) (*apitoken.Principal, error) {
+	allowed, ok := v.byToken[plain]
+	if !ok {
+		return nil, apitoken.ErrInvalid
+	}
+	return &apitoken.Principal{TokenID: "tok-" + plain, UserID: "u-1", Username: "admin",
+		Role: "admin", AllowedTools: allowed}, nil
+}
+
+// dialInMemory 用内存管道把真客户端接到一份裸 server 上(绕开 HTTP 边界与鉴权),
+// 只用来问「这份 server 注册了哪些工具」。
+func dialInMemory(t *testing.T, server *mcp.Server) *mcp.ClientSession {
+	t.Helper()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { serverSession.Wait() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "catalog-client", Version: "v0"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+	return session
+}
+
+func listTools(t *testing.T, session *mcp.ClientSession) []*mcp.Tool {
+	t.Helper()
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	return res.Tools
+}
+
+func namesOf(tools []*mcp.Tool) []string {
+	out := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, tool.Name)
+	}
+	return out
+}
+
+func listedNames(t *testing.T, session *mcp.ClientSession) []string {
+	t.Helper()
+	return namesOf(listTools(t, session))
+}
+
+// TestMCP_CatalogMatchesServer 防 catalog.go 与 registerTools 两处漂移。清单是签发接口
+// 校验「勾的工具名确实存在」和设置页画勾选框的唯一依据:少一项,那个工具就没法被限;
+// 多一项,就能签出一把指向不存在工具的令牌。标题与只读位一起比,因为前端直接展示它们。
+func TestMCP_CatalogMatchesServer(t *testing.T) {
+	tools := listTools(t, dialInMemory(t, buildServer(nil)))
+	catalog := ToolCatalog()
+	if len(tools) != len(catalog) {
+		t.Fatalf("注册了 %d 个工具,catalog.go 写了 %d 个:%v", len(tools), len(catalog), namesOf(tools))
+	}
+	byName := map[string]*mcp.Tool{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	for _, info := range catalog {
+		tool, ok := byName[info.Name]
+		if !ok {
+			t.Fatalf("清单有 %s 但 server 没注册(registerTools 漏了?)", info.Name)
+		}
+		if tool.Annotations == nil {
+			t.Fatalf("%s 缺标注", info.Name)
+		}
+		if tool.Annotations.Title != info.Title {
+			t.Fatalf("%s 标题漂移:注册 %q,清单 %q", info.Name, tool.Annotations.Title, info.Title)
+		}
+		if tool.Annotations.ReadOnlyHint != info.ReadOnly {
+			t.Fatalf("%s 只读位漂移:注册 %v,清单 %v", info.Name, tool.Annotations.ReadOnlyHint, info.ReadOnly)
+		}
+	}
+}
+
+// TestMCP_ToolFilter 验白名单落在「注册」这一步:没勾的工具既不在 tools/list 里,
+// 也没有 handler 可被调到 —— 于是不需要在每个工具内部再判一次权限(多一处会忘记同步的分支)。
+func TestMCP_ToolFilter(t *testing.T) {
+	cases := []struct {
+		name    string
+		allowed []string
+		want    []string
+	}{
+		// 空 = 不限,这是 0078 之前那些存量令牌的形状,必须维持「八个全在」。
+		{name: "不限", allowed: nil, want: ToolNames()},
+		{name: "只给两个读工具", allowed: []string{"get_run", "get_run_logs"}, want: []string{"get_run", "get_run_logs"}},
+		{name: "只给一个写工具", allowed: []string{"trigger_run"}, want: []string{"trigger_run"}},
+		// 不认识的名字匹配不到任何工具,自然被忽略;拦住这种输入是签发接口的事。
+		{name: "混入未知名字", allowed: []string{"get_run", "no_such_tool"}, want: []string{"get_run"}},
+		{name: "去重后只剩一个", allowed: []string{"get_run", "get_run"}, want: []string{"get_run"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := listedNames(t, dialInMemory(t, buildServer(tc.allowed)))
+			if len(got) != len(tc.want) {
+				t.Fatalf("暴露了 %v,期望 %v", got, tc.want)
+			}
+			set := map[string]bool{}
+			for _, n := range tc.want {
+				set[n] = true
+			}
+			for _, n := range got {
+				if !set[n] {
+					t.Fatalf("多暴露了 %s(期望 %v)", n, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestMCP_EndpointScopeEnforced 走完整边界:一把只勾了 get_run 的令牌连上 /mcp 之后,
+// tools/list 只剩那一个、白名单外的调用命不中 handler,而且一笔内部 REST 都不许多发。
+// 最后一段是关键:同一个 handler 上两把不同范围的令牌必须各看各的工具面。
+func TestMCP_EndpointScopeEnforced(t *testing.T) {
+	t.Run("窄令牌看不见也调不到", func(t *testing.T) {
+		api, srv := newEnv(t, []stubRoute{
+			{method: http.MethodGet, path: "/api/runs/r1", body: `{"id":"r1","status":"running"}`},
+			{method: http.MethodGet, path: "/api/projects", body: `[]`},
+		}, fakeVerifier{allowed: []string{"get_run"}})
+		session := dial(t, srv.URL, goodToken)
+
+		if got := listedNames(t, session); len(got) != 1 || got[0] != "get_run" {
+			t.Fatalf("端点只该露 get_run,得 %v", got)
+		}
+		var detail map[string]any
+		call(t, session, "get_run", map[string]any{"runId": "r1"}, &detail)
+		if detail["status"] != "running" {
+			t.Fatalf("白名单内的工具该照常工作: %+v", detail)
+		}
+		if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+			Name: "list_projects", Arguments: map[string]any{}}); err == nil ||
+			!strings.Contains(err.Error(), "unknown tool") {
+			t.Fatalf("白名单外的调用应命不中 handler,得 %v", err)
+		}
+		if len(api.calls) != 1 || api.calls[0].path != "/api/runs/r1" {
+			t.Fatalf("越界调用不该打到内部 REST: %+v", api.calls)
+		}
+	})
+
+	t.Run("同一端点上两把令牌互不继承", func(t *testing.T) {
+		api, srv := newEnv(t, []stubRoute{{method: http.MethodGet, path: "/api/projects", body: `[]`}},
+			scopedVerifier{byToken: map[string][]string{
+				"pwt_narrow": {"get_run"},
+				"pwt_full":   nil,
+			}})
+		narrow := dial(t, srv.URL, "pwt_narrow")
+		if got := listedNames(t, narrow); len(got) != 1 || got[0] != "get_run" {
+			t.Fatalf("窄令牌看到 %v,期望只有 get_run", got)
+		}
+		// 反过来连一次:宽令牌必须仍然是八个,不能沿用上一个请求的裁剪结果。
+		full := dial(t, srv.URL, "pwt_full")
+		if got := listedNames(t, full); len(got) != len(ToolNames()) {
+			t.Fatalf("宽令牌看到 %v,期望 %v", got, ToolNames())
+		}
+		if len(api.calls) != 0 {
+			t.Fatalf("只是列出工具不该产生内部调用: %+v", api.calls)
+		}
+	})
+}
+
 // TestMCP_ProjectAndPipelineFlow 走「建项目 → 配流水线 → 触发 → 轮询 → 读日志 → 取消」全链,
 // 全部经真实的工具实现 + 假 REST,并逐笔核对内部调用带的就是调用方令牌。
 func TestMCP_ProjectAndPipelineFlow(t *testing.T) {
@@ -541,11 +717,12 @@ func TestMCP_BadArguments(t *testing.T) {
 // 就没有 withEndpoint,工具必须回一条错误,而不是静默成功 —— 后者等于放行一次
 // 没有任何身份的调用。
 func TestMCP_AssemblyFailure(t *testing.T) {
+	server := buildServer(nil)
 	api := &stubAPI{routes: []stubRoute{{method: http.MethodGet, path: "/api/runs/r1", body: `{"id":"r1"}`}}}
-	svc := New(fakeVerifier{}, api)
+	sink := &stubAPI{}
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	serverSession, err := svc.server.Connect(context.Background(), serverTransport, nil)
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
 	if err != nil {
 		t.Fatalf("server connect: %v", err)
 	}
@@ -562,8 +739,8 @@ func TestMCP_AssemblyFailure(t *testing.T) {
 	if text := toolErrorText(t, res); !strings.Contains(text, "装配") {
 		t.Fatalf("缺通道时应当报装配错误: %s", text)
 	}
-	if len(api.calls) != 0 {
-		t.Fatalf("没有身份却打了 REST: %+v", api.calls)
+	if len(api.calls) != 0 || len(sink.calls) != 0 {
+		t.Fatalf("没有身份却打了 REST: %+v / %+v", api.calls, sink.calls)
 	}
 }
 

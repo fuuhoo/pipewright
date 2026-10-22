@@ -36,15 +36,20 @@ type TokenVerifier interface {
 	Verify(ctx context.Context, plaintext string) (*apitoken.Principal, error)
 }
 
-// Service 是一装配好的 MCP 服务:一份工具注册 + 一个可挂载的 HTTP handler。
+// Service 是一装配好的 MCP 服务:一个可挂载的 HTTP handler,或一条 stdio 出门通道。
 type Service struct {
-	server   *mcp.Server
 	tokens   TokenVerifier
 	endpoint func(token, clientAddr string) Endpoint
 	// stdio 是 stdio 形态专用的出门通道:那份令牌来自启动参数,不属于任何一个请求,
 	// 所以只能在建服务时定下来。进程内形态这里是 nil —— 它的身份跟着请求走,
 	// 没有「一份配置管全程」可言,拿 stdio 跑它等于把调用方令牌焊死成空串。
 	stdio Endpoint
+	// stdioServer 是 stdio 形态那一份注册好工具的 server。
+	//
+	// 进程内形态没有这个字段:它的工具面是**按请求**长出来的(每条 MCP 请求先验令牌,
+	// 再照这把令牌的端点白名单注册工具)。stdio 桥这边验不了令牌 —— 令牌是用户填进来的
+	// 配置,判范围的权利在它连的那端,所以这里只能先按「全量」注册,越界的调用由远端拒。
+	stdioServer *mcp.Server
 }
 
 // instructions 写给 AI:先讲清「典型链路」,再点出两个最容易踩的坑(空流水线假绿灯、
@@ -77,15 +82,21 @@ func New(tokens TokenVerifier, router http.Handler) *Service {
 	endpoint := func(token, clientAddr string) Endpoint {
 		return &httpEndpoint{base: loopbackBase, token: token, client: client, clientAddr: clientAddr}
 	}
-	return &Service{server: buildServer(), tokens: tokens, endpoint: endpoint}
+	return &Service{tokens: tokens, endpoint: endpoint}
 }
 
-// buildServer 造一份「工具已注册好」的 SDK server:两种形态(进程内 / 连远端)共用同一份
-// 工具注册与 instructions,差别只在往下的 endpoint 怎么造。
-func buildServer() *mcp.Server {
+// buildServer 造一份「工具已按 allowed 注册好」的 SDK server。
+//
+// 每条 /mcp 请求都新建一个:端点白名单是「这把令牌」的属性,而 Stateless 模式下 SDK
+// 本来就是每请求建一次会话(见 NewStreamableHTTPHandler 的 getServer),注册 8 个工具的
+// 开销与一次进程内回环相比可以忽略。反过来说,把 server 做成单例就等于把第一把令牌
+// 的范围当成所有人的范围 —— 那正是这套收窄要防的事。
+//
+// allowed 为空 = 全部注册(与 apitoken 里「'[]' 表示不限」同一口径)。
+func buildServer(allowed []string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: ServerName, Version: version.Version},
 		&mcp.ServerOptions{Instructions: instructions})
-	registerTools(server)
+	registerTools(server, allowed)
 	return server
 }
 
@@ -96,11 +107,22 @@ func buildServer() *mcp.Server {
 // 页面借她的会话冒充令牌持有者)。校验通过才把「这把令牌专属的 REST 通道」写进 context,
 // SDK 会把请求 context 传给工具处理函数,于是每次工具调用天然以调用方身份执行。
 //
+// 工具面同样按这把令牌收:验令牌时拿到它的 allowed_tools,存进 context,SDK 的
+// getServer 再据此注册 —— 白名单外的工具既不在 tools/list 里出现,也就无从被调用。
+//
 // 只有进程内形态该挂它:NewRemote 造出来的 Service 没有 TokenVerifier(令牌是配置进来的,
 // 不是在这里验的),挂上去只会得到一个对任何请求都回 401 的端点。
 func (s *Service) Handler() http.Handler {
 	inner := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return s.server },
+		func(r *http.Request) *mcp.Server {
+			allowed, ok := allowedToolsFrom(r.Context())
+			if !ok {
+				// 没走过下面的校验就没有「这把令牌允许什么」这条信息。SDK 对 nil 回 400,
+				// 比默认注册全部工具诚实:读不到范围不等于范围是「不限」。
+				return nil
+			}
+			return buildServer(allowed)
+		},
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
 	)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,13 +135,14 @@ func (s *Service) Handler() http.Handler {
 			denyMCP(w, "unauthorized", "API 令牌未启用")
 			return
 		}
-		if _, err := s.tokens.Verify(r.Context(), plain); err != nil {
+		p, err := s.tokens.Verify(r.Context(), plain)
+		if err != nil {
 			// 与 requireAuth 一样:无效令牌换不到任何关于原因的信息(不存在/已撤销/归属人被
 			// 禁用都被抹平成同一个错误),这里也不区分。
 			denyMCP(w, "invalid_api_token", "API 令牌无效或已撤销")
 			return
 		}
-		ctx := withEndpoint(r.Context(), s.endpoint(plain, r.RemoteAddr))
+		ctx := withAllowedTools(withEndpoint(r.Context(), s.endpoint(plain, r.RemoteAddr)), p.AllowedTools)
 		inner.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
