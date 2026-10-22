@@ -30,7 +30,15 @@ func accessActorFromRequest(r *http.Request) (*access.Actor, bool) {
 	if !ok || sess == nil || sess.UserID == "" {
 		return nil, false
 	}
-	return &access.Actor{UserID: sess.UserID, Username: sess.Username, Role: sess.Role}, true
+	return &access.Actor{UserID: sess.UserID, Username: sess.Username, Role: sess.Role,
+		GroupScope: tokenGroupScopeFrom(r)}, true
+}
+
+// tokenGroupScopeFrom 取这把 API 令牌端点的分组范围。
+// 浏览器会话(以及不限组的令牌)返回 nil = 不限 —— 范围是令牌的属性,不是人的属性。
+func tokenGroupScopeFrom(r *http.Request) []string {
+	ids, _ := r.Context().Value(contextKeyTokenGroups).([]string)
+	return ids
 }
 
 // guardTarget 是从 URL 认出来的被保护资源。

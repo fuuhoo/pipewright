@@ -70,6 +70,10 @@ const (
 	// contextKeyAPIToken 存本次请求所用 API 令牌的行 id(string 类型)。
 	// 只在 requireAuth 走 Bearer 分支时注入:CSRF 豁免与「需要浏览器会话」的门都看它。
 	contextKeyAPIToken contextKey = 2
+	// contextKeyTokenGroups 存这把 API 令牌端点的分组范围([]string)。
+	// 只在 requireAuth 的 Bearer 分支且范围非空时注入;access 判定据此再收一刀
+	// (见 access_guard.go 的 accessActorFromRequest)。
+	contextKeyTokenGroups contextKey = 3
 )
 
 // Option 配置 New 构建的路由(如注入凭据保险库)。

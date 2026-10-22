@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,19 @@ func privateGroup() *Group {
 }
 func publicGroup() *Group {
 	return &Group{ID: "g-pub", Visibility: VisibilityPublic, OwnerID: "g-owner", MemberIDs: []string{"g-member"}}
+}
+
+// scopedAdmin / scopedUser 造带端点分组范围的 actor(即「这把令牌限了组」)。
+// 不传分组时 GroupScope 为 nil,与「令牌不限组」同义。
+func scopedAdmin(groups ...string) *Actor {
+	a := admin()
+	a.GroupScope = groups
+	return a
+}
+func scopedUser(id string, groups ...string) *Actor {
+	a := user(id)
+	a.GroupScope = groups
+	return a
 }
 
 // TestDecide_Matrix 穷举三态(未归组 / public / private)× 身份 × 动作。
@@ -47,6 +61,15 @@ func TestDecide_Matrix(t *testing.T) {
 		{"private/组长/管理", user("g-owner"), privateGroup(), ActManage, nil},
 		{"private/管理员/管理", admin(), privateGroup(), ActManage, nil},
 
+		// 端点分组范围:只能收窄,归组判定与身份判定用同一把尺(见 Decide 首刀)。
+		{"限组/范围内成员/操作", scopedUser("g-member", "g-priv"), privateGroup(), ActOperate, nil},
+		{"限组/范围内管理员/管理", scopedAdmin("g-priv"), privateGroup(), ActManage, nil},
+		{"限组/范围外管理员/看", scopedAdmin("g-x"), publicGroup(), ActView, ErrForbidden},
+		{"限组/范围外组长/管理", scopedUser("g-owner", "g-x"), privateGroup(), ActManage, ErrForbidden},
+		// 限了组就碰不到未归组:范围存的是真组 ID,空串(Ungrouped)永远不在其中。
+		{"限组/未归组资源/看", scopedUser("alice", "g-priv"), nil, ActView, ErrForbidden},
+		{"空范围/等同不限", &Actor{UserID: "alice", Role: "user", GroupScope: []string{}}, nil, ActOperate, nil},
+
 		{"匿名/未归组/看", nil, nil, ActView, ErrUnauthenticated},
 		{"空身份/未归组/看", &Actor{Role: "user"}, nil, ActView, ErrUnauthenticated},
 	}
@@ -72,6 +95,34 @@ func TestIsAdminNilActor(t *testing.T) {
 	var a *Actor
 	if a.IsAdmin() {
 		t.Fatal("nil actor 不得视为 admin")
+	}
+}
+
+// TestActorInScope 钉住范围判定的边界:nil / 空 = 不限,其余按 ID 精确比对。
+func TestActorInScope(t *testing.T) {
+	var nilActor *Actor
+	if !nilActor.InScope("g-any") {
+		t.Fatal("nil actor 应视为不受端点范围约束(缺身份由 Decide 另一刀拦下)")
+	}
+	if !(&Actor{UserID: "u"}).InScope(Ungrouped) {
+		t.Fatal("无范围 = 不限,未归组也应在范围内")
+	}
+	a := scopedUser("u", "g-a", "g-b")
+	if !a.InScope("g-b") {
+		t.Fatal("范围内的组应放行")
+	}
+	if a.InScope("g-c") {
+		t.Fatal("范围外的组应拦下")
+	}
+	// 空串不在任何真实范围里(apitoken 存前剔除空项),所以限组 = 看不见未归组。
+	if a.InScope(Ungrouped) {
+		t.Fatal("限了组的令牌不该覆盖未归组")
+	}
+	if got := a.errOutOfScope("g-c"); !errors.Is(got, ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", got)
+	}
+	if got := a.errOutOfScope(Ungrouped); !strings.Contains(got.Error(), "未归组") {
+		t.Fatalf("未归组的措辞应说明落点,得到:%v", got)
 	}
 }
 
@@ -160,6 +211,81 @@ func TestServiceCan(t *testing.T) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
 		}
 	})
+	t.Run("仓储未装配+带端点范围也403", func(t *testing.T) {
+		// 上面那条 admin 兜底走的是「归属查不到就算了」;可范围判定必须拿到归属,
+		// 查不到不能当成落在范围内,否则限组令牌反而比不限组的更宽。
+		if err := NewService(nil).Can(ctx, scopedAdmin("g-priv"), KindProject, "p1", ActView); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("err = %v, want ErrForbidden", err)
+		}
+	})
+}
+
+// TestServiceCan_EndpointScope 验端点分组范围在「读库解析归属」这条路上的表现:
+// 它比本人原有的权限更严,且拦下的措辞要指向令牌而不是名册。
+func TestServiceCan_EndpointScope(t *testing.T) {
+	useSeededPresets(t)
+	repo := &fakeRepo{
+		groups: map[string]*Group{
+			"g-priv": privateGroup(),
+			"g-pub":  publicGroup(),
+		},
+		byRes: map[string]string{
+			"project/p1": "g-priv", // 私有:owner/member
+			"project/p2": "g-pub",  // 公开:全员本来可看
+			"project/p3": Ungrouped,
+			"run/r1":     "g-pub",
+		},
+	}
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	cases := []struct {
+		name, kind, id string
+		actor          *Actor
+		act            Act
+		wantErr        error
+	}{
+		{"范围内/公开组路人可看", "project", "p2", scopedUser("carol", "g-pub"), ActView, nil},
+		{"范围外/公开组路人被收", "project", "p2", scopedUser("carol", "g-priv"), ActView, ErrForbidden},
+		{"范围内/私有组成员可操作", "project", "p1", scopedUser("g-member", "g-priv"), ActOperate, nil},
+		{"范围内/管理员可管", "project", "p1", scopedAdmin("g-priv"), ActManage, nil},
+		// 硬收窄:归属人是管理员也一样被拦(与用户定的口径对齐)。
+		{"范围外/管理员也被收", "project", "p2", scopedAdmin("g-priv"), ActView, ErrForbidden},
+		{"范围外/组长也被收", "project", "p1", scopedUser("g-owner", "g-pub"), ActManage, ErrForbidden},
+		{"限组后/未归组资源不可见", "project", "p3", scopedUser("carol", "g-pub"), ActView, ErrForbidden},
+		{"运行同样受范围约束", "run", "r1", scopedUser("carol", "g-priv"), ActView, ErrForbidden},
+		{"运行在范围内放行", "run", "r1", scopedUser("carol", "g-pub"), ActView, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.Can(ctx, tc.actor, Kind(tc.kind), tc.id, tc.act)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("放行失败:%v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	t.Run("范围拦下的措辞指向令牌", func(t *testing.T) {
+		// carol 对公开组本有权限,被拦纯粹因为范围;此时报「你不在名册里」会把人引偏。
+		err := svc.Can(ctx, scopedUser("carol", "g-priv"), KindProject, "p2", ActView)
+		if !strings.Contains(err.Error(), "端点范围") {
+			t.Fatalf("应当提示是令牌范围问题,得到:%v", err)
+		}
+		if !strings.Contains(err.Error(), "g-pub") {
+			t.Fatalf("消息应点出被拦的分组,得到:%v", err)
+		}
+	})
+	t.Run("不限组的行为与从前一致", func(t *testing.T) {
+		if err := svc.Can(ctx, user("carol"), KindProject, "p3", ActOperate); err != nil {
+			t.Fatalf("未归组应照旧放行:%v", err)
+		}
+	})
 }
 
 func TestForRun(t *testing.T) {
@@ -205,6 +331,57 @@ func TestVisibleGroups(t *testing.T) {
 	}
 }
 
+// TestVisibleGroups_EndpointScope 盯住列表侧的硬收窄:它必须与 Decide 给同一个答案,
+// 否则会漂成「列表里看得见、点进去 403」。
+func TestVisibleGroups_EndpointScope(t *testing.T) {
+	ctx := context.Background()
+
+	// 管理员 + 范围:不再不受限,且不必查库(范围就是答案)。
+	repo := &fakeRepo{visible: []string{"g-pub", "g-mine"}}
+	f, err := NewService(repo).VisibleGroups(ctx, scopedAdmin("g-a", "g-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Unrestricted {
+		t.Fatal("带范围的令牌不能不受限")
+	}
+	if !reflect.DeepEqual(f.GroupIDs, []string{"g-a", "g-b"}) {
+		t.Fatalf("GroupIDs = %v", f.GroupIDs)
+	}
+	if len(repo.visCalls) != 0 {
+		t.Fatalf("admin 不该查库,却查了 %v", repo.visCalls)
+	}
+
+	// 普通用户 + 范围:取「范围 ∩ 本人可见集」,未归组那一项被自然排除,顺序按范围。
+	f, err = NewService(repo).VisibleGroups(ctx, scopedUser("alice", "g-priv", "g-mine", "g-mine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(f.GroupIDs, []string{"g-mine"}) {
+		t.Fatalf("GroupIDs = %v, want [g-mine]", f.GroupIDs)
+	}
+
+	// 交集为空:必须是 DenyAll,不能掉进 Clause 的「只看未归组」兜底 —— 那等于放行未归组。
+	f, err = NewService(repo).VisibleGroups(ctx, scopedUser("alice", "g-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.DenyAll || len(f.GroupIDs) != 0 {
+		t.Fatalf("空交集应为 DenyAll,得到 %+v", f)
+	}
+	if sql, args := f.Clause("p.group_id"); sql != "1 = 0" || len(args) != 0 {
+		t.Fatalf("DenyAll 的 SQL = %q %v, want 1 = 0", sql, args)
+	}
+
+	// 仓储未装配:带范围又非管理员,无边界可算 → fail closed。
+	if _, err := NewService(nil).VisibleGroups(ctx, scopedUser("alice", "g-a")); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+	if _, err := NewService(nil).VisibleGroups(ctx, scopedAdmin("g-a")); err != nil {
+		t.Fatalf("admin 带范围不该查库:%v", err)
+	}
+}
+
 // TestListFilterClause 盯住拼接口径:占位符数量与参数一致,不受限时不出条件。
 func TestListFilterClause(t *testing.T) {
 	cases := []struct {
@@ -223,6 +400,8 @@ func TestListFilterClause(t *testing.T) {
 		},
 		// 零值 = 白名单为空,绝不能退化成「无条件放行」。
 		{"零值仍要条件", ListFilter{}, "p.group_id = ?", []any{Ungrouped}},
+		// 端点范围与本人可见集交集为空:必须恒假,空串在调用方眼里是「不加条件」= 全放行。
+		{"范围空交集全拒", ListFilter{DenyAll: true}, "1 = 0", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

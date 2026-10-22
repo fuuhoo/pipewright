@@ -56,6 +56,11 @@ func requireAuth(svc auth.Authenticator, tokens bearerVerifier, next http.Handle
 			sess := &auth.Session{UserID: p.UserID, Role: p.Role, Username: p.Username}
 			ctx := context.WithValue(r.Context(), contextKeySession, sess)
 			ctx = context.WithValue(ctx, contextKeyAPIToken, p.TokenID)
+			// 端点的分组范围跟着这把令牌走,不是跟着归属人走:同一个人用限过组的令牌
+			// 进来,能碰的资源就只剩那几个(空范围不必注入,「没有值」就是不限)。
+			if len(p.GroupScope) > 0 {
+				ctx = context.WithValue(ctx, contextKeyTokenGroups, p.GroupScope)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
