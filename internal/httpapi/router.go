@@ -684,9 +684,12 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 
 			// API 令牌(Bearer):给 MCP 客户端与脚本发凭据。明文只在创建响应里出现一次,
 			// 之后任何端点都读不回来 —— 所以这里没有「查看」,只有列元数据与撤销。
+			// 签发时可带两把尺:allowedTools(工具面)与 groupScope(数据面),口径见 apitokens.go。
 			adminR.Get("/api-tokens", makeListAPITokensHandler(o.apiTokens))
-			adminR.Post("/api-tokens", makeCreateAPITokenHandler(o.apiTokens, aud, authn))
+			adminR.Post("/api-tokens", makeCreateAPITokenHandler(o.apiTokens, o.groupSvc, aud, authn))
 			adminR.Delete("/api-tokens/{id}", makeRevokeAPITokenHandler(o.apiTokens, aud, authn))
+			// 工具名册:设置页勾工具时读它,后端校验工具名时读同一份。
+			adminR.Get("/mcp-tools", makeListMCPToolsHandler())
 
 			// 角色(P4 可配置角色):内置只剩 admin 一档当模板只读;四档预置(0063 起在库里)
 			// 与自建角色同样可增删改。

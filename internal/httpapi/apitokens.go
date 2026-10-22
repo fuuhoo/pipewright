@@ -1,14 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fuuhoo/pipewright/internal/apitoken"
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/group"
+	"github.com/fuuhoo/pipewright/internal/mcpsrv"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -25,17 +29,31 @@ type apiTokenDTO struct {
 	CreatedAt string `json:"createdAt"`
 	// LastUsedAt 为空串表示这把令牌从没被用过(发出去没动过,通常是该删的那种)。
 	LastUsedAt string `json:"lastUsedAt"`
+	// AllowedTools / GroupScope 回显这把端点的收窄范围,供设置页列表标注与再编辑时回填。
+	// 两者都保证是数组(不限时输出 []),否则 null 会让前端为「不限」和「读不到」写两套判断。
+	AllowedTools []string `json:"allowedTools"`
+	GroupScope   []string `json:"groupScope"`
+}
+
+// scopeForDTO 把领域侧的 nil(不限)归一成空切片,只为 JSON 输出形态服务。
+func scopeForDTO(items []string) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+	return items
 }
 
 func toAPITokenDTO(t *apitoken.Token) apiTokenDTO {
 	return apiTokenDTO{
-		ID:         t.ID,
-		Name:       t.Name,
-		UserID:     t.UserID,
-		OwnerName:  t.OwnerName,
-		CreatedBy:  t.CreatedBy,
-		CreatedAt:  t.CreatedAt.UTC().Format(time.RFC3339),
-		LastUsedAt: formatMaybeTime(t.LastUsedAt),
+		ID:           t.ID,
+		Name:         t.Name,
+		UserID:       t.UserID,
+		OwnerName:    t.OwnerName,
+		CreatedBy:    t.CreatedBy,
+		CreatedAt:    t.CreatedAt.UTC().Format(time.RFC3339),
+		LastUsedAt:   formatMaybeTime(t.LastUsedAt),
+		AllowedTools: scopeForDTO(t.AllowedTools),
+		GroupScope:   scopeForDTO(t.GroupScope),
 	}
 }
 
@@ -89,24 +107,101 @@ func makeListAPITokensHandler(svc *apitoken.Service) http.HandlerFunc {
 	}
 }
 
+// unknownTools 返回勾选名单里不存在于名册的工具名(清单见 mcpsrv.ToolNames)。
+//
+// 为什么校验放在 HTTP 层而不是 apitoken:apitoken 是 mcpsrv 的被依赖方,让它认识工具名
+// 就成了反向依赖。名单为空(= 不限)由调用方在进来之前已排除显式空列表。
+func unknownTools(names []string) []string {
+	set := make(map[string]bool)
+	for _, name := range mcpsrv.ToolNames() {
+		set[name] = true
+	}
+	var bad []string
+	for _, name := range names {
+		if !set[strings.TrimSpace(name)] {
+			bad = append(bad, name)
+		}
+	}
+	return bad
+}
+
+// unknownGroups 返回勾选名单里并不存在的分组 ID。引用一个已删的组不会越权(判定按归属
+// 解析失败处理),但它会让这把令牌永远看不见该组,签发当场就该说清楚。
+//
+// 第二个返回值只在「读库真的失败」时非空 —— 它不能和「名字不存在」混成同一个错误,
+// 否则一次 DB 抖动会被回成 400 入参错误,把运维引去改请求体而不是查库。
+func unknownGroups(ctx context.Context, gs *group.Service, ids []string) ([]string, error) {
+	all, err := gs.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(all))
+	for i := range all {
+		set[all[i].ID] = true
+	}
+	var bad []string
+	for _, id := range ids {
+		if !set[strings.TrimSpace(id)] {
+			bad = append(bad, id)
+		}
+	}
+	return bad, nil
+}
+
 // makeCreateAPITokenHandler 返回 POST /api/admin/api-tokens handler。
 //
-// 请求体 {name, userId}:userId 留空 = 签给当前登录者自己。这个默认值不是省事 ——
-// 「管理员替某人签」与「管理员给自己签」在事后追查里是两条完全不同的线,而机器凭据真正
-// 该问的是「谁用它跑过构建」,所以归属人必须是一个具体账号,不能是「管理员」这个抽象。
-func makeCreateAPITokenHandler(svc *apitoken.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+// 请求体 {name, userId, allowedTools, groupScope}:userId 留空 = 签给当前登录者自己。
+// 这个默认值不是省事 ——「管理员替某人签」与「管理员给自己签」在事后追查里是两条完全不同的线,
+// 而机器凭据真正该问的是「谁用它跑过构建」,所以归属人必须是一个具体账号,不能是「管理员」这个抽象。
+//
+// allowedTools / groupScope 是这把端点的两把尺(工具面与数据面),口径见 apitoken/scopes.go:
+// 缺省与空数组都归一成「不限」,但**显式写成 [] 当场拒签** —— 存进库里读回来就是「不限」,
+// 一把想「什么都不给」的令牌反而会拿到全量,这是全站最不该出错的方向。
+func makeCreateAPITokenHandler(svc *apitoken.Service, gs *group.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAPITokenSvc(w, svc) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Name   string `json:"name"`
-			UserID string `json:"userId"`
+			Name         string   `json:"name"`
+			UserID       string   `json:"userId"`
+			AllowedTools []string `json:"allowedTools"`
+			GroupScope   []string `json:"groupScope"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
+		}
+		// 缺省 → nil;显式 [] → 非 nil 且 len 0。这两态必须分开判。
+		if req.AllowedTools != nil && len(req.AllowedTools) == 0 {
+			writeError(w, http.StatusBadRequest, "invalid_token_request", "工具范围要么不限制,至少给一个;一个都不给等于签发一把不能用的凭据")
+			return
+		}
+		if req.GroupScope != nil && len(req.GroupScope) == 0 {
+			writeError(w, http.StatusBadRequest, "invalid_token_request", "分组范围要么不限制,至少给一个;一个都不给等于签发一把不能用的凭据")
+			return
+		}
+		if len(req.AllowedTools) > 0 {
+			if bad := unknownTools(req.AllowedTools); len(bad) > 0 {
+				writeError(w, http.StatusBadRequest, "invalid_token_request", "不存在的 MCP 工具:"+strings.Join(bad, "、"))
+				return
+			}
+		}
+		if len(req.GroupScope) > 0 {
+			if gs == nil {
+				writeError(w, http.StatusServiceUnavailable, "internal", "分组服务未初始化,无法校验分组范围")
+				return
+			}
+			bad, err := unknownGroups(r.Context(), gs, req.GroupScope)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "校验分组范围时读库失败")
+				return
+			}
+			if len(bad) > 0 {
+				writeError(w, http.StatusBadRequest, "invalid_token_request", "不存在的分组:"+strings.Join(bad, "、"))
+				return
+			}
 		}
 		sess, ok := sessionFromContext(r.Context())
 		if !ok || sess == nil {
@@ -118,9 +213,11 @@ func makeCreateAPITokenHandler(svc *apitoken.Service, aud audit.Recorder, ac aut
 			userID = sess.UserID
 		}
 		created, err := svc.Create(r.Context(), apitoken.CreateInput{
-			Name:      req.Name,
-			UserID:    userID,
-			CreatedBy: sess.Username,
+			Name:         req.Name,
+			UserID:       userID,
+			CreatedBy:    sess.Username,
+			AllowedTools: req.AllowedTools,
+			GroupScope:   req.GroupScope,
 		})
 		if err != nil {
 			writeAPITokenError(w, err)
@@ -130,14 +227,35 @@ func makeCreateAPITokenHandler(svc *apitoken.Service, aud audit.Recorder, ac aut
 			Action:     audit.ActionAPITokenCreate,
 			TargetType: audit.TargetAPIToken,
 			TargetID:   created.Token.ID,
-			// detail 只留「哪把、给谁」;明文只进响应体一次,绝不进审计。
-			Detail: map[string]any{"name": created.Token.Name, "userId": created.Token.UserID},
-			IP:     clientIP(r),
+			// detail 只留「哪把、给谁、收窄到哪」;明文只进响应体一次,绝不进审计。
+			Detail: map[string]any{
+				"name":         created.Token.Name,
+				"userId":       created.Token.UserID,
+				"allowedTools": created.Token.AllowedTools,
+				"groupScope":   created.Token.GroupScope,
+			},
+			IP: clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"item":      toAPITokenDTO(&created.Token),
 			"plaintext": created.Plaintext,
 		})
+	}
+}
+
+// makeListMCPToolsHandler 返回 GET /api/admin/mcp-tools handler → { items: [...] }。
+//
+// 它只吐名字、标题与只读位(不含 handler 与描述正文),给设置页画勾选框用。
+// 清单来自 mcpsrv 那一份权威名册,签发接口校验工具名也读同一份 —— 两处读同一份才不会有
+// 「页面上勾了但后端不认」的漂移(名册与真 server 的 tools/list 由 TestMCP_CatalogMatchesServer 钉住)。
+func makeListMCPToolsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cat := mcpsrv.ToolCatalog()
+		out := make([]map[string]any, 0, len(cat))
+		for _, t := range cat {
+			out = append(out, map[string]any{"name": t.Name, "title": t.Title, "readOnly": t.ReadOnly})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
 	}
 }
 
