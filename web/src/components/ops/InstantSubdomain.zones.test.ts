@@ -30,6 +30,7 @@ const containers: ContainerInfo[] = [
     state: 'running',
     status: 'Up 2 hours',
     ports: '0.0.0.0:8080->80/tcp',
+    project: '',
     createdAt: '2026-10-01T00:00:00Z',
   },
 ]

@@ -2,7 +2,7 @@
  * 容器总览的「搜索 + 分页」纯逻辑。
  *
  * 搜索是 Portainer 式的单框多字段:一个词命中 容器名 / 镜像 / 容器 ID / 端口映射 / 状态 /
- * 机器名 / 机器 IP 任意一项即算命中;多个词之间取 AND(每词各自命中,词序无关)。
+ * Stack(compose 项目)名 / 机器名 / 机器 IP 任意一项即算命中;多个词之间取 AND(每词各自命中,词序无关)。
  *
  * 机器内网 IP(172.17.x)不在这里:聚合列表来自 `docker ps --format {{json .}}`,那一列压根
  * 没有 IP,要拿就得每台每 12s 多跑一次 `docker inspect`。端口映射列里的宿主绑定地址
@@ -65,7 +65,7 @@ export function matchesContainer(
   tokens: readonly string[],
 ): boolean {
   if (tokens.length === 0) return true
-  const hay = [c.names, c.image, c.id, c.ports, c.status, c.state, host.name, hostAddress(host.host)]
+  const hay = [c.names, c.image, c.id, c.ports, c.status, c.state, c.project, host.name, hostAddress(host.host)]
     .map((s) => (s ?? '').toLowerCase())
   return tokens.every((token) => hay.some((field) => field.includes(token)))
 }

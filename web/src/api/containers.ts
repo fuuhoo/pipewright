@@ -35,6 +35,11 @@ export interface ContainerInfo {
   ports: string
   /** Raw creation timestamp from the runtime. */
   createdAt: string
+  /**
+   * Compose 项目名(`com.docker.compose.project` 标签)。裸 `docker run` 起的容器是空串 —— 后端
+   * 从 `docker ps` 的 Labels 列直接解析,不额外跑 inspect,所以这一列在所有主机上都有值(可能为空)。
+   */
+  project: string
 }
 
 export type ContainerState =

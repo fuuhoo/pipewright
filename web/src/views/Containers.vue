@@ -18,6 +18,7 @@ import {
   queryTokens,
   type HostFields,
 } from '../lib/containerListFilter'
+import { buildStackGroups, stackHasMatch, stackHasRows, NO_STACK, type StackGroup } from '../lib/containerStacks'
 import { HttpError } from '../api/http'
 import { stateBucket, type StateBucket } from '../lib/containerState'
 import {
@@ -37,6 +38,7 @@ import EmptyState from '../components/ui/EmptyState.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
 import SkeletonBlock from '../components/ui/SkeletonBlock.vue'
 import ServerCard from '../components/ops/ServerCard.vue'
+import StackCard from '../components/ops/StackCard.vue'
 import ContainerLogsDrawer from '../components/ops/ContainerLogsDrawer.vue'
 import CreateContainerModal from '../components/ops/CreateContainerModal.vue'
 import AiDiagnosisModal from '../components/ops/AiDiagnosisModal.vue'
@@ -175,8 +177,8 @@ function filterCount(key: StateFilter): number {
 }
 
 // ─── 文本搜索 ─────────────────────────────────────────────────────────────────
-// 一个框多字段:命中 容器名 / 镜像 / 容器 ID / 端口映射 / 状态 / 机器名 / 机器 IP 任一即算命中
-// (判据在 lib/containerListFilter,卡片行与这里的「整张卡片该不该出现」共用同一函数)。
+// 一个框多字段:命中 容器名 / 镜像 / 容器 ID / 端口映射 / 状态 / Stack 名 / 机器名 / 机器 IP
+// 任一即算命中(判据在 lib/containerListFilter,卡片行与这里的「整张卡片该不该出现」共用同一函数)。
 const searchText = ref('')
 const searchTokens = computed(() => queryTokens(searchText.value))
 
@@ -190,10 +192,45 @@ const displayGroups = computed(() => {
   if (tokens.length === 0) return scopeGroups.value
   return scopeGroups.value.filter((g) => hostHasMatch(g.containers, hostFields(g.serverId), tokens))
 })
-/** 有机器、却一台都不命中:与「机器被分组筛光」是两种空态,文案要分开。 */
-const searchToEmpty = computed(
-  () => searchTokens.value.length > 0 && scopeGroups.value.length > 0 && displayGroups.value.length === 0,
-)
+
+// ─── 视图切换:按主机 / 按 Stack ───────────────────────────────────────────────
+// 同一份逐台聚合结果,两种切法。按 Stack 时把 compose 项目相同的那些行合成一条 ——
+// 平台的 deploy_docker 一次把同一条栈铺 N 台,按机器摊开反而看不出它铺到了哪几台。
+// 项目名由后端从 `docker ps` 的 Labels 列里带出来(不额外跑 inspect),所以这一档
+// 跟按主机视图共用同一轮刷新,不多花一次 SSH。
+const HOST_VIEW = 'host'
+const STACK_VIEW = 'stack'
+const viewMode = ref<string>(HOST_VIEW)
+
+/** 涉及的宿主展示信息(名字/地址/所属分组);StackCard 只认这张表,不猜名字。 */
+const hostViews = computed(() => {
+  const m: Record<string, { name: string; host: string; group: string }> = {}
+  for (const g of scopeGroups.value) {
+    m[g.serverId] = { name: serverName(g.serverId), host: serverHost(g.serverId), group: hostGroupTag(g.serverId) }
+  }
+  return m
+})
+
+const stacks = computed<StackGroup[]>(() => buildStackGroups(scopeGroups.value))
+/** 只按搜索收敛的栈:空态文案要说准是「搜没了」还是「这一档没行」,所以先不掺状态筛。 */
+const stacksBySearch = computed(() => {
+  const tokens = searchTokens.value
+  if (tokens.length === 0) return stacks.value
+  return stacks.value.filter((s) => stackHasMatch(s, hostFields, tokens))
+})
+/** 与按主机视图同一口径:搜索只收敛「这条栈该不该出现在屏上」,行级筛选在卡片里做。 */
+const displayStacks = computed(() => stacksBySearch.value.filter((s) => stackHasRows(s, stateFilter.value)))
+/** 有机器、却一台都不命中:与「机器被分组筛光」是两种空态,文案要分开(两种视图各按各自的单位判)。 */
+const searchToEmpty = computed(() => {
+  if (searchTokens.value.length === 0 || scopeGroups.value.length === 0) return false
+  return viewMode.value === STACK_VIEW ? stacksBySearch.value.length === 0 : displayGroups.value.length === 0
+})
+/** 状态档筛到一张栈不剩:容器都还在,只是都不在这一档 —— 与「搜没了」也是两种空态。 */
+const bucketToEmpty = computed(() => stacksBySearch.value.length > 0 && displayStacks.value.length === 0)
+/** 范围内一条栈都没有(机器都在,只是没有容器):与「搜没了」是两种空态。 */
+const stacksEmpty = computed(() => stacks.value.length === 0)
+/** 栈头那枚「几条栈」计数:独立容器那一档不算一条栈,它是「其余都是 compose」的兜底。 */
+const stackCount = computed(() => stacks.value.filter((s) => s.key !== NO_STACK).length)
 
 // ─── 每页条数 ─────────────────────────────────────────────────────────────────
 // 分页单位是一张卡片里的容器行(机器维度已经有「只看这台」+ 分组筛选 + 搜索收敛)。
@@ -202,13 +239,18 @@ const pageSize = ref<number>(PAGE_SIZE_OPTIONS[0])
 // ─── 卡片折叠 ─────────────────────────────────────────────────────────────────
 // 折叠集由页面持有,卡片只读自己那一项 —— 这样页头才能一键折叠/展开当前范围的全部卡片。
 // 范围外的 id 保留:切回那台时还是折叠着,这正是逐台看时的连续性。
+// 两种视图各留一份:serverId 与 compose 项目名是两套 key,混在一格里会互相误伤。
 const folded = ref<Set<string>>(new Set())
+const foldedStacks = ref<Set<string>>(new Set())
 // 只有连得上且有运行时的卡片有正文可折(卡片内那个按钮也是这个条件)。
-const foldableIds = computed(() =>
-  displayGroups.value.filter((g) => g.reachable && g.runtime).map((g) => g.serverId),
+const foldableKeys = computed(() =>
+  viewMode.value === STACK_VIEW
+    ? displayStacks.value.map((s) => s.key)
+    : displayGroups.value.filter((g) => g.reachable && g.runtime).map((g) => g.serverId),
 )
+const foldedInMode = computed(() => (viewMode.value === STACK_VIEW ? foldedStacks.value : folded.value))
 const allFolded = computed(
-  () => foldableIds.value.length > 0 && foldableIds.value.every((id) => folded.value.has(id)),
+  () => foldableKeys.value.length > 0 && foldableKeys.value.every((k) => foldedInMode.value.has(k)),
 )
 function toggleFold(serverId: string): void {
   const next = new Set(folded.value)
@@ -216,8 +258,16 @@ function toggleFold(serverId: string): void {
   else next.add(serverId)
   folded.value = next
 }
+function toggleFoldStack(key: string): void {
+  const next = new Set(foldedStacks.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  foldedStacks.value = next
+}
 function foldAll(): void {
-  folded.value = allFolded.value ? new Set() : new Set(foldableIds.value)
+  const next = allFolded.value ? new Set<string>() : new Set(foldableKeys.value)
+  if (viewMode.value === STACK_VIEW) foldedStacks.value = next
+  else folded.value = next
 }
 
 // ─── 批量操作 ─────────────────────────────────────────────────────────────────
@@ -511,20 +561,8 @@ onUnmounted(() => {
       :description="t('containers.emptyDesc')"
     />
 
-    <!-- 筛到一台不剩:机器是有的,只是宿主不在这一档 -->
-    <EmptyState
-      v-else-if="filteredToEmpty"
-      :title="t('containers.groupEmptyTitle')"
-      :description="t('containers.groupEmpty')"
-    />
-
-    <!-- 搜到一台不剩:机器在,只是这屏没有命中的容器 -->
-    <EmptyState
-      v-else-if="searchToEmpty"
-      :title="t('containers.searchEmptyTitle')"
-      :description="t('containers.searchEmpty', { q: searchText.trim() })"
-    />
-
+    <!-- 只要还连着机器,筛选段/搜索框/视图切换就必须留在屏上:空态收的是卡片正文,不是控件。
+         把控件一起藏掉,用户点进「已暂停」这一档就再也回不来(没有「全部」可切,只能刷新页面)。 -->
     <template v-else>
       <!-- 服务器切换:一台一张卡,机器多了不用滚动找;在线的排前面、离线的沉底 -->
       <div v-if="showScopeBar" class="scope-bar" role="group" :aria-label="t('containers.serverFilterAria')">
@@ -600,6 +638,27 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="controls-right">
+          <!-- 视图切换:同一份逐台聚合结果,按机器摊 or 按 compose 项目摊(后者看得见一条栈铺了几台) -->
+          <div class="view-switch" role="group" :aria-label="t('containers.viewAria')">
+            <button
+              class="filter-chip"
+              :class="{ 'filter-chip--active': viewMode === HOST_VIEW }"
+              :aria-pressed="viewMode === HOST_VIEW"
+              @click="viewMode = HOST_VIEW"
+            >
+              {{ t('containers.viewHost') }}
+              <span class="filter-chip__count">{{ scopeGroups.length }}</span>
+            </button>
+            <button
+              class="filter-chip"
+              :class="{ 'filter-chip--active': viewMode === STACK_VIEW }"
+              :aria-pressed="viewMode === STACK_VIEW"
+              @click="viewMode = STACK_VIEW"
+            >
+              {{ t('containers.viewStack') }}
+              <span class="filter-chip__count">{{ stackCount }}</span>
+            </button>
+          </div>
           <!-- 宿主分组筛选:容器跟宿主走,所以这一档切的是「哪几台机器的容器」 -->
           <div v-if="groupsLoaded" class="group-filter">
             <select v-model="groupFilter" class="group-filter__select" :aria-label="t('groups.filterAria')">
@@ -627,9 +686,9 @@ onUnmounted(() => {
             />
             <button v-if="searchText" class="search-box__clear" :title="t('containers.searchClear')" @click="searchText = ''">✕</button>
           </div>
-          <!-- 机器一多,逐台点折叠太累:一档开关按当前范围整体收起/放开 -->
+          <!-- 机器 / 栈 一多,逐个点折叠太累:一档开关按当前范围整体收起/放开 -->
           <button
-            v-if="foldableIds.length > 1"
+            v-if="foldableKeys.length > 1"
             class="fold-all"
             type="button"
             :aria-pressed="allFolded"
@@ -661,8 +720,30 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 逐台卡片(卡片内自带 容器/镜像 tab;只渲染切换范围内、且搜索有命中的机器)。后台刷新就地换卡,不压暗。 -->
-      <section class="cards" :aria-label="t('containers.cardsAria')">
+      <!-- 卡片正文区。四种「筛没了」各自说清是哪一把尺:分组、搜索、范围内没有栈、状态档 ——
+           空态只收这一片,上面的筛选段/搜索框/视图切换全留着,用户随时能换一把尺。 -->
+      <EmptyState
+        v-if="filteredToEmpty"
+        :title="t('containers.groupEmptyTitle')"
+        :description="t('containers.groupEmpty')"
+      />
+      <EmptyState
+        v-else-if="searchToEmpty"
+        :title="t('containers.searchEmptyTitle')"
+        :description="t('containers.searchEmpty', { q: searchText.trim() })"
+      />
+      <EmptyState
+        v-else-if="viewMode === STACK_VIEW && stacksEmpty"
+        :title="t('containers.stackEmptyTitle')"
+        :description="t('containers.stackEmpty')"
+      />
+      <EmptyState
+        v-else-if="viewMode === STACK_VIEW && bucketToEmpty"
+        :title="t('containers.stackBucketEmptyTitle')"
+        :description="t('containers.stackBucketEmpty')"
+      />
+      <!-- 按 Stack:范围内压根没有容器(机器都摊着但每张是空的),或状态档把栈收光了 —— 后两档与「搜没了」是不同空态 -->
+      <section v-else-if="viewMode === HOST_VIEW" class="cards" :aria-label="t('containers.cardsAria')">
         <ServerCard
           v-for="g in displayGroups"
           :key="g.serverId"
@@ -683,6 +764,29 @@ onUnmounted(() => {
           @terminal="(c) => openTerminal(g.serverId, c)"
           @diagnose="(c) => openDiagnose(g.serverId, c)"
           @inspect="(c) => openInspect(g.serverId, c)"
+        />
+      </section>
+
+      <!-- 按 Stack:一条 compose 项目一张卡,同名跨主机合成一条;行上直接标所在机器,批量勾选照旧跨机器累加 -->
+      <section v-else class="cards" :aria-label="t('containers.stackCardsAria')">
+        <StackCard
+          v-for="s in displayStacks"
+          :key="s.key"
+          :stack="s"
+          :host-views="hostViews"
+          :state-filter="stateFilter"
+          :search="searchText"
+          :page-size="pageSize"
+          :bulk-mode="bulkMode"
+          :selected-set="selected"
+          :folded-set="foldedStacks"
+          @toggle-fold="toggleFoldStack(s.key)"
+          @toggle-select="toggleSelect"
+          @changed="load"
+          @logs="(serverId, c) => openLogs(serverId, c)"
+          @terminal="(serverId, c) => openTerminal(serverId, c)"
+          @diagnose="(serverId, c) => openDiagnose(serverId, c)"
+          @inspect="(serverId, c) => openInspect(serverId, c)"
         />
       </section>
     </template>
@@ -796,6 +900,12 @@ onUnmounted(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+/* 视图切换(按主机 / 按 Stack):同一份数据的两种切法,放在同一行展示控件的最前 */
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 /* 分组下拉与同一行的搜索框同高同圆角:一行里两种形状会比多一行还乱 */
 .group-filter {
