@@ -62,6 +62,46 @@ func TestParseContainers_SkipsGarbageLines(t *testing.T) {
 	}
 }
 
+func TestParseContainers_ComposeProject(t *testing.T) {
+	// Labels 列的真实形态:一整串逗号连接的 key=value,值里还能再含逗号(config_files 多个路径)。
+	out := `{"ID":"c1","Names":"pw-web","Image":"nginx","State":"running","Status":"Up 1 hour","Labels":"com.docker.compose.project.config_files=/a/docker-compose.yml,/b/docker-compose.devtest.yml,com.docker.compose.project=pipewright,com.docker.compose.service=web"}`
+	got := parseContainers(out)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Project != "pipewright" {
+		t.Fatalf("project = %q, want pipewright", got[0].Project)
+	}
+
+	// 裸 docker run:没有任何 compose 标签。
+	if p := parseContainers(`{"ID":"c2","Names":"solo","Status":"Up","Labels":"org.opencontainers.image.title=WeKnora"}`); p[0].Project != "" {
+		t.Fatalf("bare run project = %q, want empty", p[0].Project)
+	}
+	// 旧 docker 压根没有 Labels 列(留空),不能因此报错或误判归属。
+	if p := parseContainers(`{"ID":"c3","Names":"old","Status":"Up"}`); p[0].Project != "" {
+		t.Fatalf("no-labels project = %q, want empty", p[0].Project)
+	}
+}
+
+func TestComposeProjectOf(t *testing.T) {
+	cases := map[string]string{
+		// 同前缀长键必须让位给真正的 project。
+		"com.docker.compose.project=web": "web",
+		"com.docker.compose.project.config_files=/x/docker-compose.yml,com.docker.compose.project=stack-a":               "stack-a",
+		"com.docker.compose.project.working_dir=/x,com.docker.compose.project.version=1,com.docker.compose.project=deep": "deep",
+		// 顺序无关:project 在前也在后都取到。
+		"com.docker.compose.project=first,com.docker.compose.service=api": "first",
+		"":                            "",
+		"labels":                      "",
+		"com.docker.compose.project=": "",
+	}
+	for labels, want := range cases {
+		if got := composeProjectOf(labels); got != want {
+			t.Fatalf("composeProjectOf(%q) = %q, want %q", labels, got, want)
+		}
+	}
+}
+
 func TestDeriveState(t *testing.T) {
 	cases := map[string]string{
 		"Up 2 hours":            "running",

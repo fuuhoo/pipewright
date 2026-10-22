@@ -41,6 +41,8 @@ var containerRuntimePref = []string{"docker"}
 
 // cmdContainerPS 构造列容器命令 array(不拼 shell)。`-a` 含已停止容器;`--no-trunc` 给完整
 // ID(生命周期操作用全 ID 无歧义);`--format {{json .}}` 每行一个 JSON 对象。
+// 用 {{json .}} 而不是逐字段模板,是因为它把整列 Labels 也带回来(compose 项目名就从这里取,
+// 见 composeProjectOf),而且引号/分隔由 docker 负责 —— 手写模板还得自己躲值里的逗号。
 func cmdContainerPS(bin string) []string {
 	return []string{bin, "ps", "-a", "--no-trunc", "--format", "{{json .}}"}
 }
@@ -54,6 +56,7 @@ type containerDTO struct {
 	Status    string `json:"status"`    // 人读状态(如 "Up 2 hours" / "Exited (0) 3 days ago")
 	Ports     string `json:"ports"`     // 端口映射原文(如 "0.0.0.0:80->80/tcp")
 	CreatedAt string `json:"createdAt"` // 创建时间原文
+	Project   string `json:"project"`   // compose 项目名(com.docker.compose.project 标签;裸 run 为空)
 }
 
 // serverContainersDTO 是单台服务器的容器清单响应体(冻结契约)。
@@ -73,6 +76,7 @@ type serverContainersDTO struct {
 
 // dockerPSLine 映射 `docker ps --format {{json .}}` 的逐行 JSON。仅取展示所需字段。
 // State 字段于 Docker 20.10+ 才有;旧版缺失 → 留空,由 deriveState 据 Status 回退推断。
+// Labels 是一整列逗号连接的 `key=value` 串(不是对象),compose 项目名从中取。
 type dockerPSLine struct {
 	ID        string `json:"ID"`
 	Names     string `json:"Names"`
@@ -81,6 +85,24 @@ type dockerPSLine struct {
 	Status    string `json:"Status"`
 	Ports     string `json:"Ports"`
 	CreatedAt string `json:"CreatedAt"`
+	Labels    string `json:"Labels"`
+}
+
+// composeProjectOf 从 Labels 列里取 compose 项目名;非 compose 容器(裸 docker run)返回空。
+//
+// 这一列是逗号连接的串,而**值本身也能含逗号**且不会转义(实测
+// `...config_files=/a/docker-compose.yml,/b/docker-compose.devtest.yml,com.docker.compose.project=x`),
+// 所以只能逐段找恰好以 `键 + "="` 开头的段:同前缀的长键(project.config_files、
+// project.working_dir)因为要求紧跟 `=` 而天然排除。唯一读得错的形态是某个值里正好带
+// `,com.docker.compose.project=` 这段字串 —— compose 的取值域(路径/服务名/镜像 digest)不会出现。
+func composeProjectOf(labels string) string {
+	const key = "com.docker.compose.project="
+	for _, seg := range strings.Split(labels, ",") {
+		if rest, ok := strings.CutPrefix(seg, key); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
 }
 
 // parseContainers 解析 `docker ps -a --format {{json .}}` 的多行 JSON 为 DTO 切片。
@@ -111,6 +133,7 @@ func parseContainers(out string) []containerDTO {
 			Status:    p.Status,
 			Ports:     p.Ports,
 			CreatedAt: p.CreatedAt,
+			Project:   composeProjectOf(p.Labels),
 		})
 	}
 	return list
