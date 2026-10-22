@@ -46,6 +46,7 @@ import {
   registerAcmeAccount,
   replaceCert,
   setAutoRenew,
+  setRenewWindow,
   updateCertTarget,
   issueCert,
   type AcmeAccount,
@@ -66,6 +67,8 @@ import { useConfirm } from '../composables/useConfirm'
 import { useSessionStore } from '../stores/session'
 import {
   CHECK_BUCKETS,
+  MAX_RENEW_BEFORE_DAYS,
+  MIN_RENEW_BEFORE_DAYS,
   RENEW_WINDOW_DAYS,
   canIssue,
   certTone,
@@ -75,8 +78,11 @@ import {
   filterAttentions,
   filterCerts,
   invalidDomains,
+  isValidRenewBeforeDays,
   needsAttention,
   parseDomains,
+  parseRenewDays,
+  renewWindowDays,
   type CheckBucket,
 } from '../lib/certRows'
 import type { CertTone } from '../lib/certRows'
@@ -131,9 +137,9 @@ const sourceLabels = computed<Record<CertSource, string>>(() => ({
   upload: t('certs.sourceUpload'),
 }))
 
-/** 状态徽章:配色由 lib 判,文案在这里拼(与 containerState 同一分工)。 */
+/** 状态徽章:配色由 lib 判,文案在这里拼(与 containerState 同一分工)。窗口用这张证书自己的阈值。 */
 function statusBadge(c: Cert): { label: string; tone: CertTone } {
-  return { label: statusLabels.value[c.status] ?? c.status, tone: certTone(c.status, c.daysLeft) }
+  return { label: statusLabels.value[c.status] ?? c.status, tone: certTone(c.status, c.daysLeft, renewWindowDays(c)) }
 }
 
 /** 为什么这张要人接手:一句话给出能接着行动的理由。 */
@@ -297,8 +303,12 @@ const modal = ref<ModalKind>('')
 // 登记表单(source=acme:平台自签)
 const createBusy = ref(false)
 const createBanner = ref('')
-const createForm = ref({ domain: '', sans: '', ca: '', dnsProviderId: '', autoRenew: true })
-const createErrors = ref({ domain: '', sans: '', ca: '', dnsProviderId: '' })
+// renewBeforeDaysText 存 string | number:`<input type="number">` 上的 v-model 会交给数字(实测填 999 拿到的是
+// number,清空才是 ''),一律按字符串处理会当场炸。留空 = 提交 0 = 「用默认 30 天」,所以到提交时才现算。
+const createForm = ref<{ domain: string; sans: string; ca: string; dnsProviderId: string; autoRenew: boolean; renewBeforeDaysText: string | number }>({
+  domain: '', sans: '', ca: '', dnsProviderId: '', autoRenew: true, renewBeforeDaysText: '',
+})
+const createErrors = ref({ domain: '', sans: '', ca: '', dnsProviderId: '', renewBeforeDays: '' })
 const cas = ref<CaOption[]>([])
 const dnsProviders = ref<DnsProvider[]>([])
 
@@ -313,8 +323,10 @@ const caOptions = computed(() =>
 const selectedCa = computed(() => cas.value.find((c) => c.id === createForm.value.ca) ?? null)
 
 async function openCreate(): Promise<void> {
-  createForm.value = { domain: '', sans: '', ca: cas.value[0]?.id ?? '', dnsProviderId: '', autoRenew: true }
-  createErrors.value = { domain: '', sans: '', ca: '', dnsProviderId: '' }
+  createForm.value = {
+    domain: '', sans: '', ca: cas.value[0]?.id ?? '', dnsProviderId: '', autoRenew: true, renewBeforeDaysText: '',
+  }
+  createErrors.value = { domain: '', sans: '', ca: '', dnsProviderId: '', renewBeforeDays: '' }
   createBanner.value = ''
   modal.value = 'create'
   try {
@@ -330,7 +342,7 @@ async function openCreate(): Promise<void> {
 }
 
 function validateCreate(): boolean {
-  const e = { domain: '', sans: '', ca: '', dnsProviderId: '' }
+  const e = { domain: '', sans: '', ca: '', dnsProviderId: '', renewBeforeDays: '' }
   const domain = createForm.value.domain.trim().toLowerCase()
   if (!domain) e.domain = t('certs.valDomainRequired')
   else if (invalidDomains([domain]).length) e.domain = t('certs.valDomainInvalid')
@@ -338,8 +350,12 @@ function validateCreate(): boolean {
   if (bad.length) e.sans = t('certs.valSansInvalid', { names: bad.join('、') })
   if (!createForm.value.ca) e.ca = t('certs.valCaRequired')
   if (!createForm.value.dnsProviderId) e.dnsProviderId = t('certs.valDnsRequired')
+  const days = parseRenewDays(createForm.value.renewBeforeDaysText)
+  if (!isValidRenewBeforeDays(days)) {
+    e.renewBeforeDays = t('certs.valRenewDays', { min: MIN_RENEW_BEFORE_DAYS, max: MAX_RENEW_BEFORE_DAYS })
+  }
   createErrors.value = e
-  return !e.domain && !e.sans && !e.ca && !e.dnsProviderId
+  return !e.domain && !e.sans && !e.ca && !e.dnsProviderId && !e.renewBeforeDays
 }
 
 async function submitCreate(): Promise<void> {
@@ -353,6 +369,7 @@ async function submitCreate(): Promise<void> {
       ca: createForm.value.ca,
       dnsProviderId: createForm.value.dnsProviderId,
       autoRenew: createForm.value.autoRenew,
+      renewBeforeDays: parseRenewDays(createForm.value.renewBeforeDaysText),
     })
     upsertRow(c)
     modal.value = ''
@@ -437,12 +454,15 @@ async function openDetail(c: Cert): Promise<void> {
   detailTargets.value = []
   detailError.value = ''
   showPem.value = false
+  renewDaysText.value = c.renewBeforeDays > 0 ? String(c.renewBeforeDays) : ''
+  renewError.value = ''
   modal.value = 'detail'
   detailBusy.value = true
   try {
     const [full, targets] = await Promise.all([getCert(c.id), listCertTargets(c.id)])
     detail.value = full
     detailTargets.value = targets
+    renewDaysText.value = full.renewBeforeDays > 0 ? String(full.renewBeforeDays) : ''
   } catch (err) {
     detailError.value = errText(err, t('certs.errLoadDetail'))
   } finally {
@@ -450,8 +470,41 @@ async function openDetail(c: Cert): Promise<void> {
   }
 }
 
+// 「到期前 N 天开始自动续期」:详情里单独一格,和列表那个总开关各管各的。
+const renewDaysText = ref<string | number>('')
+const renewBusy = ref(false)
+const renewError = ref('')
+
+/** 有没有改动:留空 = 用默认窗口,和后端存 0 同义,所以拿现算的天数和库里比。 */
+const renewDirty = computed(() => {
+  if (!detail.value) return false
+  return parseRenewDays(renewDaysText.value) !== detail.value.renewBeforeDays
+})
+
+async function saveRenewWindow(): Promise<void> {
+  if (!detail.value || renewBusy.value) return
+  const days = parseRenewDays(renewDaysText.value)
+  if (!isValidRenewBeforeDays(days)) {
+    renewError.value = t('certs.valRenewDays', { min: MIN_RENEW_BEFORE_DAYS, max: MAX_RENEW_BEFORE_DAYS })
+    return
+  }
+  renewBusy.value = true
+  renewError.value = ''
+  try {
+    const next = await setRenewWindow(detail.value.id, days)
+    upsertRow(next)
+    // 详情里这行也要跟着换:不然用户看的是旧窗口,列表却已经是新值。
+    detail.value = { ...detail.value, renewBeforeDays: next.renewBeforeDays }
+    toast.success(t('certs.renewWindowSaved'), { detail: next.domain })
+  } catch (err) {
+    renewError.value = errText(err, t('certs.errSave'))
+  } finally {
+    renewBusy.value = false
+  }
+}
+
 function closeDetail(): void {
-  if (detailBusy.value || targetBusy.value) return
+  if (detailBusy.value || targetBusy.value || renewBusy.value) return
   modal.value = ''
   detail.value = null
   targetFormOpen.value = false
@@ -941,6 +994,26 @@ const hasAccountForCa = computed(() => {
             <span>{{ t('certs.autoRenewLabel') }}</span>
           </label>
 
+          <div v-if="createForm.autoRenew" class="field">
+            <label class="field-label" for="cert-renew-days">{{ t('certs.fieldRenewDays') }}</label>
+            <input
+              id="cert-renew-days"
+              v-model="createForm.renewBeforeDaysText"
+              class="field-input field-input--num"
+              :class="{ 'field-input--error': createErrors.renewBeforeDays }"
+              type="number"
+              :min="1"
+              :max="365"
+              step="1"
+              :placeholder="t('certs.renewDaysPlaceholder', { days: RENEW_WINDOW_DAYS })"
+              :disabled="createBusy"
+              autocomplete="off"
+              @input="createErrors.renewBeforeDays = ''"
+            />
+            <span v-if="createErrors.renewBeforeDays" class="field-error" role="alert">{{ createErrors.renewBeforeDays }}</span>
+            <span v-else class="field-hint">{{ t('certs.renewDaysHint', { days: RENEW_WINDOW_DAYS }) }}</span>
+          </div>
+
           <div class="modal-footer">
             <button type="button" class="btn-secondary" :disabled="createBusy" @click="modal = ''">{{ t('certs.cancel') }}</button>
             <button type="submit" class="btn-primary" :disabled="createBusy" :aria-busy="createBusy">
@@ -1095,6 +1168,31 @@ const hasAccountForCa = computed(() => {
             <div><dt>{{ t('certs.infoSans') }}</dt><dd>{{ (detail.sans ?? []).join('、') || '—' }}</dd></div>
             <div><dt>{{ t('certs.infoChecked') }}</dt><dd class="mono">{{ fmtDateTime(detail.checkedAt) }}</dd></div>
           </dl>
+
+          <form v-if="detail.source === 'acme'" class="renew-row" novalidate @submit.prevent="saveRenewWindow">
+            <label class="field-label" for="detail-renew-days">{{ t('certs.fieldRenewDays') }}</label>
+            <div class="renew-row-controls">
+              <input
+                id="detail-renew-days"
+                v-model="renewDaysText"
+                class="field-input field-input--num"
+                :class="{ 'field-input--error': renewError }"
+                type="number"
+                :min="1"
+                :max="365"
+                step="1"
+                :placeholder="t('certs.renewDaysPlaceholder', { days: RENEW_WINDOW_DAYS })"
+                :disabled="renewBusy"
+                autocomplete="off"
+                @input="renewError = ''"
+              />
+              <button type="submit" class="btn-secondary btn-sm" :disabled="renewBusy || !renewDirty">
+                {{ renewBusy ? t('certs.working') : t('certs.saveRenewDays') }}
+              </button>
+            </div>
+            <span class="field-hint">{{ t('certs.renewDaysNow', { days: renewWindowDays(detail) }) }}</span>
+            <span v-if="renewError" class="field-error" role="alert">{{ renewError }}</span>
+          </form>
 
           <div class="pem-bar">
             <button class="op-btn" type="button" @click="showPem = !showPem">
@@ -2041,6 +2139,25 @@ const hasAccountForCa = computed(() => {
   font-size: 0.8rem;
   color: var(--color-dim);
   cursor: pointer;
+}
+.field-input--num {
+  max-width: 140px;
+}
+
+/* 详情里的「到期前 N 天」一格 */
+.renew-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded);
+  background: var(--color-inset);
+}
+.renew-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 详情体 */

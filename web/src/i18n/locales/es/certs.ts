@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: 'Renovar y distribuir antes de vencer',
   autoRenewHint: 'Activada: al entrar en la ventana de renovación la plataforma reemite y envía a los destinos marcados como automáticos',
   autoRenewUploadHint: 'Los certificados importados los renueva usted; la plataforma nunca los solicita al CA',
+  // Ventana de renovación: cada certificado decide cuántos días antes de vencer se actúa
+  fieldRenewDays: 'Días antes de vencer para empezar a renovar',
+  renewDaysPlaceholder: 'Por defecto: {days}',
+  renewDaysHint: 'Un entero de 1 a 365; déjelo vacío para usar los {days} días por defecto. Dentro de la ventana, la plataforma renueva sola y reparte a todos los destinos con auto-despliegue.',
+  renewDaysNow: 'Ahora: renueva con {days} días restantes',
+  saveRenewDays: 'Guardar días',
+  renewWindowSaved: 'Ventana de renovación actualizada',
   // Resultados por acción
   issueOk: 'Emitido',
   issuePending: 'La emisión no ha terminado',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: 'Usa una ruta absoluta en el host de destino',
   valPathSame: 'Certificado y clave no pueden compartir la misma ruta',
   valEabRequired: 'Este CA necesita Key ID y HMAC Key a la vez',
+  valRenewDays: 'Pon un entero entre {min} y {max}, o déjalo vacío para usar el valor por defecto',
 }

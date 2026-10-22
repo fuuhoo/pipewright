@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { Cert, CheckReport } from '../api/certs'
 import {
+  MAX_RENEW_BEFORE_DAYS,
+  MIN_RENEW_BEFORE_DAYS,
   RENEW_WINDOW_DAYS,
   canIssue,
   certTone,
@@ -11,9 +13,12 @@ import {
   filterCerts,
   invalidDomains,
   isValidDomain,
+  isValidRenewBeforeDays,
   matchesQuery,
   needsAttention,
   parseDomains,
+  parseRenewDays,
+  renewWindowDays,
 } from './certRows'
 
 function cert(over: Partial<Cert> = {}): Cert {
@@ -26,6 +31,7 @@ function cert(over: Partial<Cert> = {}): Cert {
     ca: 'letsencrypt',
     dnsProviderId: 'dns-1',
     autoRenew: true,
+    renewBeforeDays: 0,
     keyAlgo: 'ECDSA-P256',
     notBefore: '',
     notAfter: '',
@@ -57,6 +63,55 @@ describe('certTone', () => {
     expect(certTone('issued', 31)).toBe('green')
     expect(certTone('issued', RENEW_WINDOW_DAYS)).toBe('amber')
     expect(certTone('issued', 0)).toBe('amber')
+  })
+
+  it('窗口天数由调用方给:同一张证书改成 45 天就提前变琥珀', () => {
+    expect(certTone('issued', 40, 30)).toBe('green')
+    expect(certTone('issued', 40, 45)).toBe('amber')
+    expect(certTone('issued', 10, 7)).toBe('green')
+  })
+})
+
+describe('renewWindowDays / 续期天数输入', () => {
+  it('没设置过(0)用默认 30 天,填了用自己的', () => {
+    expect(renewWindowDays(cert({ renewBeforeDays: 0 }))).toBe(RENEW_WINDOW_DAYS)
+    expect(renewWindowDays(cert({ renewBeforeDays: 45 }))).toBe(45)
+    expect(renewWindowDays(cert({ renewBeforeDays: 7 }))).toBe(7)
+  })
+
+  it('字符串与数字两种来路算出同一个值:数字输入框给的就是 number', () => {
+    expect(parseRenewDays('45')).toBe(45)
+    expect(parseRenewDays(45)).toBe(45)
+    expect(parseRenewDays(45.0)).toBe(45)
+  })
+
+  it('留空是 0(=用默认),半截小数与乱七八糟都是 NaN,由调用方报错而不是提交', () => {
+    expect(parseRenewDays('')).toBe(0)
+    expect(parseRenewDays('   ')).toBe(0)
+    expect(parseRenewDays(7.5)).toBe(NaN)
+    expect(parseRenewDays('abc')).toBe(NaN)
+  })
+
+  it('可提交的是 0 与 1~365,越界与小数都拦下(和后端同一区间)', () => {
+    expect(isValidRenewBeforeDays(0)).toBe(true)
+    expect(isValidRenewBeforeDays(MIN_RENEW_BEFORE_DAYS)).toBe(true)
+    expect(isValidRenewBeforeDays(MAX_RENEW_BEFORE_DAYS)).toBe(true)
+    expect(isValidRenewBeforeDays(-1)).toBe(false)
+    expect(isValidRenewBeforeDays(MAX_RENEW_BEFORE_DAYS + 1)).toBe(false)
+    expect(isValidRenewBeforeDays(7.5)).toBe(false)
+    expect(isValidRenewBeforeDays(NaN)).toBe(false)
+  })
+})
+
+describe('needsAttention 用每张证书自己的窗口', () => {
+  it('窗口调到 45 天后,剩 40 天的导入证书就进入需要接手', () => {
+    expect(needsAttention(cert({ daysLeft: 40, source: 'upload' }))).toBe(false)
+    expect(needsAttention(cert({ daysLeft: 40, source: 'upload', renewBeforeDays: 45 }))).toBe(true)
+  })
+
+  it('窗口调到 7 天则剩 10 天还不算,阈值不是越大越吵', () => {
+    expect(needsAttention(cert({ daysLeft: 10, autoRenew: false, renewBeforeDays: 7 }))).toBe(false)
+    expect(needsAttention(cert({ daysLeft: 6, autoRenew: false, renewBeforeDays: 7 }))).toBe(true)
   })
 })
 

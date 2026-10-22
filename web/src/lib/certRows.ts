@@ -3,33 +3,63 @@
  * 列表筛选与「立即检查」汇总,全是纯函数。
  *
  * 规则尽量与后端 `internal/cert` 同源,页面只做「提交前先说清楚」,判定权仍在后端:
- *   - 续期窗口 30 天 = `cert.IssuanceWindow`,窗口内平台能自己续的不算需要接手(见 `cert.NeedsRenew`);
+ *   - 续期窗口默认 30 天 = `cert.IssuanceWindow`,每张证书可用 renewBeforeDays 覆盖(`cert.RenewWindow`);
+ *     窗口内平台能自己续的不算需要接手(见 `cert.NeedsRenew`);
+ *   - 可填天数 1~365 = `cert.Min/MaxRenewBeforeDays`(0 = 改回默认);
  *   - 域名正则 = `cert.domainRe`(通配只允许最左标签);
  *   - 落点路径 = `cert.ValidateDeployTarget`(两条都绝对、且不能同路径)。
  * 文案一律由调用方从 i18n 传进来:lib 不依赖 vue-i18n,才方便脱离页面验规则。
  */
 import type { Cert, CertSource, CertStatus, CheckReport } from '../api/certs'
 
-/** 与后端 `cert.IssuanceWindow` 同长:剩余寿命不足这个天数就该被扫到。 */
+/** 与后端 `cert.IssuanceWindow` 同长:证书没设置过自己的阈值时按这个天数算。 */
 export const RENEW_WINDOW_DAYS = 30
+
+/** 用户能填的「到期前 N 天」区间,与后端 Min/MaxRenewBeforeDays 同值;0 是「用默认」的专用值。 */
+export const MIN_RENEW_BEFORE_DAYS = 1
+export const MAX_RENEW_BEFORE_DAYS = 365
 
 /** 状态徽章配色;与 StatusBadge / containerState 用同一组色名。 */
 export type CertTone = 'green' | 'amber' | 'red' | 'cyan' | 'faint'
 
+/** 这张证书实际生效的续期窗口天数:填过用自己的,没填(0)用默认。 */
+export function renewWindowDays(cert: Cert): number {
+  return cert.renewBeforeDays > 0 ? cert.renewBeforeDays : RENEW_WINDOW_DAYS
+}
+
+/** 输入框的原始文本是否落在可提交区间(1~365 或 0);提交前拦一下,省一次 400。 */
+export function isValidRenewBeforeDays(n: number): boolean {
+  return n === 0 || (Number.isInteger(n) && n >= MIN_RENEW_BEFORE_DAYS && n <= MAX_RENEW_BEFORE_DAYS)
+}
+
 /**
- * 状态 + 剩余天数 → 配色。
- * 待签用青色(进行中,不是坏了),签发失败与已过期用红色,窗口内用琥珀色提醒「该留意了」。
+ * 天数输入框的当前值 → 要提交的天数:留空 = 0 = 用后端默认窗口,非整数 = NaN(调用方据此报错)。
+ *
+ * 必须同时收字符串和数字:`<input type="number">` 上的 v-model 在 Vue 3.4 起会自动转成 number,
+ * 清格或填半截小数时还可能给到 `''` 之外的东西,所以这里先统一转字符串再判。
  */
-export function certTone(status: CertStatus, daysLeft: number): CertTone {
+export function parseRenewDays(value: string | number): number {
+  const trimmed = String(value ?? '').trim()
+  if (trimmed === '') return 0
+  const n = Number(trimmed)
+  return Number.isInteger(n) ? n : NaN
+}
+
+/**
+ * 状态配色 + 剩余天数 → 徽章颜色。
+ * 待签用青色(进行中,不是坏了),签发失败与已过期用红色,窗口内用琥珀色提醒「该留意了」。
+ * 窗口天数由调用方传(每张证书可以各自设),不传按默认 30 天。
+ */
+export function certTone(status: CertStatus, daysLeft: number, windowDays = RENEW_WINDOW_DAYS): CertTone {
   if (status === 'pending') return 'cyan'
   if (status === 'failed') return 'red'
   if (status === 'expired') return 'red'
-  if (daysLeft >= 0 && daysLeft <= RENEW_WINDOW_DAYS) return 'amber'
+  if (daysLeft >= 0 && daysLeft <= windowDays) return 'amber'
   return 'green'
 }
 
 /**
- * 这张证书要不要人接手:已过期,或落在续期窗口内而平台续不动(导入的、或关了自动续期的)。
+ * 这张证书要不要人接手:已过期,或落在它自己的续期窗口内而平台续不动(导入的、或关了自动续期的)。
  *
  * 待签(还没有正文)不算:首签必须是用户明确点「签发」的结果,后台扫描器也刻意跳过它,
  * 页面把它列成「需要接手」会和后端的行为对不上。
@@ -37,7 +67,7 @@ export function certTone(status: CertStatus, daysLeft: number): CertTone {
 export function needsAttention(cert: Cert): boolean {
   if (cert.status === 'expired') return true
   if (cert.status !== 'issued') return false
-  return cert.daysLeft <= RENEW_WINDOW_DAYS && (cert.source === 'upload' || !cert.autoRenew)
+  return cert.daysLeft <= renewWindowDays(cert) && (cert.source === 'upload' || !cert.autoRenew)
 }
 
 /** 平台此刻能不能自己把它签出来:只有 ACME 来源能,导入的永远要用户自己换正文。 */

@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: 'Vor Ablauf automatisch erneuern und verteilen',
   autoRenewHint: 'Ein: im Erneuerungsfenster stellt die Plattform neu aus und liefert an alle Ziele mit Auto-Deploy',
   autoRenewUploadHint: 'Importierte Zertifikate erneuern Sie selbst; die Plattform fragt sie nie beim CA an',
+  // Erneuerungsfenster: jede Certificate legt selbst fest, wie viele Tage vor Ablauf es losgeht
+  fieldRenewDays: 'Wie viele Tage vor Ablauf erneuert wird',
+  renewDaysPlaceholder: 'Standard: {days}',
+  renewDaysHint: 'Ganzzahl von 1 bis 365; leer lassen bedeutet die standardmäßigen {days} Tage. Sobald ein Zertifikat im Fenster liegt, erneuert die Plattform es von selbst und verteilt es an alle Ziele mit automatischer Verteilung.',
+  renewDaysNow: 'Aktuell: ab {days} Resttagen',
+  saveRenewDays: 'Tage speichern',
+  renewWindowSaved: 'Erneuerungsfenster aktualisiert',
   // Ergebnisse je Aktion
   issueOk: 'Ausgestellt',
   issuePending: 'Ausstellung noch nicht abgeschlossen',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: 'Absoluten Pfad auf dem Zielhost verwenden',
   valPathSame: 'Zertifikat und Schlüssel dürfen nicht denselben Pfad haben',
   valEabRequired: 'Dieser CA braucht sowohl Key-ID als auch HMAC-Key',
+  valRenewDays: 'Ganze Zahl zwischen {min} und {max}, oder leer für die Standardfrist',
 }

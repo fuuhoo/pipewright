@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: '만료 전 자동 갱신 후 전달',
   autoRenewHint: '켜짐: 갱신 기간에 들어하면 플랫폼이 스스로 재발급하고 자동 배포가 표시된 대상에 전달합니다',
   autoRenewUploadHint: '가져온 인증서는 직접 갱신합니다. 플랫폼이 CA에 신청하지 않습니다',
+  // 갱신 윈도우: 인증서별로 만료 몇 일 전에 손대기 시작하는지 정합니다
+  fieldRenewDays: '만료 몇 일 전부터 갱신',
+  renewDaysPlaceholder: '기본 {days}일',
+  renewDaysHint: '1~365의 정수. 비우면 기본 {days}일을 씁니다. 윈도우에 들어하면 플랫폼이 스스로 재발급하고 자동 배포가 켜진 배치 위치로 전달합니다.',
+  renewDaysNow: '현재: {days}일 남을 때부터 갱신',
+  saveRenewDays: '일수 저장',
+  renewWindowSaved: '갱신 윈도우를 바꿨습니다',
   // 작업별 결과
   issueOk: '발급 완료',
   issuePending: '발급이 완료되지 않았습니다',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: '대상 호스트의 절대 경로를 입력하세요',
   valPathSame: '인증서와 개인 키는 같은 경로에 기록할 수 없습니다',
   valEabRequired: '이 CA는 Key ID와 HMAC Key를 모두 입력해야 합니다',
+  valRenewDays: '{min}~{max} 사이 정수를 입력하거나 비워 두면 기본값을 씁니다',
 }

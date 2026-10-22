@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: '到期前自動續期並鋪發',
   autoRenewHint: '開啟:進入續期視窗後平台自己重簽,並推到標記自動發佈的落點',
   autoRenewUploadHint: '匯入的憑證由你自己續,平台不會替它向 CA 申請',
+  // 續期窗口:每張憑證自己決定「到期前多少天動手」
+  fieldRenewDays: '到期前多少天開始續期',
+  renewDaysPlaceholder: '預設 {days} 天',
+  renewDaysHint: '填 1~365 的整數;留空按預設 {days} 天。進入窗口後平台自己續簽,並鋪到開了自動發佈的落點。',
+  renewDaysNow: '目前:剩 {days} 天起開始續',
+  saveRenewDays: '儲存天數',
+  renewWindowSaved: '續期窗口已更新',
   // 各操作結果
   issueOk: '簽發完成',
   issuePending: '簽發尚未完成',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: '請填寫目標機上的絕對路徑',
   valPathSame: '憑證與私密金鑰不能落在同一個路徑',
   valEabRequired: '這家 CA 需要同時填 Key ID 與 HMAC Key',
+  valRenewDays: '天數要填 {min}~{max} 之間的整數,或留空用預設',
 }

@@ -58,6 +58,7 @@ const ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'cert_issue', label: 'cert_issue' },
   { value: 'cert_check', label: 'cert_check' },
   { value: 'cert_auto_renew', label: 'cert_auto_renew' },
+  { value: 'cert_renew_window', label: 'cert_renew_window' },
   { value: 'cert_target_create', label: 'cert_target_create' },
   { value: 'cert_target_update', label: 'cert_target_update' },
   { value: 'cert_target_delete', label: 'cert_target_delete' },

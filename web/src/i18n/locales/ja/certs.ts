@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: '期限前に自動更新して配信する',
   autoRenewHint: 'オン:更新期間に入るとプラットフォームが再発行し、自動配布を設定した配信先へ配信します',
   autoRenewUploadHint: 'インポートした証明書はご自身で更新してください。プラットフォームが CA に申請することはありません',
+  // 更新ウィンドウ:証明書ごとに「満了の何日前に着手するか」を決めます
+  fieldRenewDays: '満了の何日前から更新するか',
+  renewDaysPlaceholder: '既定 {days} 日',
+  renewDaysHint: '1〜365 の整数。空欄なら既定の {days} 日です。ウィンドウに入るとプラットフォームが自ら再取得し、自動配信をオンにした配置先に展開します。',
+  renewDaysNow: '現在:残り {days} 日から更新',
+  saveRenewDays: '日数を保存',
+  renewWindowSaved: '更新ウィンドウを更新しました',
   // 操作結果
   issueOk: '発行完了',
   issuePending: '発行は完了していません',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: '対象ホスト上の絶対パスを入力してください',
   valPathSame: '証明書と秘密鍵を同じパスに置くことはできません',
   valEabRequired: 'この CA は Key ID と HMAC Key の両方が必要です',
+  valRenewDays: '{min}~{max} の整数を入力するか、空欄なら既定になります',
 }

@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: 'Renew automatically before expiry',
   autoRenewHint: 'On: once inside the renewal window the platform reissues and pushes it to targets marked for auto-deploy',
   autoRenewUploadHint: 'Imported certificates are yours to renew; the platform never asks the CA for them',
+  // Renewal window: each certificate decides how many days before expiry it starts
+  fieldRenewDays: 'Start renewing this many days before expiry',
+  renewDaysPlaceholder: 'Default: {days}',
+  renewDaysHint: 'A whole number from 1 to 365, or leave it empty for the default {days}. Once a certificate falls inside the window, the platform renews it and pushes it to every target with auto-deploy on.',
+  renewDaysNow: 'Now: renews with {days} days left',
+  saveRenewDays: 'Save days',
+  renewWindowSaved: 'Renewal window updated',
   // Per-action results
   issueOk: 'Issued',
   issuePending: 'Issuance not finished',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: 'Use an absolute path on the target host',
   valPathSame: 'Certificate and private key cannot share one path',
   valEabRequired: 'This CA needs both a Key ID and an HMAC key',
+  valRenewDays: 'Enter a whole number between {min} and {max}, or leave it empty for the default',
 }

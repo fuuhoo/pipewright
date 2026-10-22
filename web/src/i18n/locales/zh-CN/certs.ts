@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: '到期前自动续期并铺发',
   autoRenewHint: '开着:进入续期窗口后平台自己续签,并推到标记了自动发布的落点',
   autoRenewUploadHint: '导入的证书由你自己续,平台不会替它向 CA 申请',
+  // 续期窗口:每张证书自己决定「到期前多少天动手」
+  fieldRenewDays: '到期前多少天开始续期',
+  renewDaysPlaceholder: '默认 {days} 天',
+  renewDaysHint: '填 1~365 的整数;留空按默认 {days} 天。进入窗口后平台自己续签,并铺到开了自动发布的落点。',
+  renewDaysNow: '当前:剩 {days} 天起开始续',
+  saveRenewDays: '保存天数',
+  renewWindowSaved: '续期窗口已更新',
   // 逐操作结果
   issueOk: '签发完成',
   issuePending: '签发尚未完成',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: '请填写目标机上的绝对路径',
   valPathSame: '证书与私钥不能落在同一个路径',
   valEabRequired: '这家 CA 需要同时填 Key ID 与 HMAC Key',
+  valRenewDays: '天数要填 {min}~{max} 之间的整数,或留空用默认',
 }

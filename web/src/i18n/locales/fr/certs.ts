@@ -54,6 +54,13 @@ export default {
   autoRenewLabel: 'Renouveler et déployer avant expiration',
   autoRenewHint: 'Activé : dès l’ouverture de la fenêtre, la plateforme réémet et pousse vers les cibles marquées « déploiement auto »',
   autoRenewUploadHint: 'Les certificats importés se renouvellent par vos soins ; la plateforme n’en demande jamais à l’AC',
+  // Fenêtre de renouvellement : chaque certificat décide « combien de jours avant expiration »
+  fieldRenewDays: 'Renouveler X jours avant l’expiration',
+  renewDaysPlaceholder: '{days} jours par défaut',
+  renewDaysHint: 'Entier de 1 à 365 ; laisser vide = {days} jours par défaut. Dès l’ouverture de la fenêtre, la plateforme réémet et pousse vers les cibles marquées « déploiement auto ».',
+  renewDaysNow: 'Actuel : à partir de {days} jours restants',
+  saveRenewDays: 'Enregistrer les jours',
+  renewWindowSaved: 'Fenêtre de renouvellement mise à jour',
   // Résultats par action
   issueOk: 'Certificat émis',
   issuePending: 'Émission non terminée',
@@ -223,4 +230,5 @@ export default {
   valPathNotAbsolute: 'Utilisez un chemin absolu sur l’hôte cible',
   valPathSame: 'Le certificat et la clé ne peuvent pas partager le même chemin',
   valEabRequired: 'Cette AC exige à la fois le Key ID et la clé HMAC',
+  valRenewDays: 'Indiquez un entier entre {min} et {max}, ou laissez vide pour le défaut',
 }

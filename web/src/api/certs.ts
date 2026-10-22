@@ -14,6 +14,7 @@
  *   POST   /api/certs/{id}/replace     → Cert                     (换正文,落点配置一行不动)
  *   POST   /api/certs/{id}/issue       → Cert                     (ACME DNS-01 签/续,可能要几分钟)
  *   POST   /api/certs/{id}/auto-renew  → Cert
+ *   POST   /api/certs/{id}/renew-window→ Cert                     (改「到期前 N 天开始续」,0 = 回到默认)
  *   GET    /api/certs/{id}/bundle      → CertBundle               (私钥的唯一出口,cert.manage)
  *   GET    /api/certs/{id}/targets     → { items: CertTarget[] }
  *   POST   /api/certs/{id}/targets     → CertTarget(201)          (还要那台主机的操作权)
@@ -42,6 +43,8 @@ export interface Cert {
   ca: string
   dnsProviderId: string
   autoRenew: boolean
+  /** 「到期前 N 天开始自动续期」;0 = 没设置过,按后端默认窗口(RENEW_WINDOW_DAYS)。 */
+  renewBeforeDays: number
   keyAlgo: string
   notBefore: string
   notAfter: string
@@ -149,6 +152,8 @@ export interface CreateCertInput {
   ca: string
   dnsProviderId: string
   autoRenew: boolean
+  /** 1~365,或 0 = 用默认 30 天窗口(后端 ErrBadRenewWindow 同区间)。 */
+  renewBeforeDays: number
 }
 
 /** 导入与「替换正文」共用同一份载荷。 */
@@ -204,6 +209,11 @@ export async function issueCert(id: string): Promise<Cert> {
 
 export async function setAutoRenew(id: string, autoRenew: boolean): Promise<Cert> {
   return http.post<Cert>(`/api/certs/${encodeURIComponent(id)}/auto-renew`, { autoRenew })
+}
+
+/** 改「到期前 N 天开始自动续期」;传 0 就是改回默认窗口。 */
+export async function setRenewWindow(id: string, renewBeforeDays: number): Promise<Cert> {
+  return http.post<Cert>(`/api/certs/${encodeURIComponent(id)}/renew-window`, { renewBeforeDays })
 }
 
 export async function deleteCert(id: string): Promise<void> {
