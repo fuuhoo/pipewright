@@ -359,7 +359,7 @@ The listen address can also be set on the command line, which wins over `PIPEWRI
 
 | Variable | Description | Default |
 |---|---|---|
-| `PIPEWRIGHT_ADMIN_PASSWORD` | Admin password on first launch | none (must be set) |
+| `PIPEWRIGHT_ADMIN_PASSWORD` | Admin password on first launch (ignored once the DB already has an admin; if it is lost, see "Lost the admin password" below) | none (must be set) |
 | `PIPEWRIGHT_MASTER_KEY` | Credential vault master key (base64-encoded 32 bytes); or use `PIPEWRIGHT_MASTER_KEY_FILE` to point to a file | vault disabled if unset |
 | `PIPEWRIGHT_ADDR` | HTTP listen address | `:8080` |
 | `PIPEWRIGHT_PUBLIC_URL` | Externally reachable base URL (e.g. `https://ci.example.com`). Required for webhook callbacks, OAuth redirects, signed approval links in notifications, and PR status links | none |
@@ -368,6 +368,15 @@ The listen address can also be set on the command line, which wins over `PIPEWRI
 | `PIPEWRIGHT_RELEASE_REPO` | GitHub repo queried for update checks (change it for a fork) | `fuuhoo/pipewright` |
 | `PIPEWRIGHT_RUNTIME` | Set `docker` to declare a container deployment (affects self-update mode); otherwise auto-detected via `/.dockerenv` | auto-detect |
 | `PIPEWRIGHT_AUDIT_SINK` | Remote audit sink: an `http(s)://` endpoint, or any other value as a second local JSON Lines file path. Keeps audit records complete even if the local DB is wiped | none |
+
+**Lost the admin password**: `PIPEWRIGHT_ADMIN_PASSWORD` only takes effect on the one launch where the DB has no admin yet; changing it later never touches the account. Run one subcommand **on the machine hosting the platform** — it opens the local DB only, binds no port, and the new password is in effect at the next login:
+
+```bash
+pipewright reset-admin-password --stdin < newpass.txt   # also supports --password-file / --generate
+docker exec -it <container> /pipewright reset-admin-password --stdin   # compose form: the binary sits at /pipewright in the image root
+```
+
+The password is only accepted from stdin / a file / `--generate`. There is deliberately no `--password` flag (`ps` and shell history would both keep a copy), and the command never re-reads `PIPEWRIGHT_ADMIN_PASSWORD`. It handles the built-in admin only; for other accounts, sign in as a different admin and reset them under **User management**.
 
 **Database**
 
