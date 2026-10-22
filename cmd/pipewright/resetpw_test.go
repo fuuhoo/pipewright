@@ -99,8 +99,12 @@ func TestParseResetPasswordFlagsGenerates(t *testing.T) {
 			t.Fatalf("生成口令含字母表外的字符:%q", got.plain)
 		}
 	}
-	// 易混字符(i/l/1/o/0)不该出现:这串是要人手敲进登录框的。
-	if strings.ContainsAny(got.plain, "il1oO0") {
+	// 易混字符不该出现:这串是要人手敲进登录框的。判据落在字母表常量上,
+	// 不落在这一轮的随机样本上 —— 拿样本来断言,同一个缺陷要靠运气才测得出来。
+	if strings.ContainsAny(generateAlphabet, ambiguousRunes) {
+		t.Fatalf("字母表含易混字符:%q", generateAlphabet)
+	}
+	if strings.ContainsAny(got.plain, ambiguousRunes) {
 		t.Fatalf("生成口令含易混字符:%q", got.plain)
 	}
 	other, _ := parseResetPasswordFlags([]string{"--generate"}, staticEnv(nil), strings.NewReader(""))

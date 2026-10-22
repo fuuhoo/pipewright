@@ -39,12 +39,17 @@ type resetPWConfig struct {
 	usedGenerate bool   // 口令是本命令生成的 → 成功时打印一次
 }
 
-// generateLen 是 --generate 产出的口令长度。字符表去掉易混字符(i/l/1/o/0),
-// 因为这串字符是要人手打进登录框的。
+// generateLen 是 --generate 产出的口令长度。字符表去掉易混字符(i/l/1/o/0 与它们的
+// 大写 I/O),因为这串字符是要人手打进登录框的。
+// 字母表本身必须真的不含这些字符 —— 之前小写档漏掉了 i,注释与测试都承诺去掉,
+// 于是随机样本约三成踩中,CI 一阵红。
 const (
 	generateLen      = 20
-	generateAlphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	generateAlphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 )
+
+// ambiguousRunes 是字母表里不该出现的易混字符(两种大小写都算)。
+const ambiguousRunes = "il1oOI0"
 
 func parseResetPasswordFlags(args []string, lookupEnv func(string) string, stdin io.Reader) (resetPWConfig, error) {
 	fs := flag.NewFlagSet("reset-admin-password", flag.ContinueOnError)
