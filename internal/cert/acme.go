@@ -303,6 +303,15 @@ func (s *service) issueOnce(ctx context.Context, r *certRow) (*issueResult, erro
 		return nil, ErrNoCA
 	}
 	client, err := s.accountClient(ctx, ca)
+	if errors.Is(err, ErrNoACMEAccount) && !ca.RequiresEAB {
+		// Certimate 式一步到位:这家 CA 不需要 EAB,首次签发当场把账户注册好(账户密钥进保险库封存,
+		// 条款沿用「用户在下拉里选中该 CA 即视为同意」的口径),再取回客户端继续。需要 EAB 的
+		// (ZeroSSL / GTS / SSL.com)这里注册不了,保留原 ErrNoACMEAccount 让用户先去账户页填凭据。
+		if _, regErr := s.RegisterAccount(ctx, AccountInput{CA: ca.ID}); regErr != nil {
+			return nil, regErr
+		}
+		client, err = s.accountClient(ctx, ca)
+	}
 	if err != nil {
 		return nil, err
 	}

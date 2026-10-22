@@ -948,16 +948,17 @@ func TestIssueGuards(t *testing.T) {
 		t.Errorf("缺 TXTWriter = %v, 期望 %v", err, ErrTXTWriterUnconfigured)
 	}
 
-	// 有写入能力但还没注册账户。
+	// 有写入能力但还没注册账户:免 EAB 的 CA 会在签发时当场自动注册,所以这里用需要 EAB 的
+	// ZeroSSL 来验「注册不了就报没账户」这条护栏(它没法替用户造 EAB 凭据)。
 	f := newFakeCA(t, txt)
 	s2 := newAcmeSvc(t, st.DB, txt, f.directoryURL())
 	seedProvider(t, st.DB, "dns-2")
-	c2, err := s2.Create(ctx, CreateInput{Domain: "b.example.com", CA: CALetsEncrypt, DNSProviderID: "dns-1"})
+	c2, err := s2.Create(ctx, CreateInput{Domain: "b.example.com", CA: CAZeroSSL, DNSProviderID: "dns-1"})
 	if err != nil {
 		t.Fatalf("登记 2: %v", err)
 	}
 	if _, err := s2.Issue(ctx, c2.ID); !errors.Is(err, ErrNoACMEAccount) {
-		t.Errorf("未注册账户 = %v, 期望 %v", err, ErrNoACMEAccount)
+		t.Errorf("需要 EAB 的 CA 未注册账户 = %v, 期望 %v", err, ErrNoACMEAccount)
 	}
 
 	// 导入的证书不归平台签。
@@ -972,6 +973,43 @@ func TestIssueGuards(t *testing.T) {
 	}
 	if _, err := s2.Issue(ctx, up.ID); !errors.Is(err, ErrNotACME) {
 		t.Errorf("导入证书签发 = %v, 期望 %v", err, ErrNotACME)
+	}
+}
+
+// TestIssueAutoRegistersAccount 锁住 Certimate 式一步到位:免 EAB 的 CA,登记证书后不先注册账户,
+// 直接签发就应该当场把账户注册好并签出证书。
+func TestIssueAutoRegistersAccount(t *testing.T) {
+	st := storetest.Open(t)
+	ctx := context.Background()
+	seedProvider(t, st.DB, "dns-1")
+	txt := newTXTRecorder()
+	f := newFakeCA(t, txt)
+	s := newAcmeSvc(t, st.DB, txt, f.directoryURL())
+
+	c, err := s.Create(ctx, CreateInput{Domain: "auto.example.com", CA: CALetsEncrypt, DNSProviderID: "dns-1"})
+	if err != nil {
+		t.Fatalf("登记: %v", err)
+	}
+	// 签发前账户表里确实什么都没有。
+	if _, err := s.store.getAccount(ctx, CALetsEncrypt); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("前置: 期望未注册账户, 实得 err=%v", err)
+	}
+	got, err := s.Issue(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("未先注册账户的签发 = %v, 期望自动注册后签成", err)
+	}
+	if got.Status != StatusIssued || !got.HasKey {
+		t.Errorf("签发结果 = %s hasKey=%v, 期望 issued/true", got.Status, got.HasKey)
+	}
+	// 自动注册应该把 LE 账户落库,并替用户在 CA 侧接受了条款。
+	if _, err := s.store.getAccount(ctx, CALetsEncrypt); err != nil {
+		t.Errorf("签发后账户应已入库: %v", err)
+	}
+	f.mu.Lock()
+	terms := f.termsSet
+	f.mu.Unlock()
+	if !terms {
+		t.Errorf("自动注册应向 CA 提交条款同意")
 	}
 }
 
