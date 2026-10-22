@@ -83,6 +83,7 @@ export default {
   caPlaceholder: 'CA 선택',
   caStaging: '스테이징',
   caNoAccount: '{name}의 ACME 계정이 아직 없습니다.',
+  caNoAccountEnd: '에서 등록하세요',
   fieldDns: 'DNS 공급자',
   dnsPlaceholder: 'DNS-01 검증에 사용할 관리 존 선택',
   dnsNone: 'DNS 공급자가 아직 없습니다. 설정 페이지에서 추가하세요',

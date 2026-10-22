@@ -321,6 +321,9 @@ async function openCreate(): Promise<void> {
     if (cas.value.length === 0) cas.value = await listCas()
     if (dnsProviders.value.length === 0) dnsProviders.value = await listDnsProviders()
     if (!createForm.value.ca) createForm.value.ca = cas.value[0]?.id ?? ''
+    // 提醒「这家 CA 还没注册 ACME 账户」要靠这份名单判断;不加载就会对已注册的 CA 误报。
+    // 拉失败不影响登记本身(后端签发时仍会 422 说清),所以这里吞掉错误,不打断弹窗。
+    if (accounts.value.length === 0) accounts.value = await listAcmeAccounts().catch(() => accounts.value)
   } catch (err) {
     createBanner.value = errText(err, t('certs.errLoadChoices'))
   }
@@ -911,6 +914,7 @@ const hasAccountForCa = computed(() => {
             <span v-else-if="selectedCa && !hasAccountForCa(selectedCa.id)" class="field-hint">
               {{ t('certs.caNoAccount', { name: selectedCa.name }) }}
               <button type="button" class="link-btn" @click="modal = 'accounts'; openAccounts()">{{ t('certs.btnAccounts') }}</button>
+              {{ t('certs.caNoAccountEnd') }}
             </span>
           </div>
 

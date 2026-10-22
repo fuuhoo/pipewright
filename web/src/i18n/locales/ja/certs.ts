@@ -83,6 +83,7 @@ export default {
   caPlaceholder: 'CA を選択',
   caStaging: 'ステージング',
   caNoAccount: '{name} の ACME アカウントがまだありません。',
+  caNoAccountEnd: 'から登録してください',
   fieldDns: 'DNS プロバイダー',
   dnsPlaceholder: 'DNS-01 検証に使う管理ゾーンを選択',
   dnsNone: 'DNS プロバイダーがまだありません。設定ページで追加してください',
