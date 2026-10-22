@@ -207,6 +207,75 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
+// SetScopesInput 是「改这把端点的两把尺」的入参。
+//
+// 用指针是因为这里必须分得清三态,而签发接口分不出:
+//   - nil:这一把这次不动(请求里没带这个键);
+//   - 指向非空切片:收窄成这些;
+//   - 指向空切片:**改回不限**。
+//
+// 最后一条与签发时的口径相反,不是写歪了:POST 里显式 `[]` 会被拒,因为「一把什么都不给的令牌」
+// 是笔误;而 PATCH 里给 `[]` 只有一个意思 —— 把上次收窄的两把尺解开。同一次改动的两把尺
+// 一起落库(一个事务),不会出现「工具改了、分组没改」这种半套范围。
+type SetScopesInput struct {
+	AllowedTools *[]string
+	GroupScope   *[]string
+}
+
+// SetScopes 改一把令牌的端点范围,返回改后的视图。未知 id → ErrNotFound。
+func (s *Service) SetScopes(ctx context.Context, id string, in SetScopesInput) (*Token, error) {
+	if in.AllowedTools == nil && in.GroupScope == nil {
+		return nil, fmt.Errorf("%w:没有要修改的范围", ErrValidation)
+	}
+	toolsJSON, err := marshalPtrScope(in.AllowedTools)
+	if err != nil {
+		return nil, fmt.Errorf("apitoken: 编码工具范围: %w", err)
+	}
+	groupsJSON, err := marshalPtrScope(in.GroupScope)
+	if err != nil {
+		return nil, fmt.Errorf("apitoken: 编码分组范围: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("apitoken: begin set scopes: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 两列各写一次,nil(不动)就跳过。RowsAffected==0 只可能是这把令牌刚被撤销。
+	for _, col := range []struct {
+		name  string
+		value *string
+	}{{"allowed_tools", toolsJSON}, {"group_scope", groupsJSON}} {
+		if col.value == nil {
+			continue
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE api_tokens SET `+col.name+` = ? WHERE id = ?`, *col.value, id)
+		if err != nil {
+			return nil, fmt.Errorf("apitoken: update %s: %w", col.name, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, ErrNotFound
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("apitoken: commit set scopes: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+// marshalPtrScope 把「这次不动」(nil)与「改回不限」(指向空切片)分开:前者返回 nil 让调用方跳过这一列。
+func marshalPtrScope(items *[]string) (*string, error) {
+	if items == nil {
+		return nil, nil
+	}
+	raw, err := marshalScope(*items)
+	if err != nil {
+		return nil, err
+	}
+	return &raw, nil
+}
+
 // Verify 按明文取回归属人身份与这把令牌的范围。任何不可用的原因(不含摘要、不存在、归属用户被删或被禁用)
 // 一律回 ErrInvalid。成功时按节流刷新 last_used_at —— 这一步失败不影响本次校验结果。
 func (s *Service) Verify(ctx context.Context, plaintext string) (*Principal, error) {

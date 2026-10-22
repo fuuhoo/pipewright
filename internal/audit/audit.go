@@ -181,6 +181,9 @@ const (
 	// 而真正要复盘的是「这把令牌什么时候发出去、什么时候收回来」。
 	// 撤销必须留痕且不只在列表里消失:出事后要能回答「这把泄露的令牌是哪天作废的」。
 	ActionAPITokenCreate = "api_token_create"
+	// 改范围必须留痕:端点收窄是「这把凭据能干什么」的变更,出事后第一个要问的就是
+	// 「那会儿它是收窄的还是不限的、谁在什么时候解开的」。
+	ActionAPITokenUpdate = "api_token_update"
 	ActionAPITokenRevoke = "api_token_revoke"
 )
 

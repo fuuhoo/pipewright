@@ -243,6 +243,74 @@ func makeCreateAPITokenHandler(svc *apitoken.Service, gs *group.Service, aud aud
 	}
 }
 
+// makeUpdateAPITokenScopesHandler 返回 PATCH /api/admin/api-tokens/{id} handler。
+//
+// 请求体里两个键都可以省:省 = 这一把尺不动;给非空数组 = 收窄成这些;给 [] = 改回不限。
+// 最后一条与 POST 的口径相反,而且是故意的:签发时「什么都不给」是笔误,该拒;
+// 编辑时「清空」只有一个意思 —— 把上次套上的尺解开(见 apitoken.SetScopesInput)。
+//
+// 返回体是改后的整条令牌视图,前端不必再拉一次列表才知道改成了什么。
+func makeUpdateAPITokenScopesHandler(svc *apitoken.Service, gs *group.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireAPITokenSvc(w, svc) {
+			return
+		}
+		id := chi.URLParam(r, "id")
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			AllowedTools *[]string `json:"allowedTools"`
+			GroupScope   *[]string `json:"groupScope"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		if req.AllowedTools != nil && len(*req.AllowedTools) > 0 {
+			if bad := unknownTools(*req.AllowedTools); len(bad) > 0 {
+				writeError(w, http.StatusBadRequest, "invalid_token_request", "不存在的 MCP 工具:"+strings.Join(bad, "、"))
+				return
+			}
+		}
+		if req.GroupScope != nil && len(*req.GroupScope) > 0 {
+			if gs == nil {
+				writeError(w, http.StatusServiceUnavailable, "internal", "分组服务未初始化,无法校验分组范围")
+				return
+			}
+			bad, err := unknownGroups(r.Context(), gs, *req.GroupScope)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "校验分组范围时读库失败")
+				return
+			}
+			if len(bad) > 0 {
+				writeError(w, http.StatusBadRequest, "invalid_token_request", "不存在的分组:"+strings.Join(bad, "、"))
+				return
+			}
+		}
+		updated, err := svc.SetScopes(r.Context(), id, apitoken.SetScopesInput{
+			AllowedTools: req.AllowedTools,
+			GroupScope:   req.GroupScope,
+		})
+		if err != nil {
+			writeAPITokenError(w, err)
+			return
+		}
+		recordAuditFromRequest(r, aud, ac, audit.Entry{
+			Action:     audit.ActionAPITokenUpdate,
+			TargetType: audit.TargetAPIToken,
+			TargetID:   updated.ID,
+			// 记的是改完之后的范围:事后要回答的是「这把当时被收窄到哪」,而不是「原本是多少」。
+			Detail: map[string]any{
+				"name":         updated.Name,
+				"userId":       updated.UserID,
+				"allowedTools": updated.AllowedTools,
+				"groupScope":   updated.GroupScope,
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"item": toAPITokenDTO(updated)})
+	}
+}
+
 // makeListMCPToolsHandler 返回 GET /api/admin/mcp-tools handler → { items: [...] }。
 //
 // 它只吐名字、标题与只读位(不含 handler 与描述正文),给设置页画勾选框用。

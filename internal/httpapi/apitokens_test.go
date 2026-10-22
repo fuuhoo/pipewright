@@ -183,6 +183,24 @@ func (e *apiTokenEnv) del(t *testing.T, path, bearer string) (*http.Response, st
 	return resp, string(raw)
 }
 
+// patch 发一个 PATCH JSON 请求(管理端点只由浏览器会话调,固定带 csrf)。
+func (e *apiTokenEnv) patch(t *testing.T, path, body string) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPatch, e.srv.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCsrf, e.csrf)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp, string(raw)
+}
+
 // issueAdminToken 走真实端点给管理员自己签发一把令牌,返回明文。
 func (e *apiTokenEnv) issueAdminToken(t *testing.T) string {
 	t.Helper()
@@ -458,6 +476,97 @@ func TestAPIToken_ScopeRejections(t *testing.T) {
 	// 填合法值同样过。
 	if _, plain := e.issueScoped(t, `{"name":"只读工具","allowedTools":["get_run"],"groupScope":["`+gA+`"]}`); plain == "" {
 		t.Fatal("合法范围应签发成功")
+	}
+}
+
+// TestAPIToken_ScopesPatch 验「改范围不用撤销重发」这条线,重点是三种入参形态各有不同结果:
+// 带键 = 改这一把尺,[] = 解开这一把尺(与签发的「[] 拒签」相反),不带键 = 另一把尺一动不动。
+func TestAPIToken_ScopesPatch(t *testing.T) {
+	e := newAPITokenEnv(t, true)
+	gA := e.seedGroup(t, "甲组")
+	gB := e.seedGroup(t, "乙组")
+	e.seedProject(t, "in-a", gA)
+	e.seedProject(t, "in-b", gB)
+
+	item, plain := e.issueScoped(t, `{"name":"改范围","allowedTools":["get_run"],"groupScope":["`+gA+`"]}`)
+
+	// 只改分组:工具那把尺必须保持原样(「不带键 = 不动」是这次改动最容易写错的一条)。
+	resp, body := e.patch(t, "/api/admin/api-tokens/"+item.ID, `{"groupScope":["`+gB+`"]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH 应 200,得 %d: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Item apiTokenDTO `json:"item"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("解析响应: %v (%s)", err, body)
+	}
+	if strings.Join(out.Item.GroupScope, ",") != gB {
+		t.Fatalf("分组没改过来: %+v", out.Item)
+	}
+	if strings.Join(out.Item.AllowedTools, ",") != "get_run" {
+		t.Fatalf("没带工具这个键,范围不该被动: %+v", out.Item)
+	}
+
+	// 改完立刻生效:下一次带这把令牌调业务端点,看见的就是新组。
+	// 这一步才是「撤销重发」与「就地改」的真正差别 —— 令牌没换,客户端不用重配。
+	resp, body = e.get(t, "/api/projects", plain)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "in-b") || strings.Contains(body, "in-a") {
+		t.Fatalf("分组范围没跟着改: %d %s", resp.StatusCode, body)
+	}
+
+	// 显式 [] = 解开这把尺,回到不限(签发时同样的写法会被拒,这里是反方向)。
+	resp, body = e.patch(t, "/api/admin/api-tokens/"+item.ID, `{"groupScope":[]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("解开分组应 200,得 %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `"groupScope":[]`) {
+		t.Fatalf("解开后应回显空数组: %s", body)
+	}
+	resp, body = e.get(t, "/api/projects", plain)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "in-a") {
+		t.Fatalf("解开分组后甲组项目又该看得见: %d %s", resp.StatusCode, body)
+	}
+}
+
+// TestAPIToken_PatchRejections 钉住改范围的入参门。
+func TestAPIToken_PatchRejections(t *testing.T) {
+	e := newAPITokenEnv(t, true)
+	gA := e.seedGroup(t, "甲组")
+	item, _ := e.issueScoped(t, `{"name":"待改","groupScope":["`+gA+`"]}`)
+
+	cases := []struct {
+		name, path, body string
+		wantStatus       int
+		wantContains     string
+	}{
+		{"两个键都没带", item.ID, `{}`, http.StatusBadRequest, "没有要修改的范围"},
+		{"未知工具名", item.ID, `{"allowedTools":["no_such_tool"]}`, http.StatusBadRequest, "no_such_tool"},
+		{"未知分组 id", item.ID, `{"groupScope":["g-does-not-exist"]}`, http.StatusBadRequest, "g-does-not-exist"},
+		{"令牌不存在", "00000000-0000-4000-8000-000000000000", `{"groupScope":[]}`, http.StatusNotFound, "api_token_not_found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := e.patch(t, "/api/admin/api-tokens/"+tc.path, tc.body)
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("应 %d,得 %d: %s", tc.wantStatus, resp.StatusCode, body)
+			}
+			if !strings.Contains(body, tc.wantContains) {
+				t.Fatalf("响应应点名 %q,得 %s", tc.wantContains, body)
+			}
+		})
+	}
+
+	// 改一次就该有一条能追的痕,而且绝不落明文。
+	if _, body := e.patch(t, "/api/admin/api-tokens/"+item.ID, `{"allowedTools":["get_run"]}`); body == "" {
+		t.Fatal("PATCH 响应体为空")
+	}
+	recs, err := e.audit.List(t.Context(), audit.ListFilter{Action: audit.ActionAPITokenUpdate})
+	if err != nil || len(recs.Entries) != 1 {
+		t.Fatalf("改范围审计缺失: %v %+v", err, recs.Entries)
+	}
+	if recs.Entries[0].Detail["name"] != "待改" {
+		t.Fatalf("改范围审计该带令牌名: %+v", recs.Entries[0].Detail)
 	}
 }
 

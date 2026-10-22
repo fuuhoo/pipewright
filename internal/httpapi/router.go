@@ -687,6 +687,9 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			// 签发时可带两把尺:allowedTools(工具面)与 groupScope(数据面),口径见 apitokens.go。
 			adminR.Get("/api-tokens", makeListAPITokensHandler(o.apiTokens))
 			adminR.Post("/api-tokens", makeCreateAPITokenHandler(o.apiTokens, o.groupSvc, aud, authn))
+			// 改两把尺(端点范围)不必撤销重发:撤销会让客户端当场断连,而调范围往往是
+			// 「先收紧看看有没有人受影响」这种渐进动作。
+			adminR.Patch("/api-tokens/{id}", makeUpdateAPITokenScopesHandler(o.apiTokens, o.groupSvc, aud, authn))
 			adminR.Delete("/api-tokens/{id}", makeRevokeAPITokenHandler(o.apiTokens, aud, authn))
 			// 工具名册:设置页勾工具时读它,后端校验工具名时读同一份。
 			adminR.Get("/mcp-tools", makeListMCPToolsHandler())
