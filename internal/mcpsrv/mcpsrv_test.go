@@ -21,6 +21,13 @@ import (
 
 const goodToken = "pwt_good"
 
+// goodTokenID 是 fakeVerifier 那把令牌的 id —— 端点地址 /mcp/<这个> 必须与它一致才放行。
+// 真实 id 由 uuid.NewString 造,测试里也得用同一形状,否则路径解析那条腿验不到东西。
+const goodTokenID = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+
+// otherTokenID 是另一把令牌的 id:打到这条地址上就是「令牌与端点不匹配」。
+const otherTokenID = "0f8e6a1c-9b2d-4c3f-8a7e-1d2c3b4a5968"
+
 // stubRoute 是一条假的内部 REST 响应。
 type stubRoute struct {
 	method string
@@ -86,7 +93,7 @@ func (v fakeVerifier) Verify(_ context.Context, plain string) (*apitoken.Princip
 	if plain != goodToken {
 		return nil, apitoken.ErrInvalid
 	}
-	return &apitoken.Principal{TokenID: "tok-1", UserID: "u-1", Username: "admin", Role: "admin",
+	return &apitoken.Principal{TokenID: goodTokenID, UserID: "u-1", Username: "admin", Role: "admin",
 		AllowedTools: v.allowed}, nil
 }
 
@@ -266,6 +273,112 @@ func TestMCP_NoCookieFallback(t *testing.T) {
 	}
 	if len(api.calls) != 0 {
 		t.Fatalf("cookie 请求不该产生内部调用: %+v", api.calls)
+	}
+}
+
+// TestMCP_EndpointPathBinding 覆盖「地址指名端点」这条规矩:/mcp/<令牌 id> 只能用签发它时
+// 那把令牌,配错就 403;地址形状对不上 UUID 的(客户端自己追加的子路径)不指名端点,照旧放行。
+func TestMCP_EndpointPathBinding(t *testing.T) {
+	cases := []struct {
+		name     string
+		path     string
+		auth     string
+		wantHTTP int
+		wantCode string
+	}{
+		{name: "不带端点(旧地址)", path: "/mcp", auth: goodToken, wantHTTP: http.StatusOK},
+		{name: "空子路径", path: "/mcp/", auth: goodToken, wantHTTP: http.StatusOK},
+		{name: "自己的端点", path: "/mcp/" + goodTokenID, auth: goodToken, wantHTTP: http.StatusOK},
+		{name: "自己的端点(手输大写)", path: "/mcp/" + strings.ToUpper(goodTokenID), auth: goodToken, wantHTTP: http.StatusOK},
+		{name: "客户端追加的子路径不指名端点", path: "/mcp/sse", auth: goodToken, wantHTTP: http.StatusOK},
+		{name: "别人的端点", path: "/mcp/" + otherTokenID, auth: goodToken, wantHTTP: http.StatusForbidden, wantCode: "endpoint_token_mismatch"},
+		// 关键顺序断言:错密钥配一条别人的地址,报的仍是「令牌无效」——
+		// 否则任何人拿地址就能探测「这个端点 id 在不在」。
+		{name: "错密钥 + 别人的端点", path: "/mcp/" + otherTokenID, auth: "pwt_wrong", wantHTTP: http.StatusUnauthorized, wantCode: "invalid_api_token"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api, srv := newEnv(t, []stubRoute{{method: http.MethodGet, path: "/api/projects", body: `[]`}}, fakeVerifier{})
+			req, err := http.NewRequest(http.MethodPost, srv.URL+tc.path, strings.NewReader(
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"x","version":"1"}}}`))
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("Authorization", "Bearer "+tc.auth)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("do: %v", err)
+			}
+			defer resp.Body.Close()
+			raw, _ := io.ReadAll(resp.Body)
+
+			if resp.StatusCode != tc.wantHTTP {
+				t.Fatalf("期望 HTTP %d,得 %d: %s", tc.wantHTTP, resp.StatusCode, raw)
+			}
+			if tc.wantCode == "" {
+				// 放行分支:握手必须真做成,不能是「200 但正文是个错误信封」。
+				if strings.Contains(string(raw), "endpoint_token_mismatch") {
+					t.Fatalf("不该被端点绑定挡住: %s", raw)
+				}
+				return
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(raw, &env); err != nil {
+				t.Fatalf("正文应是平台错误信封: %v (%s)", err, raw)
+			}
+			if env.Error.Code != tc.wantCode || env.Error.Message == "" {
+				t.Fatalf("错误信封不对: %+v", env.Error)
+			}
+			// 反向断言:被拒掉的请求一个字节都不该打到内部 REST。
+			if len(api.calls) != 0 {
+				t.Fatalf("拒掉之前就有内部调用: %+v", api.calls)
+			}
+		})
+	}
+}
+
+// TestMCP_EndpointScopedToolsOnBoundPath 证明两件事不打架:走独立地址进来,工具面照这把令牌收。
+func TestMCP_EndpointScopedToolsOnBoundPath(t *testing.T) {
+	_, srv := newEnv(t, nil, fakeVerifier{allowed: []string{"list_projects"}})
+	session := dial(t, srv.URL+"/mcp/"+goodTokenID, goodToken)
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if len(res.Tools) != 1 || res.Tools[0].Name != "list_projects" {
+		t.Fatalf("独立地址上的工具面没收窄: %+v", res.Tools)
+	}
+}
+
+func TestEndpointIDFromPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+	}{
+		{path: "", want: ""},
+		{path: "/", want: ""},
+		{path: "/mcp", want: ""},
+		{path: "/mcp/", want: ""},
+		{path: "/mcp/" + goodTokenID, want: goodTokenID},
+		{path: "/mcp/" + strings.ToUpper(goodTokenID), want: goodTokenID},
+		{path: "/mcp/" + goodTokenID + "/messages", want: goodTokenID},
+		{path: "/mcp/sse", want: ""},
+		{path: "/mcp/not-a-uuid", want: ""},
+		{path: "/mcp/" + strings.ReplaceAll(otherTokenID, "-", ""), want: otherTokenID}, // 无连字符的 32 hex 也是同一个 UUID
+		{path: "/api/mcp/" + goodTokenID, want: ""},
+	}
+	for _, tc := range cases {
+		if got := endpointIDFromPath(tc.path); got != tc.want {
+			t.Fatalf("endpointIDFromPath(%q) = %q,期望 %q", tc.path, got, tc.want)
+		}
 	}
 }
 

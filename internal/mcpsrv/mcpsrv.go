@@ -25,6 +25,7 @@ import (
 
 	"github.com/fuuhoo/pipewright/internal/apitoken"
 	"github.com/fuuhoo/pipewright/internal/version"
+	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -100,7 +101,7 @@ func buildServer(allowed []string) *mcp.Server {
 	return server
 }
 
-// Handler 返回挂在 /mcp 上的 http.Handler。
+// Handler 返回挂在 /mcp 与 /mcp/* 上的 http.Handler。
 //
 // 每一条 MCP 请求都要先过 Bearer 校验(与 requireAuth 同口径:没有令牌、令牌无效、
 // 令牌未启用都是 401,且不回落到会话 cookie —— 回落就等于允许一个能诱导管理员发请求的
@@ -109,6 +110,10 @@ func buildServer(allowed []string) *mcp.Server {
 //
 // 工具面同样按这把令牌收:验令牌时拿到它的 allowed_tools,存进 context,SDK 的
 // getServer 再据此注册 —— 白名单外的工具既不在 tools/list 里出现,也就无从被调用。
+//
+// 地址形态有两朵:/mcp(不指名端点)与 /mcp/<令牌 id>(每把令牌一个独立地址,
+// 页面上能逐条复制)。后者指名了端点就必须与 Authorization 里那把是同一把 —— 判在验令牌**之后**:
+// 先验密钥再比地址,拿一个错密钥探不到「这个端点 id 存在吗」。
 //
 // 只有进程内形态该挂它:NewRemote 造出来的 Service 没有 TokenVerifier(令牌是配置进来的,
 // 不是在这里验的),挂上去只会得到一个对任何请求都回 401 的端点。
@@ -142,6 +147,11 @@ func (s *Service) Handler() http.Handler {
 			denyMCP(w, "invalid_api_token", "API 令牌无效或已撤销")
 			return
 		}
+		if want := endpointIDFromPath(r.URL.Path); want != "" && want != p.TokenID {
+			denyMCPEndpoint(w, "endpoint_token_mismatch",
+				"地址里的端点与 Authorization 里的令牌不是同一把:这条地址要用签发它时给出的那把令牌")
+			return
+		}
 		ctx := withAllowedTools(withEndpoint(r.Context(), s.endpoint(plain, r.RemoteAddr)), p.AllowedTools)
 		inner.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -151,11 +161,40 @@ func (s *Service) Handler() http.Handler {
 // 正文用平台的错误信封形状({"error":{"code","message"}}),让直接 curl 的人也看得懂。
 func denyMCP(w http.ResponseWriter, code, message string) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="pipewright", error="`+code+`"`)
+	writeMCPError(w, http.StatusUnauthorized, code, message)
+}
+
+// denyMCPEndpoint 回 403:密钥本身有效,只是被使到了别的端点地址上。
+// 刻意不带 WWW-Authenticate —— 那不是「重新认证」能解决的事,客户端照做一遍还是原样。
+func denyMCPEndpoint(w http.ResponseWriter, code, message string) {
+	writeMCPError(w, http.StatusForbidden, code, message)
+}
+
+func writeMCPError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusUnauthorized)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]string{"code": code, "message": message},
 	})
+}
+
+// endpointIDFromPath 取出「这条请求指名要打哪个端点」:/mcp → "",/mcp/<令牌 id> → 那个 id。
+//
+// 只认 UUID:地址里那一段就是令牌 id,而 id 由 uuid.NewString 生成,别的形状不可能是它。
+// 认不出来就当没指名端点 —— 客户端往地址后面自己追加 /sse、/messages 是常态,
+// 把那些判成「未知端点」会把一个配得没毛病的客户端挡在门外。
+// 返回的是规范化小写形式,与库里的 id 同一形状(顺带让手输的大写也能对上)。
+func endpointIDFromPath(path string) string {
+	rest, ok := strings.CutPrefix(path, "/mcp/")
+	if !ok {
+		return ""
+	}
+	seg, _, _ := strings.Cut(rest, "/")
+	u, err := uuid.Parse(seg)
+	if err != nil {
+		return ""
+	}
+	return u.String()
 }
 
 // bearerToken 取 Authorization 头里的 Bearer 凭据。第二个返回值为 false 表示没带令牌。
