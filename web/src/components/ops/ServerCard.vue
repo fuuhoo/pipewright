@@ -77,10 +77,16 @@ const props = defineProps<{
   selectedSet: Set<string>
   /** 父持有的折叠集(按 serverId):在集合里 = 这台卡片正文收起,只留标题行。 */
   foldedSet: Set<string>
+  /**
+   * 聚焦信号(来自页面级「点栈里的容器 → 回到这一台的容器 tab」):每次跳转换一个新编号,
+   * 0 = 没有在聚焦。用编号而不是布尔,是因为同一台连着跳两次时值没变,watcher 就不会再触发。
+   */
+  tabFocus?: number
 }>()
 const emit = defineEmits<{
   (e: 'changed'): void
   (e: 'toggle-fold'): void
+  (e: 'view-container', name: string): void
   (e: 'logs', c: ContainerInfo): void
   (e: 'terminal', c: ContainerInfo): void
   (e: 'diagnose', c: ContainerInfo): void
@@ -276,6 +282,15 @@ function switchTab(tabKey: TabKey): void {
   if (tabKey === 'networks' && netState.value === 'idle') void loadNetworks()
   if (tabKey === 'domains') domainsMounted.value = true
 }
+
+// 从栈行(本卡 Stacks tab 的服务行、页面级 StackCard 的容器行)点进某个容器时,这张卡要停在
+// 「容器」tab 上。聚焦信号是递增编号而不是布尔:连续跳同一台时值仍在变,watcher 才会再触发。
+watch(
+  () => props.tabFocus,
+  (n) => {
+    if (n && n > 0 && tab.value !== 'containers') switchTab('containers')
+  },
+)
 
 // ─── 数据卷(懒加载) ──────────────────────────────────────────────────────────
 const volumes = ref<VolumeInfo[]>([])
@@ -974,7 +989,14 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
                 <ul class="svc" role="list">
                   <li v-for="svc in stackDetail.services" :key="svc.name" class="svc__row">
                     <span class="svc__dot" :class="`svc__dot--${svc.state}`" :title="svc.state" />
-                    <span class="svc__name mono">{{ svc.service || svc.name }}</span>
+                    <button
+                      class="svc__name mono"
+                      type="button"
+                      :title="t('containers.viewContainer', { name: svc.name })"
+                      @click="emit('view-container', svc.name)"
+                    >
+                      {{ svc.service || svc.name }}
+                    </button>
                     <span class="svc__img mono" :title="svc.image">{{ svc.image }}</span>
                     <span class="svc__ports mono" :title="svc.ports">{{ svc.ports || '—' }}</span>
                     <span class="svc__status mono">{{ svc.status }}</span>
@@ -1697,7 +1719,23 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 .svc__dot--paused { background: #d97706; }
 .svc__dot--restarting { background: #2563eb; }
 .svc__dot--created { background: #6366f1; }
-.svc__name { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 服务名是这一行的入口:点了回到这张卡的「容器」tab(页面已把搜索框填成这个容器名)。
+   字体族留给 .mono(按钮不继承字体,这里只把字号/字形对齐行内其它列)。 */
+.svc__name {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.svc__name:hover { color: var(--color-primary); text-decoration: underline; }
 .svc__img, .svc__ports, .svc__status {
   color: var(--color-dim);
   overflow: hidden;

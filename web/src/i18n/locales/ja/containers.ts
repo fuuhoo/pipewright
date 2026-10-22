@@ -86,4 +86,5 @@ export default {
   stackNoRows: 'コンテナ{total}件、現在の絞り込みでは表示する行がありません',
   stackBucketEmptyTitle: 'この状態のコンテナはありません',
   stackBucketEmpty: '対象範囲内のコンテナはすべて残っていますが、この状態のコンテナを含むStackはありません。「すべて」に戻すと確認できます。',
+  viewContainer: 'コンテナタブで {name} を開く',
 }

@@ -86,4 +86,5 @@ export default {
   stackNoRows: '컨테이너 {total}개, 현재 필터에 표시할 행이 없습니다',
   stackBucketEmptyTitle: '이 상태의 컨테이너가 없습니다',
   stackBucketEmpty: '범위의 컨테이너는 모두 남아 있지만, 이 상태의 컨테이너를 가진 Stack이 없습니다. 「전체」로 돌아가면 확인할 수 있습니다.',
+  viewContainer: '컨테이너 탭에서 {name} 열기',
 }

@@ -86,4 +86,5 @@ export default {
   stackNoRows: '{total} Container — nach aktuellem Filter bleiben keine Zeilen',
   stackBucketEmptyTitle: 'Kein Container in diesem Zustand',
   stackBucketEmpty: 'Die Container in diesem Bereich sind alle noch da — nur hat kein Stack einen in diesem Zustand. Wechsle zurück auf „Alle“, um sie zu sehen.',
+  viewContainer: '{name} im Tab „Container“ öffnen',
 }

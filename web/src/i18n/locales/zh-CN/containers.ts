@@ -86,4 +86,5 @@ export default {
   stackNoRows: '共 {total} 个容器,当前筛选下没有要显示的行',
   stackBucketEmptyTitle: '这一档里没有容器',
   stackBucketEmpty: '范围内的容器都还在,只是没有一条 Stack 里有这一状态的容器。切回「全部」就能看到它们。',
+  viewContainer: '到「容器」tab 查看 {name}',
 }

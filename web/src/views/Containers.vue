@@ -270,6 +270,40 @@ function foldAll(): void {
   else folded.value = next
 }
 
+// ─── 从 Stack 行跳回那台机器的「容器」tab ──────────────────────────────────────
+// 栈视图(页面级 StackCard 的行、机器卡片 Stacks tab 展开出来的服务行)只回答「这条栈铺到了
+// 哪几台、有哪几个容器」;要看某个容器的完整一行(端口映射、实时占用、生命周期按钮)得回到
+// 那台机器的「容器」tab。一次跳转要把这一屏摆到那个容器面前:视图切回按主机、范围收到那台、
+// 卡片从折叠集里放出来、卡片停在容器 tab,并把状态档松开到「全部」—— 栈里那一台展开服务行时不看
+// 状态档,点进来的容器未必在当前档位里,点了没反应是最糟的结果,宁可多显示。
+// (分组不用动:屏幕上的栈行本来就来自分组收敛后的集合,那把尺挡不住已显示的行。)
+// 搜索框填容器名:落点就是这一行,用户想看清别的把词一删就回来了。
+const containerFocus = ref<{ serverId: string; n: number } | null>(null)
+/** 每次跳转换一个编号:卡片只认编号变没变,同一台连续跳两次也得切 tab。 */
+let focusSeq = 0
+
+function focusContainerTab(serverId: string, containerName: string): void {
+  const name = containerName.trim()
+  if (!name) return
+  viewMode.value = HOST_VIEW
+  serverScope.value = serverId
+  stateFilter.value = 'all'
+  searchText.value = name
+  if (folded.value.has(serverId)) {
+    const next = new Set(folded.value)
+    next.delete(serverId)
+    folded.value = next
+  }
+  focusSeq += 1
+  containerFocus.value = { serverId, n: focusSeq }
+}
+
+/** 某张卡片该不该切到容器 tab:只认自己那一项,编号每次跳转都变。 */
+function tabFocusFor(serverId: string): number {
+  const f = containerFocus.value
+  return f && f.serverId === serverId ? f.n : 0
+}
+
 // ─── 批量操作 ─────────────────────────────────────────────────────────────────
 // 父统一持有选择集;key = `${serverId}::${containerName}`。ServerCard 上报勾选,父加 serverId。
 const bulkMode = ref(false)
@@ -757,8 +791,10 @@ onUnmounted(() => {
           :bulk-mode="bulkMode"
           :selected-set="selected"
           :folded-set="folded"
+          :tab-focus="tabFocusFor(g.serverId)"
           @toggle-fold="toggleFold(g.serverId)"
           @toggle-select="(name) => toggleSelect(g.serverId, name)"
+          @view-container="(name) => focusContainerTab(g.serverId, name)"
           @changed="load"
           @logs="(c) => openLogs(g.serverId, c)"
           @terminal="(c) => openTerminal(g.serverId, c)"
@@ -782,6 +818,7 @@ onUnmounted(() => {
           :folded-set="foldedStacks"
           @toggle-fold="toggleFoldStack(s.key)"
           @toggle-select="toggleSelect"
+          @view-container="focusContainerTab"
           @changed="load"
           @logs="(serverId, c) => openLogs(serverId, c)"
           @terminal="(serverId, c) => openTerminal(serverId, c)"

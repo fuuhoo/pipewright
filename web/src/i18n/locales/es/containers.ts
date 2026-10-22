@@ -86,4 +86,5 @@ export default {
   stackNoRows: '{total} contenedores; los filtros actuales no dejan ninguna fila',
   stackBucketEmptyTitle: 'Ningún contenedor en este estado',
   stackBucketEmpty: 'Los contenedores del ámbito siguen ahí; ningún stack tiene uno en este estado. Vuelve a «Todos» para verlos.',
+  viewContainer: 'Abrir {name} en la pestaña «Contenedores»',
 }

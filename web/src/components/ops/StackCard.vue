@@ -35,6 +35,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-fold'): void
   (e: 'toggle-select', serverId: string, name: string): void
+  (e: 'view-container', serverId: string, name: string): void
   (e: 'logs', serverId: string, c: ContainerInfo): void
   (e: 'terminal', serverId: string, c: ContainerInfo): void
   (e: 'diagnose', serverId: string, c: ContainerInfo): void
@@ -206,7 +207,14 @@ async function runAction(row: StackRow, spec: ActionSpec): Promise<void> {
             <div v-if="view(row.serverId).group" class="crow__hostgroup">{{ view(row.serverId).group }}</div>
           </div>
           <div class="crow__main">
-            <div class="crow__name" :title="row.container.names">{{ row.container.names }}</div>
+            <button
+              class="crow__name"
+              type="button"
+              :title="t('containers.viewContainer', { name: row.container.names })"
+              @click="emit('view-container', row.serverId, row.container.names)"
+            >
+              {{ row.container.names }}
+            </button>
             <div class="crow__sub mono" :title="`${row.container.image} · ${row.container.id}`">
               {{ row.container.image }} · {{ shortId(row.container.id) }}
             </div>
@@ -464,12 +472,26 @@ async function runAction(row: StackRow, spec: ActionSpec): Promise<void> {
   min-width: 0;
 }
 .crow__name {
+  /* 容器名是这一行的入口:点了回到那台机器的「容器」tab 看完整一行(端口、占用、操作)。 */
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: inherit;
   font-size: var(--text-body);
   font-weight: 600;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+}
+.crow__name:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
 }
 .crow__sub {
   font-size: var(--text-micro);

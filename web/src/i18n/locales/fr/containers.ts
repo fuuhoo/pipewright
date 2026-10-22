@@ -86,4 +86,5 @@ export default {
   stackNoRows: '{total} conteneurs, les filtres actuels ne laissent aucune ligne',
   stackBucketEmptyTitle: 'Aucun conteneur dans cet état',
   stackBucketEmpty: 'Les conteneurs du périmètre sont toujours là, mais aucun stack n’en a un dans cet état. Revenez à « Tous » pour les voir.',
+  viewContainer: 'Ouvrir {name} dans l’onglet « Conteneurs »',
 }

@@ -86,4 +86,5 @@ export default {
   stackNoRows: '{total} containers, none left after the current filters',
   stackBucketEmptyTitle: 'No containers in this state',
   stackBucketEmpty: 'The containers in range are all still there — no stack has one in this state. Switch back to “All” to see them.',
+  viewContainer: 'Open {name} in the Containers tab',
 }
