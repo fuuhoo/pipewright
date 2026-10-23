@@ -27,7 +27,7 @@ type SeedEnv struct {
 }
 
 // builtinBuildEnvs 是内置列表。
-// 20 个,覆盖:Node / Python / Java(+Maven 工具链) / Go / Ruby / PHP / Rust / vfox 全量工具链 / 通用 Alpine。
+// 21 个,覆盖:Node / Python / Java(+Maven 工具链) / Go / Ruby / PHP / Rust / vfox 全量工具链 / 通用 Alpine。
 // sort_order 决定前端目录的展示顺序(按 sort_order 升序),同一语言内部按版本从高到低排。
 var builtinBuildEnvs = []SeedEnv{
 	{Language: "node", Version: "26", DisplayName: "Node.js 26", Description: "Node.js 26(官方镜像)", Image: "node:26-alpine", Enabled: true, SortOrder: 6},
@@ -52,6 +52,8 @@ var builtinBuildEnvs = []SeedEnv{
 	{Language: "rust", Version: "1.79", DisplayName: "Rust 1.79", Description: "Rust 1.79(官方 alpine)", Image: "rust:1.79-alpine", Enabled: true, SortOrder: 70},
 	// vfox 1.0.13 起镜像自带 `vfox use` 包装层:平台脚本(dash,无 hook)里直接切换生效,
 	// 不需要 eval activate,也不用把整段包进 bash heredoc;并补了 Maven 3.9。
+	// 1.0.14 在同一叠加层上加了 pnpm 12(装在 /opt/pnpm,切 Node 版本后仍可用)。
+	{Language: "vfox", Version: "1.0.14", DisplayName: "vfox 全量工具链 + Maven + pnpm", Description: "vfox 1.0.14:vfox use 免激活直接生效,内置 Maven 3.9 与 pnpm 12(SDK 已烘进镜像)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14", SourceType: SourceCustom, Enabled: true, SortOrder: 88},
 	{Language: "vfox", Version: "1.0.13", DisplayName: "vfox 全量工具链 + Maven", Description: "vfox 1.0.13:vfox use <sdk>@<版本> 免激活直接生效,内置 Maven 3.9(SDK 已烘进镜像)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.13", SourceType: SourceCustom, Enabled: true, SortOrder: 89},
 	{Language: "vfox", Version: "1.0.12", DisplayName: "vfox 全量工具链", Description: "vfox 1.0.12:一个容器内按需 vfox use 切 Node/Java/Go 等版本(需先 eval activate,无 Maven)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.12", SourceType: SourceCustom, Enabled: true, SortOrder: 90},
 	{Language: "alpine", Version: "latest", DisplayName: "Alpine (通用)", Description: "Alpine 通用 shell 环境(无语言工具链)", Image: "alpine:latest", Enabled: true, SortOrder: 100},
