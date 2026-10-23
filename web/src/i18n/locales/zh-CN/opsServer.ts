@@ -179,6 +179,14 @@ export default {
     unreachable: '不可达',
     collectFailed: '无法采集指标',
     cpuLoad: 'CPU 负载',
+    loadRate: '负载率 {pct}%',
+    loadRateTooltip:
+      '负载率 = 1 分钟负载 ÷ 核数。超过 100% 不是出错:负载数的是「在跑 + 排队 + 等不可中断 IO」的任务数,核数只是并行能力,两者量纲不同,8 核机负载 12 是真会发生的。',
+    cpuUsage: 'CPU 使用率',
+    cpuUsageLabel: 'CPU 使用率 {n}%',
+    cpuUsageTooltip:
+      '真 CPU 时间使用率:上一次采集到这一次之间,这台机器实际忙了多久(拿 /proc/stat 的累计量求差)。首轮还没有上一轮可比、没有 /proc/stat 的机器(macOS/BSD)都不画这一档 —— 它和上面的「负载率」是两件事,别互相冒充。',
+    cpuUsageSinceLast: '自上次采集以来',
     memory: '内存',
     swap: '交换',
     disk: '磁盘 {path}',

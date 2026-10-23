@@ -16,7 +16,7 @@ export default {
     colAddr: 'アドレス',
     colStatus: '状態',
     colSystem: 'システム',
-    colCpu: 'CPU 負荷',
+    colCpu: 'CPU',
     colMem: 'メモリ',
     colDisk: 'ディスク',
     colCollected: '取得',

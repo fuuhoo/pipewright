@@ -9,7 +9,7 @@ export default {
   fieldOperator: 'Condition',
   fieldThreshold: 'Threshold (%)',
   fieldScope: 'Scope',
-  metricCpu: 'CPU usage',
+  metricCpu: 'CPU load ratio',
   metricMemory: 'Memory usage',
   metricDisk: 'Disk usage',
   operatorGt: 'Greater than',

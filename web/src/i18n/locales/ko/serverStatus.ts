@@ -16,7 +16,7 @@ export default {
     colAddr: '주소',
     colStatus: '상태',
     colSystem: '시스템',
-    colCpu: 'CPU 부하',
+    colCpu: 'CPU',
     colMem: '메모리',
     colDisk: '디스크',
     colCollected: '수집',

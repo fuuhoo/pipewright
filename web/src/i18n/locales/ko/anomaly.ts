@@ -9,7 +9,7 @@ export default {
   fieldOperator: '조건',
   fieldThreshold: '임계값 (%)',
   fieldScope: '적용 범위',
-  metricCpu: 'CPU 사용률',
+  metricCpu: 'CPU 부하율',
   metricMemory: '메모리 사용률',
   metricDisk: '디스크 사용률',
   operatorGt: '초과',

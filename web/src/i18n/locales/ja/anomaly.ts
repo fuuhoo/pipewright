@@ -9,7 +9,7 @@ export default {
   fieldOperator: '条件',
   fieldThreshold: 'しきい値 (%)',
   fieldScope: '適用範囲',
-  metricCpu: 'CPU 使用率',
+  metricCpu: 'CPU 負荷率',
   metricMemory: 'メモリ使用率',
   metricDisk: 'ディスク使用率',
   operatorGt: 'より大きい',

@@ -16,7 +16,7 @@ export default {
     colAddr: 'Dirección',
     colStatus: 'Estado',
     colSystem: 'Sistema',
-    colCpu: 'Carga de CPU',
+    colCpu: 'CPU',
     colMem: 'Memoria',
     colDisk: 'Disco',
     colCollected: 'Recopilado',

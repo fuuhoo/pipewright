@@ -169,6 +169,14 @@ export default {
     unreachable: 'Nicht erreichbar',
     collectFailed: 'Metriken konnten nicht erfasst werden',
     cpuLoad: 'CPU-Last',
+    loadRate: 'Lastgrad {pct}%',
+    loadRateTooltip:
+      'Lastgrad = 1-Minuten-Last ÷ Kernanzahl. Über 100 % ist kein Fehler: Die Last zählt Aufgaben, die laufen, ausführbar sind oder in nicht unterbrechbarem I/O stecken, die Kernanzahl misst nur die Parallelität — eine Last von 12 auf 8 Kernen ist real.',
+    cpuUsage: 'CPU-Auslastung',
+    cpuUsageLabel: 'CPU-Auslastung {n}%',
+    cpuUsageTooltip:
+      'Tatsächliche CPU-Zeit-Auslastung: wie beschäftigt der Host zwischen der vorherigen und dieser Messung wirklich war (Differenz der /proc/stat-Zähler). Fällt bei der ersten Messung (noch kein Vergleichswert) und auf Hosts ohne /proc/stat (macOS/BSD) weg — das ist etwas anderes als die Lastgrad oben.',
+    cpuUsageSinceLast: 'seit der letzten Messung',
     memory: 'Speicher',
     swap: 'Swap',
     disk: 'Festplatte {path}',

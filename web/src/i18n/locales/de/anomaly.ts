@@ -9,7 +9,7 @@ export default {
   fieldOperator: 'Bedingung',
   fieldThreshold: 'Schwellenwert (%)',
   fieldScope: 'Geltungsbereich',
-  metricCpu: 'CPU-Auslastung',
+  metricCpu: 'CPU-Lastgrad',
   metricMemory: 'Speicherauslastung',
   metricDisk: 'Festplattenauslastung',
   operatorGt: 'Größer als',

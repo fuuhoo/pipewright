@@ -16,7 +16,7 @@ export default {
     colAddr: '位址',
     colStatus: '狀態',
     colSystem: '系統',
-    colCpu: 'CPU 負載',
+    colCpu: 'CPU',
     colMem: '記憶體',
     colDisk: '磁碟',
     colCollected: '擷取',

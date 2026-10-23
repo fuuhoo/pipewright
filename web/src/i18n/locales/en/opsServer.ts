@@ -169,6 +169,14 @@ export default {
     unreachable: 'Unreachable',
     collectFailed: 'Failed to collect metrics',
     cpuLoad: 'CPU Load',
+    loadRate: 'Load ratio {pct}%',
+    loadRateTooltip:
+      'Load ratio = 1-minute load ÷ cores. Above 100% is not an error: load counts tasks that are running, runnable, or blocked in uninterruptible I/O, while cores only measure parallelism. A load of 12 on 8 cores is real.',
+    cpuUsage: 'CPU usage',
+    cpuUsageLabel: 'CPU usage {n}%',
+    cpuUsageTooltip:
+      'True CPU time usage: how busy this host actually was between the previous sample and this one (difference of /proc/stat counters). It is hidden on the first sample (nothing to compare yet) and on hosts without /proc/stat (macOS/BSD) — it is not the same thing as the load ratio above.',
+    cpuUsageSinceLast: 'since last sample',
     memory: 'Memory',
     swap: 'Swap',
     disk: 'Disk {path}',

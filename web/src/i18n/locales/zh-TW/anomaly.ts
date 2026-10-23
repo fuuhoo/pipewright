@@ -8,7 +8,7 @@ export default {
   fieldOperator: '條件',
   fieldThreshold: '閾值 (%)',
   fieldScope: '作用範圍',
-  metricCpu: 'CPU 使用率',
+  metricCpu: 'CPU 負載率',
   metricMemory: '記憶體使用率',
   metricDisk: '磁碟使用率',
   operatorGt: '大於',

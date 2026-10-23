@@ -9,7 +9,7 @@ export default {
   fieldOperator: 'Condición',
   fieldThreshold: 'Umbral (%)',
   fieldScope: 'Alcance',
-  metricCpu: 'Uso de CPU',
+  metricCpu: 'Ratio de carga de CPU',
   metricMemory: 'Uso de memoria',
   metricDisk: 'Uso de disco',
   operatorGt: 'Mayor que',

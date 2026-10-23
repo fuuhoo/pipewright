@@ -16,7 +16,7 @@ export default {
     colAddr: 'Adresse',
     colStatus: 'Status',
     colSystem: 'System',
-    colCpu: 'CPU-Last',
+    colCpu: 'CPU',
     colMem: 'Speicher',
     colDisk: 'Festplatte',
     colCollected: 'Erfasst',

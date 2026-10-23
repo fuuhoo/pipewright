@@ -16,7 +16,7 @@ export default {
     colAddr: '地址',
     colStatus: '状态',
     colSystem: '系统',
-    colCpu: 'CPU 负载',
+    colCpu: 'CPU',
     colMem: '内存',
     colDisk: '磁盘',
     colCollected: '采集',

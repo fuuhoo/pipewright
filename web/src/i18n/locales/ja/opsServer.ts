@@ -169,6 +169,14 @@ export default {
     unreachable: '到達不可',
     collectFailed: 'メトリクスを収集できませんでした',
     cpuLoad: 'CPU 負荷',
+    loadRate: '負荷率 {pct}%',
+    loadRateTooltip:
+      '負荷率 = 1 分間負荷 ÷ コア数。100% を超えるのは異常ではありません:負荷は「実行中 + 実行待ち + 割込不可の I/O 待ち」のタスク数で、コア数は並列能力を表すだけなので単位が違います。8 コアで負荷 12 は実際に起こります。',
+    cpuUsage: 'CPU 使用率',
+    cpuUsageLabel: 'CPU 使用率 {n}%',
+    cpuUsageTooltip:
+      '実際の CPU 時間使用率:前回の採取から今回までの間に実際にどのくらいビジーだったか(/proc/stat の累計値の差分)。初回は比較対象がなく、/proc/stat のないマシン(macOS/BSD)では表示されません —— 上の「負荷率」とは別の指標です。',
+    cpuUsageSinceLast: '前回採取から',
     memory: 'メモリ',
     swap: 'スワップ',
     disk: 'ディスク {path}',

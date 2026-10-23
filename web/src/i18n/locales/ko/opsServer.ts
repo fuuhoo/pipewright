@@ -169,6 +169,14 @@ export default {
     unreachable: '연결 불가',
     collectFailed: '지표를 수집할 수 없습니다',
     cpuLoad: 'CPU 부하',
+    loadRate: '부하율 {pct}%',
+    loadRateTooltip:
+      '부하율 = 1분 부하 ÷ 코어 수. 100%를 넘는 것이 오류가 아닙니다: 부하는 「실행 중 + 실행 대기 + uninterruptible I/O 대기」 작업 수이고, 코어 수는 병렬 능력만 나타내므로 단위가 다릅니다. 8코어에서 부하 12는 실제로 일어납니다.',
+    cpuUsage: 'CPU 사용률',
+    cpuUsageLabel: 'CPU 사용률 {n}%',
+    cpuUsageTooltip:
+      '실제 CPU 시간 사용률: 이전 수집부터 이번 수집까지 실제로 얼마나 바빴는지(/proc/stat 누적값의 차이). 첫 수집은 비교할 값이 없고, /proc/stat이 없는 서버(macOS/BSD)에서는 표시하지 않습니다 — 위의 「부하율」과는 다른 지표입니다.',
+    cpuUsageSinceLast: '이전 수집 이후',
     memory: '메모리',
     swap: '스왑',
     disk: '디스크 {path}',

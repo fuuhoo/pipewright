@@ -169,6 +169,14 @@ export default {
     unreachable: 'Injoignable',
     collectFailed: 'Impossible de collecter les métriques',
     cpuLoad: 'Charge CPU',
+    loadRate: 'Taux de charge {pct}%',
+    loadRateTooltip:
+      'Taux de charge = charge 1 minute ÷ nombre de cœurs. Dépasser 100 % n\'est pas une erreur : la charge compte les tâches en cours, exécutables ou bloquées en I/O non interruptible, alors que les cœurs ne mesurent que le parallélisme. Une charge de 12 sur 8 cœurs est réelle.',
+    cpuUsage: 'Utilisation CPU',
+    cpuUsageLabel: 'Utilisation CPU {n}%',
+    cpuUsageTooltip:
+      'Utilisation réelle du temps CPU : combien de temps la machine a vraiment été occupée entre la mesure précédente et celle-ci (différence des compteurs /proc/stat). Absente à la première mesure (aucun point de comparaison) et sur les hôtes sans /proc/stat (macOS/BSD) — ce n\'est pas la même chose que le taux de charge ci-dessus.',
+    cpuUsageSinceLast: 'depuis la dernière mesure',
     memory: 'Mémoire',
     swap: 'Swap',
     disk: 'Disque {path}',

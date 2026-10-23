@@ -16,7 +16,7 @@ export default {
     colAddr: 'Adresse',
     colStatus: 'État',
     colSystem: 'Système',
-    colCpu: 'Charge CPU',
+    colCpu: 'CPU',
     colMem: 'Mémoire',
     colDisk: 'Disque',
     colCollected: 'Collecté',

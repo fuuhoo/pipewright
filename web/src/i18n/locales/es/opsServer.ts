@@ -169,6 +169,14 @@ export default {
     unreachable: 'Inaccesible',
     collectFailed: 'No se pudieron recopilar las métricas',
     cpuLoad: 'Carga de CPU',
+    loadRate: 'Ratio de carga {pct}%',
+    loadRateTooltip:
+      'Ratio de carga = carga de 1 minuto ÷ núcleos. Superar el 100 % no es un error: la carga cuenta tareas en ejecución, listas o bloqueadas en E/S ininterrumpible, mientras que los núcleos solo miden paralelismo. Una carga de 12 en 8 núcleos es real.',
+    cpuUsage: 'Uso de CPU',
+    cpuUsageLabel: 'Uso de CPU {n}%',
+    cpuUsageTooltip:
+      'Uso real del tiempo de CPU: cuánto tiempo estuvo ocupada la máquina entre la muestra anterior y esta (diferencia de contadores de /proc/stat). No aparece en la primera muestra (aún sin comparativa) ni en hosts sin /proc/stat (macOS/BSD) — no es lo mismo que el ratio de carga de arriba.',
+    cpuUsageSinceLast: 'desde la última muestra',
     memory: 'Memoria',
     swap: 'Swap',
     disk: 'Disco {path}',

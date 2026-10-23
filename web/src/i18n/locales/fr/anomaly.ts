@@ -9,7 +9,7 @@ export default {
   fieldOperator: 'Condition',
   fieldThreshold: 'Seuil (%)',
   fieldScope: 'Portée',
-  metricCpu: 'Utilisation du CPU',
+  metricCpu: 'Taux de charge CPU',
   metricMemory: 'Utilisation de la mémoire',
   metricDisk: 'Utilisation du disque',
   operatorGt: 'Supérieur à',

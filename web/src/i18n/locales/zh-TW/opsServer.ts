@@ -169,6 +169,14 @@ export default {
     unreachable: '無法連線',
     collectFailed: '無法採集指標',
     cpuLoad: 'CPU 負載',
+    loadRate: '負載率 {pct}%',
+    loadRateTooltip:
+      '負載率 = 1 分鐘負載 ÷ 核數。超過 100% 不是出錯:負載數的是「在跑 + 排隊 + 等不可中斷 IO」的任務數,核數只是並行能力,兩者量綱不同,8 核機負載 12 是真會發生的。',
+    cpuUsage: 'CPU 使用率',
+    cpuUsageLabel: 'CPU 使用率 {n}%',
+    cpuUsageTooltip:
+      '真 CPU 時間使用率:上一次採集到這一次之間,這台機器實際忙了多久(拿 /proc/stat 的累計量求差)。首輪還沒有上一輪可比、沒有 /proc/stat 的機器(macOS/BSD)都不畫這一檔 —— 它和上面的「負載率」是兩件事,別互相冒充。',
+    cpuUsageSinceLast: '自上次採集以來',
     memory: '記憶體',
     swap: '置換',
     disk: '磁碟 {path}',
