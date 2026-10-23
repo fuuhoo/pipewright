@@ -400,6 +400,21 @@ function isFailedStatus(status: RunStatus): boolean {
 
       <!-- 项目筛选:从项目卡片上的「运行记录」按钮带参进来,也能在这里打字找项目或换项目 -->
       <div class="project-filter">
+        <!-- 分组下拉只收窄下面的项目候选,不改列表、不进地址栏(见 groupFilter)。 -->
+        <div v-if="groupsLoaded" class="select-wrap project-filter-select">
+          <select
+            v-model="groupFilter"
+            class="field-select"
+            :aria-label="t('groups.filterAria')"
+          >
+            <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </div>
         <span class="project-filter-label">{{ t('runs.projectFilterLabel') }}</span>
         <div class="project-filter-select">
           <ProjectPicker
@@ -423,21 +438,6 @@ function isFailedStatus(status: RunStatus): boolean {
           class="project-filter-clear"
           @click="setProject('')"
         >{{ t('runs.projectFilterClear') }}</button>
-        <!-- 分组下拉只收窄上面那个项目候选,不改列表、不进地址栏(见 groupFilter)。 -->
-        <div v-if="groupsLoaded" class="select-wrap project-filter-select">
-          <select
-            v-model="groupFilter"
-            class="field-select"
-            :aria-label="t('groups.filterAria')"
-          >
-            <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-          <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-            <path d="M6 9l6 6 6-6"/>
-          </svg>
-        </div>
       </div>
     </div>
 
