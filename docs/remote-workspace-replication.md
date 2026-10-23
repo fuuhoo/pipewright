@@ -46,7 +46,7 @@
 | HTTP | `internal/httpapi/fs_zip.go` | 目录流式打包 + "静默即断"看门狗 |
 | HTTP | `internal/httpapi/container_terminal.go:214-269` | 主机 shell 终端 WS（`makeServerTerminalHandler`） |
 | HTTP | `internal/httpapi/terminal_recorder.go` | 命令级留痕：提示符钩子脚本 + OSC 5522 解析 + 会话审计（`server_command`） |
-| HTTP | `internal/httpapi/access_guard.go:131` | `requireTerminalOperate`（GET 也按"操作"档判） |
+| HTTP | `internal/httpapi/access_guard.go:171-185` | `requireServerPoint`：先要角色**持有那个功能点**，再走归属判定（GET 也按"操作"档判）。主机侧钉 `server.exec`，容器终端钉 `container.operate`（点常量 `:137-140`；调用点 `container_terminal.go:125`、`:228`） |
 | 路由 | `internal/httpapi/router.go:919-943` | 挂上述端点 |
 
 ### 前端（Vue 3 + TS）
@@ -61,7 +61,7 @@
 | 组件 | `web/src/components/ops/RemoteWorkspaceModal.vue` | 外壳：布局、上下分隔条、全屏、Esc、双向联动接线 |
 | 组件 | `web/src/components/ops/TerminalPane.vue` | xterm + WS + OSC7 解析 + `runCd`（expose） |
 | 组件 | `web/src/components/ops/RemoteFilePanel.vue` | 工具栏/面包屑/目录树/表格/内联编辑器/上传队列/传输记录 |
-| 入口 | `web/src/views/ServerStatus.vue:50-64,319-337` | 「远程」按钮 → `remoteId` → `v-if` 挂载弹窗 |
+| 入口 | `web/src/views/ServerStatus.vue:109-122,424-449` | 「远程」按钮 → `remoteId` → `v-if` 挂载弹窗；按钮本身按 `server.exec` 亮灭（`:39` `canRemote`） |
 | 文案 | `web/src/i18n/locales/<8 语种>/remoteWorkspace.ts` | 全部界面文案（见 §12） |
 
 ---
@@ -629,9 +629,12 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 
 ## 9. 权限、审计与安全姿态（把"为什么"一起复刻）
 
-1. **文件面板的所有路由（含 GET）都按 `ActOperate` 把关**（`server_fs.go:28-30` + `requireFSAccess`）。
+1. **文件面板与终端的所有路由（含 GET）都按 `ActOperate` + 功能点双重把关**（`server_fs.go:28-30` + `requireFSAccess`，`fs_upload.go:378-386`）。
    中间件对 GET 只判到 `ActView`，而"读主机上任意文件"不是平台语义的查看 —— 它是与开终端等价的一条通道。
-   因此**没有"只读用户可看"的降级路径**：没权限就是 403，界面按"无远程能力"处理。
+   功能点这一刀是因为**同类资源的多条入口会互相顺带放行**（`server.exec` / `container.operate` / `cert.manage` 同属"服务器"这一类，
+   只看类别上限就关不掉单条入口）：主机侧统一钉 `server.exec`，容器终端钉 `container.operate`。
+   因此**没有"只读用户可看"的降级路径**：没权限就是 403（`role_denied`），界面按"无远程能力"处理 ——
+   「远程」按钮在角色没有这个点时直接不画，而不是画出来等人点出一条红。
 2. **路径不做"越界拦截"**（`fs.go:434-441` 的 `cleanRemote` 只做 `path.Clean`；`server_fs.go:35-36` 同调）。
    能在终端里 `cd /etc` 的会话，拦它只会给假的安全感。真正的边界是操作权限本身。
    —— 但**上传的相对落点必须消毒**（§4.6），因为那批请求不允许"任意路径"这层含义。
@@ -761,7 +764,7 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 22. `TerminalPane`（xterm 动态加载 + 字体两段式重测 + refit 收敛 + OSC7 + 选中即复制 + expose runCd）。
 23. `RemoteFilePanel`（工具栏/面包屑/树(懒+reveal seq+invalidate)/表格/内联编辑/内联 op 表单/队列/记录）。
 24. `RemoteWorkspaceModal`（上下分屏 + 两条可拖 + 全屏 + Esc 三规则 + 双向联动接线 + 防回声）。
-25. 入口按钮（卡片/列表行 → `remoteId` → `v-if` 挂载；`hostLabel = user@host:port`）。
+25. 入口按钮（卡片/列表行 → `remoteId` → `v-if` 挂载；`hostLabel = user@host:port`；按钮按 `server.exec` 亮灭，与后端同点）。
 
 **M6 文案与测试**
 26. i18n 全键 ×8 语种（有 parity 测试就先补键再补翻译）。
@@ -833,6 +836,7 @@ fs_unsupported→不支持；invalid_path/bad_request/duplicate_file/chunk_too_l
 | `internal/httpapi/fs_upload_test.go` | begin 整批拒绝、409 offset_mismatch 续传、空文件、权限保留、回收 |
 | `internal/httpapi/fs_zip_test.go` | 流式 zip：软链跳过、空目录、条目上限掐断、store/deflate |
 | `internal/httpapi/container_terminal_test.go` | 两条终端 WS 的鉴权/白名单/命令 array 化/审计 |
+| `internal/httpapi/access_guard_points_test.go` | 落点按点判的六格矩阵：只给 `container.operate` 的角色开不了主机终端/远程文件（403 `role_denied`），反之亦然；管理员三格放行 |
 | `internal/httpapi/terminal_recorder_test.go` | 钩子脚本形状（无裸 `!`、真 CR 结尾）、OSC 5522 解码（脏载荷/自报/截断）、跨块拼接、每会话上限、`cutUTF8`、端到端命令落审计与 `hook=silent` |
 | `web/src/lib/serverFs.test.ts` | 路径/排序/字节/时间/权限串/`shellQuote`/OSC7 解析 |
 | `web/src/lib/fsUpload.test.ts` | 注入 deps 跑断线重连、退避、409 重定位、取消清半成品、retry |
