@@ -70,3 +70,8 @@ if (!('ResizeObserver' in globalThis)) {
     disconnect() {}
   }
 }
+
+// scrollIntoView stub — jsdom 没有布局,可滚动下拉的方向键导航会调用它
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}

@@ -7,8 +7,11 @@ import RunParamsEditor from '../components/RunParamsEditor.vue'
 import TypedRunParams from '../components/TypedRunParams.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { listProjects, type Project } from '../api/projects'
+import { listGroups, type Group } from '../api/groups'
 import { HttpError } from '../api/http'
-import { projectFilterLabel, resolveProjectFilter, withProjectFilter } from '../lib/runProjectFilter'
+import ProjectPicker from '../components/projects/ProjectPicker.vue'
+import { GROUP_ALL, groupOptions } from '../lib/groupFilter'
+import { resolveProjectFilter, withProjectFilter } from '../lib/runProjectFilter'
 
 const { t } = useI18n()
 
@@ -38,6 +41,28 @@ const statusFilter = ref<RunStatus | 'all'>('all')
 const projects        = ref<Project[]>([])
 const projectsLoading = ref(false)
 
+// 分组下拉只是把「项目下拉里能挑哪些」收窄一下:列表仍按后端给的项目可见范围出,
+// 也不写进地址栏 —— 组筛换了不该让 URL 变,那会让「收藏/回退」回到一份临时口径。
+const groups       = ref<Group[]>([])
+const groupsLoaded = ref(false)
+const groupFilter  = ref<string>(GROUP_ALL)
+
+const groupLabels = computed(() => ({
+  all: t('groups.filterAll'),
+  ungrouped: t('groups.ungrouped'),
+  missing: t('groups.groupMissing'),
+  public: t('groups.visibilityPublic'),
+  private: t('groups.visibilityPrivate'),
+}))
+const GROUP_OPTIONS = computed(() => groupOptions(groups.value, groupLabels.value))
+
+/** 项目下拉行尾的组名。「未归组」那档也要有名字,否则那一行看着像缺了字段。 */
+const groupNames = computed<Record<string, string>>(() => {
+  const out: Record<string, string> = { '': groupLabels.value.ungrouped }
+  for (const g of groups.value) out[g.id] = g.name
+  return out
+})
+
 const STATUS_FILTER_OPTIONS: Array<RunStatus | 'all'> = [
   'all',
   'running',
@@ -58,20 +83,21 @@ function filterLabel(value: RunStatus | 'all'): string {
 // 也只是往这个 query 里塞一个 id —— 不必为它另造一套页内状态。
 const projectId = computed<string>(() => resolveProjectFilter(route.query.projectId))
 
-/** 筛中的项目名;地址栏那个 id 已不在可见清单里时是 id 前 8 位。 */
-const filterProjectName = computed<string>(() => projectFilterLabel(projects.value, projectId.value))
-
 function setProject(id: string): void {
   void router.replace({ query: withProjectFilter(route.query as Record<string, string>, id) })
 }
 
 // ─── data loading ─────────────────────────────────────────────────────────────
 
+// 一次取满后端上界(100):这页没有分页控件,只拿默认 20 条却把「共 M 条」写在头里,
+// 等于告诉用户屏上这一屏就是全部。取满后文案才敢照实说「最新 N 条 / 共 M 条」。
+const RUNS_PAGE_SIZE = 100
+
 async function loadRuns(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    const params: ListRunsParams = {}
+    const params: ListRunsParams = { pageSize: RUNS_PAGE_SIZE }
     if (statusFilter.value !== 'all') params.status = statusFilter.value
     if (projectId.value) params.projectId = projectId.value
     const res = await listRuns(params)
@@ -94,6 +120,7 @@ onMounted(() => {
   void loadRuns()
   // 下拉候选和触发弹窗用的是同一份清单:一次 GET,两处都有得选。
   void loadProjects()
+  void loadGroups()
 })
 
 function onFilterChange(): void {
@@ -134,6 +161,16 @@ async function loadProjects(): Promise<void> {
     // 筛不了也别挡页:下拉只剩「全部项目」,列表照旧出。
   } finally {
     projectsLoading.value = false
+  }
+}
+
+// 分组名单取不到时整个控件不出现:没有名单就没法收窄候选,硬摆一个只有「全部分组」的下拉是摆设。
+async function loadGroups(): Promise<void> {
+  try {
+    groups.value = await listGroups()
+    groupsLoaded.value = true
+  } catch {
+    // 列表照旧出,项目下拉退回「不分分组,全给」。
   }
 }
 
@@ -361,30 +398,24 @@ function isFailedStatus(status: RunStatus): boolean {
         >{{ filterLabel(opt) }}</button>
       </div>
 
-      <!-- 项目筛选:从项目卡片上的「运行记录」按钮带参进来,也能在这里换项目或清掉 -->
+      <!-- 项目筛选:从项目卡片上的「运行记录」按钮带参进来,也能在这里打字找项目或换项目 -->
       <div class="project-filter">
         <span class="project-filter-label">{{ t('runs.projectFilterLabel') }}</span>
-        <div class="select-wrap project-filter-select">
-          <select
-            class="field-select"
-            :value="projectId"
-            :aria-label="t('runs.projectFilterAriaLabel')"
-            :disabled="projectsLoading"
-            @change="setProject(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ projectsLoading ? t('runs.loadingProjects') : t('runs.projectFilterAll') }}</option>
-            <option v-if="projectId && !projects.some((p) => p.id === projectId)" :value="projectId">
-              {{ filterProjectName }}
-            </option>
-            <option
-              v-for="proj in projects"
-              :key="proj.id"
-              :value="proj.id"
-            >{{ proj.name }}</option>
-          </select>
-          <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-            <path d="M6 9l6 6 6-6"/>
-          </svg>
+        <div class="project-filter-select">
+          <ProjectPicker
+            input-id="runs-project"
+            :model-value="projectId"
+            :projects="projects"
+            :group-filter="groupFilter"
+            :group-names="groupNames"
+            :loading="projectsLoading"
+            :placeholder="t('runs.projectSearchPlaceholder')"
+            :ariaLabel="t('runs.projectFilterAriaLabel')"
+            :all-label="t('runs.projectFilterAll')"
+            :loading-label="t('runs.loadingProjects')"
+            :empty-label="t('runs.projectSearchEmpty')"
+            @update:model-value="setProject"
+          />
         </div>
         <button
           v-if="projectId"
@@ -392,6 +423,21 @@ function isFailedStatus(status: RunStatus): boolean {
           class="project-filter-clear"
           @click="setProject('')"
         >{{ t('runs.projectFilterClear') }}</button>
+        <!-- 分组下拉只收窄上面那个项目候选,不改列表、不进地址栏(见 groupFilter)。 -->
+        <div v-if="groupsLoaded" class="select-wrap project-filter-select">
+          <select
+            v-model="groupFilter"
+            class="field-select"
+            :aria-label="t('groups.filterAria')"
+          >
+            <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </div>
       </div>
     </div>
 
@@ -561,9 +607,12 @@ function isFailedStatus(status: RunStatus): boolean {
         </template>
       </div>
 
-      <!-- Pagination placeholder (Story 3.1 scope) -->
+      <!-- 这页没有翻页控件:一次取 100 条,取满了就照实说「还有更早的没显示」。 -->
       <div class="pagination-placeholder" :aria-label="t('runs.paginationAria')">
-        <span class="pagination-hint">{{ t('runs.paginationHint', { n: totalRuns }) }}</span>
+        <span v-if="runs.length < totalRuns" class="pagination-hint">
+          {{ t('runs.paginationHint', { n: runs.length, total: totalRuns }) }}
+        </span>
+        <span v-else class="pagination-hint">{{ t('runs.paginationAll', { total: totalRuns }) }}</span>
       </div>
     </template>
   </div>
@@ -842,7 +891,11 @@ function isFailedStatus(status: RunStatus): boolean {
 }
 
 .project-filter-select {
-  width: min(210px, 100%);
+  /* 写死 width 而不是 flex-basis:basis 在这一栏算不出来(父项按内容定宽,
+     里面那格又是 width:100% 的 <input>,百分比退回浏览器默认宽 ≈157px)。
+     240 是搜索提示文案放得下的宽度,窄屏允许收到 190。 */
+  width: 240px;
+  min-width: 190px;
 }
 
 /* 页签那颗胶囊是 30px 高、整栏 padding 3px;下拉跟它们同排,收一档高度才对齐。 */
