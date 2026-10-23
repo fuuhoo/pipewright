@@ -376,7 +376,7 @@ docker exec -it <容器名> /pipewright reset-admin-password --stdin   # compose
 > docker exec -it -e PIPEWRIGHT_DB=/data/pipewright.db <容器名> /pipewright reset-admin-password --stdin
 > ```
 >
-> 报错里那行 `数据库=` 会打出实际路径,拿它核对是不是你要改的库。真要从空库冷启动,再加 `--create-missing`。
+> 报错第一行会打出它**实际解析到的库文件绝对路径**和当前目录,拿它核对是不是你要改的库;真改成功了,它也会回一句 `数据库=<路径>`。真要从空库冷启动,再加 `--create-missing`。
 
 **数据库**
 

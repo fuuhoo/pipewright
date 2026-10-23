@@ -385,7 +385,7 @@ The password is only accepted from stdin / a file / `--generate`. There is delib
 > docker exec -it -e PIPEWRIGHT_DB=/data/pipewright.db <container> /pipewright reset-admin-password --stdin
 > ```
 >
-> The `数据库=` line in its output prints the actual path — use it to confirm you are editing the right database. To really cold-start from an empty database, add `--create-missing`.
+> The first error line prints the absolute path it actually resolved to plus the current directory, so you can confirm which database you would have changed; on success it echoes `数据库=<path>` (the database it wrote). To really cold-start from an empty database, add `--create-missing`.
 
 **Database**
 
