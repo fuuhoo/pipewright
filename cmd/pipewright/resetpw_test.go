@@ -11,12 +11,14 @@ import (
 	"database/sql"
 	"errors"
 	"flag"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/config"
 	"github.com/fuuhoo/pipewright/internal/store"
 	"github.com/fuuhoo/pipewright/internal/users"
 )
@@ -69,6 +71,13 @@ func TestParseResetPasswordFlags(t *testing.T) {
 			args:  []string{"-stdin=true"},
 			stdin: "EqualPass123",
 			want:  resetPWConfig{plain: "EqualPass123", usernameHint: "admin"},
+		},
+		{
+			// 冷启动要新建库是显式意图,得靠开关表态 —— 默认那侧永远是「不许凭空建库」。
+			name:  "冷启动开关",
+			args:  []string{"--stdin", "--create-missing"},
+			stdin: "ColdStart123",
+			want:  resetPWConfig{plain: "ColdStart123", usernameHint: "admin", newDBOK: true},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -295,6 +304,94 @@ func TestDescribeDBTargetHidesMySQLDSN(t *testing.T) {
 	}
 	if got := describeDBTarget("sqlite", "pw.db"); !strings.HasSuffix(got, "pw.db") {
 		t.Fatalf("sqlite 该报出绝对路径,实得:%q", got)
+	}
+}
+
+// TestGuardMissingDatabase 守的是这次真发生的事故:在子目录里跑,解析到一个不存在的
+// pipewright.db,命令于是新建空库、给不存在的管理员设口令、还回一句成功。
+func TestGuardMissingDatabase(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "pipewright.db")
+	if err := os.WriteFile(existing, []byte("占位:真内容无所谓,守卫只看存不存在"), 0o600); err != nil {
+		t.Fatalf("写库文件: %v", err)
+	}
+	missing := filepath.Join(dir, "sub", "pipewright.db")
+
+	for _, tc := range []struct {
+		name        string
+		driver      string
+		dsn         string
+		allowCreate bool
+		wantErr     string
+	}{
+		{"库文件在,放行", "sqlite", existing, false, ""},
+		{"带查询串的 DSN 也能认出路径", "sqlite", existing + "?_pragma=busy_timeout(5000)", false, ""},
+		{"file: 前缀也能认出路径", "sqlite", "file:" + existing, false, ""},
+		{"库文件不在,拦下并说要它在哪", "sqlite", missing, false, "不存在"},
+		{"相对路径按当前目录解析", "sqlite", "definitely-not-here-9f3a2b.db", false, "不存在"},
+		{"冷启动加开关就放行", "sqlite", missing, true, ""},
+		{"已有的库加不加开关都放行", "sqlite", existing, true, ""},
+		{"mysql 没有文件可 stat,不管", "mysql", "user:pw@tcp(127.0.0.1:3306)/db", false, ""},
+		{"内存库不管", "sqlite", ":memory:", false, ""},
+		{"空 DSN 不管(交给打开那步报错)", "sqlite", "", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := guardMissingDatabase(tc.driver, tc.dsn, tc.allowCreate)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("不该拦:%v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("该拦下,却放行了")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("报错没点到位:%v(期望含 %q)", err, tc.wantErr)
+			}
+		})
+	}
+
+	// 拦下来必须是「什么都没留下」:半途建出的空库会被下一次运行当成合法目标。
+	if _, err := os.Stat(missing); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("守卫不该建库文件,stat 得到:%v", err)
+	}
+}
+
+func TestSQLiteDBFilePath(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"pipewright.db", "pipewright.db"},
+		{"/data/pipewright.db?_pragma=journal_mode(wal)", "/data/pipewright.db"},
+		{"file:/data/pipewright.db?_pragma=busy_timeout(5000)", "/data/pipewright.db"},
+		{"", ""},
+	} {
+		if got := sqliteDBFilePath(tc.in); got != tc.want {
+			t.Fatalf("sqliteDBFilePath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestRunResetPasswordCommandRefusesMissingDB 端到端确认这道守卫真接在开库之前:
+// 缺库时退出码 2,且没有在旁边留下一个新库。
+func TestRunResetPasswordCommandRefusesMissingDB(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	dbPath := filepath.Join(dir, "sub", "pipewright.db")
+
+	pwFile := filepath.Join(dir, "pw.txt")
+	if err := os.WriteFile(pwFile, []byte("GuardPass123\n"), 0o600); err != nil {
+		t.Fatalf("写口令文件: %v", err)
+	}
+	code := runResetPasswordCommand([]string{"--password-file", pwFile}, config.Config{
+		DBDriver: "sqlite",
+		DBPath:   dbPath,
+		Addr:     "127.0.0.1:1", // 探不到实例,少一行无关输出
+	})
+	if code != 2 {
+		t.Fatalf("缺库该以 2 退出,实得:%d", code)
+	}
+	if _, err := os.Stat(dbPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("拒绝的一跑不该留下库文件,stat 得到:%v", err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -32,11 +33,12 @@ import (
 )
 
 // resetPWConfig 是 `pipewright reset-admin-password` 解析出来的东西:新口令从哪来、
-// 空库时用什么用户名建号。
+// 空库时用什么用户名建号、允许不允许在没有库文件的情况下开工。
 type resetPWConfig struct {
 	plain        string // 新口令明文(三种来源解析后的结果)
 	usernameHint string // 仅库里还没有 admin_user 行时用于建号
 	usedGenerate bool   // 口令是本命令生成的 → 成功时打印一次
+	newDBOK      bool   // --create-missing:库文件不存在时允许新建
 }
 
 // generateLen 是 --generate 产出的口令长度。字符表去掉易混字符(i/l/1/o/0 与它们的
@@ -59,12 +61,18 @@ func parseResetPasswordFlags(args []string, lookupEnv func(string) string, stdin
 	file := fs.String("password-file", "", "从文件读新口令(整个文件内容即口令,允许尾随换行)")
 	generate := fs.Bool("generate", false, "自动生成强口令,只在成功时打印一次")
 	username := fs.String("username", defaultAdminUsername(lookupEnv), "库里还没有管理员时用它建号;已有管理员时不改名")
+	newDBOK := fs.Bool("create-missing", false, "解析到的 sqlite 库文件不存在时,允许新建一个空库并建号(只在冷启动时用)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `pipewright reset-admin-password —— 在本机重置内置管理员口令(不需要能登录)
 
 改的是当前配置解析出来的那个库(PIPEWRIGHT_DB / PIPEWRIGHT_DB_DRIVER + PIPEWRIGHT_DB_DSN),
 用的是与登录同一套 argon2id 哈希;admin_user 与 users 的同步行一次写齐,下一次登录即生效。
 只处理内置管理员;普通账号与额外管理员请在网页「用户管理」里重置(那里要求先用另一个管理员登录)。
+
+库路径默认是「相对当前目录」的 ./pipewright.db,所以「在哪个目录跑」决定改的是哪个库:
+在子目录里跑,解析到的就是那个子目录下的一个不存在的文件,本命令会因此停下(而不是顺手
+在旁边建一个空库、把口令设给一个不存在的管理员,再回一句成功)。切到服务用的那个目录,
+或用 PIPEWRIGHT_DB 写全路径;确实要从空库冷启动,加 --create-missing。
 
 新口令必须显式给一个来源(--stdin / --password-file / --generate)。刻意不回读
 PIPEWRIGHT_ADMIN_PASSWORD:compose 形态里它常驻容器的环境,「一条参数都没输却把口令改成了
@@ -78,8 +86,11 @@ env 里那个」是这条自救命令最不该有的行为。想用它就自己�
   pipewright reset-admin-password --password-file /run/secrets/pw
   pipewright reset-admin-password --generate
 
-容器形态用镜像里的 /pipewright(它不在 PATH 上,要写全路径):
+容器形态用镜像里的 /pipewright(它不在 PATH 上,要写全路径)。docker exec 默认落在 /data,
+那正是库所在的地方;要是 cd 进了子目录(如 /data/artifacts),把目录切回来或写全路径:
   docker exec -it <容器名> /pipewright reset-admin-password --stdin
+  docker exec -it <容器名> sh -c 'cd /data && /pipewright reset-admin-password --stdin'
+  docker exec -it -e PIPEWRIGHT_DB=/data/pipewright.db <容器名> /pipewright reset-admin-password --stdin
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -102,7 +113,7 @@ env 里那个」是这条自救命令最不该有的行为。想用它就自己�
 		return resetPWConfig{}, errors.New("--stdin / --password-file / --generate 三选一,别同时给")
 	}
 
-	cfg := resetPWConfig{usernameHint: strings.TrimSpace(*username)}
+	cfg := resetPWConfig{usernameHint: strings.TrimSpace(*username), newDBOK: *newDBOK}
 	switch {
 	case *fromStdin:
 		plain, err := readFirstLine(stdin)
@@ -251,6 +262,10 @@ func runResetPasswordCommand(args []string, cfg config.Config) int {
 		fmt.Fprintf(os.Stderr, "pipewright reset-admin-password: %v\n", err)
 		return 2
 	}
+	if err := guardMissingDatabase(dbDriver, dbDSN, pw.newDBOK); err != nil {
+		fmt.Fprintf(os.Stderr, "pipewright reset-admin-password: %v\n", err)
+		return 2
+	}
 	st, err := store.OpenWithConfig(store.OpenConfig{Driver: dbDriver, DSN: dbDSN})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pipewright reset-admin-password: 打开数据库失败: %v\n", err)
@@ -290,6 +305,54 @@ func describeDBTarget(driver, dsn string) string {
 		return abs
 	}
 	return dsn
+}
+
+// guardMissingDatabase 在解析出来的 sqlite 文件根本不存在时停住,除非 --create-missing。
+//
+// 为什么要拦:库路径的默认值是「相对当前目录」的 pipewright.db,而自救最常发生的场合是
+// docker exec 进容器后又 cd 到了某个子目录(如 /data/artifacts)。在那儿跑一次,store.Open
+// 会在旁边新建一个空库、迁移建齐表,然后走「空库建号」那条路给一个并不存在的管理员设好口令,
+// 末了回一句成功 —— 正在跑的那个库一个字节没动,登录依旧失败,而人只会以为「命令不管用」。
+// 判据用文件存不存在,不用「库里有没有管理员」:服务既然在跑,它用的库必然已经存在;
+// 「有文件但还没管理员」仍是合法的冷启动,照旧放行。
+// mysql 没有文件可 stat,跳过(而且连不上就是连不上,静默不成功)。
+func guardMissingDatabase(driver, dsn string, allowCreate bool) error {
+	if allowCreate || driver != "sqlite" {
+		return nil
+	}
+	path := sqliteDBFilePath(dsn)
+	if path == "" || strings.HasPrefix(path, ":memory:") {
+		return nil // 内存库之类的非常规 DSN:没有文件可查,交给 store.Open 自己判定
+	}
+	abs := path
+	if a, err := filepath.Abs(path); err == nil {
+		abs = a
+	}
+	_, statErr := os.Stat(abs)
+	if statErr == nil {
+		return nil
+	}
+	if !errors.Is(statErr, fs.ErrNotExist) {
+		return fmt.Errorf("查数据库文件 %s: %w", abs, statErr)
+	}
+	cwd, _ := os.Getwd()
+	return fmt.Errorf(
+		"数据库文件不存在:%s(当前目录 %s)\n"+
+			"这里不建空库 —— 在子目录里跑这条命令,改的会是那个子目录旁边的新库,正在跑的实例用的库不受影响。\n"+
+			"切到服务真正在用的一侧:cd 到它的工作目录(容器形态通常是 /data),或写全路径 PIPEWRIGHT_DB=/data/pipewright.db;\n"+
+			"确实要从空库冷启动,再加 --create-missing。",
+		abs, cwd,
+	)
+}
+
+// sqliteDBFilePath 从 sqlite DSN 里取出文件路径:去掉查询串与 file: 前缀。
+// 本仓库自己拼的就是「路径?_pragma=...」,而 PIPEWRIGHT_DB_DSN 由用户给,两种写法都得认。
+func sqliteDBFilePath(dsn string) string {
+	path := dsn
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	return strings.TrimPrefix(path, "file:")
 }
 
 // liveInstanceNotice 在监听地址上有实例时提一句:库是同一个的话新口令即刻生效。
