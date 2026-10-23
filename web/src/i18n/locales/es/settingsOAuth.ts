@@ -67,7 +67,7 @@ export default {
   domainsOptional: '(vacío = cualquier dominio)',
   domainsPlaceholder: 'corp.example.com, hr.example.com',
   domainsHint:
-    'Solo pueden entrar las cuentas cuyo correo esté en alguno de estos dominios. Con la lista vacía cualquier correo obtiene KEEP.',
+    'Solo pueden entrar las cuentas cuyo correo esté en alguno de estos dominios. Con la lista vacía cualquier correo obtiene una cuenta creada automáticamente (siempre con el rol mínimo).',
   errDomainsInvalid:
     'La allowlist de correos contiene un elemento no válido: escribe solo el dominio (p. ej. corp.example.com), sin protocolo, ruta ni espacios',
   toggleTitleLogin: 'Activar inicio de sesión',
