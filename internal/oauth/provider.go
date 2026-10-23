@@ -212,6 +212,14 @@ func isPlatformProvider(name string) bool {
 	}
 }
 
+// issuesGitToken 判断该身份源能否换出**可用于 git 仓库**的令牌:只有四家 git 平台能。
+// 凭据同步的开关只能在这四档打开 —— OIDC 的 access_token 拿去克隆仓库只会换来一个
+// 说不清的 401,钉钉/飞书/企微压根没有 git 端点。
+func issuesGitToken(name string) bool {
+	_, err := normalizeProvider(name)
+	return err == nil
+}
+
 // resolveProvider 据 provider 名 + 配置的 baseURL 返回可用的 Provider 端点模板。
 //   - gitee/github/gitlab:返回内置预设(忽略 baseURL,除非将来允许覆盖)。
 //   - custom:据 baseURL 推导 GitLab/Gitea 风格端点(authorize/token/user)。

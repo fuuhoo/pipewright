@@ -720,7 +720,14 @@ func main() {
 	// OAuth 登录(「用 git 平台账号登录本平台」):把外部稳定身份 (provider, external_id) 映射到
 	// 本地 users 行,并按域名白名单决定是否自动建号(JIT,角色 viewer)。与上面那条「取 git token
 	// 凭据」的流刻意分开:两张配置表、两个回调地址,一个 OAuth 应用只登记一个回调,互不牵制。
-	identitySvc := identity.NewService(st.DB, usersSvc, oauthSvc)
+	//
+	// 第 4 个参数是「登录即同步凭据」的落点:master key 没配时传 nil 而不是一个注定报错的保险库,
+	// 因为同步凭据要加密 —— 没有密钥就没有这条能力,登录退回「只登进来、不产出凭据」的原样。
+	var gitCredStore identity.GitCredentialStore
+	if masterKey != nil {
+		gitCredStore = credVault
+	}
+	identitySvc := identity.NewService(st.DB, usersSvc, oauthSvc, gitCredStore)
 
 	// v6.2 阶段 15:镜像检查器(构建环境服务本身在上方与预置目录一起装配)。
 	// credRef 让 Checker 在 ManualPull 时按 credential_id 取凭据做 docker login。
@@ -803,6 +810,37 @@ func main() {
 					} else if n > 0 {
 						log.Printf("[metrics] 清理过期样本 %d 行", n)
 					}
+				}
+			}
+		}()
+	}
+
+	// 「登录即同步凭据」的续期扫描:OAuth 换来的 git 令牌大多有时效,到期那天流水线会
+	// 突然克隆失败。这里按 RefreshLead(30 分钟)提前用 refresh_token 续上,续不动的
+	// 把凭据备注成人读原因(见 internal/identity/gitcred.go)。
+	// 间隔 env PIPEWRIGHT_GIT_CRED_REFRESH_INTERVAL(整数秒)覆盖,默认 30 分钟;置 0 关闭定时
+	// (下次登录本身就会轮换凭据,关掉只是「不再自动续」)。
+	// 没配 master key(gitCredStore 为 nil)时压根不启动:那条路上没有任何东西可续。
+	gitCredRefreshInterval := envDurationSeconds("PIPEWRIGHT_GIT_CRED_REFRESH_INTERVAL", 30*time.Minute)
+	if gitCredRefreshInterval > 0 && gitCredStore != nil {
+		go func() {
+			ticker := time.NewTicker(gitCredRefreshInterval)
+			defer ticker.Stop()
+			// 启动后先扫一轮:重启之前就已经到期的令牌,不该等到下一个整点才有人管。
+			// 触发后置 nil —— select 里的 nil 通道永久阻塞,正好表示「这一轮已经过去」。
+			var first <-chan time.Time = time.After(10 * time.Second)
+			log.Printf("[identity] git 凭据续期扫描已启用,间隔 %s(到期前 %s 开始续)",
+				gitCredRefreshInterval, identity.RefreshLead)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-first:
+					first = nil
+				case <-ticker.C:
+				}
+				if _, _, err := identitySvc.RefreshGrants(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("[identity] git 凭据续期扫描失败(已跳过本轮):%v", err)
 				}
 			}
 		}()

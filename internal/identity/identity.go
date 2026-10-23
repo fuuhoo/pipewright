@@ -67,6 +67,14 @@ type Binding struct {
 	Email      string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// CredentialID 指向这次授权同步出来的那条个人凭据;空 = 该映射从未同步过凭据。
+	// 它同时是续期扫描器的筛选条件:只有「同步过」的映射才可能带续期材料,
+	// 手工建的、走「连接凭据」那条流程建的都不在照看范围内。
+	CredentialID string
+	// ExpiresAt 是同步出来的访问令牌的到期时刻;零值 = 长期令牌或未同步。
+	ExpiresAt time.Time
+	// Scope 是平台**实际**授予的权限串(账户页据此说明这条凭据能干什么)。
+	Scope string
 }
 
 // Account 是登录判定出来的本地账号(会话据此签发)。
@@ -77,11 +85,16 @@ type Account struct {
 	Provider string
 	// Provisioned 为 true 表示这次登录新建了账号 —— 审计要能分清「首次建号」与「既有登录」。
 	Provisioned bool
+	// CredentialID 是这次登录同步出来(或轮换)的个人凭据 id;空 = 未同步。
+	// 只用于审计与回执,登录成功与否与它无关。
+	CredentialID string
 }
 
 // LoginApps 是本包需要的 oauth 能力子集(注入用,便于测试)。
 type LoginApps interface {
 	LoginApp(ctx context.Context, provider string) (*oauth.LoginAppConfig, error)
+	// RefreshGrant 用续期凭证换一张新的 git 令牌(续期扫描器唯一需要的外部调用)。
+	RefreshGrant(ctx context.Context, provider, refreshToken string) (*oauth.Grant, error)
 }
 
 // Service 是外部身份映射与自动建号策略。
@@ -89,20 +102,27 @@ type Service struct {
 	db    *sql.DB
 	users *users.Service
 	apps  LoginApps
+	// creds 为「登录即同步凭据」提供保险库能力;nil = 同步关闭(未配 master key 的部署)。
+	creds GitCredentialStore
 	// provisionMu 串行化自动建号:同一外部身份并发首登时只应产生一个账号。
 	// 单二进制部署下进程内互斥足够;库里 (provider, external_id) 唯一约束是最后兜底。
 	provisionMu sync.Mutex
 }
 
-// NewService 构造 Service。users / apps 由入口装配时注入。
-func NewService(db *sql.DB, u *users.Service, apps LoginApps) *Service {
-	return &Service{db: db, users: u, apps: apps}
+// NewService 构造 Service。users / apps / creds 由入口装配时注入;creds 传 nil 即关闭凭据同步。
+func NewService(db *sql.DB, u *users.Service, apps LoginApps, creds GitCredentialStore) *Service {
+	return &Service{db: db, users: u, apps: apps, creds: creds}
 }
+
+// bindingColumns 是 Binding 的读取列,刻意**不含** git_refresh_ciphertext:
+// 续期凭证只在扫描器那条路径上按需现读,列进通用视图等于把它带给每一处展示查询。
+const bindingColumns = `id, user_id, provider, external_id, username, email, created_at, updated_at,
+   credential_id, git_expires_at, git_scope`
 
 // Find 按 (provider, external_id) 取映射;无则 ErrNotFound。
 func (s *Service) Find(ctx context.Context, provider, externalID string) (*Binding, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, provider, external_id, username, email, created_at, updated_at
+		`SELECT `+bindingColumns+`
 		 FROM user_identities WHERE provider = ? AND external_id = ?`, provider, externalID)
 	return scanBinding(row)
 }
@@ -110,7 +130,7 @@ func (s *Service) Find(ctx context.Context, provider, externalID string) (*Bindi
 // ListByUser 列某本地账号的全部绑定(账户页用)。
 func (s *Service) ListByUser(ctx context.Context, userID string) ([]*Binding, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, provider, external_id, username, email, created_at, updated_at
+		`SELECT `+bindingColumns+`
 		 FROM user_identities WHERE user_id = ? ORDER BY provider`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("identity: list bindings: %w", err)
@@ -130,7 +150,10 @@ func (s *Service) ListByUser(ctx context.Context, userID string) ([]*Binding, er
 
 // Login 是登录判定:已绑定 → 用那个账号;未绑定 → 按白名单自动建号。
 // 绝不按 username / email 猜账号(见包注释铁律 1)。
-func (s *Service) Login(ctx context.Context, id *oauth.Identity) (*Account, error) {
+//
+// grant 非 nil 表示这个登录应用开了「登录即同步凭据」:顺手把这次授权拿到的 git 令牌
+// 落成该账号的一条个人凭据(见 gitcred.go)。同步失败绝不改变登录结果。
+func (s *Service) Login(ctx context.Context, id *oauth.Identity, grant *oauth.Grant) (*Account, error) {
 	if id == nil || strings.TrimSpace(id.ExternalID) == "" {
 		return nil, ErrIdentityIncomplete
 	}
@@ -145,17 +168,18 @@ func (s *Service) Login(ctx context.Context, id *oauth.Identity) (*Account, erro
 
 	b, err := s.Find(ctx, id.Provider, id.ExternalID)
 	if err == nil {
-		return s.accountFromBinding(ctx, b, id)
+		return s.accountFromBinding(ctx, b, id, grant)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	return s.provision(ctx, app, id)
+	return s.provision(ctx, app, id, grant)
 }
 
 // Bind 给**已登录**的本地账号绑一条外部身份。刻意不建号、不改角色。
 // 重复绑定同一身份是幂等的(回原绑定);身份属于别人 → ErrAlreadyBound。
-func (s *Service) Bind(ctx context.Context, userID string, id *oauth.Identity) (*Binding, error) {
+// grant 非 nil 时同样同步凭据(绑定 = 这个人明确把平台交给自己这个账号,没有更该同步的时机)。
+func (s *Service) Bind(ctx context.Context, userID string, id *oauth.Identity, grant *oauth.Grant) (*Binding, error) {
 	if id == nil || strings.TrimSpace(id.ExternalID) == "" {
 		return nil, ErrIdentityIncomplete
 	}
@@ -165,6 +189,9 @@ func (s *Service) Bind(ctx context.Context, userID string, id *oauth.Identity) (
 	existing, err := s.Find(ctx, id.Provider, id.ExternalID)
 	if err == nil {
 		if existing.UserID == userID {
+			// 重复绑定同一条身份:幂等返回,但照样借这次授权轮换凭据 ——
+			// 凭据被标成失效的人,重新点一次「绑定」就能自行恢复。
+			_ = s.syncGitCredential(ctx, existing, id, grant)
 			return existing, nil
 		}
 		return nil, ErrAlreadyBound
@@ -187,6 +214,7 @@ func (s *Service) Bind(ctx context.Context, userID string, id *oauth.Identity) (
 	}
 	// 与自动登录同理:这条账号原本没有本地档案时,把平台给的名字补进去;已有的一律不动。
 	_ = s.users.FillProfileIfEmpty(userID, id.Name, id.Email)
+	_ = s.syncGitCredential(ctx, b, id, grant)
 	return b, nil
 }
 
@@ -210,7 +238,7 @@ func (s *Service) Unbind(ctx context.Context, userID, bindingID string) error {
 // accountFromBinding 走「已绑定」这条路:账号必须存在、启用、且角色不是空串。
 // role="" 是 0053 之前旧会话的取值,语义是「按管理员」—— 任何新签发的会话都不该带它,
 // OAuth 建出来/绑上去的账号若查出空串,一律拒(绝不因脏数据白拿管理员)。
-func (s *Service) accountFromBinding(ctx context.Context, b *Binding, id *oauth.Identity) (*Account, error) {
+func (s *Service) accountFromBinding(ctx context.Context, b *Binding, id *oauth.Identity, grant *oauth.Grant) (*Account, error) {
 	u, err := s.users.GetByID(b.UserID)
 	if err != nil {
 		if errors.Is(err, users.ErrNotFound) {
@@ -236,19 +264,25 @@ func (s *Service) accountFromBinding(ctx context.Context, b *Binding, id *oauth.
 	// 同样不阻断登录。
 	_ = s.users.FillProfileIfEmpty(u.ID, id.Name, id.Email)
 
+	// 开了凭据同步时,这次登录的 git 令牌落成/轮换为这个人的一条个人凭据。
+	// 放在返回之前、但不参与任何判定:它只能让人「登进来之后少配一步」,
+	// 绝不能因为保险库抖一下就变成登录失败(见 gitcred.go 规矩 4)。
+	credID := s.syncGitCredential(ctx, b, id, grant)
+
 	return &Account{
 		UserID: u.ID, Username: u.Username, Role: role, Provider: b.Provider,
+		CredentialID: credID,
 	}, nil
 }
 
 // provision 走「未绑定 → 自动建号」这条路。
-func (s *Service) provision(ctx context.Context, app *oauth.LoginAppConfig, id *oauth.Identity) (*Account, error) {
+func (s *Service) provision(ctx context.Context, app *oauth.LoginAppConfig, id *oauth.Identity, grant *oauth.Grant) (*Account, error) {
 	s.provisionMu.Lock()
 	defer s.provisionMu.Unlock()
 
 	// 拿锁后再查一次:并发的另一个首登请求可能刚好建好了同一条映射。
 	if b, err := s.Find(ctx, id.Provider, id.ExternalID); err == nil {
-		return s.accountFromBinding(ctx, b, id)
+		return s.accountFromBinding(ctx, b, id, grant)
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -299,9 +333,10 @@ func (s *Service) provision(ctx context.Context, app *oauth.LoginAppConfig, id *
 		// 不静默吞掉 —— 报错让人来查,比悄悄给出一个「下次登录又建一个」的循环好。
 		return nil, fmt.Errorf("identity: 已建账号 %s 但绑定写入失败: %w", u.ID, err)
 	}
+	credID := s.syncGitCredential(ctx, b, id, grant)
 	return &Account{
 		UserID: u.ID, Username: u.Username, Role: u.Role,
-		Provider: b.Provider, Provisioned: true,
+		Provider: b.Provider, Provisioned: true, CredentialID: credID,
 	}, nil
 }
 
@@ -414,9 +449,10 @@ func scanBinding(sc scanner) (*Binding, error) {
 		b                      Binding
 		createdStr, updatedStr string
 		username, email        string
+		expiresStr             string
 	)
 	if err := sc.Scan(&b.ID, &b.UserID, &b.Provider, &b.ExternalID, &username, &email,
-		&createdStr, &updatedStr); err != nil {
+		&createdStr, &updatedStr, &b.CredentialID, &expiresStr, &b.Scope); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -424,6 +460,7 @@ func scanBinding(sc scanner) (*Binding, error) {
 	}
 	b.Username, b.Email = username, email
 	b.CreatedAt, b.UpdatedAt = parseOrZero(createdStr), parseOrZero(updatedStr)
+	b.ExpiresAt = parseOrZero(expiresStr)
 	return &b, nil
 }
 

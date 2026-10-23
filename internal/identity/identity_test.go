@@ -18,9 +18,12 @@ import (
 )
 
 // fakeApps 是 LoginApps 的桩:本包的判定只读「启用/配全/白名单」这三件事。
+// next / refreshErr 只服务续期扫描器 —— 令牌续得成续不成,是凭据降不降级的那条分岔。
 type fakeApps struct {
-	cfg oauth.LoginAppConfig
-	err error
+	cfg        oauth.LoginAppConfig
+	err        error
+	next       *oauth.Grant
+	refreshErr error
 }
 
 func (f fakeApps) LoginApp(context.Context, string) (*oauth.LoginAppConfig, error) {
@@ -29,6 +32,17 @@ func (f fakeApps) LoginApp(context.Context, string) (*oauth.LoginAppConfig, erro
 	}
 	c := f.cfg
 	return &c, nil
+}
+
+func (f fakeApps) RefreshGrant(context.Context, string, string) (*oauth.Grant, error) {
+	if f.refreshErr != nil {
+		return nil, f.refreshErr
+	}
+	if f.next == nil {
+		return nil, fmt.Errorf("identity/桩: 未配置续期令牌")
+	}
+	g := *f.next
+	return &g, nil
 }
 
 // loadRoles 把 0063 播种的四档预置装进进程内目录 —— viewer 不在代码表里,
@@ -58,7 +72,7 @@ func identityOf(externalID, login string) *oauth.Identity {
 func TestConcurrentFirstLoginProvisionsSingleAccount(t *testing.T) {
 	db := storetest.OpenDB(t)
 	loadRoles(t, db)
-	svc := NewService(db, users.NewService(db), enabledApp())
+	svc := NewService(db, users.NewService(db), enabledApp(), nil)
 
 	const n = 8
 	var wg sync.WaitGroup
@@ -68,7 +82,7 @@ func TestConcurrentFirstLoginProvisionsSingleAccount(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			accounts[i], errs[i] = svc.Login(context.Background(), identityOf("9001", "bob"))
+			accounts[i], errs[i] = svc.Login(context.Background(), identityOf("9001", "bob"), nil)
 		}(i)
 	}
 	wg.Wait()
@@ -107,7 +121,7 @@ func TestBoundAccountWithEmptyRoleIsRefused(t *testing.T) {
 	db := storetest.OpenDB(t)
 	loadRoles(t, db)
 	u := users.NewService(db)
-	svc := NewService(db, u, enabledApp())
+	svc := NewService(db, u, enabledApp(), nil)
 
 	hash, err := auth.HashPassword("whatever-pass-123")
 	if err != nil {
@@ -120,11 +134,11 @@ func TestBoundAccountWithEmptyRoleIsRefused(t *testing.T) {
 	if _, err := db.Exec(`UPDATE users SET role = '' WHERE id = ?`, created.ID); err != nil {
 		t.Fatalf("脏化 role: %v", err)
 	}
-	if _, err := svc.Bind(context.Background(), created.ID, identityOf("9002", "legacy")); err != nil {
+	if _, err := svc.Bind(context.Background(), created.ID, identityOf("9002", "legacy"), nil); err != nil {
 		t.Fatalf("bind: %v", err)
 	}
 
-	if _, err := svc.Login(context.Background(), identityOf("9002", "legacy")); err != ErrAccountUnavailable {
+	if _, err := svc.Login(context.Background(), identityOf("9002", "legacy"), nil); err != ErrAccountUnavailable {
 		t.Fatalf("空角色账号登录 err = %v, want ErrAccountUnavailable", err)
 	}
 }
@@ -145,8 +159,8 @@ func TestProvisionRefusedWhenDefaultRoleMissing(t *testing.T) {
 		t.Fatalf("重载角色目录: %v", err)
 	}
 
-	svc := NewService(db, users.NewService(db), enabledApp())
-	if _, err := svc.Login(context.Background(), identityOf("9003", "nobody")); err != ErrRoleUnavailable {
+	svc := NewService(db, users.NewService(db), enabledApp(), nil)
+	if _, err := svc.Login(context.Background(), identityOf("9003", "nobody"), nil); err != ErrRoleUnavailable {
 		t.Fatalf("默认角色已删时 err = %v, want ErrRoleUnavailable", err)
 	}
 	var n int64

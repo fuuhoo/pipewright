@@ -258,26 +258,26 @@ func (s *service) Exchange(ctx context.Context, provider, code, redirectURI stri
 		return nil, err
 	}
 
-	accessToken, err := requestToken(ctx, s.client, endpoints, clientID, secret, code, redirectURI)
+	grant, err := requestToken(ctx, s.client, endpoints, clientID, secret, code, redirectURI)
 	// 明文 secret 用完即弃。
 	secret = ""
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := fetchIdentity(ctx, s.client, endpoints, accessToken)
+	id, err := fetchIdentity(ctx, s.client, endpoints, grant.AccessToken)
 	if err != nil {
 		return nil, err
 	}
 	if id.Login == "" {
 		return nil, ErrExchangeFailed
 	}
-	return &TokenResult{AccessToken: accessToken, Login: id.Login}, nil
+	return &TokenResult{AccessToken: grant.AccessToken, Login: id.Login}, nil
 }
 
-// requestToken POST code→token 到 provider tokenURL,取回 access_token(绝不日志 secret/token)。
+// requestToken POST code→token 到 provider tokenURL,取回令牌包(绝不日志 secret/token)。
 // 包级函数:vault 连接流与登录流共用同一份兑换实现,只差 client_id/secret 来自哪张表。
-func requestToken(ctx context.Context, client *http.Client, p Provider, clientID, clientSecret, code, redirectURI string) (string, error) {
+func requestToken(ctx context.Context, client *http.Client, p Provider, clientID, clientSecret, code, redirectURI string) (Grant, error) {
 	form := url.Values{}
 	form.Set("client_id", clientID)
 	form.Set("client_secret", clientSecret)
@@ -287,7 +287,7 @@ func requestToken(ctx context.Context, client *http.Client, p Provider, clientID
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", ErrExchangeFailed
+		return Grant{}, ErrExchangeFailed
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// GitHub 默认回表单编码,显式要 JSON;其余平台本就回 JSON,加这头无害。
@@ -295,26 +295,15 @@ func requestToken(ctx context.Context, client *http.Client, p Provider, clientID
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", ErrExchangeFailed
+		return Grant{}, ErrExchangeFailed
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", ErrExchangeFailed
+		return Grant{}, ErrExchangeFailed
 	}
-
-	var parsed struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", ErrExchangeFailed
-	}
-	if parsed.AccessToken == "" {
-		// 兑换失败(如 code 失效):人读错误,绝不回 provider 原文(可能含敏感细节)。
-		return "", ErrExchangeFailed
-	}
-	return parsed.AccessToken, nil
+	// 兑换失败(如 code 失效)由 parseTokenResponse 收敛成人读错误,绝不回 provider 原文。
+	return parseTokenResponse(body)
 }
 
 // fetchIdentity 用 access_token 拉 userURL 解析身份(绝不日志 token)。

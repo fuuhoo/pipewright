@@ -90,6 +90,9 @@ type CreateInput struct {
 	Secret    string
 	OwnerID   string // v6.2 阶段 5:personal 凭据必填 users.id
 	CreatedBy string // v6.2 阶段 5:创建者 users.id;global 凭据即管理员行 id
+	// Description 建号时就带上:程序自动产出的凭据(如 OAuth 登录同步)必须在列表里
+	// 一眼看得出来源,否则用户只看到一条自己没建过的令牌。留空即库里默认的备注。
+	Description string
 }
 
 // UpdateInput 是更新凭据的入参;指针字段为 nil 表示不修改。
@@ -143,6 +146,10 @@ type Vault interface {
 	// Exists 仅校验凭据是否存在,**不解密、不刷新 last_used_at**(供保存配置时校验引用,
 	// 避免「仅编辑也算用过」的语义失真与无谓解密)。未配置 master key → ErrVaultUnconfigured。
 	Exists(id string) (bool, error)
+	// View 返回一条凭据的掩码视图(含 scope 与 owner_id),**不解密、不刷新 last_used_at**。
+	// 给跨领域的归属校验用:例如「登录同步回来的那条凭据还是不是这个人的」——
+	// 比一个 owner_id 就够了,把明文取出来既没必要也不该。不存在 → ErrNotFound。
+	View(id string) (*Credential, error)
 	// Update 改名/改作用域/轮换密钥;返回更新后的掩码视图。
 	Update(id string, in UpdateInput) (*Credential, error)
 	// Delete 删除凭据。
@@ -248,10 +255,11 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 	ownerID, createdBy := strings.TrimSpace(in.OwnerID), strings.TrimSpace(in.CreatedBy)
 
 	_, err = s.db.Exec(
-		`INSERT INTO credentials (id, name, type, scope, username, owner_id, created_by, enabled,
+		`INSERT INTO credentials (id, name, type, scope, username, owner_id, created_by, description, enabled,
 		                         ciphertext, masked_value, last_used_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?)`,
 		id, in.Name, in.Type, in.Scope, strings.TrimSpace(in.Username), ownerID, createdBy,
+		strings.TrimSpace(in.Description),
 		sealed, masked, nowStr, nowStr,
 	)
 	if err != nil {
@@ -266,6 +274,7 @@ func (s *service) Create(in CreateInput) (*Credential, error) {
 		OwnerID:     ownerID,
 		Username:    strings.TrimSpace(in.Username),
 		MaskedValue: masked,
+		Description: strings.TrimSpace(in.Description),
 		Enabled:     true,
 		CreatedBy:   createdBy,
 		LastUsedAt:  nil,
@@ -566,6 +575,13 @@ func (s *service) OpenSecret(sealed []byte) ([]byte, error) {
 		return nil, ErrVaultUnconfigured
 	}
 	return open(s.key, sealed)
+}
+
+func (s *service) View(id string) (*Credential, error) {
+	if !s.configured() {
+		return nil, ErrVaultUnconfigured
+	}
+	return s.getView(id)
 }
 
 // getView 回读单条凭据的掩码视图。

@@ -46,9 +46,11 @@ const (
 
 // identityLoginer 是 HTTP 层需要的「外部身份 ↔ 本地账号」判定能力(*identity.Service 实现)。
 // 收成四个方法而不是直接依赖具体类型:测试可注入假实现,且本层看不到仓储细节。
+// grant 由兑换层带回来:非 nil = 这个登录应用开了「登录即同步凭据」,
+// 由 identity 决定怎么把它落成一条个人凭据(HTTP 层不碰保险库)。
 type identityLoginer interface {
-	Login(ctx context.Context, id *oauth.Identity) (*identity.Account, error)
-	Bind(ctx context.Context, userID string, id *oauth.Identity) (*identity.Binding, error)
+	Login(ctx context.Context, id *oauth.Identity, grant *oauth.Grant) (*identity.Account, error)
+	Bind(ctx context.Context, userID string, id *oauth.Identity, grant *oauth.Grant) (*identity.Binding, error)
 	Unbind(ctx context.Context, userID, bindingID string) error
 	ListByUser(ctx context.Context, userID string) ([]*identity.Binding, error)
 }
@@ -98,6 +100,10 @@ type oauthLoginAppDTO struct {
 	IDClaim      string `json:"idClaim"`
 	Scopes       string `json:"scopes"`
 	AgentID      string `json:"agentId"`
+	// SyncCredentials = 登录时把这次授权换来的 git 令牌同步成该账号的一条个人凭据。
+	// 只有 git 四档(gitee/github/gitlab/custom)能开;非 git 身份源服务端一律返回 false。
+	// 打开它等于把登录申请的 scope 从「只认身份」升到「能读仓库」,所以是管理员的显式选择。
+	SyncCredentials bool `json:"syncCredentials"`
 }
 
 // identityBindingDTO 是一条外部身份映射(账户页;camelCase;无 token、无口令)。
@@ -109,15 +115,28 @@ type identityBindingDTO struct {
 	Email      string `json:"email"`
 	CreatedAt  string `json:"createdAt"`
 	UpdatedAt  string `json:"updatedAt"`
+	// CredentialID 非空 = 这条映射同步过一条个人凭据(登录即同步打开时才会有)。
+	CredentialID string `json:"credentialId"`
+	// ExpiresAt 是同步出来的访问令牌到期时刻;空串 = 长期令牌或未同步。
+	// 平台会在到期前自动续期,所以这里只是「下次会是什么时候」的说明,不是待办倒计时。
+	ExpiresAt string `json:"expiresAt"`
+	// Scope 是平台实际授予的权限串(空 = 未同步或平台没回)。
+	Scope string `json:"scope"`
 }
 
 func toIdentityBindingDTO(b *identity.Binding) identityBindingDTO {
-	return identityBindingDTO{
+	dto := identityBindingDTO{
 		ID: b.ID, Provider: b.Provider, ExternalID: b.ExternalID,
 		Username: b.Username, Email: b.Email,
-		CreatedAt: b.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: b.UpdatedAt.UTC().Format(time.RFC3339),
+		CreatedAt:    b.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:    b.UpdatedAt.UTC().Format(time.RFC3339),
+		CredentialID: b.CredentialID,
+		Scope:        b.Scope,
 	}
+	if !b.ExpiresAt.IsZero() {
+		dto.ExpiresAt = b.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return dto
 }
 
 // loginProviderLabel 给登录页一个不必前端拼的名字:内置档用官方名,自建档用实例主机名。
@@ -248,14 +267,15 @@ func makeOAuthLoginCallbackHandler(d oauthLoginDeps) http.HandlerFunc {
 			return
 		}
 
-		id, err := d.oauth.ExchangeIdentity(r.Context(), provider, code, oauthLoginCallbackURL(r, provider))
+		// 登录流只有这一处兑换:开了凭据同步时 grant 非 nil,由 identity 立即加密落库。
+		id, grant, err := d.oauth.ExchangeLogin(r.Context(), provider, code, oauthLoginCallbackURL(r, provider))
 		if err != nil {
 			reason := loginExchangeReason(err)
 			recordOAuthLoginFailure(d.aud, r, provider, "", reason)
 			redirectLoginError(w, r, provider, reason)
 			return
 		}
-		acct, err := d.ident.Login(r.Context(), id)
+		acct, err := d.ident.Login(r.Context(), id, grant)
 		if err != nil {
 			reason := identityErrorReason(err)
 			recordOAuthLoginFailure(d.aud, r, provider, id.ExternalID, reason)
@@ -269,20 +289,26 @@ func makeOAuthLoginCallbackHandler(d oauthLoginDeps) http.HandlerFunc {
 			return
 		}
 		setSessionCookies(w, r, sess)
+		detail := map[string]any{
+			"provider": provider,
+			// externalId 是判定依据:事后要看「这个会话是哪个平台身份换的」,
+			// 而不是只看一个可能已被改掉的登录名。
+			"externalId":  id.ExternalID,
+			"login":       id.Login,
+			"provisioned": acct.Provisioned,
+		}
+		// 只在真同步出凭据时记这一笔:审计里出现 credentialId = 这次登录多拿到了一份仓库权限,
+		// 事后排查「这个人的令牌怎么出现在那条凭据上」就看它。明文绝不出现。
+		if acct.CredentialID != "" {
+			detail["credentialId"] = acct.CredentialID
+		}
 		recordAudit(r.Context(), d.aud, audit.Entry{
 			Actor:      acct.Username,
 			Action:     audit.ActionOauthLogin,
 			TargetType: audit.TargetUser,
 			TargetID:   acct.UserID,
-			Detail: map[string]any{
-				"provider": provider,
-				// externalId 是判定依据:事后要看「这个会话是哪个平台身份换的」,
-				// 而不是只看一个可能已被改掉的登录名。
-				"externalId":  id.ExternalID,
-				"login":       id.Login,
-				"provisioned": acct.Provisioned,
-			},
-			IP: clientIP(r),
+			Detail:     detail,
+			IP:         clientIP(r),
 		})
 		dest := st.Redirect
 		if dest == "" {
@@ -348,29 +374,33 @@ func bindViaCallback(w http.ResponseWriter, r *http.Request, d oauthCallbackDeps
 		redirectAccountError(w, r, provider, "identity_unavailable")
 		return
 	}
-	id, err := d.svc.ExchangeIdentity(r.Context(), provider, code, oauthVaultCallbackURL(r, provider))
+	id, grant, err := d.svc.ExchangeLogin(r.Context(), provider, code, oauthVaultCallbackURL(r, provider))
 	if err != nil {
 		redirectAccountError(w, r, provider, loginExchangeReason(err))
 		return
 	}
 	// 绑定**不建号、不改角色**:把 git 身份挂到当前这个已登录账号上。
 	// 拿到稳定 ID 是硬要求 —— 没有它就无法保证「下次还是同一个人」,绑了等于没绑。
-	b, err := d.ident.Bind(r.Context(), sess.UserID, id)
+	b, err := d.ident.Bind(r.Context(), sess.UserID, id, grant)
 	if err != nil {
 		redirectAccountError(w, r, provider, identityErrorReason(err))
 		return
+	}
+	detail := map[string]any{
+		"provider":   provider,
+		"externalId": b.ExternalID,
+		"login":      b.Username,
+	}
+	if b.CredentialID != "" {
+		detail["credentialId"] = b.CredentialID
 	}
 	recordAudit(r.Context(), d.aud, audit.Entry{
 		Actor:      sess.Username,
 		Action:     audit.ActionIdentityBind,
 		TargetType: audit.TargetUser,
 		TargetID:   sess.UserID,
-		Detail: map[string]any{
-			"provider":   provider,
-			"externalId": b.ExternalID,
-			"login":      b.Username,
-		},
-		IP: clientIP(r),
+		Detail:     detail,
+		IP:         clientIP(r),
 	})
 	http.Redirect(w, r, accountPagePath+"?bound="+url.QueryEscape(provider), http.StatusFound)
 }
@@ -491,30 +521,40 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			IDClaim      string `json:"idClaim"`
 			Scopes       string `json:"scopes"`
 			AgentID      string `json:"agentId"`
+			// 凭据同步开关同样是「整份覆盖」语义(省略即关闭),与上面那组一致:
+			// 它是权限升级,宁可默认关。
+			SyncCredentials bool `json:"syncCredentials"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
 		cfg, err := svc.SaveLoginApp(r.Context(), oauth.SaveLoginAppInput{
-			Provider:       provider,
-			ClientID:       req.ClientID,
-			BaseURL:        req.BaseURL,
-			ClientSecret:   req.ClientSecret,
-			AllowedDomains: req.AllowedDomains,
-			Enabled:        req.Enabled,
-			DiscoveryURL:   req.DiscoveryURL,
-			AuthorizeURL:   req.AuthorizeURL,
-			TokenURL:       req.TokenURL,
-			UserinfoURL:    req.UserinfoURL,
-			IDClaim:        req.IDClaim,
-			Scopes:         req.Scopes,
-			AgentID:        req.AgentID,
+			Provider:        provider,
+			ClientID:        req.ClientID,
+			BaseURL:         req.BaseURL,
+			ClientSecret:    req.ClientSecret,
+			AllowedDomains:  req.AllowedDomains,
+			Enabled:         req.Enabled,
+			DiscoveryURL:    req.DiscoveryURL,
+			AuthorizeURL:    req.AuthorizeURL,
+			TokenURL:        req.TokenURL,
+			UserinfoURL:     req.UserinfoURL,
+			IDClaim:         req.IDClaim,
+			Scopes:          req.Scopes,
+			AgentID:         req.AgentID,
+			SyncCredentials: req.SyncCredentials,
 		})
 		if err != nil {
 			// 白名单项非法是保存期校验,报错带原文(哪一项写错了,配的人一眼能看到)。
 			if errors.Is(err, oauth.ErrInvalidDomain) {
 				writeError(w, http.StatusUnprocessableEntity, "invalid_domain", "邮箱域名白名单含非法项:只填域名本身(如 corp.example.com),不要带协议、路径或空格")
+				return
+			}
+			// 给不了 git 令牌的身份源开同步:同样是保存期就该说清楚的配置错误,
+			// 而不是静默收下、让人一直等不到凭据。
+			if errors.Is(err, oauth.ErrCredentialSyncUnsupported) {
+				writeError(w, http.StatusUnprocessableEntity, "sync_unsupported", "「登录即同步凭据」只对 git 平台(Gitee / GitHub / GitLab / 自建)开放;这个身份源给不出可用于克隆仓库的令牌")
 				return
 			}
 			writeOAuthError(w, err)
@@ -528,21 +568,22 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 
 func toLoginAppDTO(c oauth.LoginAppConfig, r *http.Request) oauthLoginAppDTO {
 	dto := oauthLoginAppDTO{
-		Provider:       c.Provider,
-		ClientID:       c.ClientID,
-		BaseURL:        c.BaseURL,
-		AllowedDomains: append([]string{}, c.AllowedDomains...),
-		Enabled:        c.Enabled,
-		MaskedSecret:   c.MaskedSecret,
-		Configured:     c.Configured,
-		CallbackURL:    oauthLoginCallbackURL(r, c.Provider),
-		DiscoveryURL:   c.DiscoveryURL,
-		AuthorizeURL:   c.AuthorizeURL,
-		TokenURL:       c.TokenURL,
-		UserinfoURL:    c.UserinfoURL,
-		IDClaim:        c.IDClaim,
-		Scopes:         c.Scopes,
-		AgentID:        c.AgentID,
+		Provider:        c.Provider,
+		ClientID:        c.ClientID,
+		BaseURL:         c.BaseURL,
+		AllowedDomains:  append([]string{}, c.AllowedDomains...),
+		Enabled:         c.Enabled,
+		MaskedSecret:    c.MaskedSecret,
+		Configured:      c.Configured,
+		CallbackURL:     oauthLoginCallbackURL(r, c.Provider),
+		DiscoveryURL:    c.DiscoveryURL,
+		AuthorizeURL:    c.AuthorizeURL,
+		TokenURL:        c.TokenURL,
+		UserinfoURL:     c.UserinfoURL,
+		IDClaim:         c.IDClaim,
+		Scopes:          c.Scopes,
+		AgentID:         c.AgentID,
+		SyncCredentials: c.SyncCredentials,
 	}
 	if c.UpdatedAt != nil {
 		s := c.UpdatedAt.UTC().Format(time.RFC3339)

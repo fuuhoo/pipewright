@@ -37,11 +37,18 @@ type stubGitProvider struct {
 
 func newStubGitProvider(t *testing.T, userBody string) *stubGitProvider {
 	t.Helper()
+	return newStubGitProviderToken(t, userBody, `{"access_token":"stub-access-token"}`)
+}
+
+// newStubGitProviderToken 让令牌响应可控:凭据同步用例要的是带 expires_in / refresh_token
+// 的那一档,而「平台只回 access_token」是自建 Gitea 的真实形态,两种都得能摆出来。
+func newStubGitProviderToken(t *testing.T, userBody, tokenBody string) *stubGitProvider {
+	t.Helper()
 	m := &stubGitProvider{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"stub-access-token"}`))
+		_, _ = w.Write([]byte(tokenBody))
 	})
 	mux.HandleFunc("/api/v4/user", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -92,7 +99,9 @@ func buildLoginEnv(t *testing.T, client *http.Client, configure func(oauth.Servi
 	v := vault.New(st.DB, testMasterKey())
 	oauthSvc := oauth.New(st.DB, v, client)
 	configure(oauthSvc)
-	ident := identity.NewService(st.DB, usersSvc, oauthSvc)
+	// 凭据同步的开关在「登录应用」那一行上,默认关;这里把真 vault 注进来,
+	// 让开了开关的用例能一路走到保险库(关着的用例则照旧一条凭据都不写)。
+	ident := identity.NewService(st.DB, usersSvc, oauthSvc, v)
 	rec := audit.New(st.DB, mask.NewMasker(), nil)
 
 	srv := httptest.NewServer(New(testWebFSAuth(), authSvc,

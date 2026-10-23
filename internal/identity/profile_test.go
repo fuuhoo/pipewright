@@ -25,9 +25,9 @@ func TestProvisionSeedsProfileFromPlatform(t *testing.T) {
 	db := storetest.OpenDB(t)
 	loadRoles(t, db)
 	u := users.NewService(db)
-	svc := NewService(db, u, enabledApp())
+	svc := NewService(db, u, enabledApp(), nil)
 
-	acc, err := svc.Login(context.Background(), identityNamed("7001", "dave", "大伟", "dave@corp.co"))
+	acc, err := svc.Login(context.Background(), identityNamed("7001", "dave", "大伟", "dave@corp.co"), nil)
 	if err != nil {
 		t.Fatalf("首登: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestProvisionSeedsProfileFromPlatform(t *testing.T) {
 
 	// 平台侧改了昵称再登一次:本地档案保持不动(那是「之后本地可编辑」的那一档)…
 	if _, err := svc.Login(context.Background(),
-		identityNamed("7001", "dave", "改过的平台昵称", "other@corp.co")); err != nil {
+		identityNamed("7001", "dave", "改过的平台昵称", "other@corp.co"), nil); err != nil {
 		t.Fatalf("二次登录: %v", err)
 	}
 	got, err = u.GetByID(acc.UserID)
@@ -71,9 +71,9 @@ func TestLegacyProfileIsBackfilledOnNextLogin(t *testing.T) {
 	db := storetest.OpenDB(t)
 	loadRoles(t, db)
 	u := users.NewService(db)
-	svc := NewService(db, u, enabledApp())
+	svc := NewService(db, u, enabledApp(), nil)
 
-	acc, err := svc.Login(context.Background(), identityNamed("7002", "erin", "恩然", "erin@corp.co"))
+	acc, err := svc.Login(context.Background(), identityNamed("7002", "erin", "恩然", "erin@corp.co"), nil)
 	if err != nil {
 		t.Fatalf("首登: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestLegacyProfileIsBackfilledOnNextLogin(t *testing.T) {
 	}
 
 	if _, err := svc.Login(context.Background(),
-		identityNamed("7002", "erin", "恩然", "erin@corp.co")); err != nil {
+		identityNamed("7002", "erin", "恩然", "erin@corp.co"), nil); err != nil {
 		t.Fatalf("二次登录: %v", err)
 	}
 	got, err := u.GetByID(acc.UserID)
@@ -101,7 +101,7 @@ func TestBindBackfillsProfile(t *testing.T) {
 	db := storetest.OpenDB(t)
 	loadRoles(t, db)
 	u := users.NewService(db)
-	svc := NewService(db, u, enabledApp())
+	svc := NewService(db, u, enabledApp(), nil)
 
 	hash, err := auth.HashPassword("whatever-pass-123")
 	if err != nil {
@@ -112,7 +112,7 @@ func TestBindBackfillsProfile(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := svc.Bind(context.Background(), created.ID,
-		identityNamed("7003", "frank", "弗兰克", "frank@corp.co")); err != nil {
+		identityNamed("7003", "frank", "弗兰克", "frank@corp.co"), nil); err != nil {
 		t.Fatalf("bind: %v", err)
 	}
 	got, err := u.GetByID(created.ID)
