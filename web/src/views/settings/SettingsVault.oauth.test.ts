@@ -121,4 +121,41 @@ describe('SettingsVault — OAuth callback query handling', () => {
     expect(buttons).toHaveLength(1)
     expect(buttons[0].text()).toContain('连接 GitHub')
   })
+
+  it('lists each credential 的备注——登录同步的来路与「授权已失效」判词只有这一处入口', async () => {
+    listCredentials.mockResolvedValue([
+      {
+        id: 'c1',
+        name: 'custom:mock.user',
+        type: 'git_token',
+        scope: 'personal',
+        ownerId: 'u1',
+        username: 'mock.user',
+        maskedValue: '••••',
+        description: 'OAuth 授权已失效(续期被平台拒绝),请重新用 git 账号登录一次以恢复此凭据',
+        enabled: true,
+        lastUsedAt: null,
+        createdAt: '2026-10-23T10:00:00Z',
+      },
+      {
+        id: 'c2',
+        name: '无备注的凭据',
+        type: 'ssh_key',
+        scope: 'personal',
+        ownerId: 'u1',
+        username: '',
+        maskedValue: '••••',
+        description: '',
+        enabled: true,
+        lastUsedAt: null,
+        createdAt: '2026-10-23T10:00:00Z',
+      },
+    ])
+    const wrapper = mountVault()
+    await flushPromises()
+
+    const rows = wrapper.findAll('.cred-name')
+    expect(rows[0].find('.cred-desc').text()).toContain('请重新用 git 账号登录一次')
+    expect(rows[1].find('.cred-desc').exists()).toBe(false)
+  })
 })

@@ -72,6 +72,16 @@ export default {
     'L’allowlist de domaines contient un élément invalide : indiquez le domaine seul (ex. corp.example.com), sans protocole, chemin ni espace',
   toggleTitleLogin: 'Activer la connexion',
   toggleDescLogin: 'Une fois activé, la page de connexion affiche un bouton « Se connecter avec cette plateforme »',
+  // ─── Sync des identifiants à la connexion (les 4 plateformes git) ─────────
+  // C'est ici que se joue tout ce qu'une seule connexion emporte : désactivé par
+  // défaut, et le texte dit à la fois la portée gagnée et comment s'en sortir.
+  syncTitle: 'Synchroniser un identifiant git à la connexion',
+  syncDesc: 'Après la connexion via cette plateforme, enregistrer le jeton d’accès obtenu de cette autorisation comme identifiant git personnel de ce compte',
+  syncAria: 'Activer la synchronisation à la connexion pour {provider}',
+  syncNote:
+    'Une fois activé, la connexion demande davantage : de « identité seule » à « lire les dépôts ». Avant l’expiration, la plateforme renouvelle le jeton elle-même ; si le renouvellement est refusé, l’identifiant est marqué « autorisation révoquée » et une nouvelle connexion le rétablit. L’identifiant synchronisé reste visible uniquement pour ce compte — l’identifiant utilisé par un projet vous appartient toujours.',
+  errSyncUnsupported:
+    'Cette source d’identité ne peut pas délivrer de jeton permettant de cloner un dépôt : la synchronisation à la connexion n’est ouverte qu’aux plateformes git (Gitee / GitHub / GitLab / auto-hébergée)',
 
   // ─── Source d’identité OIDC (uniquement sous « Connexion à la plateforme ») ──
   // Le backend résout réellement les points d’accès à l’enregistrement : une

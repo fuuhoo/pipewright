@@ -63,6 +63,15 @@ export interface IdentityBinding {
   email: string
   createdAt: string
   updatedAt: string
+  /**
+   * 非空 = 这条映射同步过一条个人 git 凭据(只有「登录即同步凭据」打开时才会有)。
+   * 它是「哪条凭据是我这次登录给的」唯一权威线索:凭据页上那条只写着名字,认不出来源。
+   */
+  credentialId: string
+  /** 同步出来的访问令牌到期时刻(RFC3339);空串 = 长期令牌或未同步。 */
+  expiresAt: string
+  /** 平台实际授予的权限串(空 = 未同步或平台没回)。 */
+  scope: string
 }
 
 export async function listIdentities(): Promise<IdentityBinding[]> {

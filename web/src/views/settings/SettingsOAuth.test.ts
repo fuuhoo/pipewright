@@ -71,6 +71,8 @@ function makeLoginApp(over: Partial<import('../../api/oauth').OAuthLoginApp> = {
     scopes: '',
     // AgentId 同理:只有企业微信有值,其余档位服务端一律回空串。
     agentId: '',
+    // 登录即同步凭据:后端只对 git 四档给 true,oidc / 钉钉 / 飞书 / 企微恒 false。
+    syncCredentials: false,
     ...over,
   }
 }
@@ -301,7 +303,7 @@ describe('SettingsOAuth', () => {
     expect((wrapper.get('#oauth-callback-gitee').element as HTMLInputElement).value).toBe(
       'http://10.0.0.9:8080/api/auth/oauth/gitee/callback',
     )
-    expect(wrapper.get('[role="switch"]').attributes('aria-label')).toContain('Gitee')
+    expect(wrapper.get('.card-footer [role="switch"]').attributes('aria-label')).toContain('Gitee')
   })
 
   it('derives the login callback for an unconfigured app so the admin has something to register', async () => {
@@ -400,9 +402,79 @@ describe('SettingsOAuth', () => {
     const wrapper = mount(SettingsOAuth)
     await flushPromises()
 
-    expect(wrapper.get('.toggle-label').text()).toContain('启用连接')
+    // 登录卡上还多了一个「登录即同步凭据」开关,不锁到 card-footer 会拿到上面那个
+    expect(wrapper.get('.card-footer .toggle-label').text()).toContain('启用连接')
     await openPurpose(wrapper, 'login')
-    expect(wrapper.get('.toggle-label').text()).toContain('启用登录')
+    expect(wrapper.get('.card-footer .toggle-label').text()).toContain('启用登录')
+  })
+
+  // ─── 登录即同步凭据(只在 git 四档的登录卡出现)───────────────────────────
+
+  it('shows the credential-sync switch only where the platform can hand out a git token', async () => {
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+
+    // 仓库凭据那套用途本来就在手填令牌,再摆一个「登录时自动同步」只会指错路
+    expect(wrapper.find('.sync-box').exists()).toBe(false)
+
+    await openPurpose(wrapper, 'login')
+    for (const pid of ['gitee', 'github', 'gitlab', 'custom']) {
+      await openTab(wrapper, pid)
+      expect(wrapper.find('.sync-box').exists(), `${pid} 该有开关`).toBe(true)
+    }
+    for (const pid of ['oidc', 'dingtalk', 'feishu', 'wecom']) {
+      await openTab(wrapper, pid)
+      expect(wrapper.find('.sync-box').exists(), `${pid} 换不出 git 令牌,不该有开关`).toBe(false)
+    }
+  })
+
+  it('hydrates the switch from the saved app and sends it back on every save', async () => {
+    getOAuthLoginApps.mockResolvedValue([makeLoginApp({ provider: 'gitee', syncCredentials: true })])
+    saveOAuthLoginApp.mockResolvedValue(makeLoginApp({ provider: 'gitee', syncCredentials: true }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+
+    const track = wrapper.get('.sync-box [role="switch"]')
+    expect(track.attributes('aria-checked')).toBe('true')
+
+    await track.trigger('click')
+    await wrapper.get('[data-panel="gitee"] form').trigger('submit')
+    await flushPromises()
+
+    // 整份覆盖语义:关成 false 也要显式发出去,省略等于关掉
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({ syncCredentials: false })
+  })
+
+  it('never sends the switch on for an identity source outside the git four', async () => {
+    // 服务端给不出这种组合,这里钉的是前端那道保险:脏状态也不该发 true 让后端回 422
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp({ syncCredentials: true })])
+    saveOAuthLoginApp.mockResolvedValue(makeOidcApp())
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    expect(wrapper.find('.sync-box').exists()).toBe(false)
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthLoginApp.mock.calls[0][1].syncCredentials).toBe(false)
+  })
+
+  it('pins a sync_unsupported rejection on the switch instead of a toast', async () => {
+    saveOAuthLoginApp.mockRejectedValue(
+      new HttpError(422, { code: 'sync_unsupported', message: 'no git token' }, 'unprocessable'),
+    )
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+
+    await wrapper.get('[data-panel="gitee"] form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('.sync-box').text()).toContain('只对 git 平台')
+    expect(toastError).not.toHaveBeenCalled()
   })
 
   // ─── OIDC 身份源(只挂在「平台登录」档)──────────────────────────────────

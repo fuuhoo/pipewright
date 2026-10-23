@@ -73,6 +73,11 @@ export default {
   identitiesEmptyDesc: 'Nach der Verknüpfung meldest du dich bei dieser Instanz mit dem Plattform-Konto statt mit einem Passwort an.',
   errLoadIdentities: 'Verknüpfungsliste konnte nicht geladen werden',
   identityMeta: 'E-Mail {email} · Plattform-ID {externalId}',
+  // Synchronisierungs-Status: nur sichtbar, wenn diese Zuordnung wirklich
+  // Zugangsdaten hervorgebracht hat (die Synchronisierung ist aus Prinzip zu).
+  syncLead: 'Bei der Anmeldung wurden persönliche Git-Zugangsdaten synchronisiert (siehe „Meine Zugangsdaten“)',
+  syncExpires: 'Token läuft ab {time}',
+  syncScope: 'Tatsächlicher Scope {scope}',
   identityNoEmail: 'nicht angegeben',
   unbindBtn: 'Lösen',
   unbindTitle: 'Diese Verknüpfung lösen?',

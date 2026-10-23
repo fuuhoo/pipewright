@@ -73,6 +73,11 @@ export default {
   identitiesEmptyDesc: 'Al vincularla puedes entrar en esta instancia con esa cuenta de plataforma en lugar de una contraseña.',
   errLoadIdentities: 'No se pudo cargar la lista de vínculos',
   identityMeta: 'Correo {email} · ID de plataforma {externalId}',
+  // Estado de la sincronización: solo se muestra si esta correspondencia produjo
+  // de verdad una credencial (viene apagada por defecto; no hay que ensuciar el resto).
+  syncLead: 'Al iniciar sesión se sincronizó una credencial git personal (ver «Mis credenciales»)',
+  syncExpires: 'El token vence {time}',
+  syncScope: 'Alcance realmente concedido {scope}',
   identityNoEmail: 'sin proporcionar',
   unbindBtn: 'Desvincular',
   unbindTitle: '¿Desvincular esta cuenta?',

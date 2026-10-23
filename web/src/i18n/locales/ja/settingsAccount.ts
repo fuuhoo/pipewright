@@ -73,6 +73,11 @@ export default {
   identitiesEmptyDesc: '紐付けると、パスワードの代わりにそのプラットフォームのアカウントでログインできます。',
   errLoadIdentities: '紐付け一覧を取得できません',
   identityMeta: 'メール {email} · プラットフォーム ID {externalId}',
+  // 同期状態:このマッピングが実際に認証情報を出した時だけ表示します(同期は既定オフ。
+  // 全バインドに「未同期」を並べるのはノイズです)。
+  syncLead: 'ログイン時に個人 git 認証情報を 1 件同期しました(「マイ資格情報」ページを参照)',
+  syncExpires: 'トークン期限 {time}',
+  syncScope: '実際に付与されたスコープ {scope}',
   identityNoEmail: '未取得',
   unbindBtn: '解除',
   unbindTitle: 'この紐付けを解除しますか?',

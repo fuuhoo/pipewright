@@ -29,6 +29,14 @@ export type OAuthProvider = 'gitee' | 'github' | 'gitlab' | 'custom'
  */
 export type OAuthLoginProvider = OAuthProvider | 'oidc' | 'dingtalk' | 'feishu' | 'wecom'
 
+/**
+ * 这一档换不换得出 git 令牌 —— 与后端 `issuesGitToken` 同一判据。
+ * 只有 git 四档能;「登录即同步凭据」只在这四档出现,别给 OIDC/钉钉/飞书/企业微信 摆一个永远存不进去的开关。
+ */
+export function issuesGitToken(provider: OAuthLoginProvider): boolean {
+  return provider === 'gitee' || provider === 'github' || provider === 'gitlab' || provider === 'custom'
+}
+
 /** GET /api/oauth/apps element — never contains plaintext clientSecret. */
 export interface OAuthApp {
   provider: OAuthProvider
@@ -120,6 +128,12 @@ export interface OAuthLoginApp {
   idClaim: string
   scopes: string
   agentId: string
+  /**
+   * 登录即同步凭据:打开后,这次授权顺手落成该账号的一条个人 git 凭据。
+   * **只有 git 四档(gitee/github/gitlab/custom)能开**,非 git 身份源服务端一律返回 false。
+   * 打开它等于把登录申请的 scope 从「只认身份」升到「能读仓库」,所以是管理员的显式选择,默认关。
+   */
+  syncCredentials: boolean
 }
 
 /** PUT /api/admin/oauth/login-apps/{provider} 请求体。 */
@@ -147,6 +161,12 @@ export interface SaveOAuthLoginAppInput {
   scopes?: string
   /** 企业微信自建应用的 AgentId;其余身份源服务端一律清空。 */
   agentId?: string
+  /**
+   * 登录即同步凭据。同样是**整份覆盖**语义:省略即关闭。
+   * 只有 git 四档能开(非 git 身份源服务端一律落 false);开关只在 git 四档的登录卡里出现,
+   * 所以前端把这段字段与非 git 档一起发 false 不会串味。
+   */
+  syncCredentials?: boolean
 }
 
 export async function getPublicOAuthProviders(): Promise<PublicOAuthProvider[]> {

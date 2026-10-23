@@ -73,6 +73,11 @@ export default {
   identitiesEmptyDesc: '연결하면 비밀번호 대신 그 플랫폼 계정으로 이 인스턴스에 로그인할 수 있습니다.',
   errLoadIdentities: '연결 목록을 불러올 수 없습니다',
   identityMeta: '이메일 {email} · 플랫폼 ID {externalId}',
+  // 동기화 상태: 이 매핑이 실제로 자격 증명을 만든 경우에만 표시합니다.
+  // (동기화는 기본 꺼짐인데 모든 바인딩에 "미동기화"를 붙이면 소음만 남습니다.)
+  syncLead: '로그인 시 개인 git 자격 증명 1건을 동기화했습니다(「내 자격 증명」 페이지에서 확인)',
+  syncExpires: '토큰 만료 {time}',
+  syncScope: '실제로 부여한 범위 {scope}',
   identityNoEmail: '미제공',
   unbindBtn: '해제',
   unbindTitle: '이 연결을 해제할까요?',

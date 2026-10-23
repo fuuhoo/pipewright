@@ -97,6 +97,7 @@ function goVault(): void {
               class="tag tag--off"
               :title="t('myCredentials.disabledHint')"
             >{{ t('myCredentials.stateDisabled') }}</span>
+            <div v-if="c.description" class="cell-dim">{{ c.description }}</div>
           </td>
           <td><code class="mono">{{ c.type }}</code></td>
           <td>
@@ -160,6 +161,14 @@ function goVault(): void {
 .cell-strong {
   font-weight: 600;
   color: var(--color-text);
+}
+/* 备注走暗一档:它说明的是「这条凭据哪来的 / 出了什么状况」,不该和名字抢主次。
+   不限行数:「授权已失效」那句把该做什么写在结尾,截断就等于把指路吞了(窄列会撑高行,值得)。 */
+.cell-dim {
+  font-weight: 400;
+  font-size: var(--text-small, 0.85em);
+  color: var(--color-faint);
+  margin-top: 2px;
 }
 .mono {
   font-family: var(--font-mono, monospace);

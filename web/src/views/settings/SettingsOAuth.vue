@@ -42,6 +42,7 @@ import {
   saveOAuthApp,
   getOAuthLoginApps,
   saveOAuthLoginApp,
+  issuesGitToken,
   type OAuthApp,
   type OAuthLoginApp,
   type OAuthLoginProvider,
@@ -108,13 +109,19 @@ interface CardState {
   /** 企业微信自建应用的 AgentId;其余身份源后端一律清空。 */
   agentId: string
   enabled: boolean
-  errors: { clientId: string; baseUrl: string; allowedDomains: string; endpoints: string; agentId: string }
+  /**
+   * 登录即同步凭据:这次授权顺手落成该账号的一条个人 git 凭据。
+   * 只在「平台登录」用途的 git 四档出现 —— 非 git 身份源换不出 git token,后端也会拒(422 sync_unsupported)。
+   * 打开它会把登录申请的 scope 从「只认身份」升到「能读仓库」,所以默认关,且要管理员显式勾选。
+   */
+  syncCredentials: boolean
+  errors: { clientId: string; baseUrl: string; allowedDomains: string; endpoints: string; agentId: string; syncCredentials: string }
   saving: boolean
 }
 
 /** 清空字段错误要用新对象:四个 tab 共用一份卡片,原地改会把别的档一起改掉。 */
 function noErrors(): CardState['errors'] {
-  return { clientId: '', baseUrl: '', allowedDomains: '', endpoints: '', agentId: '' }
+  return { clientId: '', baseUrl: '', allowedDomains: '', endpoints: '', agentId: '', syncCredentials: '' }
 }
 
 // ─── provider metadata ───────────────────────────────────────────────────────
@@ -282,6 +289,7 @@ function newCard(meta: ProviderMeta): CardState {
     scopes: '',
     agentId: '',
     enabled: false,
+    syncCredentials: false,
     errors: noErrors(),
     saving: false,
   }
@@ -353,6 +361,14 @@ const clientIdPlaceholderKey = computed<string>(() => {
 function selectCallback(event: Event): void {
   ;(event.target as HTMLInputElement).select()
 }
+
+/**
+ * 「登录即同步凭据」只出现在 git 四档的登录卡:OIDC/钉钉/飞书/企业微信换不出 git 令牌,
+ * 后端对它们一律拒收(422 sync_unsupported)—— 给这些档摆一个存不进去的开关等于骗人。
+ */
+const showSyncSwitch = computed<boolean>(
+  () => purpose.value === 'login' && issuesGitToken(active.value),
+)
 
 // ─── purpose + tabs ───────────────────────────────────────────────────────────
 
@@ -482,6 +498,7 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.scopes = app.scopes
   card.agentId = app.agentId
   card.enabled = app.enabled
+  card.syncCredentials = app.syncCredentials
   card.errors = noErrors()
 }
 
@@ -553,6 +570,10 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
         idClaim: card.idClaim.trim(),
         scopes: card.scopes.trim(),
         agentId: card.agentId.trim(),
+        // 整份覆盖语义:省略即关闭,所以每次都要把开关发出去。
+        // 再按档位收一道 —— 非 git 身份源压根换不出 git 令牌,就算状态不知从哪儿被翻成 true,
+        // 也不该发出去让后端回一句 422(后端同样拦,这里是让这条流根本不会出现那个错误)。
+        syncCredentials: issuesGitToken(provider) && card.syncCredentials,
       }
       applyLoginApp(card, await saveOAuthLoginApp(provider, payload))
     } else {
@@ -582,6 +603,10 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
           card.errors.endpoints = t('settingsOAuth.errPlatformConfigInvalid')
         } else if (code === 'agent_id_required') {
           card.errors.agentId = t('settingsOAuth.errAgentIdRequired')
+        } else if (code === 'sync_unsupported') {
+          // 前端已经把非 git 档的开关发成 false,正常走不到这儿;真到了就是两侧判据漂了
+          // (这一档前端以为换得出 git 令牌,所以开关确实摆在屏上)—— 红字钉在开关下面,别只弹一条 toast。
+          card.errors.syncCredentials = t('settingsOAuth.errSyncUnsupported')
         } else {
           toast.error(t('settingsOAuth.toastSaveFailed'), { detail: err.apiError.message })
         }
@@ -1011,6 +1036,32 @@ function relativeTime(iso: string | null): string {
                 {{ form.errors.allowedDomains }}
               </span>
               <span v-else class="field-hint">{{ t('settingsOAuth.domainsHint') }}</span>
+            </div>
+
+            <!-- 登录即同步凭据 — 仅 git 四档的登录卡(判据见 showSyncSwitch) -->
+            <div v-if="showSyncSwitch" class="sync-box">
+              <div class="toggle-row">
+                <button
+                  type="button"
+                  class="toggle-track"
+                  :class="{ 'toggle-track--on': form.syncCredentials }"
+                  role="switch"
+                  :aria-checked="form.syncCredentials"
+                  :aria-label="t('settingsOAuth.syncAria', { provider: labelFor(active) })"
+                  :disabled="form.saving"
+                  @click="form.syncCredentials = !form.syncCredentials; form.errors.syncCredentials = ''"
+                >
+                  <span class="toggle-thumb" />
+                </button>
+                <div class="toggle-label">
+                  <strong>{{ t('settingsOAuth.syncTitle') }}</strong>
+                  <span>{{ t('settingsOAuth.syncDesc') }}</span>
+                </div>
+              </div>
+              <p v-if="form.errors.syncCredentials" class="field-error" role="alert">
+                {{ form.errors.syncCredentials }}
+              </p>
+              <p v-else class="sync-note">{{ t('settingsOAuth.syncNote') }}</p>
             </div>
 
             <!-- Enabled toggle + save -->
@@ -1472,6 +1523,27 @@ function relativeTime(iso: string | null): string {
 .updated-note {
   font-size: 0.72rem;
   color: var(--color-faint);
+}
+
+/* ─── 登录即同步凭据 ───────────────────────────────────────────────────────── */
+/* 用 inset 底把它和上面的输入框分开:这一项是「这次登录顺手多换走什么」的授权决定,
+   和填 clientId 不是同一类操作,视觉上混在一起容易被当成一个普通勾选框顺手打开。 */
+.sync-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 13px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-lg);
+  background: var(--color-inset);
+}
+
+.sync-note {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--color-faint);
+  max-width: 92ch;
 }
 
 /* ─── toggle ──────────────────────────────────────────────────────────────── */

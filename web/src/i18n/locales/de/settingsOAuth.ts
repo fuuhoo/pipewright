@@ -72,6 +72,16 @@ export default {
     'Die E-Mail-Allowlist enthält einen ungültigen Eintrag: gib nur die Domain selbst an (z. B. corp.example.com), ohne Protokoll, Pfad oder Leerzeichen',
   toggleTitleLogin: 'Anmeldung aktivieren',
   toggleDescLogin: 'Nach der Aktivierung zeigt die Anmeldeseite eine Schaltfläche „Mit diesem Plattform-Konto anmelden“',
+  // ─── Zugangsdaten bei Anmeldung synchronisieren (nur die vier Git-Plattformen)
+  // Hier entscheidet sich, wie viel eine einzelne Anmeldung mitnimmt: deshalb
+  // aus, und der Text nennt sowohl die höhere Berechtigung als auch den Notausgang.
+  syncTitle: 'Git-Zugangsdaten bei Anmeldung synchronisieren',
+  syncDesc: 'Nach der Anmeldung über diese Plattform das aus dieser Freigabe erhaltene Access-Token als persönliche Git-Zugangsdaten dieses Kontos ablegen',
+  syncAria: 'Synchronisierung bei Anmeldung für {provider} aktivieren',
+  syncNote:
+    'Ist das aktiv, fordert die Anmeldung mehr Berechtigung: von „nur Identität“ auf „Repositories lesen“. Vor dem Ablauf erneuert die Plattform das Token selbst; wird die Erneuerung abgelehnt, stehen die Zugangsdaten als „Freigabe ungültig“ da und eine erneute Anmeldung stellt sie wieder her. Die synchronisierten Zugangsdaten bleiben nur für dieses Konto sichtbar — welche Zugangsdaten ein Projekt nutzt, entscheidest weiterhin du.',
+  errSyncUnsupported:
+    'Diese Identitätsquelle kann kein Token für das Klonen eines Repository ausstellen: die Synchronisierung bei Anmeldung gibt es nur für Git-Plattformen (Gitee / GitHub / GitLab / selbst gehostet)',
 
   // ─── OIDC-Identitätsquelle (erscheint nur unter „Plattform-Anmeldung“) ──────
   // Beim Speichern löst das Backend die Endpunkte tatsächlich auf: eine kaputte

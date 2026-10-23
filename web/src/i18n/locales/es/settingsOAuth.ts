@@ -72,6 +72,16 @@ export default {
     'La allowlist de correos contiene un elemento no válido: escribe solo el dominio (p. ej. corp.example.com), sin protocolo, ruta ni espacios',
   toggleTitleLogin: 'Activar inicio de sesión',
   toggleDescLogin: 'Al activarlo, la página de inicio de sesión muestra un botón «Entrar con esta plataforma»',
+  // ─── Sincronizar credenciales al iniciar sesión (solo las 4 plataformas git)
+  // Aquí se decide cuánto se lleva un solo inicio de sesión: por eso está
+  // apagado, y el texto dice a la vez el alcance ganado y cómo recuperarse.
+  syncTitle: 'Sincronizar una credencial git al iniciar sesión',
+  syncDesc: 'Tras iniciar sesión con esta plataforma, guarda el token de acceso de esta autorización como credencial git personal de esta cuenta',
+  syncAria: 'Activar la sincronización al iniciar sesión para {provider}',
+  syncNote:
+    'Al activarlo, el inicio de sesión pide más permisos: de «solo identidad» a «leer repositorios». Antes de que venza, la plataforma renueva el token; si la renovación se rechaza, la credencial queda marcada como «autorización revocada» y volver a iniciar sesión la recupera. La credencial sincronizada solo es visible para esta cuenta — qué credencial usa un proyecto lo sigues eligiendo tú.',
+  errSyncUnsupported:
+    'Esta fuente de identidad no puede dar un token que clone un repositorio: la sincronización al iniciar sesión solo está abierta a plataformas git (Gitee / GitHub / GitLab / autoalojada)',
 
   // ─── Proveedor de identidad OIDC (solo aparece bajo «Inicio de sesión») ─────
   // El backend resuelve los endpoints al guardar: con una mala configuración el

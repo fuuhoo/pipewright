@@ -635,6 +635,17 @@ onMounted(async () => {
                 })
               }}
             </div>
+            <!-- 凭据同步状态:只有这条映射真给本账号同步出过凭据才显示(同步默认关,
+                 没同步时这里什么都不写,免得每人每条绑定都挂一句「未同步」的噪音)。 -->
+            <div v-if="b.credentialId" class="acct-id__sync">
+              <span class="acct-id__sync-lead">{{ t('settingsAccount.syncLead') }}</span>
+              <span v-if="b.expiresAt" class="acct-id__sync-bit">
+                {{ t('settingsAccount.syncExpires', { time: formatTime(b.expiresAt) }) }}
+              </span>
+              <span v-if="b.scope" class="acct-id__sync-bit mono">
+                {{ t('settingsAccount.syncScope', { scope: b.scope }) }}
+              </span>
+            </div>
           </div>
           <div class="acct-session__act">
             <AppButton variant="danger" @click="onUnbind(b)">{{ t('settingsAccount.unbindBtn') }}</AppButton>
@@ -869,6 +880,18 @@ onMounted(async () => {
 /* bound identities */
 .acct-id__login {
   font-size: 0.78rem;
+  color: var(--color-dim);
+}
+.acct-id__sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-top: 5px;
+  font-size: 0.74rem;
+  color: var(--color-faint);
+}
+.acct-id__sync-lead {
   color: var(--color-dim);
 }
 .acct-bind {

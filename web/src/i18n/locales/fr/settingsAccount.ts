@@ -73,6 +73,11 @@ export default {
   identitiesEmptyDesc: 'Une fois relié, vous pouvez vous connecter à cette instance avec ce compte de plateforme au lieu d’un mot de passe.',
   errLoadIdentities: 'Impossible de charger la liste des liens',
   identityMeta: 'E-mail {email} · ID plateforme {externalId}',
+  // État de la synchronisation : affiché seulement quand cette correspondance a
+  // vraiment produit un identifiant (la synchronisation est fermée par défaut).
+  syncLead: 'Un identifiant git personnel a été synchronisé à la connexion (voir « Mes identifiants »)',
+  syncExpires: 'Jeton expirant le {time}',
+  syncScope: 'Portée réellement accordée {scope}',
   identityNoEmail: 'non fourni',
   unbindBtn: 'Rompre',
   unbindTitle: 'Rompre ce lien ?',

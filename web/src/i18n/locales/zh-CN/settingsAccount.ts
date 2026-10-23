@@ -71,6 +71,11 @@ export default {
   identitiesEmptyDesc: '绑定后即可用该平台账号直接登录本实例,不必再输密码。',
   errLoadIdentities: '无法加载绑定列表',
   identityMeta: '邮箱 {email} · 平台 ID {externalId}',
+  // 凭据同步状态:只在这条映射真同步出过凭据时才显示(同步默认关,
+  // 给每条绑定都挂一句「未同步」只是噪音)。
+  syncLead: '登录时已同步一条个人 git 凭据(见「我的凭据」页)',
+  syncExpires: '令牌到期 {time}',
+  syncScope: '实授权限 {scope}',
   identityNoEmail: '未提供',
   unbindBtn: '解绑',
   unbindTitle: '解绑该账号?',

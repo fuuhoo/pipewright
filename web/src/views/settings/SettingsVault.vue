@@ -622,6 +622,8 @@ async function toggleEditReveal(): Promise<void> {
           <div class="cred-name">
             <strong class="cred-label">{{ cred.name }}</strong>
             <span class="cred-mask mono" :title="t('settingsVault.maskTitle')" :aria-label="t('settingsVault.maskAria', { value: cred.maskedValue })">{{ cred.maskedValue }}</span>
+            <!-- 备注是这条凭据的来路与状态:登录即同步的凭据靠它说明「谁给的」,续期被平台拒绝时也靠这句话告知本人。 -->
+            <span v-if="cred.description" class="cred-desc" :title="cred.description">{{ cred.description }}</span>
           </div>
 
           <!-- Type label -->
@@ -1332,6 +1334,16 @@ async function toggleEditReveal(): Promise<void> {
   line-height: 1.4;
   user-select: none;
   cursor: default;
+}
+
+/* 备注:比掩码再淡一档,单行省略(整段挂 title);多行会把这条 grid 行撑高、列线跟着歪。 */
+.cred-desc {
+  font-size: 0.72rem;
+  color: var(--color-faint);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mono {

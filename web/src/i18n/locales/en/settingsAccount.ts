@@ -73,6 +73,11 @@ export default {
   identitiesEmptyDesc: 'Once linked, you can sign into this instance with that platform account instead of a password.',
   errLoadIdentities: 'Unable to load the link list',
   identityMeta: 'Email {email} · Platform ID {externalId}',
+  // Credential-sync status: shown only when this mapping really produced a
+  // credential (sync is off by default; labelling every binding "not synced" is noise).
+  syncLead: 'A personal git credential was synced at sign-in (see "My credentials")',
+  syncExpires: 'Token expires {time}',
+  syncScope: 'Granted scope {scope}',
   identityNoEmail: 'not provided',
   unbindBtn: 'Unlink',
   unbindTitle: 'Unlink this account?',

@@ -71,6 +71,11 @@ export default {
   identitiesEmptyDesc: '綁定後即可用該平台帳號直接登入本實例,不必再輸密碼。',
   errLoadIdentities: '無法載入綁定清單',
   identityMeta: 'Email {email} · 平台 ID {externalId}',
+  // 憑證同步狀態:只在這條映射真同步出過憑證時才顯示(同步預設關,
+  // 給每條綁定都掛一句「未同步」只是噪音)。
+  syncLead: '登入時已同步一條個人 git 憑證(見「我的憑證」頁)',
+  syncExpires: '權杖到期 {time}',
+  syncScope: '實授權限 {scope}',
   identityNoEmail: '未提供',
   unbindBtn: '解綁',
   unbindTitle: '解綁該帳號?',
