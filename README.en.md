@@ -378,13 +378,22 @@ docker exec -it <container> /pipewright reset-admin-password --stdin   # compose
 
 The password is only accepted from stdin / a file / `--generate`. There is deliberately no `--password` flag (`ps` and shell history would both keep a copy), and the command never re-reads `PIPEWRIGHT_ADMIN_PASSWORD`. It handles the built-in admin only; for other accounts, sign in as a different admin and reset them under **User management**.
 
+> **The directory you run it from decides which database you change.** The database path defaults to `pipewright.db`, relative to the current directory, and this command only ever touches the one it resolves to. `docker exec` lands in the image's `/data` (where the DB lives); if you have `cd`-ed into a subdirectory (e.g. `/data/artifacts`) the resolved path is a file that does not exist there — the command now **stops with an error** instead of creating an empty database and reporting success. Go back to `/data`, or spell the path out:
+>
+> ```bash
+> docker exec -it <container> sh -c 'cd /data && /pipewright reset-admin-password --stdin'
+> docker exec -it -e PIPEWRIGHT_DB=/data/pipewright.db <container> /pipewright reset-admin-password --stdin
+> ```
+>
+> The `数据库=` line in its output prints the actual path — use it to confirm you are editing the right database. To really cold-start from an empty database, add `--create-missing`.
+
 **Database**
 
 | Variable | Description | Default |
 |---|---|---|
 | `PIPEWRIGHT_DB_DRIVER` | Database driver: `sqlite` or `mysql` | `sqlite` |
-| `PIPEWRIGHT_DB` | SQLite database path (when driver=sqlite) | `pipewright.db` |
-| `PIPEWRIGHT_DB_DSN` | MySQL DSN (required when driver=mysql) | none |
+| `PIPEWRIGHT_DB` | SQLite database path (when driver=sqlite). The default is relative to the current directory: whichever directory starts the service is the database it uses — do not start it from a subdirectory | `pipewright.db` |
+| `PIPEWRIGHT_DB_DSN` | Connection string: required when driver=mysql (it carries the credentials), and for sqlite it can replace `PIPEWRIGHT_DB` with a file path | none |
 
 **Runs & builds**
 

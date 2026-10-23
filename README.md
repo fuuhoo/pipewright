@@ -369,13 +369,22 @@ docker exec -it <容器名> /pipewright reset-admin-password --stdin   # compose
 
 口令只从标准输入/文件/`--generate` 进,刻意不做 `--password` 参数(ps 与 shell 历史都会留一份),也不回读 `PIPEWRIGHT_ADMIN_PASSWORD`。它只处理内置管理员;别的账号要用另一个管理员登录后在「用户管理」里重置。
 
+> **先在哪个目录跑,决定改的是哪个库。** 库路径默认是相对当前目录的 `pipewright.db`,而这条命令只会动「解析到的那一个」。`docker exec` 默认落在镜像的 `/data`(就是库所在处);要是 `cd` 进了子目录(如 `/data/artifacts`),解析到的会是旁边一个不存在的文件 —— 现在它会**直接停下报错**而不是新建空库假装成功。切回 `/data`,或写全路径:
+>
+> ```bash
+> docker exec -it <容器名> sh -c 'cd /data && /pipewright reset-admin-password --stdin'
+> docker exec -it -e PIPEWRIGHT_DB=/data/pipewright.db <容器名> /pipewright reset-admin-password --stdin
+> ```
+>
+> 报错里那行 `数据库=` 会打出实际路径,拿它核对是不是你要改的库。真要从空库冷启动,再加 `--create-missing`。
+
 **数据库**
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
 | `PIPEWRIGHT_DB_DRIVER` | 数据库驱动:`sqlite` 或 `mysql` | `sqlite` |
-| `PIPEWRIGHT_DB` | SQLite 数据库路径(driver=sqlite 时) | `pipewright.db` |
-| `PIPEWRIGHT_DB_DSN` | MySQL DSN(driver=mysql 时必填) | 无 |
+| `PIPEWRIGHT_DB` | SQLite 数据库路径(driver=sqlite 时)。默认值相对当前目录:在哪个目录起服务就用的是哪个库,别在子目录里起 | `pipewright.db` |
+| `PIPEWRIGHT_DB_DSN` | 连接串:driver=mysql 时必填(账号密码都在里面),driver=sqlite 时也可代替 `PIPEWRIGHT_DB` 写文件路径 | 无 |
 
 **运行与构建**
 
