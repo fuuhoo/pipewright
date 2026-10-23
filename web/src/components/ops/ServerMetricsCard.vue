@@ -39,6 +39,8 @@ const props = defineProps<{
   groupLabel?: string
   /** 该台指标(reachable:false 时各指标为 null)。 */
   metrics: ServerMetrics
+  /** 当前角色能不能坐到那台机器前面(server.exec)。 */
+  canRemote: boolean
 }>()
 
 /** 只有可达的机器画「远程」按钮:不可达点了只是拿到一条连不上的错误。 */
@@ -190,7 +192,8 @@ const loadText = computed(() => loadTextOf(props.metrics.cpu))
       <span class="metrics-card__collected">
         {{ t('opsServer.metrics.collectedAt', { time: collectedClock(metrics.collectedAt) }) }}
       </span>
-      <button class="metrics-card__remote" type="button" @click="emit('remote', metrics.serverId)">
+      <!-- 只有可达 + 角色持有 server.exec 才给按钮:点一个注定 403 的入口不如什么都不画。 -->
+      <button v-if="canRemote" class="metrics-card__remote" type="button" @click="emit('remote', metrics.serverId)">
         {{ t('remoteWorkspace.button') }}
       </button>
     </footer>

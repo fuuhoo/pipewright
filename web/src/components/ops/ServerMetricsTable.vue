@@ -32,6 +32,8 @@ const { t } = useI18n()
 /** 一行 = 一台机的指标 + 列表要显示的登记信息(名称/地址/所属分组由页面 join 好传进来)。 */
 const props = defineProps<{
   rows: Array<{ metrics: ServerMetrics; name: string; addr: string; group: string }>
+  /** 当前角色能不能坐到那台机器前面(server.exec)。false = 整列操作留空,不画一个点了必然 403 的按钮。 */
+  canRemote: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'remote', serverId: string): void }>()
@@ -214,9 +216,9 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
             <span v-if="r.metrics.reachable" class="st-clock">{{ r.clock }}</span>
           </td>
           <td class="col-ops">
-            <!-- 只有可达的机器给「远程」:不可达点了只是再拿到一条连不上的错误。 -->
+            <!-- 只有可达的机器、且角色持有 server.exec 才给「远程」:不可达点了只是再拿到一条连不上的错误。 -->
             <button
-              v-if="r.metrics.reachable"
+              v-if="r.metrics.reachable && canRemote"
               class="st-remote"
               type="button"
               @click="emit('remote', r.metrics.serverId)"

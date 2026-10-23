@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 import type { Server, ServerMetrics } from '../api/servers'
+import type { SessionUser } from '../api/auth'
 import ServerStatus from './ServerStatus.vue'
+import { useSessionStore } from '../stores/session'
 
 // ─── 两个 API 打桩:指标是逐台回调的流,名单是一次性 JSON ────────────────────────
 const streamMock = vi.fn()
@@ -12,6 +15,28 @@ vi.mock('../api/servers', () => ({
   streamAllServerMetrics: (...a: unknown[]) => streamMock(...a),
   listServers: () => listServersMock(),
 }))
+
+/**
+ * 「远程」入口按 server.exec 这个点亮灭(后端同一件事也按它判),所以要给会话塞一份能力位。
+ * 默认这份带点;下面有用例换成不带的角色。
+ */
+function sessionWith(perms: SessionUser['capabilities']['perms']): SessionUser {
+  return {
+    username: 'tester',
+    role: 'admin',
+    capabilities: { settings: true, kinds: { server: 'operate' }, perms },
+    displayName: '',
+    email: '',
+  }
+}
+
+/** 挂页面:自带 pinia + 一份含 server.exec 的会话。 */
+function mountStatus(perms: SessionUser['capabilities']['perms'] = ['server.view', 'server.exec']) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useSessionStore().setUser(sessionWith(perms))
+  return mount(ServerStatus, { global: { plugins: [pinia] } })
+}
 
 function server(id: string, name: string): Server {
   return { id, name, host: '127.0.0.1', port: 22, user: 'cw' } as Server
@@ -58,7 +83,7 @@ describe('ServerStatus — 逐台出卡', () => {
       await round
     })
 
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     expect(emit).toBeTypeOf('function')
     // 流已开、还没回数据:只有骨架,没有卡片。
@@ -90,7 +115,7 @@ describe('ServerStatus — 逐台出卡', () => {
 
   it('下一轮就地替换同名卡:不增卡', async () => {
     emitAll(metric('a'), metric('b'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     expect(wrapper.findAll('.metrics-card')).toHaveLength(2)
 
@@ -105,7 +130,7 @@ describe('ServerStatus — 逐台出卡', () => {
 
   it('刷新失败但屏上已有卡:卡片留着,只补一行提示(不整页变白)', async () => {
     emitAll(metric('a'), metric('b'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
 
     streamMock.mockRejectedValue(new Error('boom'))
@@ -119,7 +144,7 @@ describe('ServerStatus — 逐台出卡', () => {
 
   it('首屏就失败(屏上什么都没有)才走整页错误态', async () => {
     streamMock.mockRejectedValue(new Error('boom'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
 
     expect(wrapper.findAll('.metrics-card')).toHaveLength(0)
@@ -128,7 +153,7 @@ describe('ServerStatus — 逐台出卡', () => {
 
   it('服务器被删后,下一轮不再留它的卡', async () => {
     emitAll(metric('a'), metric('b'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     expect(wrapper.findAll('.metrics-card')).toHaveLength(2)
 
@@ -154,7 +179,7 @@ describe('ServerStatus — 逐台出卡', () => {
       cb(metric('b'))
     })
 
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     release!() // 放掉首屏那一轮
     await flushPromises()
@@ -183,7 +208,7 @@ describe('ServerStatus — 逐台出卡', () => {
       cb(metric('b'))
     })
 
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     release!()
     await flushPromises()
@@ -214,7 +239,7 @@ describe('ServerStatus — 卡片 / 列表两种视图', () => {
 
   it('默认卡片视图;列表要点一下才出现', async () => {
     emitAll(metric('a'), metric('b'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
 
     expect(wrapper.findAll('.metrics-card')).toHaveLength(2)
@@ -229,7 +254,7 @@ describe('ServerStatus — 卡片 / 列表两种视图', () => {
 
   it('同一台机在两种视图给出同一个数(展示口径共用)', async () => {
     emitAll(metric('a', { cpu: { loadavg1: 3.75, cores: 4 } }), metric('b'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     expect(wrapper.findAll('.metrics-card')[0].text()).toContain('3.75')
 
@@ -242,7 +267,7 @@ describe('ServerStatus — 卡片 / 列表两种视图', () => {
 
   it('不可达那行只报错误,不给「远程」入口', async () => {
     emitAll(metric('a'), metric('b', { reachable: false, error: '无法连接服务器' }))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     await toList(wrapper)
 
@@ -252,14 +277,34 @@ describe('ServerStatus — 卡片 / 列表两种视图', () => {
     expect(rows[1].find('.st-remote').exists()).toBe(false)
   })
 
+  /**
+   * 角色没有 server.exec(如开发者:能看指标、登不上机器)→ 两种视图都不画「远程」。
+   * 后端此刻对主机终端和远程文件一律 403 role_denied,画出来只是诱一次红。
+   */
+  it('角色不含 server.exec:两种视图都没有「远程」入口', async () => {
+    emitAll(metric('a'), metric('b'))
+
+    const cards = mountStatus(['server.view'])
+    await flushPromises()
+    expect(cards.findAll('.metrics-card')).toHaveLength(2)
+    expect(cards.find('.metrics-card__remote').exists()).toBe(false)
+    // 「更新于」那行仍要在:收的是按钮,不是整页信息。
+    expect(cards.findAll('.metrics-card__foot')).toHaveLength(2)
+
+    const list = mountStatus(['server.view'])
+    await flushPromises()
+    await toList(list)
+    expect(list.find('.st-remote').exists()).toBe(false)
+  })
+
   it('偏好落盘:重新进页面还停在列表', async () => {
     emitAll(metric('a'), metric('b'))
-    const wrapper = mount(ServerStatus)
+    const wrapper = mountStatus()
     await flushPromises()
     await toList(wrapper)
     wrapper.unmount()
 
-    const again = mount(ServerStatus)
+    const again = mountStatus()
     await flushPromises()
     expect(again.find('.metrics-table').exists()).toBe(true)
   })

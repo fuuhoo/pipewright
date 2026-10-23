@@ -28,6 +28,13 @@ const router = useRouter()
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 
+/**
+ * 「坐到那台机器前面」这条能力(远程弹窗 = 主机终端 + 远程文件、全屏运维终端)按
+ * server.exec 亮灭 —— 后端同一件事也按这个点判(requireServerPoint),没有点时点了只会
+ * 拿到一条 role_denied。指标与日志属于 server.view,不受这里影响。
+ */
+const canExec = computed(() => sessionStore.canPerm('server.exec'))
+
 // ─── state ──────────────────────────────────────────────────────────────────
 
 type LoadState = 'idle' | 'loading' | 'error'
@@ -504,8 +511,12 @@ async function handleTest(s: Server): Promise<void> {
               {{ testingId === s.id ? t('settingsServers.testing') : t('settingsServers.testConnection') }}
             </button>
             <button class="btn-ghost" @click="openLogsModal(s)">{{ t('settingsServers.logs') }}</button>
-            <button class="btn-ghost" @click="openRemote(s)">{{ t('settingsServers.remote') }}</button>
-            <button class="btn-ghost" @click="openTerminal(s)">{{ t('settingsServers.terminal') }}</button>
+            <button v-if="canExec" class="btn-ghost" @click="openRemote(s)">
+              {{ t('settingsServers.remote') }}
+            </button>
+            <button v-if="canExec" class="btn-ghost" @click="openTerminal(s)">
+              {{ t('settingsServers.terminal') }}
+            </button>
             <button class="btn-ghost" @click="openOpsModal(s)">{{ t('settingsServers.serviceOps') }}</button>
             <button class="btn-ghost" @click="openEditModal(s)">{{ t('settingsServers.edit') }}</button>
             <button class="btn-ghost btn-danger" @click="openDeleteModal(s)">{{ t('settingsServers.delete') }}</button>

@@ -26,8 +26,17 @@ import AppButton from '../components/ui/AppButton.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
 import SkeletonBlock from '../components/ui/SkeletonBlock.vue'
+import { useSessionStore } from '../stores/session'
 
 const { t } = useI18n()
+const sessionStore = useSessionStore()
+
+/**
+ * 「远程」这条入口(主机终端 + 远程文件)按 server.exec 这个点亮灭。
+ * 后端同样按点判(requireServerPoint),所以这里收起不是装饰:没有这个点的角色
+ * 点了只会拿到一条 role_denied。
+ */
+const canRemote = computed(() => sessionStore.canPerm('server.exec'))
 
 /** 首屏状态(骨架/整页错误)。后台刷新不改它 —— 那才叫静默。 */
 const loadState = ref<'idle' | 'loading' | 'error'>('idle')
@@ -414,7 +423,12 @@ onUnmounted(() => {
     />
 
     <!-- Metrics(可达在前、不可达沉底):两种视图吃同一份排序结果 -->
-    <ServerMetricsTable v-else-if="viewMode === 'list'" :rows="tableRows" @remote="openRemote" />
+    <ServerMetricsTable
+      v-else-if="viewMode === 'list'"
+      :rows="tableRows"
+      :can-remote="canRemote"
+      @remote="openRemote"
+    />
     <div v-else class="metrics-grid">
       <ServerMetricsCard
         v-for="m in sortedMetrics"
@@ -422,6 +436,7 @@ onUnmounted(() => {
         :name="displayName(m)"
         :group-label="groupTagOf(m.serverId)"
         :metrics="m"
+        :can-remote="canRemote"
         @remote="openRemote"
       />
     </div>
