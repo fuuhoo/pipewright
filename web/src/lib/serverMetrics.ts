@@ -70,15 +70,45 @@ export function memoryView(m: MemoryMetric | null): MemoryView {
   }
 }
 
+/**
+ * 负载率:loadavg1 ÷ 核数 × 100(%)。
+ *
+ * 两个口径别混:loadavg 是「在跑 + 排队 + 等不可中断 IO」的任务数(没有上限),核数是并行能力,
+ * 二者量纲不同,所以 8 核机负载 12 完全可能 —— 那一档就是「活干不过来」。
+ * 拿不到核数就返回 null:没有参照系的负载数字不该被换算成百分比。
+ */
+export function loadPercent(cpu: CpuMetric | null): number | null {
+  if (!cpu || cpu.loadavg1 === null) return null
+  const cores = cpu.cores ?? 0
+  if (cores <= 0) return null
+  return (cpu.loadavg1 / cores) * 100
+}
+
 /** CPU 负载相对核数的健康着色(无核数则不着色 —— 没有参照系的数字不该判健康)。 */
 export function loadVariant(cpu: CpuMetric | null): MetricVariant {
-  if (!cpu || cpu.loadavg1 === null) return 'default'
-  const cores = cpu.cores ?? 0
-  if (cores <= 0) return 'default'
-  const ratio = cpu.loadavg1 / cores
-  if (ratio >= 1) return 'error'
-  if (ratio >= 0.7) return 'warn'
+  const pct = loadPercent(cpu)
+  if (pct === null) return 'default'
+  if (pct >= 100) return 'error'
+  if (pct >= 70) return 'warn'
   return 'default'
+}
+
+/** 「负载率 205%」;算不出就空串,让界面跳过这一档(画个 0% 是另一个谎)。 */
+export function loadRateText(cpu: CpuMetric | null): string {
+  const pct = loadPercent(cpu)
+  if (pct === null) return ''
+  return t('opsServer.metrics.loadRate', { pct: pct.toFixed(0) })
+}
+
+/**
+ * 真 CPU 时间使用率(0–100):后端用 /proc/stat 两次采样的累计 tick 求差算好。
+ * null = 首轮还没有上一轮可比,或该机没有 /proc/stat(macOS/BSD)—— 界面整行跳过。
+ * 这与 loadPercent 是两件事:那个是排队压力,这个是 CPU 到底忙了多久。
+ */
+export function cpuUsagePercent(cpu: CpuMetric | null): number | null {
+  const v = cpu?.usage
+  if (v === null || v === undefined || !Number.isFinite(v)) return null
+  return Math.min(100, Math.max(0, v))
 }
 
 export function loadAvailable(cpu: CpuMetric | null): boolean {

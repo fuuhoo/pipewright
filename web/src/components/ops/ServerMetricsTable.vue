@@ -15,8 +15,10 @@ import ProgressBar from '../ui/ProgressBar.vue'
 import type { ServerMetrics } from '../../api/servers'
 import {
   collectedClock,
+  cpuUsagePercent,
   humanBytes,
   loadAvailable as loadAvailableOf,
+  loadRateText,
   loadText as loadTextOf,
   loadVariant as loadVariantOf,
   memoryView,
@@ -48,6 +50,8 @@ interface RowView {
   loadText: string
   loadVariant: MetricVariant
   loadAvailable: boolean
+  loadRate: string
+  cpuUsage: number | null
   memPercent: number | null
   memUsedText: string
   memCacheLine: string
@@ -79,6 +83,8 @@ const views = computed<RowView[]>(() =>
       loadText: loadTextOf(m.cpu),
       loadVariant: loadVariantOf(m.cpu),
       loadAvailable: loadAvailableOf(m.cpu),
+      loadRate: loadRateText(m.cpu),
+      cpuUsage: cpuUsagePercent(m.cpu),
       memPercent: mv.percent,
       memUsedText: m.memory ? `${humanBytes(m.memory.usedBytes)} / ${humanBytes(m.memory.totalBytes)}` : '',
       memCacheLine:
@@ -111,7 +117,7 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
           <th scope="col" class="col-addr">{{ t('serverStatus.list.colAddr') }}</th>
           <th scope="col" class="col-status">{{ t('serverStatus.list.colStatus') }}</th>
           <th scope="col">{{ t('serverStatus.list.colSystem') }}</th>
-          <th scope="col" class="col-num">{{ t('serverStatus.list.colCpu') }}</th>
+          <th scope="col" class="col-usage">{{ t('serverStatus.list.colCpu') }}</th>
           <th scope="col" class="col-usage">{{ t('serverStatus.list.colMem') }}</th>
           <th scope="col" class="col-usage">{{ t('serverStatus.list.colDisk') }}</th>
           <th scope="col" class="col-clock">{{ t('serverStatus.list.colCollected') }}</th>
@@ -156,18 +162,36 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
             <span class="st-na">{{ na }}</span>
           </td>
 
-          <td v-if="r.metrics.reachable" class="col-num">
-            <span
-              class="st-num"
-              :class="{
-                'st-num--warn': r.loadVariant === 'warn',
-                'st-num--error': r.loadVariant === 'error',
-                'st-num--na': !r.loadAvailable,
-              }"
-              >{{ r.loadText }}</span
-            >
+          <td v-if="r.metrics.reachable" class="col-usage">
+            <!-- 两个口径分两行,各自带 tooltip,别互相冒充:
+                 第一行 = 真 CPU 时间使用率(后端跨两轮 /proc/stat 求差);
+                 第二行 = 负载 ÷ 核数(排队压力,可以超 100%)。
+                 首轮还没有上一轮 / 该机没有 /proc/stat(macOS)→ 进度条整行不画,
+                 12s 后自己会长出来,而不是把「还没测到」画成 0%。 -->
+            <template v-if="r.cpuUsage !== null">
+              <ProgressBar
+                :value="r.cpuUsage"
+                :variant="usageVariant(r.cpuUsage)"
+                :label="t('opsServer.metrics.cpuUsageLabel', { n: r.cpuUsage.toFixed(0) })"
+              />
+              <span class="st-sub" :title="t('opsServer.metrics.cpuUsageTooltip')">
+                {{ t('opsServer.metrics.cpuUsage') }} {{ r.cpuUsage.toFixed(0) }}%
+              </span>
+            </template>
+            <span class="st-liner">
+              <span
+                class="st-num"
+                :class="{
+                  'st-num--warn': r.loadVariant === 'warn',
+                  'st-num--error': r.loadVariant === 'error',
+                  'st-num--na': !r.loadAvailable,
+                }"
+                >{{ r.loadText }}</span
+              >
+              <span v-if="r.loadRate" class="st-rate" :title="t('opsServer.metrics.loadRateTooltip')">{{ r.loadRate }}</span>
+            </span>
           </td>
-          <td v-else class="col-num">
+          <td v-else class="col-usage">
             <span class="st-na">{{ na }}</span>
           </td>
 
@@ -390,6 +414,18 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
   color: var(--color-faint);
   font-style: italic;
   font-weight: 500;
+}
+/* CPU 列第二行:负载数字 + 负载率同一行(负载率只是它的换算,拆开两行会误当另一个指标) */
+.st-liner {
+  display: block;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+.st-rate {
+  margin-left: 6px;
+  color: var(--color-faint);
+  font-variant-numeric: tabular-nums;
+  cursor: help;
 }
 .st-sub {
   display: block;

@@ -47,7 +47,7 @@ function metric(id: string, over: Partial<ServerMetrics> = {}): ServerMetrics {
     serverId: id,
     reachable: true,
     error: '',
-    cpu: { loadavg1: 0.5, cores: 4 },
+    cpu: { loadavg1: 0.5, cores: 4, usage: null },
     memory: null,
     disk: null,
     system: null,
@@ -119,7 +119,7 @@ describe('ServerStatus — 逐台出卡', () => {
     await flushPromises()
     expect(wrapper.findAll('.metrics-card')).toHaveLength(2)
 
-    emitAll(metric('a', { cpu: { loadavg1: 3.75, cores: 4 } }), metric('b'))
+    emitAll(metric('a', { cpu: { loadavg1: 3.75, cores: 4, usage: null } }), metric('b'))
     await clickRefresh(wrapper)
     await flushPromises()
 
@@ -253,7 +253,7 @@ describe('ServerStatus — 卡片 / 列表两种视图', () => {
   })
 
   it('同一台机在两种视图给出同一个数(展示口径共用)', async () => {
-    emitAll(metric('a', { cpu: { loadavg1: 3.75, cores: 4 } }), metric('b'))
+    emitAll(metric('a', { cpu: { loadavg1: 3.75, cores: 4, usage: null } }), metric('b'))
     const wrapper = mountStatus()
     await flushPromises()
     expect(wrapper.findAll('.metrics-card')[0].text()).toContain('3.75')

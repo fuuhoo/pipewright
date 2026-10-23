@@ -1,7 +1,9 @@
 <!--
   MetricTrendChart.vue — 服务器指标时序折线(纯 SVG,无第三方图表库)。
 
-  把某台服务器的 CPU / 内存 / 磁盘使用率序列画成三条折线,y 轴固定 0–100%,x 轴为时间。
+  把某台服务器的 CPU 负载率 / 内存 / 磁盘使用率序列画成三条折线,x 轴为时间。
+  · y 轴下界 0,上界按数据翻倍递进(见 yMax):CPU 那条是「负载 ÷ 核数」,过载机本来就超 100%,
+    固定 100 的上界会把 150% 和 300% 贴顶画成同一条满格线 —— 那是最难看的谎。
   · null 点(该时刻指标不可得)断线,不强连成误导走势。
   · compositor-friendly:静态 SVG path,无逐帧动画。
   · 数据不足(每条 < 2 个有效点)→ 占位提示,不报错。
@@ -45,6 +47,27 @@ const timeRange = computed(() => {
   return { min, max, span: max - min || 1 }
 })
 
+/**
+ * y 轴上界。
+ *
+ * CPU 那条线画的是「负载 ÷ 核数」(库里 cpu_percent 就是这个口径),过载机的负载率本来就
+ * 可以超 100% —— 固定 100 的上界会把 150%、300% 全贴顶压成同一条满格线,反而看不出恶化。
+ * 所以上界按数据翻倍递进(100 / 200 / 400 / 800 / 1600):刻度步长仍是整数(25 / 50 / 100 /
+ * 200 / 400),也不会为一台极端机把整张图压扁。
+ */
+const yMax = computed(() => {
+  let peak = 0
+  for (const p of props.points) {
+    for (const s of SERIES) {
+      const v = p[s.key]
+      if (v != null && Number.isFinite(v) && v > peak) peak = v
+    }
+  }
+  let max = 100
+  while (peak > max && max < 1600) max *= 2
+  return max
+})
+
 function xFor(at: string): number {
   const r = timeRange.value
   if (!r) return padL
@@ -52,9 +75,9 @@ function xFor(at: string): number {
   return padL + ((ms - r.min) / r.span) * innerW.value
 }
 function yFor(v: number): number {
-  // 0–100% 固定刻度;翻转使大值在上。
-  const clamped = Math.max(0, Math.min(100, v))
-  return padT + innerH.value - (clamped / 100) * innerH.value
+  // 上界随数据走(见 yMax),仍翻转使大值在上。
+  const clamped = Math.max(0, Math.min(yMax.value, v))
+  return padT + innerH.value - (clamped / yMax.value) * innerH.value
 }
 
 /** 每条 series 拆成「连续非空段」的 path 列表(null 断线)。 */
@@ -91,8 +114,11 @@ function lastValue(key: 'cpu' | 'memory' | 'disk'): number | null {
   return null
 }
 
-/** y 轴刻度线(含 85/90 告警参考虚线由模板单独画)。 */
-const yTicks = [0, 25, 50, 75, 100]
+/** y 轴刻度线(跟随 yMax;上界翻倍时步长也跟着翻倍)。 */
+const yTicks = computed(() => {
+  const m = yMax.value
+  return [0, m / 4, m / 2, (m * 3) / 4, m]
+})
 
 /** x 轴时间标签(首 / 中 / 末)。 */
 const xLabels = computed(() => {

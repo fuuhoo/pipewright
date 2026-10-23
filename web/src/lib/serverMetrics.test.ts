@@ -10,8 +10,11 @@ import {
   collectedClock,
   humanBytes,
   loadAvailable,
+  loadPercent,
+  loadRateText,
   loadText,
   loadVariant,
+  cpuUsagePercent,
   memoryView,
   sysParts,
   sysPrimary,
@@ -89,8 +92,13 @@ describe('memoryView', () => {
 })
 
 describe('负载', () => {
+  const cpu = (loadavg1: number | null, cores: number | null, usage: number | null = null): CpuMetric => ({
+    loadavg1,
+    cores,
+    usage,
+  })
+
   it('相对核数判健康:1× 核数红、0.7× 黄,没有核数就不判', () => {
-    const cpu = (loadavg1: number | null, cores: number | null): CpuMetric => ({ loadavg1, cores })
     expect(loadVariant(cpu(2.0, 4))).toBe('default')
     expect(loadVariant(cpu(2.8, 4))).toBe('warn')
     expect(loadVariant(cpu(4, 4))).toBe('error')
@@ -101,11 +109,43 @@ describe('负载', () => {
 
   it('采不到就明说「不可用」,不写成 0.00', () => {
     expect(loadAvailable(null)).toBe(false)
-    expect(loadAvailable({ loadavg1: null, cores: 4 })).toBe(false)
-    expect(loadAvailable({ loadavg1: 0, cores: 4 })).toBe(true)
+    expect(loadAvailable({ loadavg1: null, cores: 4, usage: null })).toBe(false)
+    expect(loadAvailable({ loadavg1: 0, cores: 4, usage: null })).toBe(true)
     expect(loadText(null)).toBe('不可用')
-    expect(loadText({ loadavg1: 0, cores: null })).toBe('0.00')
-    expect(loadText({ loadavg1: 1.234, cores: 4 })).toBe('1.23 / 4 核')
+    expect(loadText({ loadavg1: 0, cores: null, usage: null })).toBe('0.00')
+    expect(loadText({ loadavg1: 1.234, cores: 4, usage: null })).toBe('1.23 / 4 核')
+  })
+
+  // 两个口径必须分开:负载率是「排队压力」(没有上限),使用率是「CPU 忙了多久」(0–100)。
+  it('负载率 = 负载 ÷ 核数 × 100,允许超 100%(8 核机负载 12 是真会发生的)', () => {
+    expect(loadPercent(cpu(8.2, 4))).toBeCloseTo(205, 6)
+    expect(loadPercent(cpu(1, 4))).toBeCloseTo(25, 6)
+    expect(loadPercent(cpu(1.2, null))).toBeNull()
+    expect(loadPercent(cpu(1.2, 0))).toBeNull()
+    expect(loadPercent(cpu(null, 4))).toBeNull()
+    expect(loadPercent(null)).toBeNull()
+  })
+
+  it('负载率文案:算不出给空串,让界面跳过这一档(不是画个 0%)', () => {
+    expect(loadRateText(cpu(8.2, 4))).toBe('负载率 205%')
+    expect(loadRateText(cpu(1.2, null))).toBe('')
+    expect(loadRateText(null)).toBe('')
+  })
+
+  it('着色跟着负载率走:≥100% 红、≥70% 黄,和那一行数字同一套判定', () => {
+    expect(loadVariant(cpu(2.79, 4))).toBe('default')
+    expect(loadVariant(cpu(2.8, 4))).toBe('warn')
+    expect(loadVariant(cpu(8, 4))).toBe('error')
+  })
+
+  it('真使用率取后端跨轮算好的差值;没有就 null,绝不拿 0 假装空闲', () => {
+    expect(cpuUsagePercent(cpu(1, 4, 38))).toBe(38)
+    expect(cpuUsagePercent(cpu(1, 4, 0))).toBe(0)
+    expect(cpuUsagePercent(cpu(1, 4, null))).toBeNull()
+    expect(cpuUsagePercent(null)).toBeNull()
+    // 后端越界(理论不该有)也夹进 0–100,免得进度条画出负宽度。
+    expect(cpuUsagePercent(cpu(1, 4, 140))).toBe(100)
+    expect(cpuUsagePercent(cpu(1, 4, -3))).toBe(0)
   })
 })
 

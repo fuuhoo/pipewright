@@ -233,10 +233,18 @@ export function subscribeServerLogs(
 // null (cross-platform best-effort: Linux first, macOS partial), independently
 // of the other metrics.
 
-/** CPU load + core count. Either sub-field may be null when unparseable. */
+/**
+ * CPU 负载 + 核数 + 时间使用率。任一子字段采不到即为 null。
+ *
+ * `usage` 和「负载 ÷ 核数」是两个口径:后者是排队压力(可 >100%),前者是 CPU 到底忙了多久。
+ * 后端拿 /proc/stat 的累计 tick 跨两轮求差算出,所以首轮(还没有上一轮)必然为 null;
+ * 没有 /proc/stat 的机器(macOS/BSD)恒为 null —— 界面跳过那一格,别拿 0 假装空闲。
+ */
 export interface CpuMetric {
   loadavg1: number | null
   cores: number | null
+  /** CPU 时间使用率 0–100(Linux 专有,跨采集窗口求差)。 */
+  usage: number | null
 }
 
 /** Memory used/total in bytes. */

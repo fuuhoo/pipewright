@@ -4,7 +4,8 @@
   单台已登记服务器的指标卡:
     · 名称 + reachable 徽标(可达 / 不可达)
     · 系统信息行:发行版 / 内核 / 架构 / 主机名 / 运行时长(该机自报,缺哪段跳哪段)
-    · CPU:1 分钟负载 + 核数(负载相对核数着色:>1×核数 偏红、>0.7× 偏黄)
+    · CPU:1 分钟负载 + 核数 + 负载率(负载 ÷ 核数,可 >100%:排队和等 IO 的任务数本来就超核)
+    · CPU 使用率:真占用时间(后端拿 /proc/stat 两次采样求差),首轮与无 /proc/stat 的机器整行不画
     · 内存 used/total 进度条 + 人读字节
     · 磁盘 used/total 进度条 + 人读字节
     · 某指标 null → 该行标「不可用」(跨平台 best-effort:该机没有对应命令/解析不出才缺)
@@ -19,8 +20,10 @@ import ProgressBar from '../ui/ProgressBar.vue'
 import type { ServerMetrics } from '../../api/servers'
 import {
   collectedClock,
+  cpuUsagePercent,
   humanBytes,
   loadAvailable as loadAvailableOf,
+  loadRateText,
   loadText as loadTextOf,
   loadVariant as loadVariantOf,
   memoryView,
@@ -66,6 +69,8 @@ const diskPercent = computed(() =>
 const loadVariant = computed(() => loadVariantOf(props.metrics.cpu))
 const loadAvailable = computed(() => loadAvailableOf(props.metrics.cpu))
 const loadText = computed(() => loadTextOf(props.metrics.cpu))
+const loadRate = computed(() => loadRateText(props.metrics.cpu))
+const cpuUsage = computed(() => cpuUsagePercent(props.metrics.cpu))
 </script>
 
 <template>
@@ -119,6 +124,26 @@ const loadText = computed(() => loadTextOf(props.metrics.cpu))
             }"
             >{{ loadText }}</span
           >
+          <!-- 负载率:负载 ÷ 核数。超过 100% 不是 bug —— 排队和等 IO 的任务数本就可以超核数。 -->
+          <span v-if="loadRate" class="metric-sub" :title="t('opsServer.metrics.loadRateTooltip')">{{ loadRate }}</span>
+        </dd>
+      </div>
+
+      <!-- CPU 时间使用率:后端拿 /proc/stat 两次采样求差算出的真占用。
+           首轮(还没有上一轮)或该机没有 /proc/stat(macOS/BSD)→ 整行不画,
+           而不是留一行「不可用」:12s 后自己会出来,而非 Linux 永远不会有。 -->
+      <div v-if="cpuUsage !== null" class="metric-row">
+        <dt class="metric-row__label">{{ t('opsServer.metrics.cpuUsage') }}</dt>
+        <dd class="metric-row__value">
+          <ProgressBar
+            :value="cpuUsage"
+            :variant="usageVariant(cpuUsage)"
+            :label="t('opsServer.metrics.cpuUsageLabel', { n: cpuUsage.toFixed(0) })"
+          />
+          <span class="metric-sub" :title="t('opsServer.metrics.cpuUsageTooltip')">
+            {{ cpuUsage.toFixed(0) }}%
+            <span class="metric-pct">({{ t('opsServer.metrics.cpuUsageSinceLast') }})</span>
+          </span>
         </dd>
       </div>
 
