@@ -14,8 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Story 6.1(FR-15):多机状态总览 —— 服务器层资源指标(CPU 负载/核数、内存 used/total、
-// 磁盘 used/total),经 SSH 跑**固定白名单只读命令**采集,解析为结构化指标。
+// Story 6.1(FR-15):多机状态总览 —— 服务器层资源指标(CPU 负载/核数/时间使用率、
+// 内存 used/total、磁盘 used/total),经 SSH 跑**固定白名单只读命令**采集,解析为结构化指标。
 //
 // AC-SEC-02 核心:采集命令是**纯静态命令 array**,绝不接受任何用户输入拼接 —— 无注入面。
 // 指标无敏感信息。
@@ -48,6 +48,8 @@ const (
 // 多跑几条「本机没有、直接非零退出」的命令只多几个 session 往返(毫秒级),比多拨一次号便宜得多。
 //   - loadavg:`cat /proc/loadavg`(Linux);macOS 无 /proc → 回退 `uptime`。
 //   - cores:`nproc`;缺失回退 `getconf _NPROCESSORS_ONLN`(含 macOS)。
+//   - cpu 使用率:`cat /proc/stat`(Linux)。它是开机以来的**累计** ticks,单读一次只能得
+//     「历史平均」,故按服务器缓存上一轮样本、跨轮求差(见 cpuUsageWithCache),不在采集命令里塞 sleep。
 //   - memory:`free -b`(Linux);macOS/BSD 无 free → `vm_stat` + `sysctl hw.memsize`。
 //   - swap:`free -b` 的 Swap 行;macOS → `sysctl vm.swapusage`。
 //   - disk:`df -B1 /`;不识别 -B1(老 macOS)→ 回退 `df -k /`(KiB)换算字节。
@@ -78,6 +80,8 @@ var (
 	// 运行时长:/proc/uptime 第一列(Linux);macOS/BSD 无 /proc → kern.boottime 换 now-启动时刻。
 	cmdProcUptime   = []string{"cat", "/proc/uptime"}
 	cmdKernBoottime = []string{"sysctl", "-n", "kern.boottime"}
+	// CPU 时间使用率的分母来源:累计 ticks(Linux 专有,macOS/BSD 无 /proc → 该指标为 null)。
+	cmdProcStat = []string{"cat", "/proc/stat"}
 	// 物理/分配内存(SMBIOS Type 17 内存设备容量之和)。`free` 的 MemTotal 是内核
 	// **可用**总量(已扣固件/内核保留),通常略小于物理装机量;dmidecode 读 SMBIOS
 	// 得「物理/分配」总量,与 PVE 等宿主面板显示的总量一致。需 root;非 root / 无
@@ -85,7 +89,8 @@ var (
 	cmdDmidecodeMem = []string{"dmidecode", "-t", "17"}
 )
 
-// 指标命令的固定顺序 = 结果切片下标(见 metricPlan)。新增命令往末尾加,别插中间。
+// 指标命令的固定下标 = ExecBatch 结果切片下标(解析器按它取值)。
+// 新增一条:这里加一个 iota 常量,并在 metricPlanBase 里以「下标: 命令」登记,别挪动已有常量。
 const (
 	idxLoadavg = iota
 	idxUptime
@@ -104,30 +109,35 @@ const (
 	idxSwVers
 	idxProcUptime
 	idxKernBoottime
+	idxProcStat
 	idxCount // 基数组长度,供校验/追加用
 )
 
 // idxDmidecodeMem 是物理内存命令在「本轮需要重新探测」时追加到计划末尾的下标。
 const idxDmidecodeMem = idxCount
 
+// metricPlanBase 按「下标常量: 命令」逐项登记 —— 位置即契约。
+// 用带键字面量而不是靠书写顺序:命令顺序会被 readCPU/readMemory 等解析器按下标取值,
+// 插一行就把整套解析挪位了。漏登记一项会由 server_metrics_test.go 的长度不变量测试拦下。
 var metricPlanBase = [][]string{
-	cmdLoadavg,
-	cmdUptime,
-	cmdNproc,
-	cmdGetconfCPU,
-	cmdFreeBytes,
-	cmdVMStat,
-	cmdMemSize,
-	cmdSwapUsage,
-	cmdDfBytes,
-	cmdDfKiB,
-	cmdUnameRelease,
-	cmdUnameMachine,
-	cmdUnameNode,
-	cmdOSRelease,
-	cmdSwVers,
-	cmdProcUptime,
-	cmdKernBoottime,
+	idxLoadavg:      cmdLoadavg,
+	idxUptime:       cmdUptime,
+	idxNproc:        cmdNproc,
+	idxGetconfCPU:   cmdGetconfCPU,
+	idxFreeBytes:    cmdFreeBytes,
+	idxVMStat:       cmdVMStat,
+	idxMemSize:      cmdMemSize,
+	idxSwapUsage:    cmdSwapUsage,
+	idxDfBytes:      cmdDfBytes,
+	idxDfKiB:        cmdDfKiB,
+	idxUnameRelease: cmdUnameRelease,
+	idxUnameMachine: cmdUnameMachine,
+	idxUnameNode:    cmdUnameNode,
+	idxOSRelease:    cmdOSRelease,
+	idxSwVers:       cmdSwVers,
+	idxProcUptime:   cmdProcUptime,
+	idxKernBoottime: cmdKernBoottime,
+	idxProcStat:     cmdProcStat,
 }
 
 // metricPlan 组本轮要跑的命令;needPhys 为真时末尾追加 dmidecode。
@@ -145,6 +155,10 @@ func metricPlan(needPhys bool) [][]string {
 type cpuMetric struct {
 	Loadavg1 *float64 `json:"loadavg1"`
 	Cores    *int     `json:"cores"`
+	// Usage 是「上一次采集到这一次之间」这段时间的 CPU 时间使用率(0–100),来自 /proc/stat
+	// 累计 ticks 求差。与 loadavg1/cores 的**负载率**是两回事:负载把等 IO 的进程也数进去,
+	// 使用率只算 CPU 真正转了多少。首轮无历史 / 该机没有 /proc/stat(macOS/BSD)→ nil。
+	Usage *float64 `json:"usage"`
 }
 
 type memoryMetric struct {
@@ -236,7 +250,7 @@ func collectServerMetrics(ctx context.Context, svc target.Service, id string) (s
 	// 落为 null(单条命令非零退出从来不是错误,由解析层按空输出降级)。
 	results, _ := svc.ExecBatch(bctx, id, metricPlan(needPhys))
 
-	out.CPU = readCPU(results)
+	out.CPU = readCPU(results, id, time.Now())
 	out.Memory = readMemory(results, id, needPhys)
 	out.Disk = readDisk(results)
 	out.System = readSystem(results, osName, time.Now())
@@ -263,8 +277,8 @@ func stdoutAt(results []*target.ExecResult, i int) string {
 	return out
 }
 
-// readCPU 取 CPU 负载 + 核数:各维度独立,解析失败即子字段 nil。
-func readCPU(results []*target.ExecResult) *cpuMetric {
+// readCPU 取 CPU 负载 + 核数 + 时间使用率:各维度独立,解析失败即子字段 nil。
+func readCPU(results []*target.ExecResult, id string, now time.Time) *cpuMetric {
 	m := &cpuMetric{}
 	if v, ok := parseLoadavg(stdoutAt(results, idxLoadavg)); ok {
 		m.Loadavg1 = &v
@@ -276,7 +290,106 @@ func readCPU(results []*target.ExecResult) *cpuMetric {
 	} else if c, ok := parseInt(stdoutAt(results, idxGetconfCPU)); ok { // 无 nproc(macOS/BSD)
 		m.Cores = &c
 	}
+	if t, ok := parseProcStatCPU(stdoutAt(results, idxProcStat)); ok {
+		m.Usage = cpuUsageWithCache(id, t, now)
+	}
 	return m
+}
+
+// ─── CPU 时间使用率(累计 ticks 跨轮求差)─────────────────────────────────────
+//
+// /proc/stat 的 cpu 行是开机以来的累计 tick 数,单次读只能算出「自启动至今的平均」,
+// 而界面要的是「现在忙不忙」——只能拿两次样本相减。做法是按服务器缓存上一轮的 ticks:
+// 状态页本来就以 12s 轮询、后端采样器 60s 采一次,同一台被反复采集,差值窗口天然存在,
+// 不必在采集命令里塞 sleep(那会把每台机的预算从毫秒级拉到秒级,还会拖慢批量端点)。
+//
+// 纪律与 physMemCache 同形(进程内、重启即清空):
+//   - 首轮没有历史 → nil,界面跳过那一格(绝不拿 0 假装「空闲」)。
+//   - 差值窗口太短(连点两次刷新)→ 复用上次算出的值,别把已有数字闪成「不可用」。
+//   - 累计量倒退(机器重启,或同 id 换了台机器)→ 丢掉历史,从本轮重新起算。
+//   - 该机没有 /proc/stat(macOS/BSD)→ 每轮都是 nil。
+type cpuStatEntry struct {
+	ticks cpuTicks
+	at    time.Time
+	// 上一轮窗口算出的使用率;本轮窗口太短时复用它(仍是最近一次真实测量,不是编造)。
+	usage *float64
+}
+
+var (
+	cpuStatMu    sync.Mutex
+	cpuStatCache = map[string]cpuStatEntry{}
+)
+
+// cpuMinDeltaWindow 是算一次差值所需的最短窗口。窗口越短,tick 粒度(HZ=100 时约 10ms)
+// 带来的相对误差越大;低于这个窗口的两轮直接复用上次结果。
+const cpuMinDeltaWindow = 2 * time.Second
+
+// cpuUsageWithCache 记下本轮 ticks 并返回「上一轮到本轮」这段窗口的使用率(0–100)。
+// 返回 nil = 本轮出不了数(首轮 / 倒退 / 窗口太短且上次也没算出来)。
+func cpuUsageWithCache(id string, cur cpuTicks, now time.Time) *float64 {
+	cpuStatMu.Lock()
+	defer cpuStatMu.Unlock()
+
+	prev, have := cpuStatCache[id]
+	switch {
+	case !have, cur.total < prev.ticks.total:
+		cpuStatCache[id] = cpuStatEntry{ticks: cur, at: now}
+		return nil
+	case now.Sub(prev.at) < cpuMinDeltaWindow:
+		return prev.usage
+	}
+
+	var usage *float64
+	if span := cur.total - prev.ticks.total; span > 0 {
+		if busy := span - (cur.idle - prev.ticks.idle); busy >= 0 {
+			v := float64(busy) / float64(span) * 100
+			usage = &v
+		}
+	}
+	cpuStatCache[id] = cpuStatEntry{ticks: cur, at: now, usage: usage}
+	return usage
+}
+
+// cpuTicks 是 /proc/stat 首行(聚合行)的累计量。total = 参与使用率的分母,
+// idle = 空闲 + 等待 IO 的那两列(都算「CPU 没在干活」)。
+type cpuTicks struct {
+	total int64
+	idle  int64
+}
+
+// parseProcStatCPU 解析 `cat /proc/stat` 的聚合 cpu 行。
+// 形如:`cpu  12345 678 9012 134567 890 12 34 0 0 0`(user nice system idle iowait irq softirq steal …)。
+// 只累计前 8 列:user/nice/system/idle/iowait/irq/softirq/steal —— 最后的 guest/guest_nice
+// 内核已计入 user,再加进分母会抬高总数、压低使用率。
+// 逐核行(cpu0/cpu1…)必须跳过:它们加起来会重复计数,只认字段名恰好是 "cpu" 的那一行。
+// 列数不足 / 有非数字 / 总数为 0 → false(该指标留 nil)。
+func parseProcStatCPU(s string) (cpuTicks, bool) {
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] != "cpu" {
+			continue
+		}
+		cols := fields[1:]
+		if len(cols) > 8 {
+			cols = cols[:8]
+		}
+		var total, idle int64
+		for i, f := range cols {
+			n, err := strconv.ParseInt(f, 10, 64)
+			if err != nil || n < 0 {
+				return cpuTicks{}, false
+			}
+			total += n
+			if i == 3 || i == 4 { // idle、iowait
+				idle += n
+			}
+		}
+		if total <= 0 {
+			return cpuTicks{}, false
+		}
+		return cpuTicks{total: total, idle: idle}, true
+	}
+	return cpuTicks{}, false
 }
 
 // readMemory 取内存 used/total(字节)。Linux 走 `free -b`,macOS/BSD 走 `vm_stat` + hw.memsize;

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -299,6 +300,126 @@ func TestParseBoottimeUptime(t *testing.T) {
 	}
 }
 
+// --- /proc/stat 累计 ticks 解析(真 CPU 使用率的原料) ---
+
+func TestParseProcStatCPU(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		total int64
+		idle  int64
+		ok    bool
+	}{
+		// 现代内核 10 列:只取到第 8 列(steal),后两列不计入分母。
+		{"ten cols", "cpu  1000 0 500 8000 500 0 0 0 0 0\n", 10000, 8500, true},
+		// guest/guest_nice 已被内核算进 user,再进分母会稀释使用率:
+		// 若误加这两列 total 会成 1200。
+		{"guest cols excluded", "cpu 100 0 0 100 0 0 0 0 1000 1000\n", 200, 100, true},
+		// 老内核只给到 iowait(共 5 列)也够用。
+		{"five cols", "cpu 1 2 3 4 5\n", 15, 9, true},
+		// 逐核行(cpu0)绝不能参与聚合:加起来等于重复计数。这里两行数字相同,
+		// 若误取 cpu0 也一样 → 用「只有逐核行」那条用例兜住。
+		{"skip per-core rows", "intr 12345 0 0\ncpu0 500 0 250 4000 250 0 0 0 0 0\ncpu  500 0 250 4000 250 0 0 0 0 0\nctxt 9\n", 5000, 4250, true},
+		{"only per-core rows", "cpu0 1 2 3 4 5\n", 0, 0, false},
+		{"too few cols", "cpu 1 2 3\n", 0, 0, false},
+		{"non numeric", "cpu 1 2 3 x 5\n", 0, 0, false},
+		{"negative", "cpu 1 2 3 -4 5\n", 0, 0, false},
+		{"all zero", "cpu 0 0 0 0 0 0 0 0\n", 0, 0, false},
+		{"no cpu line", "btime 1700000000\nprocesses 12\n", 0, 0, false},
+		{"empty", "", 0, 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseProcStatCPU(c.in)
+		if ok != c.ok {
+			t.Fatalf("%s: parseProcStatCPU(%q) ok = %v, want %v", c.name, c.in, ok, c.ok)
+		}
+		if ok && (got.total != c.total || got.idle != c.idle) {
+			t.Fatalf("%s: parseProcStatCPU(%q) = %+v, want total %d idle %d", c.name, c.in, got, c.total, c.idle)
+		}
+	}
+}
+
+// --- 跨轮求差缓存:首轮无基线、窗口太短复用、倒退重置 ---
+
+func TestCPUUsageWithCache(t *testing.T) {
+	const id = "cpu-usage-window-unit"
+	t.Cleanup(func() { clearCPUStat(id) })
+	base := time.Now()
+
+	// 首轮:没有上一轮可比 → nil(界面跳过那一格,绝不报 0% 假装空闲)。
+	if v := cpuUsageWithCache(id, cpuTicks{total: 1000, idle: 900}, base); v != nil {
+		t.Fatalf("首轮应为 nil, got %v", *v)
+	}
+	// 12s 窗口:span 1000、idleΔ 600 → busy 400 → 40%。
+	assertUsage(t, "12s 窗口", cpuUsageWithCache(id, cpuTicks{total: 2000, idle: 1500}, base.Add(12*time.Second)), 40)
+	// 连点刷新(0.5s 后再采):窗口太短 → 复用上一个真实测量值,且不吃掉 12s 那轮的基线。
+	assertUsage(t, "窗口太短复用", cpuUsageWithCache(id, cpuTicks{total: 2010, idle: 1505}, base.Add(12*time.Second+500*time.Millisecond)), 40)
+	// 下一轮的分母仍是 12s 那条基线(2000/1500),不是被太短那轮的 2010:
+	// span 1000、idleΔ 900 → 10%。
+	assertUsage(t, "基线未被短窗口吃掉", cpuUsageWithCache(id, cpuTicks{total: 3000, idle: 2400}, base.Add(25*time.Second)), 10)
+	// 计数器倒退(机器重启,或同 id 换了台机器)→ nil 并从本轮重新起算。
+	if v := cpuUsageWithCache(id, cpuTicks{total: 500, idle: 480}, base.Add(40*time.Second)); v != nil {
+		t.Fatalf("倒退应为 nil, got %v", *v)
+	}
+	// 以倒退那轮为新基线:span 1000、idleΔ 720 → 28%。
+	assertUsage(t, "重置后的窗口", cpuUsageWithCache(id, cpuTicks{total: 1500, idle: 1200}, base.Add(60*time.Second)), 28)
+}
+
+func assertUsage(t *testing.T, name string, got *float64, want float64) {
+	t.Helper()
+	if got == nil {
+		t.Fatalf("%s: want %v%%, got nil", name, want)
+	}
+	if math.Abs(*got-want) > 1e-6 {
+		t.Fatalf("%s: want %v%%, got %v", name, want, *got)
+	}
+}
+
+// seedCPUStat 直接写入「上一轮」的基线,让 HTTP 级测试不必真等 ≥2s 窗口。
+func seedCPUStat(t *testing.T, id string, ticks cpuTicks, at time.Time) {
+	t.Helper()
+	cpuStatMu.Lock()
+	cpuStatCache[id] = cpuStatEntry{ticks: ticks, at: at}
+	cpuStatMu.Unlock()
+	t.Cleanup(func() { clearCPUStat(id) })
+}
+
+func clearCPUStat(id string) {
+	cpuStatMu.Lock()
+	delete(cpuStatCache, id)
+	cpuStatMu.Unlock()
+}
+
+// --- 采集计划:下标即契约 ---
+
+func TestMetricPlanPositionsAreComplete(t *testing.T) {
+	// 漏登记一项 → 解析器按下标取到 nil(stdoutAt 给空串 → 该维度静默变 null),必须由这里拦下。
+	if len(metricPlanBase) != idxCount {
+		t.Fatalf("metricPlanBase 长度 = %d, want idxCount=%d", len(metricPlanBase), idxCount)
+	}
+	for i, cmd := range metricPlanBase {
+		if len(cmd) == 0 {
+			t.Fatalf("下标 %d 漏登记命令", i)
+		}
+	}
+	// dmidecode 只能追加在固定项之后(插进中间会把整套按下标取值的解析挪位)。
+	if got := metricPlan(false); len(got) != idxCount {
+		t.Fatalf("metricPlan(false) 长度 = %d, want %d", len(got), idxCount)
+	}
+	plan := metricPlan(true)
+	if len(plan) != idxCount+1 {
+		t.Fatalf("metricPlan(true) 长度 = %d, want %d", len(plan), idxCount+1)
+	}
+	if plan[idxDmidecodeMem][0] != cmdDmidecodeMem[0] {
+		t.Fatalf("末尾追加项应为 dmidecode, got %v", plan[idxDmidecodeMem])
+	}
+	for i := range metricPlanBase {
+		if plan[i][0] != metricPlanBase[i][0] {
+			t.Fatalf("追加 dmidecode 挪动了下标 %d: %v", i, plan[i])
+		}
+	}
+}
+
 // --- per-command dialer:让集成测试按命令返回不同输出 ---
 type cmdDialer struct {
 	// byCmd 按命令首参(程序名 + 关键参数)路由 stdout / exitCode。
@@ -343,6 +464,9 @@ func linuxLikeDialer() cmdDialer {
 			return &target.ExecResult{Stdout: "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.2 LTS\"\n", ExitCode: 0}, nil
 		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/proc/uptime":
 			return &target.ExecResult{Stdout: "123456.78 234567.89\n", ExitCode: 0}, nil
+		// CPU 时间使用率的累计 ticks:第二行是逐核行,聚合只能取 cpu 那一行。
+		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/proc/stat":
+			return &target.ExecResult{Stdout: "cpu  1000 0 500 8000 500 0 0 0 0 0\ncpu0 500 0 250 4000 250 0 0 0 0 0\n", ExitCode: 0}, nil
 		default:
 			return &target.ExecResult{Stdout: "", Stderr: "command not found", ExitCode: 127}, nil
 		}
@@ -398,6 +522,8 @@ func macLikeDialer() cmdDialer {
 			return &target.ExecResult{Stderr: "No such file or directory", ExitCode: 1}, nil
 		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/proc/uptime":
 			return &target.ExecResult{Stderr: "No such file or directory", ExitCode: 1}, nil
+		case cmd[0] == "cat" && len(cmd) >= 2 && cmd[1] == "/proc/stat":
+			return &target.ExecResult{Stderr: "No such file or directory", ExitCode: 1}, nil
 		case cmd[0] == "sw_vers":
 			return &target.ExecResult{Stdout: "ProductName:\t\tmacOS\nProductVersion:\t\t15.5\nBuildVersion:\t\t24F74\n", ExitCode: 0}, nil
 		case cmd[0] == "sysctl" && len(cmd) >= 3 && cmd[2] == "kern.boottime":
@@ -432,6 +558,10 @@ func TestServerMetricsLinux(t *testing.T) {
 	}
 	if out.CPU.Cores == nil || *out.CPU.Cores != 8 {
 		t.Fatalf("cores wrong: %+v", out.CPU)
+	}
+	// 真使用率要靠两轮累计量相减;每台服务器的 id 是新建 uuid → 首轮必然没有基线 → null。
+	if out.CPU.Usage != nil {
+		t.Fatalf("首轮 CPU 使用率应为 null(无上一轮基线), got %v", *out.CPU.Usage)
 	}
 	if out.Memory == nil || out.Memory.TotalBytes != 17179869184 || out.Memory.UsedBytes != 4123456789 {
 		t.Fatalf("memory wrong: %+v", out.Memory)
@@ -476,6 +606,10 @@ func TestServerMetricsMacFallback(t *testing.T) {
 	if out.CPU.Cores == nil || *out.CPU.Cores != 10 {
 		t.Fatalf("cores fallback wrong: %+v", out.CPU)
 	}
+	// 没有 /proc/stat(macOS/BSD)→ 真使用率恒为 null,界面那一格留空而不是编一个数。
+	if out.CPU.Usage != nil {
+		t.Fatalf("macOS 无 /proc/stat,CPU 使用率应为 null, got %v", *out.CPU.Usage)
+	}
 	// free 缺失 → 走 vm_stat + hw.memsize(macOS 口径):页大小 16384。
 	wantUsed := (200000 + 30000 + 10000) * 16384 // active + wired + 压缩页(不可回收缓存)
 	wantCache := 34359738368 - 100000*16384      // 总量 - 空闲页 = 含可回收缓存
@@ -507,6 +641,44 @@ func TestServerMetricsMacFallback(t *testing.T) {
 	if d := out.System.UptimeSeconds - 2*86400; d < -5 || d > 5 {
 		t.Fatalf("uptimeSeconds = %d, want ≈%d(kern.boottime 换算)", out.System.UptimeSeconds, 2*86400)
 	}
+}
+
+func TestServerMetricsCPUUsageNeedsTwoRounds(t *testing.T) {
+	// 跨轮求差的端到端契约:首轮 null → 有上一轮基线后出真数值。
+	// 「上一轮」用 seedCPUStat 直接写缓存(等价于 30s 前的一次采集),不在测试里 sleep 凑窗口。
+	srv, client, csrf := setupServerAPI(t, linuxLikeDialer())
+	credID := newSSHCredAPI(t, client, srv.URL, csrf, "pw")
+	id := createServerAPI(t, client, srv.URL, csrf, credID)
+
+	getCPU := func() *cpuMetric {
+		t.Helper()
+		resp, err := client.Get(srv.URL + "/api/servers/" + id + "/metrics")
+		if err != nil {
+			t.Fatalf("GET metrics: %v", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d: %s", resp.StatusCode, raw)
+		}
+		var out serverMetricsDTO
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("unmarshal: %v: %s", err, raw)
+		}
+		if out.CPU == nil {
+			t.Fatalf("cpu 段缺失: %s", raw)
+		}
+		return out.CPU
+	}
+
+	if v := getCPU().Usage; v != nil {
+		t.Fatalf("首轮应为 nil(没有基线), got %v", *v)
+	}
+	// dialer 的 cpu 行聚合 = total 10000 / idle 8500;基线 5000/5000 → span 5000、idleΔ 3500 → 30%。
+	seedCPUStat(t, id, cpuTicks{total: 5000, idle: 5000}, time.Now().Add(-30*time.Second))
+	assertUsage(t, "第二轮使用率", getCPU().Usage, 30)
+	// 窗口内已推进到本轮的累计量(不是停在旧基线):再采一次,窗口 <2s → 复用 30%。
+	assertUsage(t, "紧接一轮复用上次值", getCPU().Usage, 30)
 }
 
 func TestServerMetricsUnreachableNot500(t *testing.T) {
