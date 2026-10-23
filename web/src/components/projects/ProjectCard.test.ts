@@ -22,9 +22,9 @@ function project(over: Partial<Project> = {}): Project {
   } as Project
 }
 
-function mountCard(props: Partial<{ project: Project; groupLabel: string; canAssignGroup: boolean }> = {}) {
+function mountCard(props: Partial<{ project: Project; groupLabel: string; canAssignGroup: boolean; canViewRuns: boolean }> = {}) {
   return mount(ProjectCard, {
-    props: { project: project(), groupLabel: '支付平台', canAssignGroup: false, ...props },
+    props: { project: project(), groupLabel: '支付平台', canAssignGroup: false, canViewRuns: true, ...props },
   })
 }
 
@@ -65,6 +65,16 @@ describe('ProjectCard', () => {
     expect(wrapper.get('.repo-url--unbound').text()).toContain('仅用于发布')
     expect(wrapper.find('.branch-row').exists()).toBe(false)
     expect(wrapper.find('button[aria-label="浏览项目 go图形报告 的代码"]').exists()).toBe(false)
+  })
+
+  it('运行记录入口:点它只报「要看哪个项目的记录」;没有 run.view 时这个按钮根本不在', async () => {
+    const p = project()
+    const wrapper = mountCard({ project: p })
+    await wrapper.get('button[aria-label="查看项目 go图形报告 的运行记录"]').trigger('click')
+    expect(wrapper.emitted('runs')?.[0]).toEqual([p])
+
+    const noPerm = mountCard({ project: p, canViewRuns: false })
+    expect(noPerm.find('button[aria-label="查看项目 go图形报告 的运行记录"]').exists()).toBe(false)
   })
 
   it('分组行:能改归属才是按钮,否则只是带原因的一行字', async () => {

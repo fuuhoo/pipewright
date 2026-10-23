@@ -39,6 +39,8 @@ export default {
   // ─── card actions ──────────────────────────────────────────────
   actionRunTitle: 'Ausführung manuell auslösen · {name}',
   actionRunAria: 'Pipeline-Ausführung für Projekt {name} manuell auslösen',
+  actionRunsTitle: 'Verlauf · {name}',
+  actionRunsAria: 'Ausführungsverlauf für Projekt {name} ansehen',
   actionRenameTitle: '{name} umbenennen',
   actionRenameAria: 'Projekt {name} umbenennen',
   actionCodeTitle: 'Code durchsuchen · {name}',

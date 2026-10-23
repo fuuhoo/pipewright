@@ -39,6 +39,8 @@ export default {
   // ─── card actions ──────────────────────────────────────────────
   actionRunTitle: 'Déclencher une exécution manuellement · {name}',
   actionRunAria: 'Déclencher manuellement une exécution de pipeline pour le projet {name}',
+  actionRunsTitle: 'Historique · {name}',
+  actionRunsAria: 'Voir l’historique des exécutions du projet {name}',
   actionRenameTitle: 'Renommer {name}',
   actionRenameAria: 'Renommer le projet {name}',
   actionCodeTitle: 'Parcourir le code · {name}',

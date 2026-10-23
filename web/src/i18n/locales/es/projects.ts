@@ -39,6 +39,8 @@ export default {
   // ─── card actions ──────────────────────────────────────────────
   actionRunTitle: 'Disparar ejecución manualmente · {name}',
   actionRunAria: 'Disparar manualmente una ejecución de pipeline del proyecto {name}',
+  actionRunsTitle: 'Historial · {name}',
+  actionRunsAria: 'Ver el historial de ejecuciones del proyecto {name}',
   actionRenameTitle: 'Renombrar {name}',
   actionRenameAria: 'Renombrar el proyecto {name}',
   actionCodeTitle: 'Explorar código · {name}',

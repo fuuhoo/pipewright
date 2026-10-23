@@ -16,10 +16,13 @@ const props = defineProps<{
   groupLabel: string
   /** 当前用户能否改这张卡的归属 —— 与后端 Manage 判定同构,组件不自行推权限。 */
   canAssignGroup: boolean
+  /** 有没有「运行记录」这个入口(运行页要 run.view 功能点);判据由调用方给,理由同上。 */
+  canViewRuns: boolean
 }>()
 
 const emit = defineEmits<{
   run: [project: Project]
+  runs: [project: Project]
   rename: [project: Project]
   repo: [project: Project]
   code: [project: Project]
@@ -184,6 +187,21 @@ function relativeTime(isoStr: string): string {
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+
+        <!-- 运行记录:跳到运行页并把这张卡带进筛选(没有 run.view 时这个入口本就不该出现) -->
+        <button
+          v-if="canViewRuns"
+          class="action-btn"
+          :title="t('projects.actionRunsTitle', { name: project.name })"
+          :aria-label="t('projects.actionRunsAria', { name: project.name })"
+          @click.stop="emit('runs', project)"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3.2-6.9L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M12 8v4.5l3 1.8"/>
           </svg>
         </button>
 

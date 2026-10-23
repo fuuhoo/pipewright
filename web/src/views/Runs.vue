@@ -1,19 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { listRuns, triggerManual, type RunListItem, type RunStatus, type RunDetail, type ListRunsParams, type TriggerManualInput } from '../api/runs'
 import RunParamsEditor from '../components/RunParamsEditor.vue'
 import TypedRunParams from '../components/TypedRunParams.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { listProjects, type Project } from '../api/projects'
 import { HttpError } from '../api/http'
+import { projectFilterLabel, resolveProjectFilter, withProjectFilter } from '../lib/runProjectFilter'
 
 const { t } = useI18n()
 
 // ─── router ───────────────────────────────────────────────────────────────────
 
 const router = useRouter()
+const route = useRoute()
 
 function goToDetail(id: string): void {
   void router.push({ name: 'run-detail', params: { id } })
@@ -32,6 +34,10 @@ const totalRuns = ref(0)
 
 const statusFilter = ref<RunStatus | 'all'>('all')
 
+// 项目清单:筛选下拉的候选,同时也是手动触发弹窗的目标项目候选 —— 一份数据两处用。
+const projects        = ref<Project[]>([])
+const projectsLoading = ref(false)
+
 const STATUS_FILTER_OPTIONS: Array<RunStatus | 'all'> = [
   'all',
   'running',
@@ -47,6 +53,18 @@ function filterLabel(value: RunStatus | 'all'): string {
   return value === 'all' ? t('runs.filterAll') : t(`runStatus.${value}`)
 }
 
+// 项目筛选走地址栏(?projectId=),和「环境」「预览环境」「DORA」三页同一套写法:
+// 状态放在 URL 里,刷新/收藏/回退都还能回到同一份筛选,项目卡片上的「运行记录」按钮
+// 也只是往这个 query 里塞一个 id —— 不必为它另造一套页内状态。
+const projectId = computed<string>(() => resolveProjectFilter(route.query.projectId))
+
+/** 筛中的项目名;地址栏那个 id 已不在可见清单里时是 id 前 8 位。 */
+const filterProjectName = computed<string>(() => projectFilterLabel(projects.value, projectId.value))
+
+function setProject(id: string): void {
+  void router.replace({ query: withProjectFilter(route.query as Record<string, string>, id) })
+}
+
 // ─── data loading ─────────────────────────────────────────────────────────────
 
 async function loadRuns(): Promise<void> {
@@ -55,6 +73,7 @@ async function loadRuns(): Promise<void> {
   try {
     const params: ListRunsParams = {}
     if (statusFilter.value !== 'all') params.status = statusFilter.value
+    if (projectId.value) params.projectId = projectId.value
     const res = await listRuns(params)
     runs.value = res.items
     totalRuns.value = res.total
@@ -71,17 +90,29 @@ async function loadRuns(): Promise<void> {
   }
 }
 
-onMounted(() => { void loadRuns() })
+onMounted(() => {
+  void loadRuns()
+  // 下拉候选和触发弹窗用的是同一份清单:一次 GET,两处都有得选。
+  void loadProjects()
+})
 
 function onFilterChange(): void {
   void loadRuns()
 }
 
+// 地址栏改了(卡片上的「运行记录」按钮、下拉换项目、浏览器前进后退)都从这一条路重载。
+watch(projectId, () => { void loadRuns() })
+
+/** 空态那颗「清除筛选」:两个筛选条件一起归位,别让清除完还剩着项目。 */
+function clearFilters(): void {
+  statusFilter.value = 'all'
+  if (projectId.value) setProject('')
+  else void loadRuns()
+}
+
 // ─── manual trigger modal ─────────────────────────────────────────────────────
 
 const triggerModalOpen    = ref(false)
-const projects            = ref<Project[]>([])
-const projectsLoading     = ref(false)
 const triggerForm         = ref({ projectId: '', branch: '', commit: '' })
 const triggerParams       = ref<Record<string, string>>({})
 const triggerDefs         = ref<ParamDef[]>([])
@@ -94,13 +125,13 @@ const selectedProject = computed<Project | undefined>(() =>
   projects.value.find((p) => p.id === triggerForm.value.projectId),
 )
 
-async function loadProjectsForTrigger(): Promise<void> {
+async function loadProjects(): Promise<void> {
   if (projects.value.length > 0) return
   projectsLoading.value = true
   try {
     projects.value = await listProjects()
   } catch {
-    // non-fatal — user will see empty dropdown
+    // 筛不了也别挡页:下拉只剩「全部项目」,列表照旧出。
   } finally {
     projectsLoading.value = false
   }
@@ -115,7 +146,7 @@ function openTriggerModal(): void {
   triggerBanner.value       = ''
   triggerSubmitting.value   = false
   triggerModalOpen.value    = true
-  void loadProjectsForTrigger()
+  void loadProjects()
 }
 
 function closeTriggerModal(): void {
@@ -318,15 +349,50 @@ function isFailedStatus(status: RunStatus): boolean {
     </div>
 
     <!-- ─── Filter bar ───────────────────────────────────────────────────── -->
-    <div class="filter-bar" role="group" :aria-label="t('runs.filterAriaLabel')">
-      <button
-        v-for="opt in STATUS_FILTER_OPTIONS"
-        :key="opt"
-        type="button"
-        class="filter-tab"
-        :class="{ 'filter-tab--active': statusFilter === opt }"
-        @click="statusFilter = opt; onFilterChange()"
-      >{{ filterLabel(opt) }}</button>
+    <div class="filters-row">
+      <div class="filter-bar" role="group" :aria-label="t('runs.filterAriaLabel')">
+        <button
+          v-for="opt in STATUS_FILTER_OPTIONS"
+          :key="opt"
+          type="button"
+          class="filter-tab"
+          :class="{ 'filter-tab--active': statusFilter === opt }"
+          @click="statusFilter = opt; onFilterChange()"
+        >{{ filterLabel(opt) }}</button>
+      </div>
+
+      <!-- 项目筛选:从项目卡片上的「运行记录」按钮带参进来,也能在这里换项目或清掉 -->
+      <div class="project-filter">
+        <span class="project-filter-label">{{ t('runs.projectFilterLabel') }}</span>
+        <div class="select-wrap project-filter-select">
+          <select
+            class="field-select"
+            :value="projectId"
+            :aria-label="t('runs.projectFilterAriaLabel')"
+            :disabled="projectsLoading"
+            @change="setProject(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ projectsLoading ? t('runs.loadingProjects') : t('runs.projectFilterAll') }}</option>
+            <option v-if="projectId && !projects.some((p) => p.id === projectId)" :value="projectId">
+              {{ filterProjectName }}
+            </option>
+            <option
+              v-for="proj in projects"
+              :key="proj.id"
+              :value="proj.id"
+            >{{ proj.name }}</option>
+          </select>
+          <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </div>
+        <button
+          v-if="projectId"
+          type="button"
+          class="project-filter-clear"
+          @click="setProject('')"
+        >{{ t('runs.projectFilterClear') }}</button>
+      </div>
     </div>
 
     <!-- ─── Loading skeleton ─────────────────────────────────────────────── -->
@@ -374,13 +440,13 @@ function isFailedStatus(status: RunStatus): boolean {
         </div>
         <p class="empty-label">{{ t('runs.empty') }}</p>
         <p class="empty-hint">
-          <template v-if="statusFilter !== 'all'">{{ t('runs.emptyFiltered') }}</template>
+          <template v-if="statusFilter !== 'all' || projectId">{{ t('runs.emptyFiltered') }}</template>
           <template v-else>{{ t('runs.emptyHint') }}</template>
         </p>
         <button
-          v-if="statusFilter !== 'all'"
+          v-if="statusFilter !== 'all' || projectId"
           class="btn-secondary"
-          @click="statusFilter = 'all'; onFilterChange()"
+          @click="clearFilters"
         >{{ t('runs.clearFilter') }}</button>
       </div>
     </template>
@@ -711,6 +777,14 @@ function isFailedStatus(status: RunStatus): boolean {
   line-height: 1.5;
 }
 
+/* ─── filters row:状态页签 + 项目筛选 ────────────────────────────────────── */
+.filters-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /* ─── filter bar ─────────────────────────────────────────────────────────── */
 .filter-bar {
   display: flex;
@@ -749,6 +823,54 @@ function isFailedStatus(status: RunStatus): boolean {
 }
 
 .filter-tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* ─── project filter ─────────────────────────────────────────────────────── */
+.project-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-filter-label {
+  font-size: 0.75rem;
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+
+.project-filter-select {
+  width: min(210px, 100%);
+}
+
+/* 页签那颗胶囊是 30px 高、整栏 padding 3px;下拉跟它们同排,收一档高度才对齐。 */
+.project-filter-select .field-select {
+  height: 30px;
+  font-size: 0.78rem;
+}
+
+.project-filter-clear {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-dim);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  border-radius: var(--rounded-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+
+.project-filter-clear:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.project-filter-clear:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }

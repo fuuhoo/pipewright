@@ -48,6 +48,11 @@ function goToCode(projectId: string): void {
   void router.push({ name: 'project-code', params: { id: projectId } })
 }
 
+// 运行记录:同一个运行页,把这个项目塞进地址栏当筛选条件。
+function goToRuns(projectId: string): void {
+  void router.push({ name: 'runs', query: { projectId } })
+}
+
 // ─── load state ──────────────────────────────────────────────────────────────
 
 type LoadState = 'idle' | 'loading' | 'error'
@@ -135,6 +140,9 @@ function canRegroup(p: Project): boolean {
 
 const isAdminUser = computed(() => sessionStore.user?.role === 'admin')
 
+/** 「运行记录」入口:运行页要 run.view 功能点,没这个点就别给一个点了会被踢回来的按钮。 */
+const canViewRuns = computed(() => sessionStore.canPerm('run.view'))
+
 async function loadGroups(): Promise<void> {
   try {
     groups.value = await listGroups()
@@ -212,6 +220,10 @@ function openCardCode(project: Project): void {
 
 function openCardPipeline(project: Project): void {
   goToPipeline(project.id)
+}
+
+function openCardRuns(project: Project): void {
+  goToRuns(project.id)
 }
 
 // ─── credentials for dropdown ─────────────────────────────────────────────────
@@ -1041,7 +1053,9 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
           :project="project"
           :group-label="groupName(project.groupId)"
           :can-assign-group="canRegroup(project)"
+          :can-view-runs="canViewRuns"
           @run="openTriggerModal"
+          @runs="openCardRuns"
           @rename="openRenameModal"
           @repo="openRepoModal"
           @code="openCardCode"
@@ -1117,7 +1131,9 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
                 :project="project"
                 :group-label="groupName(project.groupId)"
                 :can-assign-group="canRegroup(project)"
+                :can-view-runs="canViewRuns"
                 @run="openTriggerModal"
+                @runs="openCardRuns"
                 @rename="openRenameModal"
                 @repo="openRepoModal"
                 @code="openCardCode"

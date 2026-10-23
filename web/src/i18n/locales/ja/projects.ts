@@ -39,6 +39,8 @@ export default {
   // ─── card actions ──────────────────────────────────────────────
   actionRunTitle: '手動で実行をトリガー · {name}',
   actionRunAria: 'プロジェクト {name} のパイプライン実行を手動でトリガー',
+  actionRunsTitle: '実行履歴 · {name}',
+  actionRunsAria: 'プロジェクト {name} の実行履歴を見る',
   actionRenameTitle: '{name} の名前を変更',
   actionRenameAria: 'プロジェクト {name} の名前を変更',
   actionCodeTitle: 'コードを閲覧 · {name}',

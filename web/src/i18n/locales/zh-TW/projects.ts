@@ -39,6 +39,8 @@ export default {
   // ─── card actions ──────────────────────────────────────────────
   actionRunTitle: '手動觸發執行 · {name}',
   actionRunAria: '手動觸發專案 {name} 的流水線執行',
+  actionRunsTitle: '執行記錄 · {name}',
+  actionRunsAria: '檢視專案 {name} 的執行記錄',
   actionRenameTitle: '重新命名 {name}',
   actionRenameAria: '重新命名專案 {name}',
   actionCodeTitle: '程式碼瀏覽 · {name}',

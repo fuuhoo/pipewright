@@ -39,6 +39,8 @@ export default {
   // ─── card actions ──────────────────────────────────────────────
   actionRunTitle: '수동으로 실행 트리거 · {name}',
   actionRunAria: '프로젝트 {name}의 파이프라인 실행을 수동으로 트리거',
+  actionRunsTitle: '실행 기록 · {name}',
+  actionRunsAria: '프로젝트 {name}의 실행 기록 보기',
   actionRenameTitle: '{name} 이름 변경',
   actionRenameAria: '프로젝트 {name} 이름 변경',
   actionCodeTitle: '코드 보기 · {name}',
