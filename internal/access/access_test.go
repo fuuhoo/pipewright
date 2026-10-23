@@ -424,3 +424,99 @@ func TestActString(t *testing.T) {
 		t.Fatalf("未知档位 = %q", got)
 	}
 }
+
+// TestServiceCanPoint 钉住「按点判定」与「按类别上限判定」的差别 —— 这正是落点那条线今天会漏的地方:
+// server.view / server.exec / container.operate / cert.manage 全是 KindServer,所以只给 container.operate
+// 的角色,其对 KindServer 的上限同样是 operate。Can 拦不住它,CanPoint 才拦得住。
+func TestServiceCanPoint(t *testing.T) {
+	// 一个「能操作容器、但明确没有主机终端」的自定义角色:KindServer 上限照样是 operate。
+	useStore(t, &fakeRoleStore{rows: []CustomRole{
+		{ID: "r-container-only", Name: "容器操作员", Perms: []string{"server.view", "container.operate"}},
+	}})
+	if err := ReloadRoles(context.Background()); err != nil {
+		t.Fatalf("装载角色目录: %v", err)
+	}
+	repo := &fakeRepo{
+		groups: map[string]*Group{"g-priv": privateGroup()},
+		byRes: map[string]string{
+			"server/s1": Ungrouped,
+			"server/s2": "g-priv",
+		},
+	}
+	svc := NewService(repo)
+	ctx := context.Background()
+	containerOnly := &Actor{UserID: "u-c", Username: "c", Role: "r-container-only"}
+
+	t.Run("按上限放行、按点拦下", func(t *testing.T) {
+		if err := svc.Can(ctx, containerOnly, KindServer, "s1", ActOperate); err != nil {
+			t.Fatalf("上限这条线本该放行(它只要 KindServer 有任一 operate 点):%v", err)
+		}
+		if err := svc.CanPoint(ctx, containerOnly, "server.exec", KindServer, "s1", ActOperate); !errors.Is(err, ErrRoleCeiling) {
+			t.Fatalf("err = %v, want ErrRoleCeiling", err)
+		}
+		if err := svc.CanPoint(ctx, containerOnly, "container.operate", KindServer, "s1", ActOperate); err != nil {
+			t.Fatalf("持有该点本该放行:%v", err)
+		}
+	})
+	t.Run("数据轴仍然生效", func(t *testing.T) {
+		// 点够不等于归属够:私有组里的服务器,路人拿着 container.operate 也进不去。
+		// 这条同时证明 CanPoint 没有把 Can 换成「只看点」。
+		err := svc.CanPoint(ctx, containerOnly, "container.operate", KindServer, "s2", ActOperate)
+		if !errors.Is(err, ErrForbidden) {
+			t.Fatalf("err = %v, want ErrForbidden", err)
+		}
+		if errors.Is(err, ErrRoleCeiling) {
+			t.Fatal("被数据轴拦下时不该带上上限标记(报错文案会指向错误的补救动作)")
+		}
+	})
+	t.Run("管理员与旧空角色放行", func(t *testing.T) {
+		if err := svc.CanPoint(ctx, admin(), "server.exec", KindServer, "s1", ActOperate); err != nil {
+			t.Fatalf("管理员:%v", err)
+		}
+		legacy := &Actor{UserID: "u-legacy", Username: "legacy", Role: ""}
+		if err := svc.CanPoint(ctx, legacy, "server.exec", KindServer, "s1", ActOperate); err != nil {
+			t.Fatalf("空角色按管理员口径兜底:%v", err)
+		}
+	})
+	t.Run("未知角色一律拦下", func(t *testing.T) {
+		ghost := &Actor{UserID: "u-g", Username: "g", Role: "r-does-not-exist"}
+		if err := svc.CanPoint(ctx, ghost, "server.exec", KindServer, "s1", ActOperate); !errors.Is(err, ErrRoleCeiling) {
+			t.Fatalf("err = %v, want ErrRoleCeiling", err)
+		}
+	})
+	t.Run("缺 actor fail closed", func(t *testing.T) {
+		if err := svc.CanPoint(ctx, nil, "server.exec", KindServer, "s1", ActOperate); !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("err = %v, want ErrUnauthenticated", err)
+		}
+	})
+}
+
+// TestServiceCanPoint_SeededPresets 钉住四档预置在新守卫下的表现:改判据不该顺手改变
+// 存量角色的入口 —— user 与 ops 都有 server.exec / container.operate,developer 与 viewer 两个都没有。
+func TestServiceCanPoint_SeededPresets(t *testing.T) {
+	useSeededPresets(t)
+	svc := NewService(&fakeRepo{byRes: map[string]string{"server/s1": Ungrouped}})
+	ctx := context.Background()
+
+	cases := []struct {
+		role, point string
+		want        bool
+	}{
+		{"user", "server.exec", true},
+		{"ops", "server.exec", true},
+		{"ops", "container.operate", true},
+		{"developer", "server.exec", false},
+		{"developer", "container.operate", false},
+		{"viewer", "server.exec", false},
+	}
+	for _, tc := range cases {
+		a := &Actor{UserID: "u-" + tc.role, Username: tc.role, Role: tc.role}
+		err := svc.CanPoint(ctx, a, tc.point, KindServer, "s1", ActOperate)
+		if tc.want && err != nil {
+			t.Fatalf("%s 持有 %s 却拦下了:%v", tc.role, tc.point, err)
+		}
+		if !tc.want && !errors.Is(err, ErrRoleCeiling) {
+			t.Fatalf("%s 不持有 %s 却放行了:%v", tc.role, tc.point, err)
+		}
+	}
+}

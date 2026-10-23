@@ -262,10 +262,12 @@ func requireCertPerm(w http.ResponseWriter, r *http.Request, point string) bool 
 }
 
 // requireServerOperateForCert 判定 actor 能不能把证书铺到某台目标机(数据轴)。
-// 复用 requireTerminalOperate:它判的就是「Can(actor, KindServer, id, ActOperate)」,
+// 复用 requireServerOperate:它判的就是「Can(actor, KindServer, id, ActOperate)」,
 // 与开终端同一档 —— 发布能在目标机上写文件并跑指令,权限方向不该比终端更低,也不该更高。
+// 刻意**不**按 server.exec 判点:证书那条线自己的点(cert.manage)已经在前一段 requireCertPerm
+// 判过了,再叠一刀 server.exec 会让「只给了证书管理」的角色忽然发不了布。
 func requireServerOperateForCert(w http.ResponseWriter, r *http.Request, acc *access.Service, serverID string) bool {
-	return requireTerminalOperate(w, r, acc, serverID)
+	return requireServerOperate(w, r, acc, serverID)
 }
 
 // writeUnconfigured 是本文件统一的「服务没装配」出口:main 没注入 cert.Service 时端点全 503,

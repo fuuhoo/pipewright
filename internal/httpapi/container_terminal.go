@@ -120,8 +120,9 @@ func makeContainerTerminalHandler(svc target.Service, aud audit.Recorder, acc *a
 			return
 		}
 
-		// 终端 = 在目标机上执行任意命令,按 ActOperate 把关(GET 在中间件里只判到 ActView)。
-		if !requireTerminalOperate(w, r, acc, id) {
+		// 终端 = 在目标机上执行任意命令,按 ActOperate 把关(GET 在中间件里只判到 ActView);
+		// 容器终端消耗的是 container.operate 这个点,与「重启容器 / 清理镜像」同一条能力线。
+		if !requireServerPoint(w, r, acc, id, permContainerOperate) {
 			return
 		}
 
@@ -223,8 +224,8 @@ func makeServerTerminalHandler(svc target.Service, aud audit.Recorder, acc *acce
 			writeError(w, http.StatusBadRequest, "invalid_shell", "shell 非法:"+err.Error())
 			return
 		}
-		// 主机 shell 是最宽的写通道,同样按 ActOperate 把关(见 requireTerminalOperate)。
-		if !requireTerminalOperate(w, r, acc, id) {
+		// 主机 shell 是最宽的写通道,按 server.exec 这个点把关(见 requireServerPoint)。
+		if !requireServerPoint(w, r, acc, id, permServerExec) {
 			return
 		}
 		srv, err := svc.Get(r.Context(), id)

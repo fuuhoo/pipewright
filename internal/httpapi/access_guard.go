@@ -132,11 +132,19 @@ func writeAccessError(w http.ResponseWriter, err error) {
 	}
 }
 
-// requireTerminalOperate 判定 actor 能否在某台服务器上开交互终端(WS)。
+// 落点这条线的功能点 ID(internal/access/perms.go 的字典项)。写成常量是因为守卫散在三处
+// handler 里,手抄错一个字母不会报错,只会让那个入口对所有人静默消失(或静默放开)。
+const (
+	permServerExec       = "server.exec"
+	permContainerOperate = "container.operate"
+)
+
+// requireServerOperate 判定 actor 的角色档位能否在那台服务器上「动得起来」(KindServer 上限)。
 //
-// 中间件对 GET 一律只判到 ActView,而终端是一条「在目标机上跑任意命令」的通道,
-// 语义上是操作而非查看;且 WS 升级后无法再回写 HTTP 状态码,必须在握手之前挡下。
-func requireTerminalOperate(w http.ResponseWriter, r *http.Request, svc *access.Service, serverID string) bool {
+// 中间件对 GET 一律只判到 ActView,而这里的语义是操作而非查看;WS 升级后也无法再回写 HTTP
+// 状态码,必须在握手之前挡下。证书发布复用这一档:它往目标机写私钥并跑用户填的指令,
+// 权限方向不该比终端更低,也不该更高(见 certs.go)。
+func requireServerOperate(w http.ResponseWriter, r *http.Request, svc *access.Service, serverID string) bool {
 	if svc == nil {
 		return true
 	}
@@ -146,6 +154,30 @@ func requireTerminalOperate(w http.ResponseWriter, r *http.Request, svc *access.
 		return false
 	}
 	if err := svc.Can(r.Context(), actor, access.KindServer, serverID, access.ActOperate); err != nil {
+		writeAccessError(w, err)
+		return false
+	}
+	return true
+}
+
+// requireServerPoint 判定 actor 能否在那台服务器上行使**某个功能点**(按点判,而非按类别上限)。
+//
+// 与 requireServerOperate 的分工:上限那条线只要角色在 KindServer 下持有任一 operate 点就放行,
+// 表达不了「给了容器操作、明确关掉主机终端」这种单条差异。终端与远程文件都属于「坐到那台机器
+// 前面」,所以各自钉死自己的点(server.exec / container.operate),归属那把尺仍由 CanPoint 内部的
+// Can 叠加(数据轴照旧生效)。
+//
+// svc == nil(未装配权限仓储,单机演示)时直通 —— 与中间件、requireServerOperate 同一条策略。
+func requireServerPoint(w http.ResponseWriter, r *http.Request, svc *access.Service, serverID, pointID string) bool {
+	if svc == nil {
+		return true
+	}
+	actor, ok := accessActorFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
+		return false
+	}
+	if err := svc.CanPoint(r.Context(), actor, pointID, access.KindServer, serverID, access.ActOperate); err != nil {
 		writeAccessError(w, err)
 		return false
 	}

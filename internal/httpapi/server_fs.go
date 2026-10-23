@@ -25,9 +25,9 @@ import (
 // 与主机终端是同一条能力线的两面:终端在远端跑命令,面板列/读/写这台机上的文件。
 // 两者都落在 target.Workspace / ExecInteractive 这层,连接与凭据仍经 vault 即用即弃。
 //
-// 鉴权(FR-18 同口径):每条路由(含 GET)都过 requireTerminalOperate。
+// 鉴权(FR-18 同口径):每条路由(含 GET)都过 requireServerPoint(… server.exec)。
 // 中间件对 GET 只判到 ActView,而「读主机上任意文件」不是平台语义的查看 ——
-// 它是与开终端等价的一条通道,必须按 ActOperate 把关。
+// 它是与开终端等价的一条通道,必须按点把关:角色明确没有 server.exec 时,连列表 GET 也不放行。
 //
 // 审计(NFR-8):每个**写**动作(保存正文 / 上传 / mkdir / remove / rename)与每个下载
 // 都留一行。detail 只带路径与字节数,绝不带正文 —— 面板里读的可能是密钥。

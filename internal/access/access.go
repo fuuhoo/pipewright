@@ -269,6 +269,26 @@ func (s *Service) Can(ctx context.Context, actor *Actor, kind Kind, id string, a
 	return nil
 }
 
+// CanPoint 在 Can 之上再多要一个条件:角色必须**持有这个功能点**,而不只是那类资源的档位够。
+//
+// 为什么需要它:Ceiling 取的是「该类资源所有点的最高档」(roles.go),而多条入口共用一个 Kind ——
+// server.view / server.exec / container.operate / cert.manage 全是 KindServer。于是按上限判的守卫
+// 会让「只给 container.operate、明确关掉 server.exec」的角色照样开得了主机终端:管理员在页面上
+// 取消勾选，后端却不认。终端与远程文件是按入口给权的能力，必须逐点认。
+//
+// 归属那条轴(数据轴)照旧由 Can 判，两点取更严的一档；功能点这一刀排在查库之前，
+// 与上限同一条理由:注定 403 的请求不该先去库里解析归属。
+func (s *Service) CanPoint(ctx context.Context, actor *Actor, pointID string, kind Kind, id string, act Act) error {
+	if actor == nil || actor.UserID == "" {
+		return ErrUnauthenticated
+	}
+	if !HasPerm(actor.Role, pointID) {
+		return fmt.Errorf("%w:%s 角色没有 %s 这个功能点 (%w)",
+			ErrForbidden, NormalizeRole(actor.Role), pointID, ErrRoleCeiling)
+	}
+	return s.Can(ctx, actor, kind, id, act)
+}
+
 // ForRun 判定 actor 能否访问某次运行(含其日志、报告、产物、事件流)。
 // 运行信息随项目走:kind=KindRun 的归属解析由 Repository 做 run → project → group。
 func (s *Service) ForRun(ctx context.Context, actor *Actor, runID string, act Act) error {

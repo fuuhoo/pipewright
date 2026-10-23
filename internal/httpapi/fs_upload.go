@@ -380,7 +380,8 @@ func requireFSAccess(w http.ResponseWriter, r *http.Request, svc target.Service,
 		writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
 		return false
 	}
-	if !requireTerminalOperate(w, r, acc, id) {
+	// 远程文件与主机终端是同一件事(坐到那台机器前面),消耗同一个点 server.exec。
+	if !requireServerPoint(w, r, acc, id, permServerExec) {
 		return false
 	}
 	if _, ok := svc.(target.WorkspaceOpener); !ok {
