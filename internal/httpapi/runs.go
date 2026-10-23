@@ -192,7 +192,7 @@ func writeRunError(w http.ResponseWriter, err error) {
 	}
 }
 
-// makeListRunsHandler 返回 GET /api/runs handler(筛选 projectId/status + 分页 page）。
+// makeListRunsHandler 返回 GET /api/runs handler(筛选 projectId/status + 分页 page/pageSize）。
 // 运行信息随所属项目走:列表按项目的分组可见性收敛,普通用户不会看到他人私有组的运行。
 func makeListRunsHandler(svc run.Service, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -219,10 +219,21 @@ func makeListRunsHandler(svc run.Service, acc *access.Service) http.HandlerFunc 
 			}
 			page = p
 		}
+		// 不给就留 0,由 run.Service 落到默认页大小;超上界同样由它钳,不在这里报错。
+		pageSize := 0
+		if v := q.Get("pageSize"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				writeError(w, http.StatusBadRequest, "invalid_page_size", "pageSize 必须为不小于 1 的整数")
+				return
+			}
+			pageSize = n
+		}
 		res, err := svc.List(r.Context(), run.ListFilter{
 			ProjectID:     q.Get("projectId"),
 			Status:        q.Get("status"),
 			Page:          page,
+			PageSize:      pageSize,
 			VisibleGroups: visible,
 		})
 		if err != nil {

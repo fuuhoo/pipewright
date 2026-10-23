@@ -172,6 +172,55 @@ func TestRunListInvalidPage(t *testing.T) {
 	}
 }
 
+// TestRunListPageSize 验证 GET /api/runs 接住 pageSize:前端要一次取满才敢照实说「显示了几条」。
+// 非法值 400(与 page 同一口径);超上界不报错,由 run.Service 钳到 maxPageSize。
+func TestRunListPageSize(t *testing.T) {
+	srv, client, csrf, projID, rsvc := setupRunServer(t)
+	for i := 0; i < 3; i++ {
+		if _, err := rsvc.Create(context.Background(), projID, run.Trigger{Type: run.TriggerManual}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	count := func(query string) (items, total int) {
+		t.Helper()
+		resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs?projectId="+projID+query, csrf, "")
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%q 应 200, got %d", query, resp.StatusCode)
+		}
+		var list map[string]any
+		_ = json.Unmarshal(raw, &list)
+		rows, _ := list["items"].([]any)
+		n, _ := list["total"].(float64)
+		return len(rows), int(n)
+	}
+
+	if got, tot := count("&pageSize=2"); got != 2 || tot != 3 {
+		t.Fatalf("pageSize=2 应回 2 行/共 3, got %d/%d", got, tot)
+	}
+	if got, tot := count("&pageSize=2&page=2"); got != 1 || tot != 3 {
+		t.Fatalf("pageSize=2&page=2 应回 1 行/共 3, got %d/%d", got, tot)
+	}
+	// 不传仍按默认 20 条(此处只有 3 条,等价于全给)。
+	if got, tot := count(""); got != 3 || tot != 3 {
+		t.Fatalf("缺省 pageSize 应回 3 行/共 3, got %d/%d", got, tot)
+	}
+	// 超上界由服务钳住,不报错也不无限放大。
+	if got, tot := count("&pageSize=5000"); got != 3 || tot != 3 {
+		t.Fatalf("pageSize=5000 应被钳后正常返回, got %d/%d", got, tot)
+	}
+
+	for _, p := range []string{"abc", "0", "-1"} {
+		resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs?projectId="+projID+"&pageSize="+p, csrf, "")
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("pageSize=%q 应 400, got %d", p, resp.StatusCode)
+		}
+	}
+}
+
 // TestSSETerminalSnapshotEndsStream 验证已终态 run 的 SSE:发完初始帧立即收流(不挂起)。
 func TestSSETerminalSnapshotEndsStream(t *testing.T) {
 	srv, client, csrf, projID, rsvc := setupRunServer(t)
