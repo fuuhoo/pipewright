@@ -260,11 +260,24 @@ func makeOAuthCallbackHandler(d oauthCallbackDeps) http.HandlerFunc {
 			return
 		}
 		// 把 access_token 存成 git_token 凭据(name = {provider}:{login})。token 绝不回显/日志。
+		//
+		// 为什么是 personal 而不是 global:这条令牌是**这个人**用自己的 git 账号授权换来的,
+		// 落成全局等于他一次「连接凭据」把自己私有仓库的读权限发布给了全站所有人 ——
+		// 而页面上没有任何一处说过这件事。归属写清楚之后,别人看不见、也用不上。
+		// username 一并填平台登录名:Gitee 经 HTTPS BasicAuth 时用户名必须是真实账号,
+		// 留空会让这条凭据在 Gitee 上克隆失败(见 internal/gitauth)。
+		if sess.UserID == "" {
+			redirectVaultError(w, r, provider, "session_unbound")
+			return
+		}
 		_, cerr := d.vault.Create(vault.CreateInput{
-			Name:   provider + ":" + res.Login,
-			Type:   vault.TypeGitToken,
-			Scope:  "global",
-			Secret: res.AccessToken,
+			Name:      provider + ":" + res.Login,
+			Type:      vault.TypeGitToken,
+			Scope:     "personal",
+			OwnerID:   sess.UserID,
+			CreatedBy: sess.UserID,
+			Username:  res.Login,
+			Secret:    res.AccessToken,
 		})
 		if cerr != nil {
 			if errors.Is(cerr, vault.ErrVaultUnconfigured) {
