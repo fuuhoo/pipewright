@@ -138,6 +138,114 @@ func TestPruneMaxAge(t *testing.T) {
 	}
 }
 
+// TestPruneUnionKeepsWithinAge 钉住「并集保留」的核心口径:配置了条数**和**年龄两个维度时,
+// 一条运行要两个维度都越界才删 —— 超出保留条数但还没到龄的,必须留着。
+// 这正是用户要的「只保留最近一年 / 或者 1000 条,两者符合其一就保留」。
+func TestPruneUnionKeepsWithinAge(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	proj := seedProject(t, db)
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	recent := make([]string, 0, 3)
+	for i := 0; i < 3; i++ { // 3 条都在年龄窗口内(1~3 天前)
+		recent = append(recent, insertRun(t, db, proj, "success", now.AddDate(0, 0, -(i+1))))
+	}
+	old1 := insertRun(t, db, proj, "failed", now.AddDate(0, 0, -40))
+	old2 := insertRun(t, db, proj, "success", now.AddDate(0, 0, -41))
+
+	// keepGlobal=2 + maxAgeDays=30:全局最近 2 条 + 30 天内。
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepGlobal: 2, MaxAgeDays: 30}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	n, err := svc.Prune(context.Background(), now)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	// 排名 3 的那条(2 天前)虽超出条数但没到龄 → 留;两条 40+ 天的既超条数又到龄 → 删。
+	if n != 2 {
+		t.Fatalf("应删 2 条(仅两个维度都越界的),实删 %d", n)
+	}
+	for _, id := range append(recent, old1, old2) {
+		want := !(id == old1 || id == old2)
+		if got := runExists(t, db, id); got != want {
+			t.Fatalf("运行 %s 存在=%v,期望=%v", id, got, want)
+		}
+	}
+}
+
+// TestPruneGlobalKeepRanksAcrossProjects 验证 keepGlobal 数的是**全局总条数**,不分项目。
+// 若把它当每项目来排名,安静项目那两条旧的会活下来 —— 这条测试就是用来区分两种口径的。
+func TestPruneGlobalKeepRanksAcrossProjects(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	pQuiet, pBusy := seedProject(t, db), seedProject(t, db)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// 安静项目只有两条,且都是最旧的;繁忙项目三条更新。
+	q1 := insertRun(t, db, pQuiet, "success", base.Add(1*time.Hour))
+	q2 := insertRun(t, db, pQuiet, "failed", base.Add(2*time.Hour))
+	var busy []string
+	for i := 0; i < 3; i++ {
+		busy = append(busy, insertRun(t, db, pBusy, "success", base.Add(time.Duration(i+3)*time.Hour)))
+	}
+
+	// 全局保留最近 2 条 → 留 busy 最新的两条(5h、4h),其余 3 条(含 3h 那条和安静项目全部)删。
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepGlobal: 2}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	n, err := svc.Prune(context.Background(), base.Add(100*time.Hour))
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("全局只留 2 条,5 条终态应删 3,实删 %d", n)
+	}
+	for _, id := range busy[1:] {
+		if !runExists(t, db, id) {
+			t.Fatalf("全局最近 2 条之一 %s 不应被删", id)
+		}
+	}
+	for _, id := range []string{q1, q2, busy[0]} {
+		if runExists(t, db, id) {
+			t.Fatalf("超出全局保留条数的 %s 应被删(说明 keepGlobal 被当成了每项目口径)", id)
+		}
+	}
+}
+
+// TestPruneUnionPerProjectRescuesFromGlobal 验证另一条并集腿:某项目跑得少,即使它的运行
+// 排在 keepGlobal 之外,只要仍在 keepPerProject 之内就应保留(旧维度不作死)。
+func TestPruneUnionPerProjectRescuesFromGlobal(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	pBusy, pQuiet := seedProject(t, db), seedProject(t, db)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// 安静项目只有 1 条,但时间上排在繁忙项目的多条之后(全局排名靠后)。
+	quiet := insertRun(t, db, pQuiet, "success", base.Add(1*time.Hour))
+	var busy []string
+	for i := 0; i < 4; i++ {
+		busy = append(busy, insertRun(t, db, pBusy, "success", base.Add(time.Duration(i+2)*time.Hour)))
+	}
+
+	// keepGlobal=2 + keepPerProject=1:quiet 全局第 5(越界)但项目内第 1(未越界)→ 留。
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepGlobal: 2, KeepPerProject: 1}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	n, err := svc.Prune(context.Background(), base.Add(1000*time.Hour))
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if !runExists(t, db, quiet) {
+		t.Fatalf("项目内最近 1 条应被并集保留,却删了(共删 %d)", n)
+	}
+	// 繁忙项目:最近 1 条两维度都满足 → 留;第 2 条全局内(排名 2)但项目内越界 → 留(并集);
+	// 第 3、4 条两个维度都越界 → 删。
+	if n != 2 {
+		t.Fatalf("应删 2 条,实删 %d", n)
+	}
+}
+
 // TestPruneDisabledNoop 验证总开关关 / 无任何条件时不删。
 func TestPruneDisabledNoop(t *testing.T) {
 	db := storetest.OpenDB(t)
@@ -198,18 +306,29 @@ func TestPruneCleansNonCascadeChildren(t *testing.T) {
 	}
 }
 
-// TestConfigRoundTripNormalizesNegatives 验证配置往返 + 负值归零。
+// TestConfigRoundTripNormalizesNegatives 验证配置往返 + 负值归零(三个维度都走一遍)。
 func TestConfigRoundTripNormalizesNegatives(t *testing.T) {
 	db := storetest.OpenDB(t)
 	svc := NewService(db)
-	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepPerProject: -5, MaxAgeDays: -1}); err != nil {
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepGlobal: -7, KeepPerProject: -5, MaxAgeDays: -1}); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 	got, err := svc.GetConfig(context.Background())
 	if err != nil {
 		t.Fatalf("GetConfig: %v", err)
 	}
-	if !got.Enabled || got.KeepPerProject != 0 || got.MaxAgeDays != 0 {
+	if !got.Enabled || got.KeepGlobal != 0 || got.KeepPerProject != 0 || got.MaxAgeDays != 0 {
 		t.Fatalf("负值应归零, got %+v", got)
+	}
+	// 正常值原样往返
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepGlobal: 1000, KeepPerProject: 20, MaxAgeDays: 365}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	got, err = svc.GetConfig(context.Background())
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if got != (Config{Enabled: true, KeepGlobal: 1000, KeepPerProject: 20, MaxAgeDays: 365}) {
+		t.Fatalf("往返不一致, got %+v", got)
 	}
 }

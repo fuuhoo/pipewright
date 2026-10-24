@@ -17,7 +17,7 @@ type Pruner interface {
 
 // OrphanCollector 是每轮裁剪**之后**顺带做的一件事:回收制品库孤儿字节(由 *ArtifactGC 实现)。
 // 挂在这里而不是单开一个定时器的原因 —— 孤儿正是「删运行」造出来的,裁完立刻扫最贴合;
-// 且它和保留策略本身无关(策略默认关,但删项目同样造孤儿),不能跟着 Prune 一起被关掉。
+// 且它和保留策略开关无关(策略关着时,删项目照样造孤儿),不能跟着 Prune 一起被跳过。
 type OrphanCollector interface {
 	Run(ctx context.Context, now time.Time) (artifactstore.SweepResult, error)
 }
@@ -88,9 +88,9 @@ func (s *Sweeper) runOnce(ctx context.Context) {
 	if err != nil {
 		log.Printf("[retention] 清理失败:%v", err)
 	} else if n > 0 {
-		log.Printf("[retention] 已清理 %d 条过期运行(连带其日志/步骤/产物)", n)
+		log.Printf("[retention] 已清理 %d 条运行(连带其日志/步骤/产物/构建目录快照)", n)
 	}
-	// 制品库孤儿回收与上面的策略无关(策略默认关,但删项目同样造孤儿),故 Prune 失败也照跑。
+	// 制品库孤儿回收与上面的判定无关(策略关着时删项目同样造孤儿),故 Prune 失败也照跑。
 	if s.orphans != nil {
 		s.runOrphans(ctx, now)
 	}
