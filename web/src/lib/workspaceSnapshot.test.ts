@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { DeclaredPathDTO, SnapshotEntryDTO } from '../api/runs'
+import type { DeclaredPathDTO, SnapshotEntryDTO, SnapshotReason } from '../api/runs'
 import {
   DEFAULT_EXPAND_DEPTH,
   RENDER_LIMIT,
@@ -12,8 +12,8 @@ import {
   flattenVisible,
   isExpanded,
   missedDeclared,
+  reasonClass,
   reasonKey,
-  retentionWindow,
   snapshotTitle,
   type SnapNode,
 } from './workspaceSnapshot'
@@ -258,30 +258,26 @@ describe('declaredStatusKey', () => {
 })
 
 describe('reasonKey', () => {
-  it('产物未命中与失败分别对应各自徽标文案', () => {
-    expect(reasonKey('artifact_miss')).toBe('snapReasonMiss')
+  it('三种采集原因各有文案键', () => {
     expect(reasonKey('failed')).toBe('snapReasonFailed')
+    expect(reasonKey('artifact_miss')).toBe('snapReasonMiss')
+    expect(reasonKey('success')).toBe('snapReasonSuccess')
+  })
+
+  it('后端加了未知原因时说「未知」,不假扮成失败', () => {
+    expect(reasonKey('future_reason' as SnapshotReason)).toBe('snapReasonUnknown')
   })
 })
 
-describe('retentionWindow', () => {
-  it('整小时给小时', () => {
-    expect(retentionWindow(7200)).toEqual({ count: 2, unitKey: 'snapUnitHours' })
+describe('reasonClass', () => {
+  it('成功采集用淡绿档,不与失败/未命中抢注意力', () => {
+    expect(reasonClass('success')).toBe('snap-reason--ok')
   })
 
-  it('非整小时但整分钟给分钟(PIPEWRIGHT_SNAPSHOT_TTL 可配成 30m)', () => {
-    expect(retentionWindow(1800)).toEqual({ count: 30, unitKey: 'snapUnitMinutes' })
-    expect(retentionWindow(5400)).toEqual({ count: 90, unitKey: 'snapUnitMinutes' })
-  })
-
-  it('整秒以外的兜底按秒说,不虚报成分钟', () => {
-    expect(retentionWindow(90)).toEqual({ count: 90, unitKey: 'snapUnitSeconds' })
-  })
-
-  it('窗口缺失(0 / 负数 / 非有限值)→ count 0,调用方据此省略这句', () => {
-    expect(retentionWindow(0).count).toBe(0)
-    expect(retentionWindow(-5).count).toBe(0)
-    expect(retentionWindow(Number.NaN).count).toBe(0)
+  it('失败与未命中仍用各自的告警档,未知按失败档兜底', () => {
+    expect(reasonClass('failed')).toBe('snap-reason--failed')
+    expect(reasonClass('artifact_miss')).toBe('snap-reason--miss')
+    expect(reasonClass('future_reason' as SnapshotReason)).toBe('snap-reason--failed')
   })
 })
 

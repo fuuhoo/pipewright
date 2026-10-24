@@ -369,10 +369,10 @@ export function getRunArtifacts(id: string): Promise<RunArtifactsResponse> {
 
 // ─── Workspace snapshots (构建目录快照 · 排障现场) ──────────────────────────────
 //
-// GET /api/runs/{id}/snapshots → { snapshots: [...], retentionSeconds }
-// 只在两种情况下产生快照:脚本节点执行失败,或节点声明的产物路径没命中(产物根本没生成)。
+// GET /api/runs/{id}/snapshots → { snapshots: [...] }
+// 每个脚本构建节点执行完都会留一份目录清单(成功也留);镜像节点只在失败时留。
 // 内容是该节点当时的**容器工作区目录清单**(相对路径,目录带尾斜杠),用来回答"产物到底生成在哪"。
-// 只保留数小时(retentionSeconds 如实回传),过期后该运行返回空数组。远程 runner 构建不采集。
+// 保留多久跟着那条运行记录(设置页「运行数据保留」裁掉 run 时一并清),没有独立窗口。远程 runner 构建不采集。
 // 快照仓储未启用 → 503 snapshots_unavailable(与"没有快照"区分,前端不谎报)。
 
 export interface SnapshotEntryDTO {
@@ -391,14 +391,14 @@ export interface DeclaredPathDTO {
   siblingsMore?: number // 另有几项没列出来
 }
 
-export type SnapshotReason = 'failed' | 'artifact_miss'
+export type SnapshotReason = 'failed' | 'artifact_miss' | 'success'
 
 export interface WorkspaceSnapshotDTO {
   id: string
   stage: string
   jobId: string
   jobName: string
-  reason: SnapshotReason
+  reason: SnapshotReason // 一份只记一个,按出问题优先:failed > artifact_miss > success
   declared: DeclaredPathDTO[]
   entries: SnapshotEntryDTO[]
   truncated: boolean // 撞总条数上限:清单不完整
@@ -407,7 +407,6 @@ export interface WorkspaceSnapshotDTO {
 
 export interface RunSnapshotsResponse {
   snapshots: WorkspaceSnapshotDTO[]
-  retentionSeconds: number
 }
 
 export function getRunSnapshots(id: string): Promise<RunSnapshotsResponse> {

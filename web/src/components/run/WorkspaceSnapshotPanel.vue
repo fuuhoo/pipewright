@@ -1,9 +1,9 @@
 <!--
   WorkspaceSnapshotPanel.vue — 构建目录快照(排障现场)
 
-  只在两种情况下后端才会留下快照:脚本节点执行**失败**,或节点**声明的产物路径没命中**
-  (节点成功但产物根本没生成)。面板回答的是那句"我是不是把产物目录配错了":
-  失败时看命令实际产出在哪,未命中时看声明路径往上最近的存在目录里到底有什么。
+  每个脚本构建节点执行完,后端都会留一份目录清单(成功也留);镜像节点只在失败时留。
+  面板回答的是那句"我是不是把产物目录配错了":失败时看命令实际产出在哪,未命中时看声明路径
+  往上最近的存在目录里到底有什么,成功时看那次构建到底产出了什么。
 
   自取数据(container):快照不在冻结的 run-detail DTO 内,经 GET /api/runs/{id}/snapshots 拉取。
   无快照 → 不渲染(不占视觉);仓储未启用(503)→ 同样不渲染。判定与截断口径全在
@@ -12,8 +12,8 @@
   清单按**树**渲染(后端给的是扁平相对路径):默认展开前两层,搜索时命中链自动展开,
   另有「全部展开 / 折叠」兜底 —— 手点过的展开态优先于自动口径。
 
-  保留窗口由后端如实回传(retentionSeconds),面板顶注说明"只保留最近 N 小时" —— 过期后
-  这里就是空的,不能让用户以为"从没生成过"。
+  保留口径跟着运行记录:设置页「运行数据保留」裁掉那条 run 时快照一并清掉,这里没有独立窗口,
+  所以顶注只说明这一点,不再报"只保留 N 小时"。
 -->
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
@@ -30,8 +30,8 @@ import {
   flattenVisible,
   isExpanded,
   missedDeclared,
+  reasonClass,
   reasonKey,
-  retentionWindow,
   snapshotTitle,
   type ExpandOverrides,
   type SnapNode,
@@ -44,7 +44,6 @@ const props = defineProps<{
 }>()
 
 const snapshots = ref<WorkspaceSnapshotDTO[]>([])
-const retentionSeconds = ref(0)
 const loaded = ref(false)
 const error = ref<string | null>(null)
 
@@ -54,7 +53,6 @@ async function load(id: string): Promise<void> {
   try {
     const res: RunSnapshotsResponse = await getRunSnapshots(id)
     snapshots.value = res.snapshots ?? []
-    retentionSeconds.value = res.retentionSeconds ?? 0
   } catch (err: unknown) {
     // 404(运行不存在)与 503(快照仓储未启用,PIPEWRIGHT_SNAPSHOT=0)等价于"这里没有东西",
     // 静默;其它错误给一行提示 —— 不能把加载失败谎报成"没有快照"。
@@ -72,9 +70,7 @@ watch(() => props.runId, (id) => { if (id) void load(id) }, { immediate: true })
 
 const hasSnapshots = computed(() => snapshots.value.length > 0)
 
-const retention = computed(() => retentionWindow(retentionSeconds.value))
-
-// 同一节点的多个快照(失败采一次、产物未命中再采一次)成组展示,顺序即后端返回顺序(按时间)。
+// 一个节点一份快照(顺序即后端返回顺序,按采集时间升序),逐块成组展示,标题用「阶段 · 节点」。
 function titleOf(s: WorkspaceSnapshotDTO): string {
   return snapshotTitle(s.stage, s.jobName) || t('run.snapJobFallback')
 }
@@ -159,9 +155,7 @@ function siblingsText(d: DeclaredPathDTO): string {
       </svg>
       <h3 class="sn-title">{{ t('run.snapTitle') }}</h3>
       <span v-if="hasSnapshots" class="sn-count mono">{{ snapshots.length }}</span>
-      <span v-if="retention.count > 0" class="sn-retention">
-        {{ t('run.snapRetention', { n: retention.count, unit: t(`run.${retention.unitKey}`) }) }}
-      </span>
+      <span v-if="hasSnapshots" class="sn-retention">{{ t('run.snapRetention') }}</span>
     </header>
 
     <p v-if="error" class="sn-error" role="alert">{{ error }}</p>
@@ -169,7 +163,7 @@ function siblingsText(d: DeclaredPathDTO): string {
     <template v-else>
       <article v-for="v in views" :key="v.snap.id" class="snap">
         <div class="snap-head">
-          <span class="snap-reason" :class="v.snap.reason === 'artifact_miss' ? 'snap-reason--miss' : 'snap-reason--failed'">
+          <span class="snap-reason" :class="reasonClass(v.snap.reason)">
             {{ t(`run.${reasonKey(v.snap.reason)}`) }}
           </span>
           <h4 class="snap-name">{{ v.title }}</h4>
@@ -352,6 +346,13 @@ function siblingsText(d: DeclaredPathDTO): string {
   color: var(--color-amber);
   background: var(--color-amber-soft);
   border: 1px solid var(--color-amber-line);
+}
+
+/* 成功采集的标签现在每个构建节点都会出现,视觉上要让位:用淡绿,别和失败/未命中抢注意力。 */
+.snap-reason--ok {
+  color: var(--color-green);
+  background: var(--color-green-soft);
+  border: 1px solid var(--color-green-line);
 }
 
 .snap-name {

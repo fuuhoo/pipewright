@@ -249,24 +249,32 @@ export function declaredStatusKey(status: DeclaredStatus): string {
 
 /** reason → 文案键(采集触发原因)。 */
 export function reasonKey(reason: SnapshotReason): string {
-  return reason === 'artifact_miss' ? 'snapReasonMiss' : 'snapReasonFailed'
+  switch (reason) {
+    case 'failed':
+      return 'snapReasonFailed'
+    case 'artifact_miss':
+      return 'snapReasonMiss'
+    case 'success':
+      return 'snapReasonSuccess'
+    default:
+      // 后端加了新原因而前端没跟:说"未知"而不是假扮成失败。
+      return 'snapReasonUnknown'
+  }
 }
 
-export interface RetentionWindow {
-  count: number
-  /** 单位文案键 */
-  unitKey: string
+/** reason → 标签的样式类后缀(失败红、未命中黄、成功绿)。 */
+export function reasonClass(reason: SnapshotReason): string {
+  switch (reason) {
+    case 'artifact_miss':
+      return 'snap-reason--miss'
+    case 'success':
+      return 'snap-reason--ok'
+    default:
+      return 'snap-reason--failed'
+  }
 }
 
-/** 保留窗口秒数 → 「N 小时 / N 分钟」口径;拿不到窗口时回 0,由调用方省略这句。 */
-export function retentionWindow(seconds: number): RetentionWindow {
-  if (!Number.isFinite(seconds) || seconds <= 0) return { count: 0, unitKey: 'snapUnitHours' }
-  if (seconds % 3600 === 0) return { count: seconds / 3600, unitKey: 'snapUnitHours' }
-  if (seconds % 60 === 0) return { count: seconds / 60, unitKey: 'snapUnitMinutes' }
-  return { count: seconds, unitKey: 'snapUnitSeconds' }
-}
-
-/** 同一节点可能有多份快照(失败采一次、产物未命中再采一次);面板按快照逐块展示,标题用「阶段 · 节点」。 */
+/** 面板按快照逐块展示(一次运行里每个构建节点各一份),标题用「阶段 · 节点」。 */
 export function snapshotTitle(stage: string, jobName: string): string {
   const s = stage.trim()
   const j = jobName.trim()
