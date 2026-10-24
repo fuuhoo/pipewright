@@ -355,21 +355,74 @@ func (e *loginTestEnv) adminClient(t *testing.T) (*http.Client, string) {
 	return c, csrf
 }
 
-// TestAdminRejectsCredentialSyncOnOidc 单列 OIDC:它在保存期会先真取一次发现文档
-// (端点填错该在「保存」这一刀说清楚),所以配不上上面那三家 —— 得给一个能拨通的 IdP。
-// 拒因仍然必须是 sync_unsupported,而不是被端点校验顶掉。
-func TestAdminRejectsCredentialSyncOnOidc(t *testing.T) {
+// TestAdminCredentialSyncGateOnOidc 冻结 OIDC 那一档的两头:
+// 没声明「背后是哪家 git 平台」→ 422 sync_needs_git_platform(而不是笼统的 sync_unsupported,
+// 因为这里不是「这条路走不通」而是「你还差一个回答」);声明了 → 保存成功并原样回显。
+// OIDC 单列还有一个原因:它在保存期会真取一次发现文档(端点填错该在「保存」这一刀说清楚),
+// 所以要配一个能拨通的 IdP,拒因也不能被端点校验顶掉。
+func TestAdminCredentialSyncGateOnOidc(t *testing.T) {
 	e, idp := newOidcLoginTestEnv(t, `{"sub":"keycloak-uuid-88","preferred_username":"li"}`, nil)
 	admin, csrf := e.adminClient(t)
+	put := func(body string) *http.Response {
+		return doJSON(t, admin, http.MethodPut,
+			e.srv.URL+"/api/admin/oauth/login-apps/"+oauth.ProviderOIDC, csrf, body)
+	}
 
-	resp := doJSON(t, admin, http.MethodPut,
-		e.srv.URL+"/api/admin/oauth/login-apps/"+oauth.ProviderOIDC, csrf,
-		`{"clientId":"oidc-cid","clientSecret":"oidc-secret","discoveryUrl":"`+idp.discoveryURL()+`","enabled":true,"syncCredentials":true}`)
+	// 未声明形态:明确拒绝,而不是静默把开关关掉。
+	resp := put(`{"clientId":"oidc-cid","clientSecret":"oidc-secret","discoveryUrl":"` + idp.discoveryURL() +
+		`","enabled":true,"syncCredentials":true}`)
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("oidc 开同步 status = %d, want 422, body=%s", resp.StatusCode, raw)
+		t.Fatalf("未声明形态开同步 status = %d, want 422, body=%s", resp.StatusCode, raw)
 	}
-	if code := decodeErrCode(t, resp); code != "sync_unsupported" {
-		t.Fatalf("oidc 开同步错误码 = %q, want sync_unsupported", code)
+	if code := decodeErrCode(t, resp); code != "sync_needs_git_platform" {
+		t.Fatalf("未声明形态开同步错误码 = %q, want sync_needs_git_platform", code)
+	}
+
+	// 声明形态只填一半(形态对但没给 gitShape)仍然不通;填了才通。
+	resp = put(`{"clientId":"oidc-cid","clientSecret":"oidc-secret","discoveryUrl":"` + idp.discoveryURL() +
+		`","enabled":true,"gitShape":"bitbucket","syncCredentials":true}`)
+	if code := decodeErrCode(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || code != "git_shape_invalid" {
+		t.Fatalf("未知形态应回 422 git_shape_invalid,得到 %d / %q", resp.StatusCode, code)
+	}
+
+	declared := put(`{"clientId":"oidc-cid","clientSecret":"oidc-secret","discoveryUrl":"` + idp.discoveryURL() +
+		`","enabled":true,"gitShape":"gitlab","syncCredentials":true}`)
+	raw, _ := io.ReadAll(declared.Body)
+	_ = declared.Body.Close()
+	if declared.StatusCode != http.StatusOK {
+		t.Fatalf("声明 gitlab 后开同步应保存成功,得到 %d, body=%s", declared.StatusCode, raw)
+	}
+	var dto oauthLoginAppDTO
+	if err := json.Unmarshal(raw, &dto); err != nil {
+		t.Fatalf("decode dto: %v", err)
+	}
+	if dto.GitShape != oauth.GitShapeGitLab || !dto.SyncCredentials {
+		t.Fatalf("声明与开关都应原样回显: %+v", dto)
+	}
+}
+
+// TestAdminRejectsCredentialSyncOnPlatformIDs 覆盖另外三家:钉钉/飞书/企微压根没有 git 端点,
+// 开同步必须是 sync_unsupported —— 「这个身份源给不出令牌」和「OIDC 还差一个声明」是两回事,
+// 错误码混用了前端就只能给出一句猜错的解释。
+func TestAdminRejectsCredentialSyncOnPlatformIDs(t *testing.T) {
+	e := newLoginTestEnv(t, `{"id":1,"username":"u"}`, nil)
+	admin, csrf := e.adminClient(t)
+	for _, p := range []string{oauth.ProviderDingTalk, oauth.ProviderFeishu, oauth.ProviderWeCom} {
+		// 企微硬性要 AgentId,不带就会先撞上那条校验,测不到同步这道门。
+		extra := ""
+		if p == oauth.ProviderWeCom {
+			extra = `,"agentId":"1000001"`
+		}
+		resp := doJSON(t, admin, http.MethodPut,
+			e.srv.URL+"/api/admin/oauth/login-apps/"+p, csrf,
+			`{"clientId":"cid","clientSecret":"secret","enabled":true`+extra+`,"syncCredentials":true}`)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Fatalf("%s 开同步 status = %d, want 422, body=%s", p, resp.StatusCode, raw)
+		}
+		if code := decodeErrCode(t, resp); code != "sync_unsupported" {
+			t.Fatalf("%s 开同步错误码 = %q, want sync_unsupported", p, code)
+		}
 	}
 }

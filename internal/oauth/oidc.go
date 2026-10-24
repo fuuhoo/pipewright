@@ -122,8 +122,14 @@ func resolveOidcEndpoints(ctx context.Context, client *http.Client, row loginApp
 
 // oidcProvider 把解析好的端点 + 配置的 scope/主键声明装进 Provider。
 // 登录流只读 AuthorizeURL/TokenURL/UserURL 与 loginScope()/parseIdentity,
-// DefaultScopes 与 EmailsURL 留空:OIDC 永远不参与「取仓库凭据」那条流。
-func oidcProvider(endpoints oidcEndpoints, scopes, idClaim string) Provider {
+// EmailsURL 留空:OIDC 永远不参与「取仓库凭据」那条流(它自己的令牌不是给 git API 用的)。
+//
+// gitShape 是管理员在 OIDC 卡上的声明:「这个身份源背后同时是一家 GitLab / Gitea」。
+// 只有声明了才把该形态的仓库读 scope 追加进 DefaultScopes —— 于是「登录即同步凭据」
+// 打开时申请到的令牌真能克隆仓库,没打开时(loginScope)依旧只申请身份那几项。
+// 没声明的 OIDC(Keycloak / Authentik / 企业 IDaaS)DefaultScopes 与 LoginScopes 相同:
+// 多要一层没有对应东西的权限,只会让授权页多一句让人困惑的同意条款。
+func oidcProvider(endpoints oidcEndpoints, scopes, idClaim, gitShape string) Provider {
 	scopeList := strings.Fields(scopes)
 	if len(scopeList) == 0 {
 		scopeList = strings.Fields(defaultOidcScopes)
@@ -132,16 +138,38 @@ func oidcProvider(endpoints oidcEndpoints, scopes, idClaim string) Provider {
 	if claim == "" {
 		claim = defaultOidcIDClaim
 	}
+	credScopes := scopeList
+	if isGitShape(gitShape) {
+		credScopes = mergeScopes(scopeList, gitShapes[gitShape].credScopes)
+	}
 	return Provider{
-		Name:         ProviderOIDC,
-		AuthorizeURL: endpoints.authorizeURL,
-		TokenURL:     endpoints.tokenURL,
-		UserURL:      endpoints.userinfoURL,
-		LoginScopes:  scopeList,
+		Name:          ProviderOIDC,
+		AuthorizeURL:  endpoints.authorizeURL,
+		TokenURL:      endpoints.tokenURL,
+		UserURL:       endpoints.userinfoURL,
+		DefaultScopes: credScopes,
+		LoginScopes:   scopeList,
 		parseIdentity: func(m map[string]any) Identity {
 			return oidcIdentity(m, claim)
 		},
 	}
+}
+
+// mergeScopes 把要追加的 scope 并进来,已申请过的不重复(GitLab 的 OIDC 应用本就常带 read_user,
+// 重复一次串在 scope 里会被有些实现当成非法请求)。
+func mergeScopes(base, extra []string) []string {
+	out := append([]string(nil), base...)
+	seen := make(map[string]bool, len(base))
+	for _, s := range base {
+		seen[s] = true
+	}
+	for _, s := range extra {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // oidcIdentity 从 userinfo 的 JSON 解出身份。

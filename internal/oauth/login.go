@@ -32,10 +32,16 @@ var ErrIdentityUnavailable = errors.New("oauth: provider returned no stable user
 // 保存期就报错而不是清洗掉:白名单静默失效等于没白名单,而配错的人并不会知道自己失算了。
 var ErrInvalidDomain = errors.New("oauth: invalid allowed domain")
 
-// ErrCredentialSyncUnsupported 表示给一个给不了 git 令牌的身份源(OIDC / 钉钉 / 飞书 / 企业微信)
+// ErrCredentialSyncUnsupported 表示给一个给不了 git 令牌的身份源(钉钉 / 飞书 / 企业微信)
 // 打开了「登录即同步凭据」。必须保存期就拒:静默忽略会让管理员以为开关生效了,
 // 然后一直等不到凭据 —— 而页面上一切看起来都正常。
 var ErrCredentialSyncUnsupported = errors.New("oauth: credential sync requires a git provider")
+
+// ErrCredentialSyncNeedsGitPlatform 表示 OIDC 身份源开了凭据同步,却没声明它背后是哪家
+// git 平台(留空 git_shape)。这两件事必须一起说清楚:平台无法自己判断一个通用 IdP 的
+// 令牌能不能克隆仓库,而「声明了形态」才知道该往 scope 里追加哪几家各自的仓库读权限。
+// 与上面那条分开给:开错身份源的人要的是「这条路没有」,漏填声明的人要的是「再填一格就好」。
+var ErrCredentialSyncNeedsGitPlatform = errors.New("oauth: oidc credential sync requires a declared git platform")
 
 // LoginAppConfig 是「登录用」身份源的对外视图:client_secret 仅掩码,绝无明文。
 // 端点/scope/主键声明那几项只对非 git 身份源有意义:oidc 用全套,
@@ -56,10 +62,13 @@ type LoginAppConfig struct {
 	IDClaim        string
 	Scopes         string
 	AgentID        string
-	// GitShape 只对 custom(自建实例)有语义:按哪家 git 平台的地址形态推导端点(gitlab|gitea;
-	// 空 = gitlab,存量语义)。其余档位一律为空 —— 它们的端点本就由平台定死,没有可声明的东西。
+	// GitShape 有两种含义,取决于 provider:
+	//   - custom(自建实例):按哪家 git 平台的地址形态推导端点(gitlab|gitea;空 = gitlab,存量语义)。
+	//   - oidc:**声明**这个身份源背后同时是一家 git 平台。空 = 没声明,凭据同步不许打开。
+	// 其余档位一律为空(它们的端点与 scope 本就由平台定死,没有可声明的东西)。
 	GitShape string
-	// SyncCredentials = 登录后把这次拿到的 git 令牌同步成该账号的个人凭据(仅 git 五档可开)。
+	// SyncCredentials = 登录后把这次拿到的 git 令牌同步成该账号的个人凭据(仅能换出 git
+	// 令牌的身份源可开:git 五家,或声明了 git_shape 的 OIDC)。
 	// 开着它,登录申请的 scope 也随之从「只认身份」升到「能读仓库」(见 Provider.DefaultScopes)。
 	SyncCredentials bool
 }
@@ -68,7 +77,7 @@ type LoginAppConfig struct {
 // ClientSecret 只写:nil/空串 = 保留既有 secret;非空 = 轮换。
 // AllowedDomains 为 nil 时保留既有白名单(与 secret 同语义,避免前端漏传即清空)。
 // 端点/scope/主键声明/AgentID/git 形态/凭据同步开关是**整份覆盖**语义:端点那组只对非 git 身份源生效
-// (git 档位落空值),而凭据同步反过来 —— 只有 git 五档能开,非 git 身份源一律落 false。
+// (git 档位落空值),而凭据同步反过来 —— 只有换得出 git 令牌的身份源能开,开不了就报错而不是静默落 false。
 type SaveLoginAppInput struct {
 	Provider        string
 	ClientID        string
@@ -158,11 +167,27 @@ type LoginService interface {
 	RefreshGrant(ctx context.Context, provider, refreshToken string) (*Grant, error)
 }
 
+// supportsGitCredentialFor 判断这一档 + 这一份声明换出来的令牌能不能当 git 凭据用。
+// git 五家天然能;OIDC 只在管理员显式声明了 git_shape 之后才算能 —— 声明是**运营者的断言**
+// (「这个 IdP 其实是一家 GitLab/Gitea,它的令牌直接能克隆仓库」),平台不去猜。
+// 猜的代价是一条永远克隆不动、却每轮都去撞令牌端点的凭据。
+func supportsGitCredentialFor(provider, gitShape string) bool {
+	if issuesGitToken(provider) {
+		return true
+	}
+	return provider == ProviderOIDC && isGitShape(gitShape)
+}
+
+// supportsGitCredential 是行上的版本(读库里已保存的声明)。
+func supportsGitCredential(row loginAppRow) bool {
+	return supportsGitCredentialFor(row.provider, row.gitShape)
+}
+
 // loginScopeFor 决定这次登录向 provider 申请哪档 scope。
 // 默认是最小身份 scope;只有管理员明确开了「登录即同步凭据」才升到能读仓库那档 ——
 // 多要的权限必须换来东西,否则只是把用户的仓库读权限白要一遍。
 func loginScopeFor(row loginAppRow, p Provider) string {
-	if row.syncCredentials && issuesGitToken(row.provider) {
+	if row.syncCredentials && supportsGitCredential(row) {
 		return p.scope()
 	}
 	return p.loginScope()
@@ -284,13 +309,17 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 	if err != nil {
 		return nil, err
 	}
-	// 凭据同步只有 git 五档能开(见 issuesGitToken):OIDC 的令牌拿去克隆仓库只会换来一个
-	// 说不清的认证失败,钉钉/飞书/企微压根没有 git 端点。开错了必须在保存期报错而不是静默忽略 ——
-	// 静默忽略会让管理员以为开了,然后一直等不到凭据。
-	if in.SyncCredentials && !issuesGitToken(provider) {
+	// 「登录即同步凭据」只对换得出 git 令牌的身份源有意义:git 五家天然能;OIDC 要运营者显式
+	// 声明 git_shape(「这个 IdP 其实是一家 GitLab/Gitea」)才算能;钉钉/飞书/企微压根没有 git 端点。
+	// 开错了必须在保存期报错而不是静默忽略 —— 静默忽略会让管理员以为开关生效了,
+	// 然后一直等不到凭据,而页面上一切看起来都正常。
+	if in.SyncCredentials && !supportsGitCredentialFor(provider, gitShape) {
+		if provider == ProviderOIDC {
+			return nil, fmt.Errorf("%w: %s", ErrCredentialSyncNeedsGitPlatform, provider)
+		}
 		return nil, fmt.Errorf("%w: %s", ErrCredentialSyncUnsupported, provider)
 	}
-	syncCredentials := in.SyncCredentials && issuesGitToken(provider)
+	syncCredentials := in.SyncCredentials && supportsGitCredentialFor(provider, gitShape)
 
 	existing, err := s.loadLoginApp(ctx, provider)
 	if err != nil {
@@ -421,7 +450,7 @@ func (s *service) ExchangeLogin(ctx context.Context, provider, code, redirectURI
 			// 解完身份就把访问令牌收进 grant:未开同步时下面直接丢弃,
 			// 开了同步则交给调用方立即加密落库 —— 中间没有任何一处会日志或回显它。
 			id, err = fetchIdentity(ctx, s.client, endpoints, g.AccessToken)
-			if err == nil && row.syncCredentials && issuesGitToken(row.provider) {
+			if err == nil && row.syncCredentials && supportsGitCredential(*row) {
 				grant = &g
 			}
 		}
@@ -441,13 +470,12 @@ func (s *service) ExchangeLogin(ctx context.Context, provider, code, redirectURI
 // RefreshGrant 续期一条 git 令牌(§6)。落点只有一个:凭据续期扫描器(见 identity.RefreshGrants)。
 // 这里刻意不看 enabled —— 管理员关掉登录入口只是「不让新的人从这条路进来」,
 // 已经同步出去的凭据该继续被人用,直到它自己过期或被人删掉。
+// 但要看 git_shape:没声明成 git 平台的 OIDC 应用没有仓库读语义,续出来的令牌当 git 凭据用是幻觉;
+// 管理员关掉声明后,已经落库的那条凭据到期就只能等用户重新登录。
 func (s *service) RefreshGrant(ctx context.Context, provider, refreshToken string) (*Grant, error) {
 	prov, err := normalizeLoginProvider(provider)
 	if err != nil {
 		return nil, err
-	}
-	if !issuesGitToken(prov) {
-		return nil, fmt.Errorf("%w: %s", ErrRefreshUnsupported, prov)
 	}
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, ErrRefreshUnsupported
@@ -455,6 +483,9 @@ func (s *service) RefreshGrant(ctx context.Context, provider, refreshToken strin
 	row, err := s.loadLoginApp(ctx, prov)
 	if err != nil {
 		return nil, err
+	}
+	if !supportsGitCredential(*row) {
+		return nil, fmt.Errorf("%w: %s", ErrRefreshUnsupported, prov)
 	}
 	if row.clientID == "" || len(row.sealed) == 0 {
 		return nil, ErrAppNotConfigured
@@ -500,7 +531,8 @@ func (s *service) loadLoginApp(ctx context.Context, provider string) (*loginAppR
 // loginProvider 据登录应用行解析出可用的端点模板。
 //   - git 五家(gitee/github/gitlab/gitea):沿用 presets;custom 按 base_url + git_shape 推导,
 //     与「取仓库凭据」那条流同一套地址。
-//   - oidc:端点只能问服务器自己(发现文档 + 显式覆盖),所以这里要 ctx 与 http.Client。
+//   - oidc:端点只能问服务器自己(发现文档 + 显式覆盖),所以这里要 ctx 与 http.Client;
+//     声明了 git_shape 时才把该家的仓库读 scope 追加进去(见 oidcProvider)。
 //   - 钉钉/飞书/企业微信:端点用平台预设(配置页可逐项覆盖),并带上各自的异形链路 flow。
 func (s *service) loginProvider(ctx context.Context, row loginAppRow) (Provider, error) {
 	switch {
@@ -509,7 +541,7 @@ func (s *service) loginProvider(ctx context.Context, row loginAppRow) (Provider,
 		if err != nil {
 			return Provider{}, err
 		}
-		return oidcProvider(endpoints, row.scopes, row.idClaim), nil
+		return oidcProvider(endpoints, row.scopes, row.idClaim, row.gitShape), nil
 	case isPlatformProvider(row.provider):
 		return resolvePlatformProvider(row)
 	default:

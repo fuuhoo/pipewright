@@ -27,5 +27,23 @@ func init() {
 			"fr":    "La forme de la plateforme doit rester vide ou valoir gitlab ou gitea : toute autre valeur produit une URL d'autorisation pointant vers un chemin inexistant",
 			"de":    "Die Plattform-Form muss leer, gitlab oder gitea sein: jeder andere Wert erzeugt eine Autorisierungs-URL, die auf einen nicht existierenden Pfad zeigt",
 		},
+		"「登录即同步凭据」只对 git 平台(Gitee / GitHub / GitLab / Gitea / 自建)或已声明 git 形态的 OIDC 开放;这个身份源给不出可用于克隆仓库的令牌": {
+			"zh-TW": "「登入即同步憑據」只對 git 平台(Gitee / GitHub / GitLab / Gitea / 自建)或已聲明 git 形態的 OIDC 開放;這個身分源給不出可用於複製倉庫的令牌",
+			"en":    "\"Sync credentials on sign-in\" is available only for git platforms (Gitee / GitHub / GitLab / Gitea / self-hosted) or an OIDC provider that declares a git shape; this identity provider cannot issue a token usable for cloning repositories",
+			"ja":    "「サインイン時に認証情報を同期」は git プラットフォーム(Gitee / GitHub / GitLab / Gitea / 自己ホスト型)、または git 形態を宣言した OIDC のみ利用できます。このアイデンティティプロバイダはリポジトリのクローンに使えるトークンを発行できません",
+			"ko":    "\"로그인 시 자격 증명 동기화\"는 git 플랫폼(Gitee / GitHub / GitLab / Gitea / 자체 호스팅) 또는 git 형태를 선언한 OIDC에서만 켤 수 있습니다. 이 신원 공급자는 저장소 복사에 사용할 수 있는 토큰을 발급하지 못합니다",
+			"es":    "«Sincronizar credenciales al iniciar sesión» solo está disponible para plataformas git (Gitee / GitHub / GitLab / Gitea / autoalojada) o un proveedor OIDC que declare una forma git; este proveedor de identidad no puede emitir un token que sirva para clonar repositorios",
+			"fr":    "« Synchroniser les identifiants à la connexion » n'est réservé qu'aux plateformes git (Gitee / GitHub / GitLab / Gitea / auto-hébergée) ou à un fournisseur OIDC déclarant une forme git ; ce fournisseur d'identité ne peut pas émettre de jeton utilisable pour cloner des dépôts",
+			"de":    "„Anmeldedaten bei der Anmeldung synchronisieren“ ist nur für git-Plattformen (Gitee / GitHub / GitLab / Gitea / selbst gehostet) oder einen OIDC-Anbieter mit erklärter git-Form verfügbar; dieser Identitätsanbieter kann kein Token zum Klonen von Repositories ausstellen",
+		},
+		"这个 OIDC 身份源还没声明它背后是哪家公司 git 平台(GitLab / Gitea),所以不能开「登录即同步凭据」:先在「同为 git 平台」里选一家,或关掉这个开关": {
+			"zh-TW": "這個 OIDC 身分源還沒聲明它背後是哪家公司 git 平台(GitLab / Gitea),所以不能開「登入即同步憑據」:先在「同為 git 平台」裡選一家,或關掉這個開關",
+			"en":    "This OIDC identity provider has not declared which git platform it fronts (GitLab / Gitea), so \"Sync credentials on sign-in\" cannot be enabled: pick a platform under \"Also a git platform\" first, or turn this switch off",
+			"ja":    "この OIDC アイデンティティプロバイダは、その背後にある git プラットフォーム(GitLab / Gitea)が宣言されていないため、「サインイン時に認証情報を同期」を有効にできません。まず「同時に git プラットフォーム」でいずれかを選ぶか、このスイッチをオフにしてください",
+			"ko":    "이 OIDC 신원 공급자는 자체 뒤에 있는 git 플랫폼(GitLab / Gitea)이 선언되지 않아 \"로그인 시 자격 증명 동기화\"를 켤 수 없습니다. 먼저 \"동시에 git 플랫폼\"에서 하나를 선택하거나 이 스위치를 끄세요",
+			"es":    "Este proveedor de identidad OIDC no ha declarado qué plataforma git hay detrás (GitLab / Gitea), por lo que no se puede activar «Sincronizar credenciales al iniciar sesión»: elija primero una plataforma en «También es una plataforma git» o desactive este interruptor",
+			"fr":    "Ce fournisseur d'identité OIDC n'a pas déclaré la plateforme git cachée derrière lui (GitLab / Gitea) ; « Synchroniser les identifiants à la connexion » ne peut donc pas être activé : choisissez d'abord une plateforme dans « Est aussi une plateforme git », ou désactivez ce commutateur",
+			"de":    "Dieser OIDC-Identitätsanbieter hat nicht erklärt, welche git-Plattform dahintersteht (GitLab / Gitea); „Anmeldedaten bei der Anmeldung synchronisieren“ kann daher nicht aktiviert werden: Wählen Sie zuerst eine Plattform unter „Ist auch eine git-Plattform“ oder schalten Sie diesen Schalter aus",
+		},
 	})
 }

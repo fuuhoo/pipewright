@@ -308,6 +308,77 @@ func TestOidcScopesConfigurableAndMinimal(t *testing.T) {
 	}
 }
 
+// TestOidcDeclaredGitShapeUpgradesLoginScope 冻结「声明同为 git 平台」这一动作的全部后果:
+// 只有同时满足「声明了 git 形态」和「开了登录即同步凭据」,授权才从只认身份升到能读仓库,
+// 兑换回来的令牌才会作为 grant 交给调用方落库。缺任何一个条件都只拿到身份,不多要权限。
+func TestOidcDeclaredGitShapeUpgradesLoginScope(t *testing.T) {
+	stub := newStubOidc(t, `{"sub":"gl-42","preferred_username":"fan","email":"fan@corp.example.com"}`)
+	svc, _, _ := newLoginService(t)
+
+	authScope := func(state string) string {
+		t.Helper()
+		u, err := svc.LoginAuthorizeURL(ctx(), ProviderOIDC, state, oidcCallback)
+		if err != nil {
+			t.Fatalf("LoginAuthorizeURL(%s): %v", state, err)
+		}
+		return firstQuery(t, u, "scope")
+	}
+
+	// 1) 没声明也没开同步:只有身份 scope,兑换不产出 grant。
+	saveOidcApp(t, svc, SaveLoginAppInput{DiscoveryURL: stub.discoveryURL()})
+	if scope := authScope("S-plain"); strings.Contains(scope, "read_repository") {
+		t.Fatalf("未声明形态不该要仓库读权限,scope=%q", scope)
+	}
+	if _, grant, err := svc.ExchangeLogin(ctx(), ProviderOIDC, "code-1", oidcCallback); err != nil {
+		t.Fatalf("ExchangeLogin(未声明): %v", err)
+	} else if grant != nil {
+		t.Fatal("没开同步不该回吐 grant")
+	}
+
+	// 2) 声明了形态但没开同步:scope 依旧只认身份 —— 多要的权限换不来东西。
+	saveOidcApp(t, svc, SaveLoginAppInput{DiscoveryURL: stub.discoveryURL(), GitShape: GitShapeGitLab})
+	if scope := authScope("S-shape-only"); strings.Contains(scope, "read_repository") {
+		t.Fatalf("开关没打开时不该升 scope,scope=%q", scope)
+	}
+
+	// 3) 声明 + 开同步:两者齐活才升到 GitLab 那档仓库读权限,且身份 scope 一个不丢。
+	cfg := saveOidcApp(t, svc, SaveLoginAppInput{
+		DiscoveryURL: stub.discoveryURL(), GitShape: GitShapeGitLab, SyncCredentials: true,
+	})
+	if cfg.GitShape != GitShapeGitLab || !cfg.SyncCredentials {
+		t.Fatalf("声明与开关未原样回显: gitShape=%q sync=%v", cfg.GitShape, cfg.SyncCredentials)
+	}
+	scope := authScope("S-sync")
+	for _, want := range []string{"openid", "profile", "read_repository", "read_user"} {
+		if !strings.Contains(scope, want) {
+			t.Fatalf("声明 GitLab 后 scope 应含 %q,得到 %q", want, scope)
+		}
+	}
+	if _, grant, err := svc.ExchangeLogin(ctx(), ProviderOIDC, "code-2", oidcCallback); err != nil {
+		t.Fatalf("ExchangeLogin(声明+同步): %v", err)
+	} else if grant == nil || grant.AccessToken == "" {
+		t.Fatal("声明+同步应把令牌作为 grant 交回调用方")
+	}
+
+	// 4) 声明成 Gitea 时按 Gitea 的 scope 命名,不复用 GitLab 的下划线写法。
+	saveOidcApp(t, svc, SaveLoginAppInput{
+		DiscoveryURL: stub.discoveryURL(), GitShape: GitShapeGitea, SyncCredentials: true,
+	})
+	if giteaScope := authScope("S-gitea"); !strings.Contains(giteaScope, "read:repository") ||
+		strings.Contains(giteaScope, "read_repository") {
+		t.Fatalf("Gitea 形态应申请 read:repository,得到 %q", giteaScope)
+	}
+
+	// 5) 没声明就想开同步 → 保存期硬拒,绝不静默把开关关掉。
+	_, err := svc.SaveLoginApp(ctx(), SaveLoginAppInput{
+		Provider: ProviderOIDC, ClientID: "oidc-client-id", ClientSecret: strp("OIDC-SECRET-PLAINTEXT"),
+		DiscoveryURL: stub.discoveryURL(), Enabled: true, SyncCredentials: true,
+	})
+	if !errors.Is(err, ErrCredentialSyncNeedsGitPlatform) {
+		t.Fatalf("未声明形态开同步应拒为 ErrCredentialSyncNeedsGitPlatform,得到 %v", err)
+	}
+}
+
 func firstQuery(t *testing.T, rawURL, key string) string {
 	t.Helper()
 	u, err := url.Parse(rawURL)

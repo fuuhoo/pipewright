@@ -100,8 +100,14 @@ type oauthLoginAppDTO struct {
 	IDClaim      string `json:"idClaim"`
 	Scopes       string `json:"scopes"`
 	AgentID      string `json:"agentId"`
+	// GitShape 有两种含义,只由 provider 决定:
+	//   - custom:自建实例按哪家 git 平台的地址形态推导端点(gitlab|gitea;空 = gitlab,存量语义)。
+	//   - oidc:声明「这个身份源背后同时是一家 git 平台」,是「登录即同步凭据」的前提。
+	// 其余档位恒为空串。
+	GitShape string `json:"gitShape"`
 	// SyncCredentials = 登录时把这次授权换来的 git 令牌同步成该账号的一条个人凭据。
-	// 只有 git 四档(gitee/github/gitlab/custom)能开;非 git 身份源服务端一律返回 false。
+	// 能开的只有:git 五档(gitee/github/gitlab/gitea/custom)+ 已声明 git 形态的 oidc。
+	// 其余身份源给不出 git 令牌,服务端在保存期就报错(见 sync_unsupported),不会静默关掉。
 	// 打开它等于把登录申请的 scope 从「只认身份」升到「能读仓库」,所以是管理员的显式选择。
 	SyncCredentials bool `json:"syncCredentials"`
 }
@@ -150,6 +156,8 @@ func loginProviderLabel(cfg oauth.LoginAppConfig) string {
 		return "GitHub"
 	case oauth.ProviderGitLab:
 		return "GitLab"
+	case oauth.ProviderGitea:
+		return "Gitea"
 	case oauth.ProviderOIDC:
 		// OIDC 没有品牌名可借,也不该拿 baseURL 当名字(它压根不用 baseURL)。
 		return "OIDC"
@@ -259,8 +267,14 @@ func makeOAuthLoginCallbackHandler(d oauthLoginDeps) http.HandlerFunc {
 		if code == "" {
 			// provider 侧「用户拒绝授权」也走这条:带 error 参数回来,但没有任何 code。
 			reason := "missing_code"
-			if q.Get("error") != "" {
+			if e := q.Get("error"); e != "" {
+				// 开了「登录即同步凭据」后申请的 scope 从「只认身份」升到「能读仓库」,
+				// 而应用没登记这个 scope 时平台会在授权页直接拒绝(invalid_scope)。
+				// 混进「用户拒绝授权」会让人反复重试同一件不可能成功的事,所以单独分一档。
 				reason = "provider_denied"
+				if e == "invalid_scope" {
+					reason = "scope_rejected"
+				}
 			}
 			recordOAuthLoginFailure(d.aud, r, provider, "", reason)
 			redirectLoginError(w, r, provider, reason)
@@ -521,6 +535,9 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			IDClaim      string `json:"idClaim"`
 			Scopes       string `json:"scopes"`
 			AgentID      string `json:"agentId"`
+			// GitShape 同样是「整份覆盖」语义:custom 决定端点形态,oidc 声明「背后是 git 平台」,
+			// 其余档位服务端强制落空串。
+			GitShape string `json:"gitShape"`
 			// 凭据同步开关同样是「整份覆盖」语义(省略即关闭),与上面那组一致:
 			// 它是权限升级,宁可默认关。
 			SyncCredentials bool `json:"syncCredentials"`
@@ -543,6 +560,7 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			IDClaim:         req.IDClaim,
 			Scopes:          req.Scopes,
 			AgentID:         req.AgentID,
+			GitShape:        req.GitShape,
 			SyncCredentials: req.SyncCredentials,
 		})
 		if err != nil {
@@ -554,7 +572,13 @@ func makeSaveLoginAppHandler(svc oauth.Service) http.HandlerFunc {
 			// 给不了 git 令牌的身份源开同步:同样是保存期就该说清楚的配置错误,
 			// 而不是静默收下、让人一直等不到凭据。
 			if errors.Is(err, oauth.ErrCredentialSyncUnsupported) {
-				writeError(w, http.StatusUnprocessableEntity, "sync_unsupported", "「登录即同步凭据」只对 git 平台(Gitee / GitHub / GitLab / 自建)开放;这个身份源给不出可用于克隆仓库的令牌")
+				writeError(w, http.StatusUnprocessableEntity, "sync_unsupported", "「登录即同步凭据」只对 git 平台(Gitee / GitHub / GitLab / Gitea / 自建)或已声明 git 形态的 OIDC 开放;这个身份源给不出可用于克隆仓库的令牌")
+				return
+			}
+			// OIDC 想开同步必须先声明「这个身份源背后同时是一家 git 平台」:
+			// OIDC 协议本身只管身份,令牌能不能拿去克隆仓库只有管理员知道,所以让他显式说。
+			if errors.Is(err, oauth.ErrCredentialSyncNeedsGitPlatform) {
+				writeError(w, http.StatusUnprocessableEntity, "sync_needs_git_platform", "这个 OIDC 身份源还没声明它背后是哪家公司 git 平台(GitLab / Gitea),所以不能开「登录即同步凭据」:先在「同为 git 平台」里选一家,或关掉这个开关")
 				return
 			}
 			writeOAuthError(w, err)
@@ -583,6 +607,7 @@ func toLoginAppDTO(c oauth.LoginAppConfig, r *http.Request) oauthLoginAppDTO {
 		IDClaim:         c.IDClaim,
 		Scopes:          c.Scopes,
 		AgentID:         c.AgentID,
+		GitShape:        c.GitShape,
 		SyncCredentials: c.SyncCredentials,
 	}
 	if c.UpdatedAt != nil {
