@@ -72,7 +72,26 @@ export default {
     'Die E-Mail-Allowlist enthält einen ungültigen Eintrag: gib nur die Domain selbst an (z. B. corp.example.com), ohne Protokoll, Pfad oder Leerzeichen',
   toggleTitleLogin: 'Anmeldung aktivieren',
   toggleDescLogin: 'Nach der Aktivierung zeigt die Anmeldeseite eine Schaltfläche „Mit diesem Plattform-Konto anmelden“',
-  // ─── Zugangsdaten bei Anmeldung synchronisieren (nur die vier Git-Plattformen)
+
+  // ─── Git-Form (selbst gehostet: Form der Endpunkte / OIDC: erklären, dass die
+  // Quelle auch eine Git-Plattform ist). Dasselbe Feld bedeutet je Karte etwas
+  // anderes. Beim Selbsthost entscheidet es, welche Authorisierungs-URL gebaut wird —
+  // falsch gewählt führt auf der Plattform ins 404. Bei OIDC ist es eine ausdrückliche
+  // Erklärung: Nur wenn die Identitätsquelle zugleich ein Git-Server ist, taugt ihr
+  // Anmeldetoken zum Klonen eines Repository.
+  gitShapeCustomLabel: 'Plattform-Form',
+  gitShapeOidcLabel: 'Ist auch eine git-Plattform',
+  gitShapeOidcOptional: '(leer = nur Identität)',
+  gitShapeNone: 'Nicht erklärt',
+  gitShapeCustomHint:
+    'Die Authorisierungs-, Token- und Nutzer-URLs einer selbst gehosteten Instanz werden aus der gewählten Plattform abgeleitet: GitLab nutzt /oauth/authorize, Gitea nutzt /login/oauth/authorize. Die falsche Wahl zeigt auf einen Pfad, den es nicht gibt.',
+  gitShapeOidcHint:
+    'Ein selbst gehostetes GitLab / Gitea kann auch als OIDC-Identitätsquelle dienen. Erst nach dieser Erklärung lässt sich das bei der Anmeldung erhaltene Token zum Klonen von Repositories verwenden, und der Schalter „Git-Zugangsdaten bei Anmeldung synchronisieren“ darunter wird frei. Im Zweifel leer lassen und nur als Identität nutzen.',
+  errGitShapeInvalid:
+    'Die Plattform-Form muss leer oder gitlab oder gitea sein: jeder andere Wert baut eine Authorisierungs-URL, die auf einen nicht existierenden Pfad zeigt',
+
+  // ─── Zugangsdaten bei Anmeldung synchronisieren (die fünf Git-Plattformen +
+  // OIDC mit erklärter Git-Form) ──────────────────────────────────────────────
   // Hier entscheidet sich, wie viel eine einzelne Anmeldung mitnimmt: deshalb
   // aus, und der Text nennt sowohl die höhere Berechtigung als auch den Notausgang.
   syncTitle: 'Git-Zugangsdaten bei Anmeldung synchronisieren',
@@ -80,8 +99,12 @@ export default {
   syncAria: 'Synchronisierung bei Anmeldung für {provider} aktivieren',
   syncNote:
     'Ist das aktiv, fordert die Anmeldung mehr Berechtigung: von „nur Identität“ auf „Repositories lesen“. Vor dem Ablauf erneuert die Plattform das Token selbst; wird die Erneuerung abgelehnt, stehen die Zugangsdaten als „Freigabe ungültig“ da und eine erneute Anmeldung stellt sie wieder her. Die synchronisierten Zugangsdaten bleiben nur für dieses Konto sichtbar — welche Zugangsdaten ein Projekt nutzt, entscheidest weiterhin du.',
+  syncNeedsShapeHint:
+    'Diese OIDC-Quelle hat noch nicht erklärt, welche Git-Plattform dahintersteht, deshalb ist der Schalter gesperrt: Erst oben bei „Ist auch eine git-Plattform“ eine auswählen — nur dann ergibt eine Synchronisierung Sinn.',
   errSyncUnsupported:
-    'Diese Identitätsquelle kann kein Token für das Klonen eines Repository ausstellen: die Synchronisierung bei Anmeldung gibt es nur für Git-Plattformen (Gitee / GitHub / GitLab / selbst gehostet)',
+    'Diese Identitätsquelle kann kein Token für das Klonen eines Repository ausstellen: die Synchronisierung bei Anmeldung gibt es nur für Git-Plattformen (Gitee / GitHub / GitLab / Gitea / selbst gehostet) oder ein OIDC mit erklärter Git-Form',
+  errSyncNeedsGitPlatform:
+    'Diese OIDC-Identitätsquelle hat nicht erklärt, welche Git-Plattform dahintersteht (GitLab / Gitea), deshalb kann „Git-Zugangsdaten bei Anmeldung synchronisieren“ nicht aktiviert werden: wähle zuerst eine unter „Ist auch eine git-Plattform“ oder lass den Schalter aus',
 
   // ─── OIDC-Identitätsquelle (erscheint nur unter „Plattform-Anmeldung“) ──────
   // Beim Speichern löst das Backend die Endpunkte tatsächlich auf: eine kaputte

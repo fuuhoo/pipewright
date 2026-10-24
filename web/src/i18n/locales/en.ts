@@ -95,6 +95,7 @@ const en: typeof zhCN = {
     invalidState: 'The sign-in check failed. Return to the login page and start again.',
     missingCode: 'The platform returned no authorization code. Please start again.',
     providerDenied: 'You cancelled the authorization on the platform.',
+    scopeRejected: 'The platform refused the permissions this sign-in asked for. Most often the OAuth app has no repository read scope registered, so retrying will not help: ask an administrator to add it, or turn off "Sync a git credential at sign-in".',
     appNotConfigured: "Sign-in through this platform isn't fully configured. Contact an administrator.",
     invalidProvider: 'Unrecognized sign-in provider.',
     vaultUnavailable: 'The server could not decrypt the sign-in configuration. Contact an administrator.',

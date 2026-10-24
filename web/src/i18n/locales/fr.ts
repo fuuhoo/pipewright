@@ -94,6 +94,7 @@ const fr: typeof zhCN = {
     invalidState: "Le contrôle de connexion a échoué. Revenez à la page de connexion et recommencez.",
     missingCode: "La plateforme n'a renvoyé aucun code d'autorisation. Veuillez recommencer.",
     providerDenied: "Vous avez annulé l'autorisation sur la plateforme.",
+    scopeRejected: 'La plateforme a refusé les permissions demandées par cette connexion. Le plus souvent, l’application OAuth n’a enregistré aucun droit de lecture des dépôts : réessayer n’y changera rien. Demandez à un administrateur de l’ajouter, ou désactivez « Synchroniser un identifiant git à la connexion ».',
     appNotConfigured: "La connexion via cette plateforme n'est pas entièrement configurée. Contactez un administrateur.",
     invalidProvider: "Fournisseur de connexion inconnu.",
     vaultUnavailable: "Le serveur n'a pas pu déchiffrer la configuration de connexion. Contactez un administrateur.",

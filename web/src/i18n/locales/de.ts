@@ -94,6 +94,7 @@ const de: typeof zhCN = {
     invalidState: 'Die Überprüfung der Anmeldung ist fehlgeschlagen. Zurück zur Login-Seite und neu starten.',
     missingCode: 'Die Plattform hat keinen Autorisierungscode zurückgegeben. Bitte neu starten.',
     providerDenied: 'Du hast die Autorisierung auf der Plattform abgebrochen.',
+    scopeRejected: 'Die Plattform hat die angefragten Berechtigungen abgelehnt. Meist ist im OAuth-App-Eintrag die Leseberechtigung für Repositories nicht hinterlegt — ein erneuter Versuch hilft nicht. Bitte einen Administrator, sie zu ergänzen, oder schalte „Git-Zugangsdaten bei Anmeldung synchronisieren“ aus.',
     appNotConfigured: 'Der Login über diese Plattform ist nicht vollständig konfiguriert. Bitte einen Administrator kontaktieren.',
     invalidProvider: 'Unbekannter Login-Anbieter.',
     vaultUnavailable: 'Der Server konnte die Login-Konfiguration nicht entschlüsseln. Bitte einen Administrator kontaktieren.',

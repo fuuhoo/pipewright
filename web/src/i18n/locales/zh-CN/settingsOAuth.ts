@@ -74,7 +74,22 @@ export default {
     '邮箱域名白名单含非法项:只填域名本身(如 corp.example.com),不要带协议、路径或空格',
   toggleTitleLogin: '启用登录',
   toggleDescLogin: '启用后登录页出现「用该平台账号登录」按钮',
-  // ─── 登录即同步凭据(只在 git 四档的登录卡出现)──────────────────────────
+
+  // ─── git 形态(自建实例选端点形态 / OIDC 声明「同为 git 平台」)────────────────
+  // 同一个字段在两档说的是两件事:自建那档决定「授权地址按哪家拼」,选错就在平台侧撞 404;
+  // OIDC 那档是一项显式声明——这个身份源背后同时是一家 git 平台,决定登录令牌能不能拿去克隆仓库。
+  gitShapeCustomLabel: '平台形态',
+  gitShapeOidcLabel: '同为 git 平台',
+  gitShapeOidcOptional: '(留空 = 只当身份源)',
+  gitShapeNone: '未声明',
+  gitShapeCustomHint:
+    '自建实例的授权 / 令牌 / 用户信息地址按所选平台推导:GitLab 走 /oauth/authorize,Gitea 走 /login/oauth/authorize。选错了授权页会指向一个不存在的路径。',
+  gitShapeOidcHint:
+    '自建 GitLab / Gitea 也能同时当 OIDC 身份源。声明了它,登录换来的令牌才可能拿去克隆仓库,下面的「登录即同步凭据」才允许打开;不确定就留空,只当身份源用。',
+  errGitShapeInvalid:
+    '平台形态只能留空、填 gitlab 或 gitea:填了别家,拼出来的授权地址指向一个不存在的路径',
+
+  // ─── 登录即同步凭据(只在 git 五档 + 已声明 git 形态的 OIDC 的登录卡出现)──────
   // 这一项决定的是「一次登录顺手换走多大权限」,不是又一个填错的框:默认关,
   // 打开后授权页会多申请仓库读权限,所以文案要同时交代升到哪一级、失效了怎么办。
   syncTitle: '登录即同步凭据',
@@ -82,8 +97,12 @@ export default {
   syncAria: '为 {provider} 开启登录即同步凭据',
   syncNote:
     '打开后,登录申请的权限会从「只认身份」升到「能读仓库」。令牌到期前平台会自动续期;续期被拒时那条凭据会被标注成「授权已失效」,重新用该平台登录一次即可恢复。同步出来的凭据只对本账号可见,项目该用哪条凭据仍由你自己选。',
+  syncNeedsShapeHint:
+    '这个 OIDC 身份源还没声明它背后是哪家公司 git 平台,所以开关先按住:在上面「同为 git 平台」里选一家才谈得上同步凭据。',
   errSyncUnsupported:
-    '这个身份源给不出能克隆仓库的令牌:「登录即同步凭据」只对 git 平台(Gitee / GitHub / GitLab / 自建)开放',
+    '这个身份源给不出能克隆仓库的令牌:「登录即同步凭据」只对 git 平台(Gitee / GitHub / GitLab / Gitea / 自建)或已声明 git 形态的 OIDC 开放',
+  errSyncNeedsGitPlatform:
+    '这个 OIDC 身份源还没声明它背后是哪家公司 git 平台(GitLab / Gitea),所以不能开「登录即同步凭据」:先在「同为 git 平台」里选一家,或关掉这个开关',
 
   // ─── OIDC 身份源(只在「平台登录」档出现)────────────────────────────────
   // 端点由服务端在保存时真解析一次:配错的代价是「授权页一切正常,回来就报错」,

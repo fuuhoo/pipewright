@@ -273,6 +273,7 @@ const PROVIDER_LABELS = computed<Record<OAuthProvider, string>>(() => ({
   gitee: 'Gitee',
   github: 'GitHub',
   gitlab: 'GitLab',
+  gitea: 'Gitea',
   custom: t('settingsAccount.providerCustom'),
 }))
 

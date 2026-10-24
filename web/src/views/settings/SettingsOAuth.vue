@@ -2,23 +2,26 @@
 /**
  * SettingsOAuth — OAuth application configuration for git providers.
  *
- * 四个 git 平台(Gitee / GitHub / GitLab / 自建)是**并列的同构配置**,不是要对比着看的东西,
- * 所以走 tab 一次只摊开一个:四张卡片竖排时,页面要滚近两屏才能填完一个平台,
- * 而「哪个平台启用了」这件事在 tab 的状态点上比在四张卡头上更集中。
+ * 五个 git 平台(Gitee / GitHub / GitLab / Gitea / 自建)是**并列的同构配置**,不是要对比着看的东西,
+ * 所以走 tab 一次只摊开一个:卡片竖排时,页面要滚近两屏才能填完一个平台,
+ * 而「哪个平台启用了」这件事在 tab 的状态点上比在几张卡头上更集中。
  *
  * 「平台登录」用途下还多一档 **OIDC**(通用 SSO):discovery 地址或手填三个端点、
- * 可配主键声明与 scope。它只在登录档出现 —— OIDC 服务器给不了 git token,
- * 「仓库凭据」那条路压根不支持它(后端同样拦,见 internal/oauth/provider.go 的两套枚举)。
+ * 可配主键声明与 scope。它不进「仓库凭据」那套 tab —— OIDC 协议只管身份,
+ * 光看协议本身换不出 git token(后端同样拦,见 internal/oauth/provider.go 的两套枚举)。
+ * 但自建 GitLab / Gitea 这类「既是 IdP 又是 git 平台」的服务器是真实存在的,所以登录档给它
+ * 一个「同为 git 平台」的声明:声明了才谈得上「登录即同步凭据」,没声明就按住开关并说清原因。
+ * 自建那档(git 平台)同理要选「平台形态」——同一套地址推导规则,只是它决定端点长什么样。
  *
  *   - clientId text input
  *   - clientSecret password input — WRITE-ONLY, never echoed; placeholder
  *     hints "留空保留已存" when a secret is already configured
- *   - baseUrl (only the self-hosted `custom` provider)
- *   - oidc 独有:Discovery / 三个端点覆盖 / ID claim / Scopes
+ *   - baseUrl + 平台形态 (only the self-hosted `custom` provider)
+ *   - oidc 独有:Discovery / 三个端点覆盖 / 主键声明 / scope / 「同为 git 平台」
  *   - enabled toggle
  *   - Save (PUT) → toast "OAuth 应用已保存" + masked secret echo (mirrors SettingsAI)
  *
- * tab 是页内切换而非子路由:四档没有各自的门禁,而且切走再切回要保住没保存的草稿。
+ * tab 是页内切换而非子路由:各档没有独立的门禁,而且切走再切回要保住没保存的草稿。
  *
  * tab 之上还有一层「用途」切换:同一个 git 平台在本实例里有两种用法 ——
  *   - 仓库凭据:已登录用户授权后换回 access_token,存进保险库给 git 操作用;
@@ -43,6 +46,8 @@ import {
   getOAuthLoginApps,
   saveOAuthLoginApp,
   issuesGitToken,
+  supportsGitCredential,
+  type GitShape,
   type OAuthApp,
   type OAuthLoginApp,
   type OAuthLoginProvider,
@@ -74,7 +79,7 @@ interface ProviderMeta {
   hasBaseUrl: boolean
   /**
    * 端点组长什么样:
-   *   none     —— git 四家,地址写死在代码里,不给配;
+   *   none     —— 品牌 git 平台,地址写死在代码里,不给配;
    *   oidc     —— 发现文档 + 三项覆盖 + 主键声明 + scope;
    *   platform —— 钉钉/飞书/企业微信:官方地址本就已内置,只给三项覆盖(和 scope)。
    */
@@ -83,6 +88,14 @@ interface ProviderMeta {
   needsAgentId: boolean
   /** 这一档有没有 scope 可填:企业微信的扫码地址压根不带 scope 参数。 */
   hasScopes: boolean
+  /**
+   * 「git 形态」这一栏摆不摆、摆成什么意思(与后端 git_shape 列的两副面孔一致):
+   *   none   —— 内置 git 平台(形态写死在代码里)与钉钉/飞书/企业微信,后端一律落空串;
+   *   custom —— 自建 git 实例:形态决定拼哪家的端点路径,空串按存量语义就是 GitLab;
+   *   oidc   —— 通用 OIDC:这一栏是**声明**「这个身份源背后同时是一家 git 平台」,
+   *             空串 = 没声明,「登录即同步凭据」随之按住不给开。
+   */
+  gitShape: 'none' | 'custom' | 'oidc'
 }
 
 /** Per-provider editable form + saved snapshot(两种用途共用同一张表单壳)。 */
@@ -96,6 +109,13 @@ interface CardState {
   allowedDomains: string
   /** login 用途:要在平台侧登记的回调地址(服务端按当前 origin 现算,只读回显)。 */
   callbackUrl: string
+  /**
+   * git 形态:custom 选哪家平台的地址形态,oidc 声明背后是哪家 git 平台。
+   * 后端是**整份覆盖**语义(省略即清空),所以这两档每次保存都把它发出去;
+   * 其余档位后端一律落空串,多发一个空字段不会串味。
+   * custom 载入时把服务端的空串显示成 GitLab(存量语义),界面上不存在「空」这个选项。
+   */
+  gitShape: GitShape
   /**
    * 仅非 git 身份源:端点组 + 主键声明 + scope + AgentId。
    * 保存是**整份覆盖**语义(后端对 git 档位一律落空),所以登录档每次保存都把这些原样发出,不能省略。
@@ -111,17 +131,18 @@ interface CardState {
   enabled: boolean
   /**
    * 登录即同步凭据:这次授权顺手落成该账号的一条个人 git 凭据。
-   * 只在「平台登录」用途的 git 四档出现 —— 非 git 身份源换不出 git token,后端也会拒(422 sync_unsupported)。
+   * 能开的是 git 五档 + **已声明 git 形态**的 OIDC;钉钉/飞书/企业微信压根换不出 git token,
+   * 开关不摆(判据见 showSyncSwitch),OIDC 没声明时开关摆着但按住。真发上去后端也拒(422)。
    * 打开它会把登录申请的 scope 从「只认身份」升到「能读仓库」,所以默认关,且要管理员显式勾选。
    */
   syncCredentials: boolean
-  errors: { clientId: string; baseUrl: string; allowedDomains: string; endpoints: string; agentId: string; syncCredentials: string }
+  errors: { clientId: string; baseUrl: string; gitShape: string; allowedDomains: string; endpoints: string; agentId: string; syncCredentials: string }
   saving: boolean
 }
 
-/** 清空字段错误要用新对象:四个 tab 共用一份卡片,原地改会把别的档一起改掉。 */
+/** 清空字段错误要用新对象:几张 tab 共用一份卡片,原地改会把别的档一起改掉。 */
 function noErrors(): CardState['errors'] {
-  return { clientId: '', baseUrl: '', allowedDomains: '', endpoints: '', agentId: '', syncCredentials: '' }
+  return { clientId: '', baseUrl: '', gitShape: '', allowedDomains: '', endpoints: '', agentId: '', syncCredentials: '' }
 }
 
 // ─── provider metadata ───────────────────────────────────────────────────────
@@ -138,6 +159,7 @@ const PROVIDERS: ProviderMeta[] = [
     endpoints: 'none',
     needsAgentId: false,
     hasScopes: false,
+    gitShape: 'none',
   },
   {
     id: 'github',
@@ -149,6 +171,7 @@ const PROVIDERS: ProviderMeta[] = [
     endpoints: 'none',
     needsAgentId: false,
     hasScopes: false,
+    gitShape: 'none',
   },
   {
     id: 'gitlab',
@@ -160,6 +183,19 @@ const PROVIDERS: ProviderMeta[] = [
     endpoints: 'none',
     needsAgentId: false,
     hasScopes: false,
+    gitShape: 'none',
+  },
+  {
+    id: 'gitea',
+    label: 'Gitea',
+    desc: 'gitea.com',
+    logoText: '',
+    logoStyle: 'background:#2ab39c;color:#fff',
+    hasBaseUrl: false,
+    endpoints: 'none',
+    needsAgentId: false,
+    hasScopes: false,
+    gitShape: 'none',
   },
   {
     id: 'custom',
@@ -171,6 +207,8 @@ const PROVIDERS: ProviderMeta[] = [
     endpoints: 'none',
     needsAgentId: false,
     hasScopes: false,
+    // 自建实例的端点要靠「这是家什么平台」才拼得出来 —— 光有地址不够。
+    gitShape: 'custom',
   },
 ]
 
@@ -192,6 +230,8 @@ const OIDC_META: ProviderMeta = {
   endpoints: 'oidc',
   needsAgentId: false,
   hasScopes: true,
+  // OIDC 本身只管身份;这一栏是「声明它背后同时是一家 git 平台」,不是选端点形态。
+  gitShape: 'oidc',
 }
 
 const PLATFORM_METAS: ProviderMeta[] = [
@@ -205,6 +245,7 @@ const PLATFORM_METAS: ProviderMeta[] = [
     endpoints: 'platform',
     needsAgentId: false,
     hasScopes: true,
+    gitShape: 'none',
   },
   {
     id: 'feishu',
@@ -216,6 +257,7 @@ const PLATFORM_METAS: ProviderMeta[] = [
     endpoints: 'platform',
     needsAgentId: false,
     hasScopes: true,
+    gitShape: 'none',
   },
   {
     id: 'wecom',
@@ -228,13 +270,14 @@ const PLATFORM_METAS: ProviderMeta[] = [
     needsAgentId: true,
     // 企业微信的扫码授权地址压根不带 scope 这一参数,填了也会被后端忽略。
     hasScopes: false,
+    gitShape: 'none',
   },
 ]
 
 /** 登录档独有的身份源(OIDC + 三家国内平台):「仓库凭据」那套 tab 里不出现。 */
 const LOGIN_ONLY_METAS: ProviderMeta[] = [OIDC_META, ...PLATFORM_METAS]
 
-/** 「仓库凭据」档的 tab 清单(四个 git 平台)与「平台登录」档的(再加五档身份源)。 */
+/** 「仓库凭据」档的 tab 清单(五个 git 平台)与「平台登录」档的(再加五档身份源)。 */
 const VAULT_IDS: OAuthLoginProvider[] = PROVIDERS.map((m) => m.id)
 const ALL_IDS: OAuthLoginProvider[] = [...VAULT_IDS, ...LOGIN_ONLY_METAS.map((m) => m.id)]
 
@@ -281,6 +324,8 @@ function newCard(meta: ProviderMeta): CardState {
     baseUrl: '',
     allowedDomains: '',
     callbackUrl: '',
+    // 空态也走一遍归一:自建那档没有「未声明」这个选项,新建卡得直接落在 GitLab 形态上。
+    gitShape: shownShape(meta, ''),
     discoveryUrl: '',
     authorizeUrl: '',
     tokenUrl: '',
@@ -363,12 +408,38 @@ function selectCallback(event: Event): void {
 }
 
 /**
- * 「登录即同步凭据」只出现在 git 四档的登录卡:OIDC/钉钉/飞书/企业微信换不出 git 令牌,
- * 后端对它们一律拒收(422 sync_unsupported)—— 给这些档摆一个存不进去的开关等于骗人。
+ * 「登录即同步凭据」的可见范围:git 五档 + OIDC。
+ * 钉钉/飞书/企业微信换不出 git 令牌,给它们摆一个永远存不进去的开关等于骗人,所以连栏都不出。
+ * OIDC 要「声明了背后是 git 平台」才真的能同步,所以它这条按 syncAvailable 单独处理:
+ * 开关摆着、按住,并把为什么按住写在旁边 —— 隐藏整条会让管理员以为这功能没做。
  */
 const showSyncSwitch = computed<boolean>(
-  () => purpose.value === 'login' && issuesGitToken(active.value),
+  () => purpose.value === 'login' && (issuesGitToken(active.value) || active.value === 'oidc'),
 )
+
+/** 这个开关此刻开得了吗 —— 与后端 supportsGitCredentialFor 同一判据。 */
+const syncAvailable = computed<boolean>(
+  () => supportsGitCredential(active.value, form.value.gitShape),
+)
+
+/** git 形态选择器:custom 与 oidc 用同一份选项、两套说法(一个定端点,一个作声明)。 */
+const gitShapeLabelKey = computed<string>(
+  () => (form.value.meta.gitShape === 'oidc' ? 'settingsOAuth.gitShapeOidcLabel' : 'settingsOAuth.gitShapeCustomLabel'),
+)
+const gitShapeHintKey = computed<string>(
+  () => (form.value.meta.gitShape === 'oidc' ? 'settingsOAuth.gitShapeOidcHint' : 'settingsOAuth.gitShapeCustomHint'),
+)
+/** 只有 oidc 需要「未声明」这一项;custom 的空串在载入时已归一成 GitLab。 */
+const gitShapeOptions = computed<string[]>(
+  () => (form.value.meta.gitShape === 'oidc' ? ['', 'gitlab', 'gitea'] : ['gitlab', 'gitea']),
+)
+
+/** 形态选项的文字:两家平台是品牌名,照字面写,只有「未声明」要翻。 */
+function gitShapeOptionLabel(shape: string): string {
+  if (shape === 'gitea') return 'Gitea'
+  if (shape === 'gitlab') return 'GitLab'
+  return t('settingsOAuth.gitShapeNone')
+}
 
 // ─── purpose + tabs ───────────────────────────────────────────────────────────
 
@@ -472,11 +543,32 @@ async function loadApps(): Promise<void> {
   }
 }
 
+/**
+ * 回显用的形态归一:custom 的空串在后端是「按 GitLab 推导」的存量语义,界面上不该出现
+ * 一个「什么都没选」的必选项;oidc 的空串是真含义(未声明),原样留着。
+ */
+function shownShape(meta: ProviderMeta, raw: string): GitShape {
+  if (raw === 'gitea') return 'gitea'
+  if (raw === 'gitlab') return 'gitlab'
+  // 空串:custom 按存量语义显示成 GitLab;oidc 是真的「未声明」,其余档位是「不适用」。
+  return meta.gitShape === 'custom' ? 'gitlab' : ''
+}
+
+/** oidc 的声明被撤掉时同步开关随之复位:按住一个「开着但注定发不出去」的开关只会让人干等。 */
+function onShapeChange(): void {
+  form.value.errors.gitShape = ''
+  if (form.value.meta.gitShape === 'oidc' && !form.value.gitShape) {
+    form.value.syncCredentials = false
+    form.value.errors.syncCredentials = ''
+  }
+}
+
 function applyApp(card: CardState, app: OAuthApp): void {
   card.saved = app
   card.clientId = app.clientId
   card.clientSecret = '' // never pre-fill the secret
   card.baseUrl = app.baseUrl
+  card.gitShape = shownShape(card.meta, app.gitShape)
   card.enabled = app.enabled
   card.errors = noErrors()
 }
@@ -488,6 +580,7 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.baseUrl = app.baseUrl
   card.allowedDomains = joinOAuthDomains(app.allowedDomains ?? [])
   card.callbackUrl = app.callbackUrl
+  card.gitShape = shownShape(card.meta, app.gitShape)
   // 非 git 身份源那几项:git 档位服务端一律返回空串,所以直接覆盖回来即可(不会串味)。
   // idClaim / scopes 为空时后端已按默认值(sub、openid profile email)落库并回显。
   card.discoveryUrl = app.discoveryUrl
@@ -498,7 +591,8 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.scopes = app.scopes
   card.agentId = app.agentId
   card.enabled = app.enabled
-  card.syncCredentials = app.syncCredentials
+  // 换不出 git 令牌的那几档,库里就算存着 true 也当没开:开关按住的态和勾上的态不能同时出现。
+  card.syncCredentials = supportsGitCredential(app.provider, card.gitShape) && app.syncCredentials
   card.errors = noErrors()
 }
 
@@ -556,6 +650,9 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
 
   card.saving = true
   try {
+    // git 形态:两档用得着(custom 定端点形态 / oidc 作 git 平台声明),其余档位后端一律落空串,
+    // 所以干脆只在有选择器的那两档发,别把「不适用」的档位带出一个莫名值。
+    const gitShape = card.meta.gitShape === 'none' ? undefined : card.gitShape
     if (isLogin) {
       const payload: SaveOAuthLoginAppInput = {
         clientId,
@@ -570,10 +667,11 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
         idClaim: card.idClaim.trim(),
         scopes: card.scopes.trim(),
         agentId: card.agentId.trim(),
+        ...(gitShape !== undefined ? { gitShape } : {}),
         // 整份覆盖语义:省略即关闭,所以每次都要把开关发出去。
-        // 再按档位收一道 —— 非 git 身份源压根换不出 git 令牌,就算状态不知从哪儿被翻成 true,
-        // 也不该发出去让后端回一句 422(后端同样拦,这里是让这条流根本不会出现那个错误)。
-        syncCredentials: issuesGitToken(provider) && card.syncCredentials,
+        // 再按「这一档到底给不给得出 git 令牌」收一道 —— 开关本来就只摆在这些档上,
+        // 收这一道是让「前端以为能开、后端说不能」的漂移不会变成一条 422(后端同样拦)。
+        syncCredentials: supportsGitCredential(provider, card.gitShape) && card.syncCredentials,
       }
       applyLoginApp(card, await saveOAuthLoginApp(provider, payload))
     } else {
@@ -581,6 +679,7 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
         clientId,
         ...(card.clientSecret ? { clientSecret: card.clientSecret } : {}),
         ...(card.meta.hasBaseUrl ? { baseUrl } : {}),
+        ...(gitShape !== undefined ? { gitShape } : {}),
         enabled: card.enabled,
       }
       // 仓库凭据的 tab 清单里压根没有 OIDC(见 cardList),这里只是给类型收窄一个落点。
@@ -603,10 +702,19 @@ async function handleSave(provider: OAuthLoginProvider): Promise<void> {
           card.errors.endpoints = t('settingsOAuth.errPlatformConfigInvalid')
         } else if (code === 'agent_id_required') {
           card.errors.agentId = t('settingsOAuth.errAgentIdRequired')
+        } else if (code === 'git_shape_invalid') {
+          // 形态只有「留空 / gitlab / gitea」三种合法值,选择器本身就是枚举,
+          // 走到这儿说明前端发的值不在选项里(两侧漂了)——红字钉在形态这一栏上。
+          card.errors.gitShape = t('settingsOAuth.errGitShapeInvalid')
         } else if (code === 'sync_unsupported') {
           // 前端已经把非 git 档的开关发成 false,正常走不到这儿;真到了就是两侧判据漂了
           // (这一档前端以为换得出 git 令牌,所以开关确实摆在屏上)—— 红字钉在开关下面,别只弹一条 toast。
           card.errors.syncCredentials = t('settingsOAuth.errSyncUnsupported')
+        } else if (code === 'sync_needs_git_platform') {
+          // OIDC 开了同步但没声明背后是哪家 git 平台:同样漂在「开关按住 + 表单拦了一道」之后才会出现。
+          // 指路要落在「同为 git 平台」那一栏,而不是只在开关下写一句没头没尾的话。
+          card.errors.syncCredentials = t('settingsOAuth.errSyncNeedsGitPlatform')
+          card.errors.gitShape = t('settingsOAuth.errSyncNeedsGitPlatform')
         } else {
           toast.error(t('settingsOAuth.toastSaveFailed'), { detail: err.apiError.message })
         }
@@ -832,6 +940,34 @@ function relativeTime(iso: string | null): string {
               </span>
             </div>
 
+            <!-- git 形态 — 只有两档用得着:自建实例靠它拼出这家的端点路径,
+                 OIDC 拿它作「这个身份源背后同时是一家 git 平台」的声明(不声明就没有仓库令牌可换)。
+                 选项本身就是枚举,所以配不出非法值;后端仍会拒收漂来的值。 -->
+            <div v-if="form.meta.gitShape !== 'none'" class="field">
+              <label class="field-label" :for="`oauth-gitshape-${active}`">
+                {{ t(gitShapeLabelKey) }}
+                <span v-if="form.meta.gitShape === 'custom'" class="field-required">*</span>
+                <span v-else class="field-optional">{{ t('settingsOAuth.gitShapeOidcOptional') }}</span>
+              </label>
+              <select
+                :id="`oauth-gitshape-${active}`"
+                v-model="form.gitShape"
+                class="field-input"
+                :class="{ 'field-input--error': form.errors.gitShape }"
+                :aria-invalid="!!form.errors.gitShape || undefined"
+                :disabled="form.saving"
+                @change="onShapeChange"
+              >
+                <option v-for="s in gitShapeOptions" :key="s" :value="s">
+                  {{ gitShapeOptionLabel(s) }}
+                </option>
+              </select>
+              <span v-if="form.errors.gitShape" class="field-error" role="alert">
+                {{ form.errors.gitShape }}
+              </span>
+              <span v-else class="field-hint">{{ t(gitShapeHintKey) }}</span>
+            </div>
+
             <!-- 端点组 — 只出现在「平台登录」档。OIDC 的端点必须问服务器自己(discovery),
                  钉钉/飞书/企业微信的官方地址后端已内置,这里只给「覆盖」(走代理/内网入口时才填)。 -->
             <template v-if="purpose === 'login' && form.meta.endpoints !== 'none'">
@@ -1038,7 +1174,7 @@ function relativeTime(iso: string | null): string {
               <span v-else class="field-hint">{{ t('settingsOAuth.domainsHint') }}</span>
             </div>
 
-            <!-- 登录即同步凭据 — 仅 git 四档的登录卡(判据见 showSyncSwitch) -->
+            <!-- 登录即同步凭据 — git 五档 + OIDC(判据见 showSyncSwitch);OIDC 没声明 git 形态时按住 -->
             <div v-if="showSyncSwitch" class="sync-box">
               <div class="toggle-row">
                 <button
@@ -1048,7 +1184,7 @@ function relativeTime(iso: string | null): string {
                   role="switch"
                   :aria-checked="form.syncCredentials"
                   :aria-label="t('settingsOAuth.syncAria', { provider: labelFor(active) })"
-                  :disabled="form.saving"
+                  :disabled="form.saving || !syncAvailable"
                   @click="form.syncCredentials = !form.syncCredentials; form.errors.syncCredentials = ''"
                 >
                   <span class="toggle-thumb" />
@@ -1061,6 +1197,9 @@ function relativeTime(iso: string | null): string {
               <p v-if="form.errors.syncCredentials" class="field-error" role="alert">
                 {{ form.errors.syncCredentials }}
               </p>
+              <!-- 按住开关时要把「为什么按不住」和「怎么松开」写在开关旁边:
+                   这条流能不能落成凭据只有管理员知道自己那台服务器是什么,所以让他显式声明,而不是默默关掉。 -->
+              <p v-else-if="!syncAvailable" class="sync-note">{{ t('settingsOAuth.syncNeedsShapeHint') }}</p>
               <p v-else class="sync-note">{{ t('settingsOAuth.syncNote') }}</p>
             </div>
 

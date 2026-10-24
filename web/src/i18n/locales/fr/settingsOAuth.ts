@@ -72,16 +72,39 @@ export default {
     'L’allowlist de domaines contient un élément invalide : indiquez le domaine seul (ex. corp.example.com), sans protocole, chemin ni espace',
   toggleTitleLogin: 'Activer la connexion',
   toggleDescLogin: 'Une fois activé, la page de connexion affiche un bouton « Se connecter avec cette plateforme »',
-  // ─── Sync des identifiants à la connexion (les 4 plateformes git) ─────────
-  // C'est ici que se joue tout ce qu'une seule connexion emporte : désactivé par
-  // défaut, et le texte dit à la fois la portée gagnée et comment s'en sortir.
+
+  // ─── Forme git (auto-hébergée : forme des endpoints / OIDC : déclarer que c’est
+  // aussi une plateforme git). Le même champ ne dit pas la même chose selon la carte.
+  // En auto-hébergé, il décide quelle URL d’autorisation est construite — se tromper
+  // mène à un 404 côté plateforme. En OIDC, c’est une déclaration explicite : le
+  // jeton de connexion ne peut cloner un dépôt que si la source d’identité est aussi
+  // un serveur git.
+  gitShapeCustomLabel: 'Forme de la plateforme',
+  gitShapeOidcLabel: 'Est aussi une plateforme git',
+  gitShapeOidcOptional: '(vide = identité seule)',
+  gitShapeNone: 'Non déclaré',
+  gitShapeCustomHint:
+    'Les URL d’autorisation / de jeton / d’utilisateur d’une instance auto-hébergée sont dérivées de la plateforme choisie : GitLab utilise /oauth/authorize, Gitea utilise /login/oauth/authorize. Un mauvais choix pointe vers un chemin inexistant.',
+  gitShapeOidcHint:
+    'Un GitLab / Gitea auto-hébergé peut aussi servir de source OIDC. Ce n’est qu’après la déclaration que le jeton obtenu à la connexion peut cloner un dépôt et que l’option « Synchroniser un identifiant git à la connexion » ci-dessous s’active. En cas de doute, laissez vide et utilisez-la comme identité seule.',
+  errGitShapeInvalid:
+    'La forme de la plateforme doit rester vide ou valoir gitlab ou gitea : avec toute autre valeur, l’URL d’autorisation construite pointera vers un chemin inexistant',
+
+  // ─── Sync des identifiants à la connexion (les 5 plateformes git + l’OIDC
+  // déclarant une forme git). ─────────────────────────────────────────────────
+  // C’est ici que se joue tout ce qu’une seule connexion emporte : désactivé par
+  // défaut, et le texte dit à la fois la portée gagnée et comment s’en sortir.
   syncTitle: 'Synchroniser un identifiant git à la connexion',
   syncDesc: 'Après la connexion via cette plateforme, enregistrer le jeton d’accès obtenu de cette autorisation comme identifiant git personnel de ce compte',
   syncAria: 'Activer la synchronisation à la connexion pour {provider}',
   syncNote:
     'Une fois activé, la connexion demande davantage : de « identité seule » à « lire les dépôts ». Avant l’expiration, la plateforme renouvelle le jeton elle-même ; si le renouvellement est refusé, l’identifiant est marqué « autorisation révoquée » et une nouvelle connexion le rétablit. L’identifiant synchronisé reste visible uniquement pour ce compte — l’identifiant utilisé par un projet vous appartient toujours.',
+  syncNeedsShapeHint:
+    'Cette source OIDC n’a pas encore déclaré la plateforme git qui se trouve derrière elle : l’option reste donc verrouillée. Choisissez-en une dans « Est aussi une plateforme git » pour pouvoir parler de synchroniser un identifiant.',
   errSyncUnsupported:
-    'Cette source d’identité ne peut pas délivrer de jeton permettant de cloner un dépôt : la synchronisation à la connexion n’est ouverte qu’aux plateformes git (Gitee / GitHub / GitLab / auto-hébergée)',
+    'Cette source d’identité ne peut pas délivrer de jeton permettant de cloner un dépôt : la synchronisation à la connexion n’est ouverte qu’aux plateformes git (Gitee / GitHub / GitLab / Gitea / auto-hébergée) ou à un fournisseur OIDC déclarant une forme git',
+  errSyncNeedsGitPlatform:
+    'Ce fournisseur d’identité OIDC n’a pas déclaré la plateforme git qu’il front (GitLab / Gitea), « Synchroniser un identifiant git à la connexion » ne peut donc pas être activé : choisissez-en une sous « Est aussi une plateforme git », ou laissez l’option désactivée',
 
   // ─── Source d’identité OIDC (uniquement sous « Connexion à la plateforme ») ──
   // Le backend résout réellement les points d’accès à l’enregistrement : une

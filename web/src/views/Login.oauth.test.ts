@@ -123,4 +123,14 @@ describe('Login — OAuth 登录入口', () => {
 
     expect(wrapper.get('.banner').text()).toContain('登录未完成(brand_new_code)')
   })
+
+  it('平台拒绝授权范围时说清「重试没用」,不跟「你点了取消」混成一句', async () => {
+    // 这两个码在授权页上长得一样,但 scope 被拒是配置问题:让用户反复试只会 more 困惑
+    routeQuery.value = { oauth_error: 'scope_rejected' }
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    expect(wrapper.get('.banner').text()).toContain('拒绝了这次申请的权限范围')
+    expect(replace).toHaveBeenCalledWith({ path: '/login', query: {} })
+  })
 })

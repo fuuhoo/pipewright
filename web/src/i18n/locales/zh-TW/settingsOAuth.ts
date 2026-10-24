@@ -71,7 +71,22 @@ export default {
     'Email 網域白名單含非法項:只填網域本身(如 corp.example.com),不要附協議、路徑或空白',
   toggleTitleLogin: '啟用登入',
   toggleDescLogin: '啟用後登入頁出現「用該平台帳號登入」按鈕',
-  // ─── 登入即同步憑證(只在 git 四檔的登入卡出現)──────────────────────────
+
+  // ─── git 形態(自建實例選端點形態 / OIDC 聲明「同為 git 平台」)──────────────
+  // 同一個欄位在兩檔說的是兩件事:自建那檔決定「授權網址按哪家拼」,選錯就在平台側撞 404;
+  // OIDC 那檔是一項顯式聲明——這個身分來源背後同時是一家 git 平台,決定登入權杖能不能拿去複製倉庫。
+  gitShapeCustomLabel: '平台形態',
+  gitShapeOidcLabel: '同為 git 平台',
+  gitShapeOidcOptional: '(留空 = 只當身分源)',
+  gitShapeNone: '未聲明',
+  gitShapeCustomHint:
+    '自建實例的授權 / 權杖 / 使用者資訊網址按所選平台推導:GitLab 走 /oauth/authorize,Gitea 走 /login/oauth/authorize。選錯會導向一個不存在的路徑。',
+  gitShapeOidcHint:
+    '自建 GitLab / Gitea 也能同時當 OIDC 身分源。聲明之後,登入換來的權杖才可能拿去複製倉庫,下面的「登入即同步憑證」才允許開啟;不確定就留空,只當身分源用。',
+  errGitShapeInvalid:
+    '平台形態只能留空、填 gitlab 或 gitea:填了別家,拼出來的授權網址會指向一個不存在的路徑',
+
+  // ─── 登入即同步憑證(只在 git 五檔 + 已聲明 git 形態的 OIDC 的登入卡出現)──────
   // 這一項決定的是「一次登入順手換走多大權限」,不是又一個填錯的框:預設關閉,
   // 開啟後授權頁會多申請倉庫讀權限,所以文案要同時交代升到哪一級、失效了怎麼辦。
   syncTitle: '登入即同步憑證',
@@ -79,8 +94,12 @@ export default {
   syncAria: '為 {provider} 開啟登入即同步憑證',
   syncNote:
     '開啟後,登入申請的權限會從「只認身分」升到「能讀倉庫」。權杖到期前平台會自動續期;續期被拒時那條憑證會被標註成「授權已失效」,重新用該平台登入一次即可恢復。同步出來的憑證只對本帳號可見,專案要用哪條憑證仍由你自己選。',
+  syncNeedsShapeHint:
+    '這個 OIDC 身分源還沒聲明它背後是哪家公司 git 平台,所以開關先按住:在上面「同為 git 平台」裡選一家才談得上同步憑證。',
   errSyncUnsupported:
-    '這個身分來源給不出能複製倉庫的權杖:「登入即同步憑證」只對 git 平台(Gitee / GitHub / GitLab / 自建)開放',
+    '這個身分來源給不出能複製倉庫的權杖:「登入即同步憑證」只對 git 平台(Gitee / GitHub / GitLab / Gitea / 自建)或已聲明 git 形態的 OIDC 開放',
+  errSyncNeedsGitPlatform:
+    '這個 OIDC 身分源還沒聲明它背後是哪家公司 git 平台(GitLab / Gitea),所以不能開「登入即同步憑證」:先在「同為 git 平台」裡選一家,或關掉這個開關',
 
   // ─── OIDC 身分來源(只在「平台登入」檔出現)──────────────────────────────
   // 端點由服務端在儲存時真的解析一次:配錯的代價是「授權頁一切正常,回來就報錯」,

@@ -35,11 +35,13 @@ function makeApp(over: Partial<import('../../api/oauth').OAuthApp> = {}) {
     maskedSecret: '••••a91f',
     configured: true,
     updatedAt: '2026-05-30T00:00:00Z',
+    // 自建那档才用得上:空串在服务端就是 GitLab 形态,老行也是这么存的。
+    gitShape: '' as const,
     ...over,
   }
 }
 
-/** 四个平台改成 tab 后一次只摊开一档:断言某档的表单前得先把它的 tab 点亮。 */
+/** 五个平台改成 tab 后一次只摊开一档:断言某档的表单前得先把它的 tab 点亮。 */
 async function openTab(wrapper: Awaited<ReturnType<typeof mount>>, pid: string) {
   await wrapper.get(`[data-provider="${pid}"]`).trigger('click')
   await flushPromises()
@@ -71,7 +73,10 @@ function makeLoginApp(over: Partial<import('../../api/oauth').OAuthLoginApp> = {
     scopes: '',
     // AgentId 同理:只有企业微信有值,其余档位服务端一律回空串。
     agentId: '',
-    // 登录即同步凭据:后端只对 git 四档给 true,oidc / 钉钉 / 飞书 / 企微恒 false。
+    // git 形态:custom 是端点形态(空 = GitLab),oidc 是「同为 git 平台」的声明(空 = 未声明)。
+    // 其余档位服务端强制落空串,所以它对所有夹具都必填。
+    gitShape: '' as const,
+    // 登录即同步凭据:后端只给 git 五档 + 已声明 git 形态的 oidc 落 true,钉钉 / 飞书 / 企微恒 false。
     syncCredentials: false,
     ...over,
   }
@@ -125,8 +130,8 @@ describe('SettingsOAuth', () => {
     const wrapper = mount(SettingsOAuth)
     await flushPromises()
 
-    // four provider tabs (gitee/github/gitlab/custom)
-    expect(wrapper.findAll('[data-provider]')).toHaveLength(4)
+    // five provider tabs (gitee/github/gitlab/gitea/custom)
+    expect(wrapper.findAll('[data-provider]')).toHaveLength(5)
     const panels = wrapper.findAll('[data-panel]')
     expect(panels).toHaveLength(1)
     expect(panels[0].attributes('data-panel')).toBe('gitee')
@@ -408,9 +413,9 @@ describe('SettingsOAuth', () => {
     expect(wrapper.get('.card-footer .toggle-label').text()).toContain('启用登录')
   })
 
-  // ─── 登录即同步凭据(只在 git 四档的登录卡出现)───────────────────────────
+  // ─── 登录即同步凭据(git 五档 + 已声明 git 形态的 OIDC 才给开)──────────────
 
-  it('shows the credential-sync switch only where the platform can hand out a git token', async () => {
+  it('shows the credential-sync switch on the git five and holds it off on an undeclared OIDC', async () => {
     const wrapper = mount(SettingsOAuth)
     await flushPromises()
 
@@ -418,11 +423,19 @@ describe('SettingsOAuth', () => {
     expect(wrapper.find('.sync-box').exists()).toBe(false)
 
     await openPurpose(wrapper, 'login')
-    for (const pid of ['gitee', 'github', 'gitlab', 'custom']) {
+    const switchEl = () => wrapper.get('.sync-box [role="switch"]').element as HTMLButtonElement
+    for (const pid of ['gitee', 'github', 'gitlab', 'gitea', 'custom']) {
       await openTab(wrapper, pid)
       expect(wrapper.find('.sync-box').exists(), `${pid} 该有开关`).toBe(true)
+      expect(switchEl().disabled, `${pid} 的开关该能点`).toBe(false)
     }
-    for (const pid of ['oidc', 'dingtalk', 'feishu', 'wecom']) {
+    // OIDC 没声明 git 形态时开关照摆,但按住并说明为什么:藏着等于让管理员以为没这功能。
+    await openTab(wrapper, 'oidc')
+    expect(wrapper.find('.sync-box').exists()).toBe(true)
+    expect(switchEl().disabled).toBe(true)
+    expect(wrapper.get('.sync-box').text()).toContain('还没声明它背后是哪家公司 git 平台')
+    // 三家国内身份源压根给不出能克隆的令牌,连开关都不该出现
+    for (const pid of ['dingtalk', 'feishu', 'wecom']) {
       await openTab(wrapper, pid)
       expect(wrapper.find('.sync-box').exists(), `${pid} 换不出 git 令牌,不该有开关`).toBe(false)
     }
@@ -446,7 +459,7 @@ describe('SettingsOAuth', () => {
     expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({ syncCredentials: false })
   })
 
-  it('never sends the switch on for an identity source outside the git four', async () => {
+  it('never sends the switch on for an identity source that cannot hand out a git token', async () => {
     // 服务端给不出这种组合,这里钉的是前端那道保险:脏状态也不该发 true 让后端回 422
     getOAuthLoginApps.mockResolvedValue([makeOidcApp({ syncCredentials: true })])
     saveOAuthLoginApp.mockResolvedValue(makeOidcApp())
@@ -455,11 +468,71 @@ describe('SettingsOAuth', () => {
     await openPurpose(wrapper, 'login')
     await openTab(wrapper, 'oidc')
 
-    expect(wrapper.find('.sync-box').exists()).toBe(false)
+    // 未声明 git 形态 → 开关既显示为关,也点不动:按住的同时不能还亮着勾
+    expect(wrapper.get('.sync-box [role="switch"]').attributes('aria-checked')).toBe('false')
     await wrapper.get('[data-panel="oidc"] form').trigger('submit')
     await flushPromises()
 
     expect(saveOAuthLoginApp.mock.calls[0][1].syncCredentials).toBe(false)
+    expect(saveOAuthLoginApp.mock.calls[0][1].gitShape).toBe('')
+  })
+
+  it('opens the OIDC switch once a git platform is declared, and sends that declaration', async () => {
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp()])
+    saveOAuthLoginApp.mockResolvedValue(makeOidcApp({ gitShape: 'gitlab', syncCredentials: true }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    expect(wrapper.get('.sync-box [role="switch"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('#oauth-gitshape-oidc').setValue('gitlab')
+    expect(wrapper.get('.sync-box [role="switch"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('.sync-box [role="switch"]').trigger('click')
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({ gitShape: 'gitlab', syncCredentials: true })
+  })
+
+  it('clears the draft sync switch again when the OIDC declaration is dropped', async () => {
+    // 声明一撤,开关就回到按住的态;留着 ON 的草稿等于把「屏上亮着但发不出去」摆给用户
+    getOAuthLoginApps.mockResolvedValue([makeOidcApp({ gitShape: 'gitea', syncCredentials: true })])
+    saveOAuthLoginApp.mockResolvedValue(makeOidcApp())
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    expect(wrapper.get('.sync-box [role="switch"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('#oauth-gitshape-oidc').setValue('')
+
+    expect(wrapper.get('.sync-box [role="switch"]').attributes('aria-checked')).toBe('false')
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+    expect(saveOAuthLoginApp.mock.calls[0][1]).toMatchObject({ gitShape: '', syncCredentials: false })
+  })
+
+  it('sends the self-hosted platform shape and omits it on the branded tabs', async () => {
+    saveOAuthApp.mockResolvedValue(makeApp({ provider: 'custom', baseUrl: 'http://git.local', gitShape: 'gitea' }))
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+
+    await openTab(wrapper, 'custom')
+    // 自建的老行库里存的是空串,回显要落在真正生效的那一档形态上,而不是空白
+    expect(wrapper.get('#oauth-gitshape-custom').element).toHaveProperty('value', 'gitlab')
+    await wrapper.get('#oauth-gitshape-custom').setValue('gitea')
+    await wrapper.get('[data-panel="custom"] form').trigger('submit')
+    await flushPromises()
+    expect(saveOAuthApp.mock.calls[0][0]).toBe('custom')
+    expect(saveOAuthApp.mock.calls[0][1]).toMatchObject({ gitShape: 'gitea' })
+
+    // 品牌档位没有形态可声明:多发一个字段等于让服务端去改写一个它不该动的值
+    await openTab(wrapper, 'gitea')
+    await wrapper.get('[data-panel="gitea"] form').trigger('submit')
+    await flushPromises()
+    expect(saveOAuthApp.mock.calls[1][1].gitShape).toBeUndefined()
   })
 
   it('pins a sync_unsupported rejection on the switch instead of a toast', async () => {
@@ -477,6 +550,39 @@ describe('SettingsOAuth', () => {
     expect(toastError).not.toHaveBeenCalled()
   })
 
+  it('pins a sync_needs_git_platform rejection on both the switch and the declaration', async () => {
+    // 前端本来就拦住了这种组合,真收到说明两侧判据漂了 —— 红字要同时钉住开关和它的原因栏
+    saveOAuthLoginApp.mockRejectedValue(
+      new HttpError(422, { code: 'sync_needs_git_platform', message: 'undeclared' }, 'unprocessable'),
+    )
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openPurpose(wrapper, 'login')
+    await openTab(wrapper, 'oidc')
+
+    await wrapper.get('[data-panel="oidc"] form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('.sync-box').text()).toContain('还没声明')
+    expect(wrapper.get('#oauth-gitshape-oidc').attributes('aria-invalid')).toBe('true')
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('pins a git_shape_invalid rejection on the shape field', async () => {
+    saveOAuthApp.mockRejectedValue(
+      new HttpError(422, { code: 'git_shape_invalid', message: 'bad shape' }, 'unprocessable'),
+    )
+    const wrapper = mount(SettingsOAuth)
+    await flushPromises()
+    await openTab(wrapper, 'custom')
+
+    await wrapper.get('[data-panel="custom"] form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[data-panel="custom"]').text()).toContain('只能留空、填 gitlab 或 gitea')
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
   // ─── OIDC 身份源(只挂在「平台登录」档)──────────────────────────────────
 
   it('offers the OIDC tab only under the login purpose', async () => {
@@ -485,10 +591,10 @@ describe('SettingsOAuth', () => {
 
     // 仓库凭据复用的是 git 平台的 token 流程,OIDC 在那边没有意义,tab 都不该出现
     expect(wrapper.find('[data-provider="oidc"]').exists()).toBe(false)
-    expect(wrapper.findAll('[data-provider]')).toHaveLength(4)
+    expect(wrapper.findAll('[data-provider]')).toHaveLength(5)
 
     await openPurpose(wrapper, 'login')
-    expect(wrapper.findAll('[data-provider]')).toHaveLength(8)
+    expect(wrapper.findAll('[data-provider]')).toHaveLength(9)
     expect(wrapper.get('[data-provider="oidc"]').text()).toContain('OIDC')
   })
 
@@ -608,7 +714,7 @@ describe('SettingsOAuth', () => {
 
     await wrapper.get('#oauth-discovery-oidc').setValue('')
     await wrapper.get('#oauth-oidc-authorize-oidc').setValue('https://sso.local/authorize')
-    await wrapper.get('[data-panel="oidc"]').get('[role="switch"]').trigger('click')
+    await wrapper.get('[data-panel="oidc"]').get('.card-footer [role="switch"]').trigger('click')
     await wrapper.get('[data-panel="oidc"] form').trigger('submit')
     await flushPromises()
 
@@ -631,7 +737,7 @@ describe('SettingsOAuth', () => {
     await wrapper.get('#oauth-oidc-authorize-oidc').setValue('https://sso.local/authorize')
     await wrapper.get('#oauth-oidc-token-oidc').setValue('https://sso.local/token')
     await wrapper.get('#oauth-oidc-userinfo-oidc').setValue('https://sso.local/userinfo')
-    await wrapper.get('[data-panel="oidc"]').get('[role="switch"]').trigger('click')
+    await wrapper.get('[data-panel="oidc"]').get('.card-footer [role="switch"]').trigger('click')
     await wrapper.get('[data-panel="oidc"] form').trigger('submit')
     await flushPromises()
 

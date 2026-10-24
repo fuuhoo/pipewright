@@ -76,7 +76,24 @@ export default {
     'The email allowlist contains an invalid entry: give the domain alone (e.g. corp.example.com), without scheme, path or spaces',
   toggleTitleLogin: 'Enable sign-in',
   toggleDescLogin: 'Once enabled, the sign-in page shows a "sign in with this platform" button',
-  // ─── Sync a credential at sign-in (the four git platforms' sign-in card) ───
+
+  // ─── Git shape (self-hosted endpoint shape / OIDC's "also a git platform") ──
+  // One field, two meanings. For the self-hosted tier it decides whose URLs we
+  // build — pick wrong and the consent screen 404s on the platform. For OIDC it
+  // is an explicit declaration that this identity provider also fronts a git
+  // host, which is the only thing that can make a sign-in token clone-able.
+  gitShapeCustomLabel: 'Platform shape',
+  gitShapeOidcLabel: 'Also a git platform',
+  gitShapeOidcOptional: '(blank = identity only)',
+  gitShapeNone: 'Not declared',
+  gitShapeCustomHint:
+    'A self-hosted instance takes its authorize / token / userinfo URLs from the platform you pick: GitLab uses /oauth/authorize, Gitea /login/oauth/authorize. The wrong choice points at a path that does not exist.',
+  gitShapeOidcHint:
+    'A self-hosted GitLab or Gitea can also be the OIDC provider. Declaring it is what lets the sign-in token be used to clone a repository — only then does "Sync a git credential at sign-in" below unlock. Leave it blank if you are not sure.',
+  errGitShapeInvalid:
+    'Platform shape must be left empty or set to gitlab or gitea: any other value builds an authorization URL that points to a path that does not exist',
+
+  // ─── Sync a credential at sign-in (git platforms, plus OIDC once declared) ──
   // This decides how much a single sign-in takes away, so it stays off by
   // default and the copy has to name both the wider scope and the recovery path.
   syncTitle: 'Sync a git credential at sign-in',
@@ -84,8 +101,12 @@ export default {
   syncAria: 'Enable credential sync at sign-in for {provider}',
   syncNote:
     'Turning this on raises what the login asks for: from "identity only" to "read repositories". The platform refreshes the token before it expires; when a refresh is refused the credential is labelled "authorization revoked", and signing in again restores it. The synced credential stays visible to this account only — which credential a project uses is still your choice.',
+  syncNeedsShapeHint:
+    'This OIDC provider has not declared which git platform it fronts, so the switch stays locked: pick one under "Also a git platform" above before anything can be synced.',
   errSyncUnsupported:
-    'This identity source cannot hand out a token that clones a repository: credential sync at sign-in is open only to git platforms (Gitee / GitHub / GitLab / self-hosted)',
+    'This identity source cannot hand out a token that clones a repository: credential sync at sign-in is open only to git platforms (Gitee / GitHub / GitLab / Gitea / self-hosted) and to an OIDC provider that declares a git shape',
+  errSyncNeedsGitPlatform:
+    'This OIDC identity provider has not declared which git platform it fronts (GitLab / Gitea), so "Sync a git credential at sign-in" cannot be enabled: pick one under "Also a git platform" first, or leave this switch off',
 
   // ─── OIDC identity source (only ever listed under "Platform sign-in") ──────
   // The backend resolves the endpoints for real when you save: a wrong config

@@ -94,6 +94,7 @@ const zhTW: typeof zhCN = {
     invalidState: '登入校驗未通過,請回到登入頁重新發起。',
     missingCode: '平台沒有回傳授權碼,請重新發起登入。',
     providerDenied: '你在平台側取消了授權。',
+    scopeRejected: '平台拒絕了這次申請的權限範圍。多半是這個登入應用沒有登記「讀倉庫」權限,重試不會有用:請讓管理員在 OAuth 應用裡補上,或關閉「登入即同步憑證」。',
     appNotConfigured: '這個平台的登入入口還沒配置完整,請聯絡管理員。',
     invalidProvider: '無法辨識這個登入平台。',
     vaultUnavailable: '伺服器無法解密登入配置,請聯絡管理員。',

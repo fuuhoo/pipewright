@@ -94,6 +94,7 @@ const es: typeof zhCN = {
     invalidState: 'No se pudo validar el inicio de sesión. Vuelve a la pantalla de acceso e inténtalo otra vez.',
     missingCode: 'La plataforma no devolvió el código de autorización. Inténtalo otra vez.',
     providerDenied: 'Cancelaste la autorización en la plataforma.',
+    scopeRejected: 'La plataforma rechazó los permisos que pedía este inicio de sesión. Casi siempre significa que la aplicación OAuth no tiene registrado el permiso de lectura de repositorios: reintentar no sirve de nada. Pide a un administrador que lo añada o desactiva «Sincronizar una credencial git al iniciar sesión».',
     appNotConfigured: 'El acceso por esta plataforma no está configurado del todo. Contacta con un administrador.',
     invalidProvider: 'Proveedor de inicio de sesión desconocido.',
     vaultUnavailable: 'El servidor no pudo descifrar la configuración de acceso. Contacta con un administrador.',

@@ -94,6 +94,7 @@ export default {
     invalidState: '登录校验未通过,请回到登录页重新发起。',
     missingCode: '平台没有回传授权码,请重新发起登录。',
     providerDenied: '你在平台侧取消了授权。',
+    scopeRejected: '平台拒绝了这次申请的权限范围。多半是这个登录应用没有登记「读仓库」权限,重试不会有用:请让管理员在 OAuth 应用里补上,或关掉「登录即同步凭据」。',
     appNotConfigured: '这个平台的登录入口还没配置完整,请联系管理员。',
     invalidProvider: '无法识别这个登录平台。',
     vaultUnavailable: '服务器无法解密登录配置,请联系管理员。',

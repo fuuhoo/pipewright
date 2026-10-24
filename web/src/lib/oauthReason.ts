@@ -17,6 +17,9 @@ const REASON_KEYS: Record<string, string> = {
   invalid_state: 'invalidState',
   missing_code: 'missingCode',
   provider_denied: 'providerDenied',
+  // 平台在授权页直接拒绝了我们申请的 scope(多为「登录即同步凭据」升过级、而应用没登记该 scope)。
+  // 它和「用户点了取消」长得一样但重试永远不会成功,所以后端单独回吐一个码。
+  scope_rejected: 'scopeRejected',
   app_not_configured: 'appNotConfigured',
   invalid_provider: 'invalidProvider',
   vault_unavailable: 'vaultUnavailable',

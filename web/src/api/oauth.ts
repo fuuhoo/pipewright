@@ -20,21 +20,33 @@
 
 import { http } from './http'
 
-export type OAuthProvider = 'gitee' | 'github' | 'gitlab' | 'custom'
+export type OAuthProvider = 'gitee' | 'github' | 'gitlab' | 'gitea' | 'custom'
 
 /**
- * 「登录用」身份源的枚举 = git 四档 + OIDC + 钉钉 / 飞书 / 企业微信。
+ * 「登录用」身份源的枚举 = git 五档 + OIDC + 钉钉 / 飞书 / 企业微信。
  * 与后端 `normalizeProvider` / `normalizeLoginProvider` 两套枚举一一对应:
  * 后四档都给不了 git token,所以它们只出现在登录这一侧,永远不进保险库/仓库凭据。
  */
 export type OAuthLoginProvider = OAuthProvider | 'oidc' | 'dingtalk' | 'feishu' | 'wecom'
 
+/** 自建实例按哪家 git 平台的地址形态推导端点;空 = gitlab(存量语义)。 */
+export type GitShape = 'gitlab' | 'gitea' | ''
+
 /**
  * 这一档换不换得出 git 令牌 —— 与后端 `issuesGitToken` 同一判据。
- * 只有 git 四档能;「登录即同步凭据」只在这四档出现,别给 OIDC/钉钉/飞书/企业微信 摆一个永远存不进去的开关。
+ * 「登录即同步凭据」只在这些档出现,别给钉钉/飞书/企业微信 摆一个永远存不进去的开关。
  */
 export function issuesGitToken(provider: OAuthLoginProvider): boolean {
-  return provider === 'gitee' || provider === 'github' || provider === 'gitlab' || provider === 'custom'
+  return provider === 'gitee' || provider === 'github' || provider === 'gitlab' || provider === 'gitea' || provider === 'custom'
+}
+
+/**
+ * 「登录即同步凭据」开不开得了 —— 与后端 `supportsGitCredentialFor` 同一判据:
+ * git 五档天然能;OIDC 只有管理员声明了它背后是一家 git 平台(GitLab / Gitea)才算能。
+ * 判据只看 provider 会把 OIDC 的开关摆出来,而它压根存不进去 —— 那是服务端要报错的事。
+ */
+export function supportsGitCredential(provider: OAuthLoginProvider, gitShape: string): boolean {
+  return issuesGitToken(provider) || (provider === 'oidc' && gitShape !== '')
 }
 
 /** GET /api/oauth/apps element — never contains plaintext clientSecret. */
@@ -42,6 +54,8 @@ export interface OAuthApp {
   provider: OAuthProvider
   clientId: string
   baseUrl: string
+  /** 只有 custom 有值(gitlab|gitea):自建实例按哪家的地址形态推导端点,空 = gitlab。 */
+  gitShape: GitShape
   enabled: boolean
   /** Server-computed mask, e.g. "••••a91f" — never plaintext. */
   maskedSecret: string
@@ -59,6 +73,11 @@ export interface SaveOAuthAppInput {
   clientSecret?: string
   /** Only meaningful for the self-hosted (`custom`) provider. */
   baseUrl?: string
+  /**
+   * 同样只对 custom 有语义,且是**整份覆盖**(省略即清空,清空 = 回到 GitLab 形态)。
+   * 内置四档服务端一律落空串,多发一个空字段不会串味。
+   */
+  gitShape?: GitShape
   enabled: boolean
 }
 
@@ -129,8 +148,16 @@ export interface OAuthLoginApp {
   scopes: string
   agentId: string
   /**
+   * 有两种含义,只由 provider 决定:
+   *   - custom:自建实例按哪家 git 平台的地址形态推导端点(空 = GitLab,存量语义)。
+   *   - oidc:**声明**这个身份源背后同时是一家 git 平台。空 = 没声明,凭据同步不许打开。
+   * 其余档位恒为空串。
+   */
+  gitShape: GitShape
+  /**
    * 登录即同步凭据:打开后,这次授权顺手落成该账号的一条个人 git 凭据。
-   * **只有 git 四档(gitee/github/gitlab/custom)能开**,非 git 身份源服务端一律返回 false。
+   * 能开的只有 git 五档(gitee/github/gitlab/gitea/custom)+ 已声明 gitShape 的 oidc;
+   * 其余身份源服务端在保存期就报错(422 sync_unsupported),不会静默关掉。
    * 打开它等于把登录申请的 scope 从「只认身份」升到「能读仓库」,所以是管理员的显式选择,默认关。
    */
   syncCredentials: boolean
@@ -162,9 +189,16 @@ export interface SaveOAuthLoginAppInput {
   /** 企业微信自建应用的 AgentId;其余身份源服务端一律清空。 */
   agentId?: string
   /**
+   * 同样是**整份覆盖**语义(省略即清空),且只有两档有用:
+   *   - custom:自建实例按哪家 git 平台的地址形态推导端点(空 = GitLab)。
+   *   - oidc:声明这个身份源背后同时是一家 git 平台(空 = 没声明,凭据同步开不了)。
+   * 其余档位服务端强制落空串,多发一个空字段不会串味。
+   */
+  gitShape?: GitShape
+  /**
    * 登录即同步凭据。同样是**整份覆盖**语义:省略即关闭。
-   * 只有 git 四档能开(非 git 身份源服务端一律落 false);开关只在 git 四档的登录卡里出现,
-   * 所以前端把这段字段与非 git 档一起发 false 不会串味。
+   * 能开的只有 git 五档 + 已声明 gitShape 的 oidc;其余身份源服务端在保存期就报 422,
+   * 不会静默落成 false —— 少发一个 gitShape 而多发 true 是要看到错误提示的。
    */
   syncCredentials?: boolean
 }
