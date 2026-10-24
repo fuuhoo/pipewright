@@ -126,6 +126,8 @@ release:
   # 含 -rc/-beta 等预发布标识的 tag 自动标记为 prerelease。
   prerelease: auto
   name_template: "Pipewright {{ .Tag }}"
+  # 安装示例里的镜像 tag 用 {{ .Version }} 而不是 {{ .Tag }}:上面 docker_mods 推的是去掉前导 v 的
+  # {{ .Version }},写 :v0.12.0 用户照抄就是 manifest unknown。Release 名带 v 不受影响。
   footer: |
     ---
     ## 安装
@@ -137,11 +139,11 @@ release:
 
     Docker:
     ```sh
-    docker run -d -p 8080:8080 -v pipewright-data:/data ghcr.io/fuuhoo/pipewright:{{ .Tag }}
+    docker run -d -p 8080:8080 -v pipewright-data:/data ghcr.io/fuuhoo/pipewright:{{ .Version }}
     ```
 
     境内网络拉 ghcr 困难时改用阿里云 ACR(青岛,另有 `-docker` 档=容器内可再打包镜像):
     ```sh
     docker run -d -p 8080:8080 -v pipewright-data:/data \
-      registry.cn-qingdao.aliyuncs.com/fubin/pipewright:{{ .Tag }}
+      registry.cn-qingdao.aliyuncs.com/fubin/pipewright:{{ .Version }}
     ```
