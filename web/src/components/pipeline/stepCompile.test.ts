@@ -6,6 +6,8 @@ import {
   stepToCommandLines,
   compileSteps,
   conditionGuardLine,
+  copyStepLine,
+  splitExcludes,
   lineToStep,
   parseSteps,
   configUsesTemplate,
@@ -217,6 +219,60 @@ describe('stepCompile', () => {
     })
   })
 
+  describe('copy step (rsync first, cp fallback)', () => {
+    it('compiles to one set -e safe line that prefers rsync and falls back to cp', () => {
+      const line = copyStepLine('frontend/dist', 'build/out', [])
+      expect(line).toBe(
+        "if command -v rsync >/dev/null 2>&1; then mkdir -p 'build/out/' && rsync -a 'frontend/dist/' 'build/out/';" +
+          " else mkdir -p 'build/out/' && cp -a 'frontend/dist/.' 'build/out/'; fi",
+      )
+      // 单行:逐行反解析才不会裂;两条分支语义一致(复制源目录里的内容)。
+      expect(line.includes('\n')).toBe(false)
+      expect(line).toContain("rsync -a 'frontend/dist/' 'build/out/'")
+      expect(line).toContain("cp -a 'frontend/dist/.' 'build/out/'")
+    })
+
+    it('emits one --exclude= per item, splitting on spaces and commas', () => {
+      expect(splitExcludes('node_modules, .git  *.map')).toEqual(['node_modules', '.git', '*.map'])
+      const line = copyStepLine('src', 'out', splitExcludes('node_modules .git'))
+      expect(line).toContain("rsync -a --exclude='node_modules' --exclude='.git' 'src/' 'out/'")
+    })
+
+    it('normalizes trailing slashes and drops a step missing src or dest', () => {
+      expect(copyStepLine('src/', 'out/', [])).toBe(copyStepLine('src', 'out', []))
+      expect(stepToCommandLines(step({ kind: 'copy', copySrc: 'src', copyDest: '  ' }))).toEqual([])
+      expect(stepToCommandLines(step({ kind: 'copy', copySrc: '', copyDest: 'out' }))).toEqual([])
+    })
+
+    it('quotes values so a path with a single quote survives round-trip', () => {
+      const src = "it's/a dir"
+      const back = lineToStep(copyStepLine(src, "o'ut", ["x'y"]))
+      expect(back.kind).toBe('copy')
+      expect(back.copySrc).toBe(src)
+      expect(back.copyDest).toBe("o'ut")
+      expect(back.copyExcludes).toBe("x'y")
+    })
+
+    it('round-trips a copy step through compile + parse', () => {
+      const steps: StepBlock[] = [
+        step({ kind: 'copy', copySrc: 'frontend/dist', copyDest: 'build/out', copyExcludes: 'node_modules .git' }),
+        step({ kind: 'command', command: 'ls build/out' }),
+      ]
+      const parsed = parseSteps({ commands: compileSteps(steps).commands })
+      expect(parsed.map((s) => s.kind)).toEqual(['copy', 'command'])
+      expect(parsed[0].copySrc).toBe('frontend/dist')
+      expect(parsed[0].copyDest).toBe('build/out')
+      expect(parsed[0].copyExcludes).toBe('node_modules .git')
+    })
+
+    it('hands a hand-edited branch back as a plain command step (never silently rewritten)', () => {
+      const generated = copyStepLine('src', 'out', [])
+      const edited = generated.replace("cp -a 'src/.' 'out/'", "cp -r 'src/.' 'out/'")
+      expect(lineToStep(edited).kind).toBe('command')
+      expect(lineToStep('if command -v rsync >/dev/null 2>&1; then echo hi; fi').kind).toBe('command')
+    })
+  })
+
   describe('configUsesTemplate', () => {
     it('detects commandTemplate / params', () => {
       expect(configUsesTemplate({ commandTemplate: 'cd {{dir}}' })).toBe(true)
@@ -230,6 +286,6 @@ describe('stepCompile', () => {
   })
 
   it('STEP_KIND_META covers every kind', () => {
-    expect(Object.keys(STEP_KIND_META).sort()).toEqual(['artifact', 'command', 'condition', 'env', 'workDir'])
+    expect(Object.keys(STEP_KIND_META).sort()).toEqual(['artifact', 'command', 'condition', 'copy', 'env', 'workDir'])
   })
 })

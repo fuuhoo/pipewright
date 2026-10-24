@@ -325,6 +325,7 @@ export default {
   stepCommandLabel: 'Ejecutar comando',
   stepEnvLabel: 'Definir variable de entorno',
   stepWorkDirLabel: 'Cambiar directorio',
+  stepCopyLabel: 'Copiar archivos',
   stepArtifactLabel: 'Ruta de artefacto',
   stepConditionLabel: 'Guarda condicional',
 
@@ -433,6 +434,10 @@ export default {
   sbEnvKeyAria: 'Nombre de variable de entorno {n}',
   sbEnvValueAria: 'Valor de variable de entorno {n}',
   sbDirAria: 'Directorio {n}',
+  sbCopySrcAria: 'Carpeta de origen de la copia {n}',
+  sbCopyDestAria: 'Carpeta de destino de la copia {n}',
+  sbCopyExclAria: 'Exclusiones de la copia {n}',
+  sbCopyHint: 'Copia el contenido de la carpeta de origen: usa rsync -a si está instalado (las exclusiones se aplican) y si no cp -a (sin exclusiones).',
   sbCondAria: 'Condición {n}',
   sbCondHintPre: 'condición de shell; si no se cumple, ',
   sbCondHintStrong: 'omite todos los pasos posteriores',
@@ -443,6 +448,7 @@ export default {
   sbAddCommandDesc: 'comando de shell (multilínea)',
   sbAddEnvDesc: 'inyectar KEY=VALUE en el entorno',
   sbAddWorkDirDesc: 'cambiar el directorio de trabajo para comandos posteriores',
+  sbAddCopyDesc: 'copiar el contenido del origen al destino (con exclusiones)',
   sbAddConditionDesc: 'omite pasos posteriores si no se cumple',
   sbAddArtifactDesc: 'glob para archivar artefactos',
 }

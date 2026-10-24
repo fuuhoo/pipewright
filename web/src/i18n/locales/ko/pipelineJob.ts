@@ -325,6 +325,7 @@ export default {
   stepCommandLabel: '명령 실행',
   stepEnvLabel: '환경 변수 설정',
   stepWorkDirLabel: '디렉터리 전환',
+  stepCopyLabel: '파일 복사',
   stepArtifactLabel: '아티팩트 경로',
   stepConditionLabel: '조건 가드',
 
@@ -433,6 +434,10 @@ export default {
   sbEnvKeyAria: '환경 변수 이름 {n}',
   sbEnvValueAria: '환경 변수 값 {n}',
   sbDirAria: '디렉터리 {n}',
+  sbCopySrcAria: '복사 원본 디렉터리 {n}',
+  sbCopyDestAria: '복사 대상 디렉터리 {n}',
+  sbCopyExclAria: '복사 제외 항목 {n}',
+  sbCopyHint: '원본 디렉터리의 내용을 복사합니다. rsync가 있으면 rsync -a(제외 항목 적용), 없으면 cp -a(제외 없음)를 사용합니다.',
   sbCondAria: '조건 {n}',
   sbCondHintPre: 'shell 조건, 충족되지 않으면 ',
   sbCondHintStrong: '후속 모든 단계를 건너뜀',
@@ -443,6 +448,7 @@ export default {
   sbAddCommandDesc: 'shell 명령(여러 줄 가능)',
   sbAddEnvDesc: 'KEY=VALUE 를 환경에 주입',
   sbAddWorkDirDesc: '후속 명령의 작업 디렉터리 전환',
+  sbAddCopyDesc: '원본 디렉터리 내용을 대상에 복사(제외 가능)',
   sbAddConditionDesc: '충족되지 않으면 후속 단계 건너뜀',
   sbAddArtifactDesc: 'glob 로 아티팩트 아카이브',
 }

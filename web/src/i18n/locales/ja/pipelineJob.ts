@@ -325,6 +325,7 @@ export default {
   stepCommandLabel: 'コマンド実行',
   stepEnvLabel: '環境変数を設定',
   stepWorkDirLabel: 'ディレクトリ切替',
+  stepCopyLabel: 'ファイルをコピー',
   stepArtifactLabel: '成果物パス',
   stepConditionLabel: '条件ガード',
 
@@ -433,6 +434,10 @@ export default {
   sbEnvKeyAria: '環境変数名 {n}',
   sbEnvValueAria: '環境変数値 {n}',
   sbDirAria: 'ディレクトリ {n}',
+  sbCopySrcAria: 'コピー元ディレクトリ {n}',
+  sbCopyDestAria: 'コピー先ディレクトリ {n}',
+  sbCopyExclAria: 'コピーの除外指定 {n}',
+  sbCopyHint: 'コピー元ディレクトリの中身を複製します。rsync があれば rsync -a(除外指定が効く)、なければ cp -a(除外なし)を使います。',
   sbCondAria: '条件 {n}',
   sbCondHintPre: 'shell 条件、不成立なら',
   sbCondHintStrong: '後続のすべてのステップをスキップ',
@@ -443,6 +448,7 @@ export default {
   sbAddCommandDesc: 'shell コマンド(複数行可)',
   sbAddEnvDesc: 'KEY=VALUE を環境に注入',
   sbAddWorkDirDesc: '後続コマンドの作業ディレクトリを切替',
+  sbAddCopyDesc: 'ソースディレクトリの中身をコピー先に複製(除外可)',
   sbAddConditionDesc: '不成立なら後続ステップをスキップ',
   sbAddArtifactDesc: 'glob で成果物をアーカイブ',
 }

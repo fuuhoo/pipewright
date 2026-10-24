@@ -326,6 +326,7 @@ export default {
   stepCommandLabel: 'Run command',
   stepEnvLabel: 'Set env var',
   stepWorkDirLabel: 'Change dir',
+  stepCopyLabel: 'Copy files',
   stepArtifactLabel: 'Artifact path',
   stepConditionLabel: 'Condition guard',
 
@@ -434,6 +435,10 @@ export default {
   sbEnvKeyAria: 'Env var name {n}',
   sbEnvValueAria: 'Env var value {n}',
   sbDirAria: 'Directory {n}',
+  sbCopySrcAria: 'Copy source directory {n}',
+  sbCopyDestAria: 'Copy destination directory {n}',
+  sbCopyExclAria: 'Copy exclusions {n}',
+  sbCopyHint: 'Copies the contents of the source directory: uses rsync -a when installed (exclusions apply), otherwise falls back to cp -a (no exclusions).',
   sbCondAria: 'Condition {n}',
   sbCondHintPre: 'shell condition; if it fails, ',
   sbCondHintStrong: 'skip all subsequent steps',
@@ -444,6 +449,7 @@ export default {
   sbAddCommandDesc: 'shell command (multi-line)',
   sbAddEnvDesc: 'inject KEY=VALUE into env',
   sbAddWorkDirDesc: 'change working dir for later commands',
+  sbAddCopyDesc: 'copy source dir contents into a target dir (with excludes)',
   sbAddConditionDesc: 'skip later steps if it fails',
   sbAddArtifactDesc: 'glob to archive artifacts',
 }

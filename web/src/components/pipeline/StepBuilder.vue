@@ -83,6 +83,7 @@ const addOptions = computed<ReadonlyArray<{ kind: StepKind; label: string; desc:
   { kind: 'command', label: STEP_KIND_META.command.label, desc: t('pipelineJob.sbAddCommandDesc') },
   { kind: 'env', label: STEP_KIND_META.env.label, desc: t('pipelineJob.sbAddEnvDesc') },
   { kind: 'workDir', label: STEP_KIND_META.workDir.label, desc: t('pipelineJob.sbAddWorkDirDesc') },
+  { kind: 'copy', label: STEP_KIND_META.copy.label, desc: t('pipelineJob.sbAddCopyDesc') },
   { kind: 'condition', label: STEP_KIND_META.condition.label, desc: t('pipelineJob.sbAddConditionDesc') },
   { kind: 'artifact', label: STEP_KIND_META.artifact.label, desc: t('pipelineJob.sbAddArtifactDesc') },
 ])
@@ -261,6 +262,41 @@ const stepCount = computed(() => steps.value.length)
           @blur="flush"
         />
 
+        <!-- 复制文件:源目录内容 → 目标目录,rsync 优先(能排除),没装则 cp 兜底 -->
+        <div v-else-if="step.kind === 'copy'" class="sb-copy">
+          <div class="sb-copy-path">
+            <input
+              :value="step.copySrc ?? ''"
+              class="sb-input is-mono"
+              type="text"
+              placeholder="frontend/dist"
+              :aria-label="t('pipelineJob.sbCopySrcAria', { n: index + 1 })"
+              @input="patchStep(step.id, { copySrc: ($event.target as HTMLInputElement).value })"
+              @blur="flush"
+            />
+            <span class="sb-arrow" aria-hidden="true">→</span>
+            <input
+              :value="step.copyDest ?? ''"
+              class="sb-input is-mono"
+              type="text"
+              placeholder="build/out"
+              :aria-label="t('pipelineJob.sbCopyDestAria', { n: index + 1 })"
+              @input="patchStep(step.id, { copyDest: ($event.target as HTMLInputElement).value })"
+              @blur="flush"
+            />
+          </div>
+          <input
+            :value="step.copyExcludes ?? ''"
+            class="sb-input is-mono"
+            type="text"
+            placeholder="node_modules .git *.map"
+            :aria-label="t('pipelineJob.sbCopyExclAria', { n: index + 1 })"
+            @input="patchStep(step.id, { copyExcludes: ($event.target as HTMLInputElement).value })"
+            @blur="flush"
+          />
+          <p class="sb-copy-hint">{{ t('pipelineJob.sbCopyHint') }}</p>
+        </div>
+
         <!-- 条件守卫 -->
         <div v-else-if="step.kind === 'condition'" class="sb-cond">
           <input
@@ -382,6 +418,7 @@ const stepCount = computed(() => steps.value.length)
 .sb-step--command { --accent: var(--color-primary); }
 .sb-step--env { --accent: var(--color-cyan); }
 .sb-step--workDir { --accent: var(--color-amber); }
+.sb-step--copy { --accent: var(--color-green); }
 .sb-step--artifact { --accent: var(--color-green); }
 .sb-step--condition { --accent: var(--color-red); }
 
@@ -520,6 +557,32 @@ const stepCount = computed(() => steps.value.length)
   font-weight: 700;
 }
 
+.sb-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sb-copy-path {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-arrow {
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.sb-copy-hint {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--color-faint);
+}
+
 .sb-cond {
   display: flex;
   flex-direction: column;
@@ -623,6 +686,7 @@ const stepCount = computed(() => steps.value.length)
 .sb-add-item--command { --item-accent: var(--color-primary); }
 .sb-add-item--env { --item-accent: var(--color-cyan); }
 .sb-add-item--workDir { --item-accent: var(--color-amber); }
+.sb-add-item--copy { --item-accent: var(--color-green); }
 .sb-add-item--condition { --item-accent: var(--color-red); }
 .sb-add-item--artifact { --item-accent: var(--color-green); }
 

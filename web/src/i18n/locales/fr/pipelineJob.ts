@@ -325,6 +325,7 @@ export default {
   stepCommandLabel: 'Exécuter une commande',
   stepEnvLabel: 'Définir une variable d’environnement',
   stepWorkDirLabel: 'Changer de répertoire',
+  stepCopyLabel: 'Copier des fichiers',
   stepArtifactLabel: 'Chemin d’artefact',
   stepConditionLabel: 'Garde conditionnelle',
 
@@ -433,6 +434,10 @@ export default {
   sbEnvKeyAria: 'Nom de variable d’environnement {n}',
   sbEnvValueAria: 'Valeur de variable d’environnement {n}',
   sbDirAria: 'Répertoire {n}',
+  sbCopySrcAria: 'Répertoire source de la copie {n}',
+  sbCopyDestAria: 'Répertoire destination de la copie {n}',
+  sbCopyExclAria: 'Exclusions de la copie {n}',
+  sbCopyHint: 'Copie le contenu du répertoire source : utilise rsync -a s’il est installé (les exclusions s’appliquent), sinon cp -a (sans exclusions).',
   sbCondAria: 'Condition {n}',
   sbCondHintPre: 'condition shell ; si elle échoue, ',
   sbCondHintStrong: 'ignore toutes les étapes suivantes',
@@ -443,6 +448,7 @@ export default {
   sbAddCommandDesc: 'commande shell (multiligne)',
   sbAddEnvDesc: 'injecter KEY=VALUE dans l’environnement',
   sbAddWorkDirDesc: 'changer le répertoire de travail pour les commandes suivantes',
+  sbAddCopyDesc: 'copier le contenu du répertoire source vers la cible (avec exclusions)',
   sbAddConditionDesc: 'ignore les étapes suivantes si elle échoue',
   sbAddArtifactDesc: 'glob pour archiver les artefacts',
 }

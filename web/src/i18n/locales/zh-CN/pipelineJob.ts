@@ -325,6 +325,7 @@ export default {
   stepCommandLabel: '运行命令',
   stepEnvLabel: '设环境变量',
   stepWorkDirLabel: '切目录',
+  stepCopyLabel: '复制文件',
   stepArtifactLabel: '产物路径',
   stepConditionLabel: '条件守卫',
 
@@ -433,6 +434,10 @@ export default {
   sbEnvKeyAria: '环境变量名 {n}',
   sbEnvValueAria: '环境变量值 {n}',
   sbDirAria: '目录 {n}',
+  sbCopySrcAria: '复制源目录 {n}',
+  sbCopyDestAria: '复制目标目录 {n}',
+  sbCopyExclAria: '复制排除项 {n}',
+  sbCopyHint: '复制的是源目录里的内容:装了 rsync 用 rsync -a(排除项生效),没装则退回 cp -a(不排除)。',
   sbCondAria: '条件 {n}',
   sbCondHintPre: 'shell 条件,不成立则',
   sbCondHintStrong: '跳过后续所有步骤',
@@ -443,6 +448,7 @@ export default {
   sbAddCommandDesc: 'shell 命令(可多行)',
   sbAddEnvDesc: 'KEY=VALUE 注入环境',
   sbAddWorkDirDesc: '切换后续命令工作目录',
+  sbAddCopyDesc: '源目录内容拷进目标目录(可排除)',
   sbAddConditionDesc: '不成立则跳过后续步骤',
   sbAddArtifactDesc: 'glob 归档产物',
 }

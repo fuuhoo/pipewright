@@ -325,6 +325,7 @@ export default {
   stepCommandLabel: 'Befehl ausführen',
   stepEnvLabel: 'Umgebungsvariable setzen',
   stepWorkDirLabel: 'Verzeichnis wechseln',
+  stepCopyLabel: 'Dateien kopieren',
   stepArtifactLabel: 'Artefaktpfad',
   stepConditionLabel: 'Bedingungs-Guard',
 
@@ -433,6 +434,10 @@ export default {
   sbEnvKeyAria: 'Name der Umgebungsvariable {n}',
   sbEnvValueAria: 'Wert der Umgebungsvariable {n}',
   sbDirAria: 'Verzeichnis {n}',
+  sbCopySrcAria: 'Quellverzeichnis kopieren {n}',
+  sbCopyDestAria: 'Zielverzeichnis kopieren {n}',
+  sbCopyExclAria: 'Ausschlüsse kopieren {n}',
+  sbCopyHint: 'Kopiert den Inhalt des Quellverzeichnisses: nutzt rsync -a, wenn installiert (Ausschlüsse wirken), sonst cp -a (ohne Ausschlüsse).',
   sbCondAria: 'Bedingung {n}',
   sbCondHintPre: 'Shell-Bedingung; wenn nicht erfüllt, ',
   sbCondHintStrong: 'alle nachfolgenden Schritte überspringen',
@@ -443,6 +448,7 @@ export default {
   sbAddCommandDesc: 'Shell-Befehl (mehrzeilig)',
   sbAddEnvDesc: 'KEY=VALUE in die Umgebung injizieren',
   sbAddWorkDirDesc: 'Arbeitsverzeichnis für nachfolgende Befehle wechseln',
+  sbAddCopyDesc: 'Inhalt des Quellverzeichnisses ins Zielverzeichnis kopieren (mit Ausschlüssen)',
   sbAddConditionDesc: 'nachfolgende Schritte überspringen, wenn nicht erfüllt',
   sbAddArtifactDesc: 'glob zum Archivieren von Artefakten',
 }
