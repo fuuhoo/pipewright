@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'ソース取得',
   typeGitSourceDesc: 'Git リポジトリをビルドワークスペースにクローン',
+  // ソースノードのリポジトリ/ブランチ/認証情報はプロジェクト設定のミラー表示(バックエンドが読み書き時に上書き)。変更はプロジェクト · リポジトリ設定で。
   fieldRepoUrlLabel: 'リポジトリ URL',
-  fieldRepoUrlHint: '空 = プロジェクトに紐づくデフォルトリポジトリを使用',
+  fieldRepoUrlHint: '読み取り専用:プロジェクトに紐づくリポジトリ。変更は「プロジェクト · リポジトリ設定」で',
+  fieldRepoUrlEmpty: 'プロジェクトにリポジトリが紐づいていません',
   fieldBranchLabel: 'ブランチ / Ref',
-  fieldBranchHint: '空 = トリガー時のブランチまたはプロジェクトのデフォルトブランチを使用',
+  fieldBranchHint: '読み取り専用:プロジェクトのデフォルトブランチ。実行時はトリガーしたブランチまたはタグを取得します',
   fieldCredentialIdLabel: 'アクセス認証情報',
-  fieldCredentialIdHint: 'プライベートリポジトリは Git トークン認証情報の参照が必要',
-  fieldDepthLabel: 'クローン深度',
-  fieldDepthHint: '浅いクローンの深度。空 = 完全な履歴',
+  fieldCredentialIdHint: '読み取り専用:「プロジェクト · リポジトリ設定」で選んだ Git 認証情報。公開リポジトリは空',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: 'イメージビルド(旧版)',
@@ -381,6 +381,7 @@ export default {
   change: '変更',
   summaryLabel: '概要説明',
   summaryPlaceholder: 'カードのサブタイトル(任意)',
+  readonlyEmpty: '未設定',
   instanceParams: 'インスタンスパラメータ',
   instanceParamsHint: 'このカスタムノードは以下のパラメータを公開しています。必要に応じて調整してください。残りのコマンドテンプレートはノード作成者が固定しています。',
   advancedRawToggle: '詳細 · 元のパラメータを表示/編集',

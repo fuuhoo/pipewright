@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Récupérer la source',
   typeGitSourceDesc: 'Clone un dépôt Git dans l’espace de travail de build',
+  // Le nœud source n’affiche qu’un reflet de la config du projet (le serveur le réécrit en lecture comme en écriture) ; à modifier dans Projet · Paramètres du dépôt.
   fieldRepoUrlLabel: 'URL du dépôt',
-  fieldRepoUrlHint: 'Vide = utiliser le dépôt par défaut lié au projet',
+  fieldRepoUrlHint: 'Lecture seule : le dépôt lié au projet. À modifier dans « Projet · Paramètres du dépôt »',
+  fieldRepoUrlEmpty: 'Aucun dépôt lié à ce projet',
   fieldBranchLabel: 'Branche / Ref',
-  fieldBranchHint: 'Vide = utiliser la branche du déclencheur ou la branche par défaut du projet',
+  fieldBranchHint: 'Lecture seule : la branche par défaut du projet. Un build récupère la branche ou l’étiquette qui l’a déclenché',
   fieldCredentialIdLabel: 'Identifiant d’accès',
-  fieldCredentialIdHint: 'Les dépôts privés nécessitent un identifiant de jeton Git référencé',
-  fieldDepthLabel: 'Profondeur de clonage',
-  fieldDepthHint: 'Profondeur du clonage superficiel ; vide = historique complet',
+  fieldCredentialIdHint: 'Lecture seule : identifiant Git choisi dans « Projet · Paramètres du dépôt ». Vide pour un dépôt public',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: 'Construire l’image (obsolète)',
@@ -381,6 +381,7 @@ export default {
   change: 'Changer',
   summaryLabel: 'Description du résumé',
   summaryPlaceholder: 'Sous-titre de la carte (optionnel)',
+  readonlyEmpty: 'Non défini',
   instanceParams: 'Paramètres d’instance',
   instanceParamsHint: 'Ce nœud personnalisé expose les paramètres suivants ; ajustez-les selon vos besoins, le reste du modèle de commande est fixé par l’auteur du nœud.',
   advancedRawToggle: 'Avancé · Voir/modifier les paramètres bruts',

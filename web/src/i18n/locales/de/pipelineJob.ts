@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Quellcode abrufen',
   typeGitSourceDesc: 'Klont ein Git-Repository in den Build-Workspace',
+  // Nur schreibgeschützte Spiegel der Projektkonfiguration (der Backend überschreibt sie beim Lesen und Speichern); geändert wird unter Projekt · Repository-Einstellungen.
   fieldRepoUrlLabel: 'Repository-URL',
-  fieldRepoUrlHint: 'Leer = das mit dem Projekt verknüpfte Standard-Repository verwenden',
+  fieldRepoUrlHint: 'Schreibgeschützt: das mit dem Projekt verknüpfte Repository. Ändern unter „Projekt · Repository-Einstellungen“',
+  fieldRepoUrlEmpty: 'Kein Repository mit diesem Projekt verknüpft',
   fieldBranchLabel: 'Branch / Ref',
-  fieldBranchHint: 'Leer = den Trigger-Branch oder den Standard-Branch des Projekts verwenden',
+  fieldBranchHint: 'Schreibgeschützt: der Standard-Branch des Projekts. Ein Lauf klont den Branch oder Tag, der ihn ausgelöst hat',
   fieldCredentialIdLabel: 'Zugriffsanmeldedaten',
-  fieldCredentialIdHint: 'Private Repositories benötigen eine referenzierte Git-Token-Anmeldung',
-  fieldDepthLabel: 'Klontiefe',
-  fieldDepthHint: 'Tiefe des flachen Klons; leer = vollständige Historie',
+  fieldCredentialIdHint: 'Schreibgeschützt: die unter „Projekt · Repository-Einstellungen“ gewählte Git-Anmeldung. Bei öffentlichen Repos leer',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: 'Image-Build (veraltet)',
@@ -381,6 +381,7 @@ export default {
   change: 'Ändern',
   summaryLabel: 'Zusammenfassung',
   summaryPlaceholder: 'Karten-Untertitel (optional)',
+  readonlyEmpty: 'Nicht festgelegt',
   instanceParams: 'Instanzparameter',
   instanceParamsHint: 'Dieser benutzerdefinierte Knoten stellt die folgenden Parameter bereit; passe sie nach Bedarf an, der Rest der Befehlsvorlage ist vom Knotenautor festgelegt.',
   advancedRawToggle: 'Erweitert · Rohparameter anzeigen/bearbeiten',

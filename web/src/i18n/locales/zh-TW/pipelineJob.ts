@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '拉取原始碼',
   typeGitSourceDesc: '複製 Git 倉庫到建置工作區',
+  // 源節點的倉庫/分支/憑證只是專案配置的鏡像(後端讀和存都會覆寫),改動入口在專案 · 倉庫設定。
   fieldRepoUrlLabel: '倉庫位址',
-  fieldRepoUrlHint: '留空則使用專案繫結的預設倉庫',
+  fieldRepoUrlHint: '唯讀:專案繫結的倉庫;要換倉庫請到「專案 · 倉庫設定」',
+  fieldRepoUrlEmpty: '專案未繫結倉庫',
   fieldBranchLabel: '分支 / Ref',
-  fieldBranchHint: '留空則使用觸發時的分支或專案預設分支',
+  fieldBranchHint: '唯讀:專案預設分支;實際拉取依觸發這次運行的分支或標籤',
   fieldCredentialIdLabel: '存取憑證',
-  fieldCredentialIdHint: '私有倉庫需引用 Git 權杖憑證',
-  fieldDepthLabel: '複製深度',
-  fieldDepthHint: '淺複製深度;留空為完整歷史',
+  fieldCredentialIdHint: '唯讀:專案在「專案 · 倉庫設定」選取的 Git 憑證;公開倉庫為空',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: '構建映像(舊版)',
@@ -381,6 +381,7 @@ export default {
   change: '更換',
   summaryLabel: '摘要描述',
   summaryPlaceholder: '卡片副標題(可選)',
+  readonlyEmpty: '未設定',
   instanceParams: '實例參數',
   instanceParamsHint: '該自訂節點提升了以下參數;按需調整,其餘命令範本已由節點作者固定。',
   advancedRawToggle: '進階 · 檢視/編輯原始參數',

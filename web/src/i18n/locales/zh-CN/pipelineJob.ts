@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '拉取源码',
   typeGitSourceDesc: '克隆 Git 仓库到构建工作区',
+  // 源节点的仓库/分支/凭据只是项目配置的镜像(后端读和存都覆盖),改动入口在项目 · 仓库设置。
   fieldRepoUrlLabel: '仓库地址',
-  fieldRepoUrlHint: '留空则使用项目绑定的默认仓库',
+  fieldRepoUrlHint: '只读:项目绑定的仓库;换仓库请到「项目 · 仓库设置」',
+  fieldRepoUrlEmpty: '项目未绑定仓库',
   fieldBranchLabel: '分支 / Ref',
-  fieldBranchHint: '留空则使用触发时的分支或项目默认分支',
+  fieldBranchHint: '只读:项目默认分支;实际拉取按触发这次运行的分支或标签',
   fieldCredentialIdLabel: '访问凭据',
-  fieldCredentialIdHint: '私有仓库需引用 Git 令牌凭据',
-  fieldDepthLabel: '克隆深度',
-  fieldDepthHint: '浅克隆深度;留空为完整历史',
+  fieldCredentialIdHint: '只读:项目在「项目 · 仓库设置」里选的 Git 凭据;公开仓库为空',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: '构建镜像(旧版)',
@@ -381,6 +381,7 @@ export default {
   change: '更换',
   summaryLabel: '摘要描述',
   summaryPlaceholder: '卡片副标题(可选)',
+  readonlyEmpty: '未设置',
   instanceParams: '实例参数',
   instanceParamsHint: '该自定义节点提升了以下参数;按需调整,其余命令模板已由节点作者固定。',
   advancedRawToggle: '高级 · 查看/编辑原始参数',

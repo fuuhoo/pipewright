@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '소스 가져오기',
   typeGitSourceDesc: 'Git 저장소를 빌드 작업 공간에 복제',
+  // 소스 노드의 저장소/브랜치/자격 증명은 프로젝트 설정의 미러 표시입니다(백엔드가 읽기·저장 시 덮어씀). 변경은 프로젝트 · 저장소 설정에서.
   fieldRepoUrlLabel: '저장소 URL',
-  fieldRepoUrlHint: '비우면 프로젝트에 바인딩된 기본 저장소 사용',
+  fieldRepoUrlHint: '읽기 전용: 프로젝트에 바인딩된 저장소. 변경은 「프로젝트 · 저장소 설정」에서',
+  fieldRepoUrlEmpty: '프로젝트에 바인딩된 저장소가 없습니다',
   fieldBranchLabel: '브랜치 / Ref',
-  fieldBranchHint: '비우면 트리거 시 브랜치 또는 프로젝트 기본 브랜치 사용',
+  fieldBranchHint: '읽기 전용: 프로젝트 기본 브랜치. 실제 실행은 이 실행을 트리거한 브랜치 또는 태그를 가져옵니다',
   fieldCredentialIdLabel: '접근 자격 증명',
-  fieldCredentialIdHint: '비공개 저장소는 Git 토큰 자격 증명 참조가 필요',
-  fieldDepthLabel: '복제 깊이',
-  fieldDepthHint: '얕은 복제 깊이. 비움 = 전체 이력',
+  fieldCredentialIdHint: '읽기 전용: 「프로젝트 · 저장소 설정」에서 선택한 Git 자격 증명. 공개 저장소는 비어 있음',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: '이미지 빌드(구버전)',
@@ -381,6 +381,7 @@ export default {
   change: '변경',
   summaryLabel: '요약 설명',
   summaryPlaceholder: '카드 부제(선택)',
+  readonlyEmpty: '설정 없음',
   instanceParams: '인스턴스 매개변수',
   instanceParamsHint: '이 사용자 지정 노드는 다음 매개변수를 공개합니다. 필요에 따라 조정하세요. 나머지 명령 템플릿은 노드 작성자가 고정했습니다.',
   advancedRawToggle: '고급 · 원본 매개변수 보기/편집',

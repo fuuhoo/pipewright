@@ -37,6 +37,8 @@ export type FieldKind =
   | 'artifactsource'
   /** 只读回显:推送目标 = 环境绑定的镜像仓(不可编辑,也不写进 config) */
   | 'pushTarget'
+  /** 只读回显:值来自别处(项目配置),节点里既改不动、改了也不生效,所以只摊出来给人看 */
+  | 'readonly'
   /** K8s 集群选择:候选 = 设置 · K8s 集群 里本人可见的集群(值存集群 ID) */
   | 'cluster'
   /** env 文件选取:只在你浏览器里把本地文件读成正文填进 envText,没有任何上传 */
@@ -62,10 +64,17 @@ export interface JobField {
   presets?: string[]
   /** Helper text shown under the control */
   hint?: string
+  /** 只读档的空值文案(缺省用通用的「未设置」;源节点的仓库要直说「项目未绑定仓库」) */
+  emptyLabel?: string
   /** Options for `select` */
   options?: SelectOption[]
   /** Restrict the credential picker to one credential type */
   credentialType?: CredentialType
+  /**
+   * 只读档(`kind: 'readonly'`)怎么取值:`'credential'` = 把存着的凭据 ID 显示成凭据名,
+   * 名字拿不到才退回 ID。不给只读档以外的字段用。
+   */
+  readonlyRef?: 'credential'
   /** Render with monospace font (paths, commands, image refs) */
   monospace?: boolean
   /** `textarea` 的行数(缺省 4;compose 正文这种整份文件要给它看得下的额度) */
@@ -1084,39 +1093,34 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     get description() { return t('pipelineJob.typeGitSourceDesc') },
     accent: 'cyan',
     category: 'source',
+    // 源节点没有「自己的源」:仓库 / 分支 / 凭据三格全是项目配置的镜像,后端读和存都无条件
+    // 覆盖(见 internal/pipeline/pipeline.go 的 syncSourceMirror),克隆时也只认项目配置。
+    // 给它们摆输入框等于摆一个改了什么都不发生的旋钮,所以整节只读,改动入口在项目 · 仓库设置。
     fields: [
       {
         key: 'repoUrl',
         get label() { return t('pipelineJob.fieldRepoUrlLabel') },
-        kind: 'text',
+        kind: 'readonly',
         monospace: true,
-        placeholder: 'https://gitee.com/org/repo.git',
         get hint() { return t('pipelineJob.fieldRepoUrlHint') },
+        get emptyLabel() { return t('pipelineJob.fieldRepoUrlEmpty') },
       },
       {
         key: 'branch',
         get label() { return t('pipelineJob.fieldBranchLabel') },
-        kind: 'text',
+        kind: 'readonly',
         monospace: true,
-        placeholder: 'main',
-        presets: ['main', 'master'],
         get hint() { return t('pipelineJob.fieldBranchHint') },
       },
       {
         key: 'credentialId',
         get label() { return t('pipelineJob.fieldCredentialIdLabel') },
-        kind: 'credential',
-        credentialType: 'git_token',
+        kind: 'readonly',
+        readonlyRef: 'credential',
         get hint() { return t('pipelineJob.fieldCredentialIdHint') },
       },
-      {
-        key: 'depth',
-        get label() { return t('pipelineJob.fieldDepthLabel') },
-        kind: 'number',
-        placeholder: '1',
-        get hint() { return t('pipelineJob.fieldDepthHint') },
-      },
     ],
+    droppedKeys: ['depth'],
   },
 
   // ── 构建任务:唯一入口,产物档位决定它到底是「跑脚本收文件」还是「造镜像」──

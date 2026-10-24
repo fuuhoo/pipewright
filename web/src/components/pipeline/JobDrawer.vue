@@ -557,6 +557,20 @@ function fieldValue(key: string): string {
   return typedConfig.value[key] ?? ''
 }
 
+/**
+ * 只读档取值:config 里躺着的只是别处(项目配置)的镜像,节点既改不动、改了也不生效。
+ * credentialId 存的是 ID,直接摊出来没人看得懂,所以映射成凭据名;凭据被删或归别人管时
+ * 名字查不到,退回 ID 至少还能对上是哪一条。
+ */
+function readonlyValue(field: JobField): string {
+  const raw = (typedConfig.value[field.key] ?? '').trim()
+  if (!raw) return ''
+  if (field.readonlyRef === 'credential') {
+    return (props.credentials ?? []).find((c) => c.id === raw)?.name || raw
+  }
+  return raw
+}
+
 /** Default-display value for selects so the first option shows before any edit. */
 function selectValue(field: JobField): string {
   const v = typedConfig.value[field.key]
@@ -770,7 +784,9 @@ async function confirmSave(): Promise<void> {
         </button>
       </div>
 
-      <div class="drawer-field">
+      <!-- 摘要:源节点不给手写 —— 那一行是后端按项目仓库/分支推导出来的展示文字
+           (见 internal/pipeline/pipeline.go 的 syncSourceMirror),在这里写了也会在下次读取时被覆盖。 -->
+      <div v-if="localType !== 'git_source'" class="drawer-field">
         <div class="drawer-field-label">{{ t('pipelineJob.summaryLabel') }}</div>
         <input
           v-model="localSummary"
@@ -1108,6 +1124,14 @@ async function confirmSave(): Promise<void> {
           <p v-if="envPickError" class="field-error">{{ envPickError }}</p>
         </div>
 
+        <!-- 只读回显:这三格(源节点的仓库/分支/凭据)的值来自项目配置,后端读和存都无条件
+             覆盖成镜像,克隆时也只认项目配置 —— 摆输入框等于摆一个改了什么都不发生的旋钮。
+             改动入口在项目 · 仓库设置,提示文案里指路。 -->
+        <div v-else-if="field.kind === 'readonly'" class="readonly-value">
+          <code v-if="readonlyValue(field)" :class="{ 'is-mono': field.monospace }">{{ readonlyValue(field) }}</code>
+          <span v-else class="readonly-empty">{{ field.emptyLabel || t('pipelineJob.readonlyEmpty') }}</span>
+        </div>
+
         <!-- number / text -->
         <input
           v-else
@@ -1406,6 +1430,28 @@ async function confirmSave(): Promise<void> {
   font-size: 0.72rem;
   color: var(--color-faint);
   overflow-wrap: anywhere;
+}
+
+/* 只读回显:用输入框的壳(同宽同高同边线)但明显不可输入,值本身仍是可选中复制的正文。 */
+.readonly-value {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md, 6px);
+  background: var(--color-inset);
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+.readonly-value code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.readonly-empty {
+  color: var(--color-faint);
+  font-style: italic;
 }
 
 /* 配置资源多选:语言过滤后的复选清单 */

@@ -151,14 +151,15 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Pull source',
   typeGitSourceDesc: 'Clone a Git repository into the build workspace',
+  // The source node's repo / branch / credential are only a mirror of the project config
+  // (the backend overwrites them on both read and save); edit them under Project · Repository settings.
   fieldRepoUrlLabel: 'Repository URL',
-  fieldRepoUrlHint: 'Empty = use the project’s bound default repository',
+  fieldRepoUrlHint: 'Read-only: the repository bound to the project. Change it under Project · Repository settings',
+  fieldRepoUrlEmpty: 'No repository bound to this project',
   fieldBranchLabel: 'Branch / Ref',
-  fieldBranchHint: 'Empty = use the trigger branch or the project default branch',
+  fieldBranchHint: 'Read-only: the project default branch. A run clones the branch or tag that triggered it',
   fieldCredentialIdLabel: 'Access credential',
-  fieldCredentialIdHint: 'Private repos require a referenced Git token credential',
-  fieldDepthLabel: 'Clone depth',
-  fieldDepthHint: 'Shallow clone depth; empty = full history',
+  fieldCredentialIdHint: 'Read-only: the Git credential selected under Project · Repository settings. Empty for public repos',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: 'Build image (legacy)',
@@ -381,6 +382,7 @@ export default {
   change: 'Change',
   summaryLabel: 'Summary description',
   summaryPlaceholder: 'Card subtitle (optional)',
+  readonlyEmpty: 'Not set',
   instanceParams: 'Instance params',
   instanceParamsHint: 'This custom node promotes the following params; adjust as needed, the rest of the command template is fixed by the node author.',
   advancedRawToggle: 'Advanced · View/edit raw params',

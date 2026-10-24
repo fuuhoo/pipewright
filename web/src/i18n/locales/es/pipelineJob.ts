@@ -151,14 +151,14 @@ export default {
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Obtener código fuente',
   typeGitSourceDesc: 'Clona un repositorio Git en el espacio de trabajo de build',
+  // El nodo de fuente solo refleja la configuración del proyecto (el backend la sobrescribe al leer y guardar); se cambia en Proyecto · Ajustes del repositorio.
   fieldRepoUrlLabel: 'URL del repositorio',
-  fieldRepoUrlHint: 'Vacío = usar el repositorio predeterminado vinculado al proyecto',
+  fieldRepoUrlHint: 'Solo lectura: el repositorio vinculado al proyecto. Cámbialo en «Proyecto · Ajustes del repositorio»',
+  fieldRepoUrlEmpty: 'Ningún repositorio vinculado a este proyecto',
   fieldBranchLabel: 'Rama / Ref',
-  fieldBranchHint: 'Vacío = usar la rama del disparador o la rama predeterminada del proyecto',
+  fieldBranchHint: 'Solo lectura: la rama predeterminada del proyecto. Una ejecución clona la rama o etiqueta que la desencadenó',
   fieldCredentialIdLabel: 'Credencial de acceso',
-  fieldCredentialIdHint: 'Los repositorios privados requieren una credencial de token Git referenciada',
-  fieldDepthLabel: 'Profundidad de clonado',
-  fieldDepthHint: 'Profundidad de clonado superficial; vacío = historial completo',
+  fieldCredentialIdHint: 'Solo lectura: la credencial Git elegida en «Proyecto · Ajustes del repositorio». Vacía en repositorios públicos',
 
   // ─── jobConfigSchema · build_image ─────────────────────────────────────
   typeBuildImageLabel: 'Construir imagen (antiguo)',
@@ -381,6 +381,7 @@ export default {
   change: 'Cambiar',
   summaryLabel: 'Descripción del resumen',
   summaryPlaceholder: 'Subtítulo de la tarjeta (opcional)',
+  readonlyEmpty: 'No establecido',
   instanceParams: 'Parámetros de instancia',
   instanceParamsHint: 'Este nodo personalizado expone los siguientes parámetros; ajústalos según necesites, el resto de la plantilla de comandos está fijado por el autor del nodo.',
   advancedRawToggle: 'Avanzado · Ver/editar parámetros sin procesar',

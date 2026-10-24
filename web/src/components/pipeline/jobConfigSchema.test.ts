@@ -636,4 +636,20 @@ describe('jobConfigSchema', () => {
       expect(keys).not.toContain('cachePaths')
     })
   })
+
+  describe('source node (git_source) is a read-only mirror', () => {
+    // 克隆只认项目配置(projects.repo_url / credential_id + 触发分支),节点里这三格改了不生效,
+    // 所以整节只读回显;depth 是后端从未实现的假字段,读进来即抹掉。
+    it('renders repo / branch / credential as readonly, not as inputs', () => {
+      for (const key of ['repoUrl', 'branch', 'credentialId']) {
+        const field = JOB_TYPE_SPECS.git_source.fields.find((f) => f.key === key)
+        expect(field?.kind, key).toBe('readonly')
+      }
+    })
+
+    it('drops the fake depth key from the form and from raw params', () => {
+      expect(droppedKeys('git_source').has('depth')).toBe(true)
+      expect(splitConfig('git_source', { repoUrl: 'https://gitee.com/acme/shop.git', depth: '1' }).extras).toEqual([])
+    })
+  })
 })
