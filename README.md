@@ -489,7 +489,7 @@ stages:
     name: 流水线源
     kind: source
     jobs:
-      - name: Gitee 源
+      - name: Git 源
         type: git_source
   - id: stg_build
     name: 构建

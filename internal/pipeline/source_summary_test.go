@@ -61,7 +61,7 @@ func TestGet_SourceSummaryTracksRepoBinding(t *testing.T) {
 			if tc.cfgRepo != "" {
 				cfgMap["repoUrl"] = tc.cfgRepo
 			}
-			src := Job{ID: "job_src", Name: "Gitee 源", Type: "git_source", Summary: tc.stored, Config: cfgMap}
+			src := Job{ID: "job_src", Name: sourceJobDefaultName, Type: "git_source", Summary: tc.stored, Config: cfgMap}
 			if _, err := svc.Save(context.Background(), projID, sourceStageWith(src)); err != nil {
 				t.Fatalf("Save: %v", err)
 			}
@@ -87,7 +87,7 @@ func TestSave_RebindRepoRefreshesPlaceholderSummary(t *testing.T) {
 	); err != nil {
 		t.Fatalf("unbind repo: %v", err)
 	}
-	src := Job{ID: "job_src", Name: "Gitee 源", Type: "git_source", Config: map[string]any{}}
+	src := Job{ID: "job_src", Name: sourceJobDefaultName, Type: "git_source", Config: map[string]any{}}
 	if _, err := svc.Save(context.Background(), projID, sourceStageWith(src)); err != nil {
 		t.Fatalf("Save(未绑定): %v", err)
 	}

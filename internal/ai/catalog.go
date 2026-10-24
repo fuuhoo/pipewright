@@ -20,7 +20,7 @@ type NodeKind struct {
 // 顺序按典型流水线推进(源 → 构建 → 部署 → 通知),便于 LLM 组合。
 func BuiltinNodeCatalog() []NodeKind {
 	return []NodeKind{
-		{Type: "git_source", Label: "Gitee 源", Category: "source",
+		{Type: "git_source", Label: "Git 源", Category: "source",
 			Description: "拉取 Git 仓库源码到构建工作区。每条流水线必须恰有一个 source 阶段,含一个 git_source。"},
 		{Type: "build", Label: "构建", Category: "build",
 			Description: "唯一的构建任务,config.artifactType 必须先选档位:" +

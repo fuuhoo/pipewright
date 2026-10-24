@@ -498,7 +498,7 @@ stages:
     name: Source
     kind: source
     jobs:
-      - name: Gitee source
+      - name: Git source
         type: git_source
   - id: stg_build
     name: Build

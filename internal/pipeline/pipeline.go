@@ -185,6 +185,8 @@ func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 		// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
 		// 放回去,用户不必先保存一次才看得到。
 		restoreSourceJob(&cfg.Spec)
+		// 旧版本把源卡片种成了「Gitee 源」,而平台并不知道用户用的是哪家 git 平台:读到就收敛成中性名。
+		healLegacySourceJobNames(&cfg.Spec)
 		// 源节点的仓库/分支/凭据 + 摘要:一律回写成项目配置的镜像(画布上只读展示)。
 		s.syncSourceMirror(ctx, projectID, &cfg.Spec)
 		return cfg, nil
@@ -212,7 +214,7 @@ func restoreSourceJob(spec *Spec) bool {
 		if specHasJobID(spec, id) {
 			id = uuid.NewString()
 		}
-		st.Jobs = append([]Job{{ID: id, Name: "源", Type: "git_source", Config: map[string]any{}}}, st.Jobs...)
+		st.Jobs = append([]Job{{ID: id, Name: sourceJobDefaultName, Type: "git_source", Config: map[string]any{}}}, st.Jobs...)
 		healed = true
 	}
 	return healed
@@ -298,6 +300,7 @@ func (s *service) Save(ctx context.Context, projectID string, spec Spec) (*Confi
 
 	// 源节点三键落库前也覆盖成项目真值:否则 API / YAML 导入塞进来的镜像会一直躺在库里,
 	// 而它既不参与克隆、又会被步骤日志当成真源读出来。
+	healLegacySourceJobNames(&normalized)
 	s.syncSourceMirror(ctx, projectID, &normalized)
 
 	specJSON, err := json.Marshal(normalized)
@@ -428,6 +431,35 @@ func (s *service) sourceSummary(ctx context.Context, projectID string) (string, 
 // sourceSummaryUnbound 是没绑仓库项目(仅发布用)的源卡片摘要。
 const sourceSummaryUnbound = "未绑定仓库 · 仅用于发布"
 
+// sourceJobDefaultName 是平台给源任务卡片起的默认名。刻意不带任何 git 平台品牌:
+// 仓库可以是 Gitee / GitHub / GitLab / Gitea / 自建实例,而平台并没有判过 host,
+// 写死「Gitee 源」等于替用户宣称一个可能不成立的来源(2026-10-24 用户实测反馈:
+// 他的仓库在自建 GitLab 上,卡片却一路说 Gitee)。
+const sourceJobDefaultName = "Git 源"
+
+// legacySourceJobNames 是旧版本播种过、如今要收敛掉的品牌名。
+// 判定只看这一个精确字面量:用户自己取的其他名字(含真 Gitee 用户手动写的「Gitee 源」的变体)
+// 一律不动,免得又犯一次「平台替用户改配置」。
+var legacySourceJobNames = map[string]bool{"Gitee 源": true}
+
+// healLegacySourceJobNames 把存量 spec 里等于旧品牌名的源任务改成中性默认名(就地改)。
+// 只认 git_source 任务:别的类型节点上出现同名是用户自己的命名,不该被平台改写。
+// 返回是否发生了改写。
+func healLegacySourceJobNames(spec *Spec) bool {
+	healed := false
+	for i := range spec.Stages {
+		for j := range spec.Stages[i].Jobs {
+			job := &spec.Stages[i].Jobs[j]
+			if job.Type != "git_source" || !legacySourceJobNames[strings.TrimSpace(job.Name)] {
+				continue
+			}
+			job.Name = sourceJobDefaultName
+			healed = true
+		}
+	}
+	return healed
+}
+
 // defaultSpec 构造默认种子:仅 源阶段(git_source 引用项目仓库)+ 空构建阶段。
 // 部署/通知等阶段不再预置——按需由用户「+添加阶段」动态加入,空阶段不写死、不冒充已配置
 // (空阶段既不展示为「已执行步骤」,也不在拓扑图里画出,见 dagrun 与 runDag)。
@@ -439,7 +471,7 @@ func defaultSpec(sourceSummary string) Spec {
 			Kind: KindSource,
 			Jobs: []Job{{
 				ID:      "job_src",
-				Name:    "Gitee 源",
+				Name:    sourceJobDefaultName,
 				Type:    "git_source",
 				Summary: sourceSummary,
 				Config:  map[string]any{},
@@ -538,7 +570,7 @@ func normalizeSpec(in Spec) (Spec, error) {
 		// 删掉后这阶段就没有任何补加入口(加任务只挂在已有任务上)。所以缺了就补回来,
 		// 让存量流水线在下次读/存时自愈,而不是留一列死的给执行人看。
 		if kind == KindSource && !hasSourceJob(jobs) {
-			jobs = append([]Job{{ID: uuid.NewString(), Name: "源", Type: "git_source", Config: map[string]any{}}}, jobs...)
+			jobs = append([]Job{{ID: uuid.NewString(), Name: sourceJobDefaultName, Type: "git_source", Config: map[string]any{}}}, jobs...)
 			seen[jobs[0].ID] = struct{}{}
 		}
 

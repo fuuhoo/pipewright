@@ -117,7 +117,7 @@ func TestGetIdempotent(t *testing.T) {
 func validSpec() Spec {
 	return Spec{Stages: []Stage{
 		{Name: "流水线源", Kind: KindSource, Jobs: []Job{
-			{Name: "Gitee 源", Type: "git_source", Summary: "main", Config: map[string]any{}},
+			{Name: "Git 源", Type: "git_source", Summary: "main", Config: map[string]any{}},
 		}},
 		{Name: "构建", Kind: KindBuild, Jobs: []Job{
 			{Name: "打镜像", Type: "build_image", Summary: "docker build", Config: map[string]any{"dockerfile": "Dockerfile"}},

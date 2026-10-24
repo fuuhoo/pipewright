@@ -17,7 +17,7 @@ stages:
     kind: source
     jobs:
       - id: job_src
-        name: Gitee 源
+        name: Git 源
         type: git_source
         summary: org/repo · main
   - id: stg_build
