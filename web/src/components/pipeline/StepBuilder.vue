@@ -3,11 +3,12 @@
  * StepBuilder — 节点内可视化步骤构建器(低代码 · Tier 3)。
  *
  * 用「加步骤」+ 拖拽/上下移排序拼出脚本块,实时编译成现有可执行 config 键
- * (commands 多行 / artifactPath 多行),经 emit('update') 落库。绝不新增执行语义:
+ * (commands 多行),经 emit('update') 落库。绝不新增执行语义:
  * 编译/反解析全在 stepCompile.ts 的纯函数里(见其文件头契约)。
  *
- * 父级(JobDrawer)负责持有 image/workDir 等节点级字段;本组件只管「步骤」那部分,
- * 把 commands + artifactPath 这两个键回传。
+ * 父级(JobDrawer)负责持有 image/workDir/artifactPath 等节点级字段;本组件只管
+ * 「步骤」那部分,把 commands 这一个键回传。产物目录是节点的固定属性(档位=产物时表单里
+ * 始终有这一格),不在「加步骤」里。
  */
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -33,8 +34,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** 步骤变更后回传编译出的 config 片段(只含 commands / artifactPath) */
-  (e: 'update', patch: { commands: string; artifactPath: string }): void
+  /** 步骤变更后回传编译出的 config 片段(只含 commands) */
+  (e: 'update', patch: { commands: string }): void
 }>()
 
 const steps = ref<StepBlock[]>([])
@@ -48,18 +49,13 @@ function hydrate(config: Record<string, string>): void {
 /**
  * 只在「外部」变更时重建步骤(切换节点、原始视图改 commands 等)。我们自己 flush 回传后,
  * 父级会把同一份 config 透传回来 —— 这种「自激」更新不能重建,否则正在编辑的空步骤(空 env/空 cd,
- * 编译成空串)会被反解析丢掉。判据:incoming 的 commands/artifactPath 与当前步骤的编译结果一致 → 自激,跳过。
+ * 编译成空串)会被反解析丢掉。判据:incoming 的 commands 与当前步骤的编译结果一致 → 自激,跳过。
  */
 let hydrated = false
 watch(
   () => props.config,
   (next) => {
-    if (hydrated) {
-      const mine = compileSteps(steps.value)
-      if ((next.commands ?? '') === mine.commands && (next.artifactPath ?? '') === mine.artifactPath) {
-        return
-      }
-    }
+    if (hydrated && (next.commands ?? '') === compileSteps(steps.value).commands) return
     hydrated = true
     hydrate(next)
   },
@@ -85,7 +81,6 @@ const addOptions = computed<ReadonlyArray<{ kind: StepKind; label: string; desc:
   { kind: 'workDir', label: STEP_KIND_META.workDir.label, desc: t('pipelineJob.sbAddWorkDirDesc') },
   { kind: 'copy', label: STEP_KIND_META.copy.label, desc: t('pipelineJob.sbAddCopyDesc') },
   { kind: 'condition', label: STEP_KIND_META.condition.label, desc: t('pipelineJob.sbAddConditionDesc') },
-  { kind: 'artifact', label: STEP_KIND_META.artifact.label, desc: t('pipelineJob.sbAddArtifactDesc') },
 ])
 
 function addStep(kind: StepKind): void {
@@ -313,18 +308,6 @@ const stepCount = computed(() => steps.value.length)
             <code>[ -f package.json ]</code>
           </p>
         </div>
-
-        <!-- 产物路径 -->
-        <input
-          v-else
-          :value="step.artifact ?? ''"
-          class="sb-input is-mono"
-          type="text"
-          placeholder="frontend/dist"
-          :aria-label="t('pipelineJob.sbArtifactAria', { n: index + 1 })"
-          @input="patchStep(step.id, { artifact: ($event.target as HTMLInputElement).value })"
-          @blur="flush"
-        />
       </li>
     </ol>
 
@@ -419,7 +402,6 @@ const stepCount = computed(() => steps.value.length)
 .sb-step--env { --accent: var(--color-cyan); }
 .sb-step--workDir { --accent: var(--color-amber); }
 .sb-step--copy { --accent: var(--color-green); }
-.sb-step--artifact { --accent: var(--color-green); }
 .sb-step--condition { --accent: var(--color-red); }
 
 .sb-step--dragging {
@@ -688,7 +670,6 @@ const stepCount = computed(() => steps.value.length)
 .sb-add-item--workDir { --item-accent: var(--color-amber); }
 .sb-add-item--copy { --item-accent: var(--color-green); }
 .sb-add-item--condition { --item-accent: var(--color-red); }
-.sb-add-item--artifact { --item-accent: var(--color-green); }
 
 .sb-add-dot {
   flex-shrink: 0;

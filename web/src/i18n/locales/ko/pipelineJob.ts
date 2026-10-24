@@ -326,7 +326,6 @@ export default {
   stepEnvLabel: '환경 변수 설정',
   stepWorkDirLabel: '디렉터리 전환',
   stepCopyLabel: '파일 복사',
-  stepArtifactLabel: '아티팩트 경로',
   stepConditionLabel: '조건 가드',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -442,7 +441,6 @@ export default {
   sbCondHintPre: 'shell 조건, 충족되지 않으면 ',
   sbCondHintStrong: '후속 모든 단계를 건너뜀',
   sbCondHintPost: '(성공으로 종료). 예',
-  sbArtifactAria: '아티팩트 경로 {n}',
   sbEmpty: '아직 단계가 없습니다. 아래의 「단계 추가」를 눌러 시작하세요',
   sbAddStep: '단계 추가',
   sbAddCommandDesc: 'shell 명령(여러 줄 가능)',
@@ -450,5 +448,4 @@ export default {
   sbAddWorkDirDesc: '후속 명령의 작업 디렉터리 전환',
   sbAddCopyDesc: '원본 디렉터리 내용을 대상에 복사(제외 가능)',
   sbAddConditionDesc: '충족되지 않으면 후속 단계 건너뜀',
-  sbAddArtifactDesc: 'glob 로 아티팩트 아카이브',
 }

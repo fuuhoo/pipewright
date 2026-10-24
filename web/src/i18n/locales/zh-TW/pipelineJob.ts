@@ -326,7 +326,6 @@ export default {
   stepEnvLabel: '設環境變數',
   stepWorkDirLabel: '切目錄',
   stepCopyLabel: '複製檔案',
-  stepArtifactLabel: '產物路徑',
   stepConditionLabel: '條件守衛',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -442,7 +441,6 @@ export default {
   sbCondHintPre: 'shell 條件,不成立則',
   sbCondHintStrong: '跳過後續所有步驟',
   sbCondHintPost: '(成功結束)。如',
-  sbArtifactAria: '產物路徑 {n}',
   sbEmpty: '還沒有步驟,點下方「加步驟」開始',
   sbAddStep: '加步驟',
   sbAddCommandDesc: 'shell 命令(可多行)',
@@ -450,5 +448,4 @@ export default {
   sbAddWorkDirDesc: '切換後續命令工作目錄',
   sbAddCopyDesc: '來源目錄內容拷進目標目錄(可排除)',
   sbAddConditionDesc: '不成立則跳過後續步驟',
-  sbAddArtifactDesc: 'glob 歸檔產物',
 }

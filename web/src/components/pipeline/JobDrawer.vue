@@ -168,8 +168,8 @@ const pushTargets = computed<Array<{ env: string; registry: string }>>(() =>
   })),
 )
 
-/** 步骤构建器拥有的 config 键(commands 多行 / artifactPath 多行)。 */
-const STEP_OWNED_KEYS = new Set(['commands', 'artifactPath'])
+/** 步骤构建器拥有的 config 键:只有 commands 多行(产物目录 artifactPath 是节点固定属性)。 */
+const STEP_OWNED_KEYS = new Set(['commands'])
 
 // 「自定义脚本」节点(script/custom)天然就是写命令文本,可视化步骤构建器对它是冗余:
 // 这些类型不提供 steps/raw 切换、默认就用原始参数(命令文本框)。可视化步骤仅保留给
@@ -179,7 +179,7 @@ const RAW_ONLY_SCRIPT_TYPES = new Set(['script', 'custom'])
 // 执行/缓存类高级字段:能力保留,但默认收进可折叠「高级」分区,主表单只留镜像/命令/工作目录。
 const ADVANCED_FIELD_KEYS = new Set(['timeoutSeconds', 'retries', 'cpu', 'memory', 'cachePaths', 'cacheKey'])
 
-/** 该类型能用可视化步骤构建器吗(脚本类 + 有 commands/artifactPath 字段;但 script/custom 除外)。 */
+/** 该类型能用可视化步骤构建器吗(脚本类 + 有 commands 字段;但 script/custom 除外)。 */
 const canUseStepBuilder = computed<boolean>(() => {
   // 构建任务按产物档位折算:只有「产物」档走脚本路径,才有步骤可编;镜像档是 docker 构建。
   if (!isScriptClassType(localType.value, liveConfig.value)) return false
@@ -203,7 +203,7 @@ function pickViewMode(config: Record<string, string>): void {
   }
 }
 
-/** 步骤模式下,typed 表单只渲染「非步骤拥有」的字段(image/workDir/模板字段等)。 */
+/** 步骤模式下,typed 表单只渲染「非步骤拥有」的字段(image/workDir/产物目录/模板字段等)。 */
 const visibleFields = computed<JobField[]>(() => {
   if (!spec.value) return []
   return spec.value.fields.filter((f) => {
@@ -260,12 +260,11 @@ function showStepsHere(field: JobField, index: number): boolean {
   return slot.before || index === visibleFields.value.length - 1
 }
 
-/** 步骤构建器回传的编译片段并入 typedConfig 落库。 */
-function onStepsUpdate(patch: { commands: string; artifactPath: string }): void {
+/** 步骤构建器回传的编译片段并入 typedConfig 落库(只接管 commands;产物目录由字段直接编辑)。 */
+function onStepsUpdate(patch: { commands: string }): void {
   typedConfig.value = {
     ...typedConfig.value,
     commands: patch.commands,
-    artifactPath: patch.artifactPath,
   }
   flush()
 }
@@ -885,7 +884,7 @@ async function confirmSave(): Promise<void> {
       </div>
 
       <template v-for="(field, fieldIndex) in visibleFields" :key="field.key">
-        <!-- 可视化步骤构建器(脚本类节点;编译进 commands/artifactPath,经 update 落库)。
+        <!-- 可视化步骤构建器(脚本类节点;编译进 commands,经 update 落库;产物目录仍是下面的固定字段)。
              插在这里 = 「编译等指令」在环境变量导入之上,与原始参数视图里 commands 格的位置一致。 -->
         <div v-if="showStepsHere(field, fieldIndex)" class="drawer-field step-builder-field">
           <StepBuilder :config="typedConfig" :language="commandTemplateLang" @update="onStepsUpdate" />

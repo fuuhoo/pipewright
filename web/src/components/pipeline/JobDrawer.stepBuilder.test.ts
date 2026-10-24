@@ -49,15 +49,14 @@ describe('JobDrawer + StepBuilder integration', () => {
     expect(wrapper.findAll('.view-tab').length).toBe(0)
   })
 
-  it('compiles builder steps into commands/artifactPath via emit("update")', async () => {
-    const job = builderJob({ image: 'node:20', commands: 'npm ci', artifactPath: '' })
+  it('compiles builder steps into commands via emit("update"), leaving artifactPath alone', async () => {
+    const job = builderJob({ image: 'node:20', commands: 'npm ci', artifactPath: 'old/dist' })
     const wrapper = mount(JobDrawer, { props: { job, stage } })
 
     const builder = wrapper.findComponent(StepBuilder)
-    // simulate the builder emitting a compiled fragment (env + cd + cmd, plus artifact)
+    // simulate the builder emitting a compiled fragment (env + cd + cmd)
     builder.vm.$emit('update', {
       commands: "export CI='true'\ncd 'frontend'\nnpm run build",
-      artifactPath: 'frontend/dist',
     })
     await wrapper.vm.$nextTick()
 
@@ -65,12 +64,13 @@ describe('JobDrawer + StepBuilder integration', () => {
     expect(events).toBeTruthy()
     const last = events!.at(-1)![0] as Partial<PipelineJob>
     expect(last.config!.commands).toBe("export CI='true'\ncd 'frontend'\nnpm run build")
-    expect(last.config!.artifactPath).toBe('frontend/dist')
+    // 产物目录不再由步骤回写:步骤更新只动 commands,原有 artifactPath 原样保留
+    expect(last.config!.artifactPath).toBe('old/dist')
     // node-level field preserved
     expect(last.config!.image).toBe('node:20')
   })
 
-  it('reparses an existing config back into ordered step blocks on open', () => {
+  it('reparses an existing config into ordered step blocks (artifactPath is a field, not a step)', () => {
     const job = builderJob({
       image: 'node:20',
       commands: "export NODE_ENV='production'\ncd 'frontend'\nnpm ci\nnpm run build",
@@ -78,11 +78,16 @@ describe('JobDrawer + StepBuilder integration', () => {
     })
     const wrapper = mount(JobDrawer, { props: { job, stage } })
     const builder = wrapper.findComponent(StepBuilder)
-    // 4 command-derived steps + 1 artifact step = 5 step rows
-    expect(builder.findAll('.sb-step').length).toBe(5)
+    // 只有 4 条命令行 → 4 个步骤(产物路径不进步骤)
+    expect(builder.findAll('.sb-step').length).toBe(4)
     // first step is the env block (compiled from export line)
     expect(builder.findAll('.sb-kind')[0].text()).toBe('设环境变量')
     expect(builder.findAll('.sb-kind')[1].text()).toBe('切目录')
+    // 步骤视图下「产物路径」仍是节点的固定字段,值直接可编辑
+    const artifactField = wrapper
+      .findAll('.drawer-section .drawer-field')
+      .find((n) => n.find('.drawer-field-label').exists() && n.find('.drawer-field-label').text() === '产物路径')
+    expect(artifactField?.find('textarea').element.value).toBe('frontend/dist')
   })
 
   it('defaults to raw view for a templated node (commandTemplate present)', () => {

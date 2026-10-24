@@ -326,7 +326,6 @@ export default {
   stepEnvLabel: 'Umgebungsvariable setzen',
   stepWorkDirLabel: 'Verzeichnis wechseln',
   stepCopyLabel: 'Dateien kopieren',
-  stepArtifactLabel: 'Artefaktpfad',
   stepConditionLabel: 'Bedingungs-Guard',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -442,7 +441,6 @@ export default {
   sbCondHintPre: 'Shell-Bedingung; wenn nicht erfüllt, ',
   sbCondHintStrong: 'alle nachfolgenden Schritte überspringen',
   sbCondHintPost: ' (erfolgreich beenden). z. B.',
-  sbArtifactAria: 'Artefaktpfad {n}',
   sbEmpty: 'Noch keine Schritte, klicke unten auf „Schritt hinzufügen“, um zu beginnen',
   sbAddStep: 'Schritt hinzufügen',
   sbAddCommandDesc: 'Shell-Befehl (mehrzeilig)',
@@ -450,5 +448,4 @@ export default {
   sbAddWorkDirDesc: 'Arbeitsverzeichnis für nachfolgende Befehle wechseln',
   sbAddCopyDesc: 'Inhalt des Quellverzeichnisses ins Zielverzeichnis kopieren (mit Ausschlüssen)',
   sbAddConditionDesc: 'nachfolgende Schritte überspringen, wenn nicht erfüllt',
-  sbAddArtifactDesc: 'glob zum Archivieren von Artefakten',
 }

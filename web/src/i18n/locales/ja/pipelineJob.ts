@@ -326,7 +326,6 @@ export default {
   stepEnvLabel: '環境変数を設定',
   stepWorkDirLabel: 'ディレクトリ切替',
   stepCopyLabel: 'ファイルをコピー',
-  stepArtifactLabel: '成果物パス',
   stepConditionLabel: '条件ガード',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -442,7 +441,6 @@ export default {
   sbCondHintPre: 'shell 条件、不成立なら',
   sbCondHintStrong: '後続のすべてのステップをスキップ',
   sbCondHintPost: '(成功で終了)。例',
-  sbArtifactAria: '成果物パス {n}',
   sbEmpty: 'まだステップがありません。下の「ステップを追加」から始めてください',
   sbAddStep: 'ステップを追加',
   sbAddCommandDesc: 'shell コマンド(複数行可)',
@@ -450,5 +448,4 @@ export default {
   sbAddWorkDirDesc: '後続コマンドの作業ディレクトリを切替',
   sbAddCopyDesc: 'ソースディレクトリの中身をコピー先に複製(除外可)',
   sbAddConditionDesc: '不成立なら後続ステップをスキップ',
-  sbAddArtifactDesc: 'glob で成果物をアーカイブ',
 }

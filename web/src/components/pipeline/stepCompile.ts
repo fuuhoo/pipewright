@@ -8,7 +8,7 @@
  *   - `commands`     多行命令字符串,按 `\n` 拆成逐行命令,在容器内拼成一个
  *                    `set -e` 单脚本经 `sh -c` 执行(见 internal/build/dag_stage_exec.go:25)
  *   - `workDir`      步骤起始工作目录(节点级)
- *   - `artifactPath` 多行产物路径(每行一条 glob)
+ *   - `artifactPath` 多行产物路径(每行一条 glob,节点级固定属性,不由步骤产出)
  * 后端**不读** `env` 这类键 —— 所以「设环境变量」步骤被编译成 `export K=V` 命令行;
  * 「切目录」步骤被编译成 `cd DIR` 命令行。因为所有命令同处一个 shell 脚本,
  * `export` / `cd` 对后续命令生效,顺序语义被忠实保留,且零后端改动。
@@ -23,11 +23,12 @@
  * 两条分支同一语义 —— 把「源目录的内容」铺进目标目录(rsync 靠源尾斜杠、cp 靠 `源/.`)。
  * `command -v` 探针跑在 `if` 测试上下文里,对 `set -e` 安全;整条单行仍能逐行反解析还原。
  *
- * 编译(steps → config):把有序步骤列表展开为 `commands` 多行串,产物路径汇入
- * `artifactPath`;`image`/`workDir` 作为节点级字段单独保留(由调用方合并)。
+ * 编译(steps → config):把有序步骤列表展开成 `commands` 多行串。产物目录不属于步骤,
+ * 它是节点的固定属性(`artifactPath`,档位=产物时表单里始终有这一格),由调用方单独持有;
+ * `image`/`workDir` 同样是节点级字段(由调用方合并)。
  *
- * 反解析(config → steps):把 `commands` 按行拆开,逐行识别成「设环境变量」/「切目录」/
- * 「运行命令」三类步骤(`artifactPath` 的每一行还原成「产物路径」步骤)。
+ * 反解析(config → steps):只吃 `commands`,按行识别成「设环境变量」/「切目录」/
+ * 「复制文件」/「条件守卫」/「运行命令」几类步骤。
  * 反解析允许有损(注释、奇异语法仍归类为「运行命令」原样保留),绝不丢用户数据。
  */
 
@@ -35,7 +36,7 @@
 
 import { t } from '../../i18n'
 
-export type StepKind = 'command' | 'env' | 'workDir' | 'copy' | 'artifact' | 'condition'
+export type StepKind = 'command' | 'env' | 'workDir' | 'copy' | 'condition'
 
 export interface StepBlock {
   /** 稳定的本地标识(列表 key / 拖拽用),不进 config */
@@ -55,16 +56,13 @@ export interface StepBlock {
   copyDest?: string
   /** copy:排除项(空格/逗号分隔,编译成若干 `--exclude=`) */
   copyExcludes?: string
-  /** artifact:产物路径(glob) */
-  artifact?: string
   /** condition:shell 条件表达式(不成立则跳过后续步骤) */
   condition?: string
 }
 
-/** 编译产出:展开后的 config 片段(只含步骤拥有的键)。 */
+/** 编译产出:展开后的 config 片段(只含步骤拥有的 commands 键;产物目录是节点级字段)。 */
 export interface CompiledSteps {
   commands: string
-  artifactPath: string
 }
 
 let _seq = 0
@@ -132,7 +130,6 @@ export function copyStepLine(src: string, dest: string, excludes: readonly strin
  * - workDir:`cd DIR`(DIR 做单引号转义)
  * - copy:单行 rsync/cp 兜底(源与目标齐备才发;排除项逐条 `--exclude=`)
  * - condition:`if ! ( <cond> ); then echo …; exit 0; fi`(单行守卫;cond 原样,空步骤跳过)
- * - artifact:不产生命令(进 artifactPath)
  */
 export function stepToCommandLines(step: StepBlock): string[] {
   switch (step.kind) {
@@ -159,29 +156,16 @@ export function stepToCommandLines(step: StepBlock): string[] {
       if (!cond) return []
       return [conditionGuardLine(cond)]
     }
-    case 'artifact':
-      return []
     default:
       return []
   }
 }
 
-/** 把有序步骤列表编译成可执行 config 片段(commands 多行 + artifactPath 多行)。 */
+/** 把有序步骤列表编译成可执行 config 片段(commands 多行)。 */
 export function compileSteps(steps: readonly StepBlock[]): CompiledSteps {
   const cmdLines: string[] = []
-  const artifacts: string[] = []
-  for (const step of steps) {
-    if (step.kind === 'artifact') {
-      const p = (step.artifact ?? '').trim()
-      if (p) artifacts.push(p)
-      continue
-    }
-    cmdLines.push(...stepToCommandLines(step))
-  }
-  return {
-    commands: cmdLines.join('\n'),
-    artifactPath: artifacts.join('\n'),
-  }
+  for (const step of steps) cmdLines.push(...stepToCommandLines(step))
+  return { commands: cmdLines.join('\n') }
 }
 
 // ─── 反解析:config → steps ─────────────────────────────────────────────────────
@@ -343,8 +327,9 @@ export function lineToStep(line: string): StepBlock {
 }
 
 /**
- * 从 config 反解析出步骤列表。`commands` 逐行分类;`artifactPath` 每行还原成产物路径步骤
- * (追加在末尾,顺序无关)。空 → 空列表(由调用方决定是否兜底)。
+ * 从 config 反解析出步骤列表:只吃 `commands`,逐行分类。
+ * 产物目录(`artifactPath`)不是步骤,由表单的固定字段直接编辑,这里不碰。
+ * 空 → 空列表(由调用方决定是否兜底)。
  */
 export function parseSteps(config: Record<string, string>): StepBlock[] {
   const steps: StepBlock[] = []
@@ -352,11 +337,6 @@ export function parseSteps(config: Record<string, string>): StepBlock[] {
   for (const line of commands.replace(/\r/g, '').split('\n')) {
     if (line.trim() === '') continue
     steps.push(lineToStep(line))
-  }
-  const artifactPath = config.artifactPath ?? ''
-  for (const line of artifactPath.replace(/\r/g, '').split('\n')) {
-    const p = line.trim()
-    if (p) steps.push({ id: nextStepId(), kind: 'artifact', artifact: p })
   }
   return steps
 }
@@ -375,6 +355,5 @@ export const STEP_KIND_META: Record<StepKind, { label: string; accent: string }>
   env: { get label() { return t('pipelineJob.stepEnvLabel') }, accent: 'cyan' },
   workDir: { get label() { return t('pipelineJob.stepWorkDirLabel') }, accent: 'amber' },
   copy: { get label() { return t('pipelineJob.stepCopyLabel') }, accent: 'green' },
-  artifact: { get label() { return t('pipelineJob.stepArtifactLabel') }, accent: 'green' },
   condition: { get label() { return t('pipelineJob.stepConditionLabel') }, accent: 'red' },
 }

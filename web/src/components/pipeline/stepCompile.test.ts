@@ -58,24 +58,24 @@ describe('stepCompile', () => {
     it('compiles workDir into a cd line', () => {
       expect(stepToCommandLines(step({ kind: 'workDir', dir: 'frontend' }))).toEqual(["cd 'frontend'"])
     })
-
-    it('artifact steps produce no command lines', () => {
-      expect(stepToCommandLines(step({ kind: 'artifact', artifact: 'dist' }))).toEqual([])
-    })
   })
 
   describe('compileSteps', () => {
-    it('compiles an ordered mix into commands + artifactPath', () => {
+    it('compiles an ordered mix into one commands block', () => {
       const steps: StepBlock[] = [
         step({ kind: 'env', envKey: 'CI', envValue: 'true' }),
         step({ kind: 'workDir', dir: 'frontend' }),
+        step({ kind: 'copy', copySrc: 'frontend/dist', copyDest: 'out', copyExcludes: '*.map' }),
         step({ kind: 'command', command: 'npm ci\nnpm run build' }),
-        step({ kind: 'artifact', artifact: 'frontend/dist' }),
-        step({ kind: 'artifact', artifact: '*.log' }),
       ]
       const out = compileSteps(steps)
-      expect(out.commands).toBe("export CI='true'\ncd 'frontend'\nnpm ci\nnpm run build")
-      expect(out.artifactPath).toBe('frontend/dist\n*.log')
+      expect(out.commands.split('\n')).toEqual([
+        "export CI='true'",
+        "cd 'frontend'",
+        copyStepLine('frontend/dist', 'out', ['*.map']),
+        'npm ci',
+        'npm run build',
+      ])
     })
 
     it('preserves step ordering (cd before the command that depends on it)', () => {
@@ -86,8 +86,8 @@ describe('stepCompile', () => {
       expect(out.commands.split('\n')).toEqual(["cd 'api'", 'go build ./...'])
     })
 
-    it('yields empty strings for no steps', () => {
-      expect(compileSteps([])).toEqual({ commands: '', artifactPath: '' })
+    it('yields an empty string for no steps', () => {
+      expect(compileSteps([])).toEqual({ commands: '' })
     })
   })
 
@@ -123,12 +123,12 @@ describe('stepCompile', () => {
       const original: StepBlock[] = [
         step({ kind: 'env', envKey: 'NODE_ENV', envValue: 'production' }),
         step({ kind: 'workDir', dir: 'frontend' }),
+        step({ kind: 'copy', copySrc: 'frontend/dist', copyDest: 'out', copyExcludes: 'node_modules *.map' }),
         step({ kind: 'command', command: 'npm ci' }),
         step({ kind: 'command', command: 'npm run build' }),
-        step({ kind: 'artifact', artifact: 'frontend/dist' }),
       ]
       const compiled = compileSteps(original)
-      const parsed = parseSteps({ commands: compiled.commands, artifactPath: compiled.artifactPath })
+      const parsed = parseSteps({ commands: compiled.commands })
 
       // ids differ, compare structurally
       const shape = (s: StepBlock) => ({
@@ -137,7 +137,9 @@ describe('stepCompile', () => {
         envKey: s.envKey,
         envValue: s.envValue,
         dir: s.dir,
-        artifact: s.artifact,
+        copySrc: s.copySrc,
+        copyDest: s.copyDest,
+        copyExcludes: s.copyExcludes,
       })
       expect(parsed.map(shape)).toEqual(original.map(shape))
     })
@@ -147,12 +149,8 @@ describe('stepCompile', () => {
       expect(parsed.map((s) => s.command)).toEqual(['echo a', 'echo b', 'echo c'])
     })
 
-    it('parses artifactPath lines into artifact steps', () => {
-      const parsed = parseSteps({ commands: '', artifactPath: 'dist\n*.jar' })
-      expect(parsed.map((s) => [s.kind, s.artifact])).toEqual([
-        ['artifact', 'dist'],
-        ['artifact', '*.jar'],
-      ])
+    it('ignores artifactPath — 产物目录是节点固定属性,不是步骤', () => {
+      expect(parseSteps({ commands: '', artifactPath: 'dist\n*.jar' })).toEqual([])
     })
 
     it('returns an empty list for empty config (caller decides fallback)', () => {
@@ -286,6 +284,6 @@ describe('stepCompile', () => {
   })
 
   it('STEP_KIND_META covers every kind', () => {
-    expect(Object.keys(STEP_KIND_META).sort()).toEqual(['artifact', 'command', 'condition', 'copy', 'env', 'workDir'])
+    expect(Object.keys(STEP_KIND_META).sort()).toEqual(['command', 'condition', 'copy', 'env', 'workDir'])
   })
 })

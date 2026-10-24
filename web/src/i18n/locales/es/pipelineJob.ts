@@ -326,7 +326,6 @@ export default {
   stepEnvLabel: 'Definir variable de entorno',
   stepWorkDirLabel: 'Cambiar directorio',
   stepCopyLabel: 'Copiar archivos',
-  stepArtifactLabel: 'Ruta de artefacto',
   stepConditionLabel: 'Guarda condicional',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -442,7 +441,6 @@ export default {
   sbCondHintPre: 'condición de shell; si no se cumple, ',
   sbCondHintStrong: 'omite todos los pasos posteriores',
   sbCondHintPost: ' (termina con éxito). Por ejemplo',
-  sbArtifactAria: 'Ruta de artefacto {n}',
   sbEmpty: 'Aún no hay pasos, haz clic en «Añadir paso» abajo para empezar',
   sbAddStep: 'Añadir paso',
   sbAddCommandDesc: 'comando de shell (multilínea)',
@@ -450,5 +448,4 @@ export default {
   sbAddWorkDirDesc: 'cambiar el directorio de trabajo para comandos posteriores',
   sbAddCopyDesc: 'copiar el contenido del origen al destino (con exclusiones)',
   sbAddConditionDesc: 'omite pasos posteriores si no se cumple',
-  sbAddArtifactDesc: 'glob para archivar artefactos',
 }

@@ -327,7 +327,6 @@ export default {
   stepEnvLabel: 'Set env var',
   stepWorkDirLabel: 'Change dir',
   stepCopyLabel: 'Copy files',
-  stepArtifactLabel: 'Artifact path',
   stepConditionLabel: 'Condition guard',
 
   // ─── studioCompile · catalog groups + items ────────────────────────────
@@ -443,7 +442,6 @@ export default {
   sbCondHintPre: 'shell condition; if it fails, ',
   sbCondHintStrong: 'skip all subsequent steps',
   sbCondHintPost: ' (succeed early). e.g.',
-  sbArtifactAria: 'Artifact path {n}',
   sbEmpty: 'No steps yet, click “Add step” below to start',
   sbAddStep: 'Add step',
   sbAddCommandDesc: 'shell command (multi-line)',
@@ -451,5 +449,4 @@ export default {
   sbAddWorkDirDesc: 'change working dir for later commands',
   sbAddCopyDesc: 'copy source dir contents into a target dir (with excludes)',
   sbAddConditionDesc: 'skip later steps if it fails',
-  sbAddArtifactDesc: 'glob to archive artifacts',
 }
