@@ -29,8 +29,9 @@ import (
 
 // ---- 测试装配 ----
 
-// stubGitProvider 是一个 GitLab/Gitea 形态的最小 OAuth provider
-// (custom 档的端点由 base_url 推导,故它是四档里唯一能被 httptest 完整接管的形态)。
+// stubGitProvider 是一个 GitLab 形态的最小 OAuth provider
+// (custom 档的端点由 base_url + 平台形态推导,故它是唯一能被 httptest 完整接管的形态;
+// 换成 gitea 形态要另起 /login/oauth/access_token 与 /api/v1/user 两条路径)。
 type stubGitProvider struct {
 	srv *httptest.Server
 }

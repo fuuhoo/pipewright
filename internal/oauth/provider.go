@@ -169,7 +169,7 @@ type Provider struct {
 	// 其余身份源恒为空。
 	AgentID string
 	// flow 非 nil 表示这个身份源不走标准 OAuth 报文 —— 钉钉/飞书/企业微信各自的参数名、
-	// 请求体编码、令牌头、响应信封、兑换步数都不是一套。git 四家与 OIDC 恒为 nil,
+	// 请求体编码、令牌头、响应信封、兑换步数都不是一套。品牌 git 平台与 OIDC 恒为 nil,
 	// 继续走 buildAuthorizeURL / requestToken / fetchIdentity 那条标准路径。
 	flow platformFlow
 	// parseIdentity 从 user API 的 JSON map 解析身份(各平台字段名不同)。

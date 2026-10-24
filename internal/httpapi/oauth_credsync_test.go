@@ -282,7 +282,7 @@ func TestAdminSaveValidatesCredentialSyncSwitch(t *testing.T) {
 		}
 	}
 
-	// git 档则应原样收下并回显 —— 前端那张开关只有在这四档上才点得动。
+	// git 档则应原样收下并回显 —— 前端那张开关只在 git 五档和声明了 git 形态的 OIDC 上才点得动。
 	ok := doJSON(t, admin, http.MethodPut,
 		e.srv.URL+"/api/admin/oauth/login-apps/"+oauth.ProviderCustom, csrf,
 		`{"clientId":"login-cid","baseUrl":"`+e.stub.srv.URL+`","clientSecret":"login-secret","enabled":true,"syncCredentials":true}`)

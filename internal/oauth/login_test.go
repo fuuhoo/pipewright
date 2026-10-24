@@ -1,8 +1,8 @@
 // login_test.go 覆盖「用 git 平台账号登录本平台」的那半 OAuth 领域:
 // 登录应用配置的密文边界、身份 scope 的下限、以及 code→身份 这条兑换链。
 //
-// mock provider 走 custom 档:它的端点完全由 base_url 推导,因此是四档里唯一能被
-// httptest 接管的形态。内置三档(gitee/github/gitlab)只测端点与 scope 模板 ——
+// mock provider 走 custom 档:它的端点完全由 base_url 推导,因此是这些档里唯一能被
+// httptest 接管的形态。内置品牌档(gitee/github/gitlab/gitea)只测端点与 scope 模板 ——
 // 那些是与真实主机无关的静态契约,联网测它们只会让测试随外网抖动。
 package oauth
 

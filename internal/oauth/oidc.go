@@ -1,6 +1,6 @@
 // oidc.go 是登录流的「通用 OIDC 身份源」这一支(Keycloak / Authentik / 企业自建 IDaaS)。
 //
-// 与 git 四家的关键区别:git 平台的端点写在 presets 常量里(或据 base_url 推导),
+// 与 git 平台的关键区别:git 平台的端点写在 presets 常量里(或据 base_url 推导),
 // 而 OIDC 服务器的端点只能问它自己 —— 先读发现文档,运营者手填的端点再逐项覆盖。
 //
 // 本期只走 **userinfo 路线**:换到 access_token 后 GET userinfo_endpoint 取主键声明,

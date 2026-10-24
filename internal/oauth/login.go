@@ -529,7 +529,7 @@ func (s *service) loadLoginApp(ctx context.Context, provider string) (*loginAppR
 }
 
 // loginProvider 据登录应用行解析出可用的端点模板。
-//   - git 五家(gitee/github/gitlab/gitea):沿用 presets;custom 按 base_url + git_shape 推导,
+//   - 品牌 git 平台(gitee/github/gitlab/gitea):沿用 presets;custom 按 base_url + git_shape 推导,
 //     与「取仓库凭据」那条流同一套地址。
 //   - oidc:端点只能问服务器自己(发现文档 + 显式覆盖),所以这里要 ctx 与 http.Client;
 //     声明了 git_shape 时才把该家的仓库读 scope 追加进去(见 oidcProvider)。
