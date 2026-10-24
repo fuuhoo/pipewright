@@ -185,9 +185,8 @@ func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 		// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
 		// 放回去,用户不必先保存一次才看得到。
 		restoreSourceJob(&cfg.Spec)
-		// 给 git_source 任务预填项目绑定的仓库/分支/凭据(字段留空时)+ 卡片摘要,
-		// 使画布源节点直接展示项目源码信息(经 YAML 导入/手编保存的 source 任务常为空)。
-		s.fillSourceDefaults(ctx, projectID, &cfg.Spec)
+		// 源节点的仓库/分支/凭据 + 摘要:一律回写成项目配置的镜像(画布上只读展示)。
+		s.syncSourceMirror(ctx, projectID, &cfg.Spec)
 		return cfg, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -231,57 +230,52 @@ func specHasJobID(spec *Spec, id string) bool {
 	return false
 }
 
-// fillSourceDefaults 为 git_source 任务预填项目绑定的仓库/分支/凭据(仅当对应字段为空,
-// 不覆盖用户显式覆盖)并补上「仓库 · 分支」卡片摘要。展示层补全:让源节点直观显示项目源码;
-// 项目信息读取失败则静默跳过,不阻断流水线返回。
-func (s *service) fillSourceDefaults(ctx context.Context, projectID string, spec *Spec) {
+// syncSourceMirror 把 git_source 节点的「仓库 / 分支 / 访问凭据」三键钉成项目配置的镜像:
+// 读和存两条路径都无条件覆盖,节点存不住自己的值。这不是偷懒 —— 运行时根本不读这三键
+// (克隆一律用 projects.repo_url / credential_id + 触发分支,见 internal/build/builder.go),
+// 让它们可编辑等于摆一个改了什么都不发生的旋钮,还会让源节点步骤日志照滞后的镜像说话。
+// 摘要同理:源卡片那一行就是「仓库 · 分支」,由镜像推导,没有给用户手写的余地。
+//
+// 项目行读不到时原样不动:把「读失败」写成「没绑仓库」是另一种骗人。
+func (s *service) syncSourceMirror(ctx context.Context, projectID string, spec *Spec) {
 	var repoURL, branch, credID string
+	var loadErr error
 	loaded := false
-	load := func() {
-		if loaded {
-			return
+	projectRead := func() bool {
+		if !loaded {
+			loaded = true
+			loadErr = s.db.QueryRowContext(ctx,
+				`SELECT repo_url, default_branch, COALESCE(credential_id, '') FROM projects WHERE id = ?`, projectID,
+			).Scan(&repoURL, &branch, &credID)
 		}
-		loaded = true
-		_ = s.db.QueryRowContext(ctx,
-			`SELECT repo_url, default_branch, COALESCE(credential_id, '') FROM projects WHERE id = ?`, projectID,
-		).Scan(&repoURL, &branch, &credID)
+		return loadErr == nil
 	}
-	asStr := func(v any) string { s, _ := v.(string); return strings.TrimSpace(s) }
 	for i := range spec.Stages {
 		for j := range spec.Stages[i].Jobs {
 			job := &spec.Stages[i].Jobs[j]
 			if job.Type != "git_source" {
 				continue
 			}
-			load()
+			if !projectRead() {
+				return
+			}
 			if job.Config == nil {
 				job.Config = map[string]any{}
 			}
-			if repoURL != "" && asStr(job.Config["repoUrl"]) == "" {
-				job.Config["repoUrl"] = repoURL
-			}
-			if branch != "" && asStr(job.Config["branch"]) == "" {
-				job.Config["branch"] = branch
-			}
-			if credID != "" && asStr(job.Config["credentialId"]) == "" {
-				job.Config["credentialId"] = credID
-			}
-			// 摘要只在为空或仍是自己生成的占位时重写,用户手写的文字不碰。
-			summary := strings.TrimSpace(job.Summary)
-			if summary != "" && summary != sourceSummaryUnbound &&
-				!strings.HasSuffix(summary, sourceSummaryPushSuffix) {
+			job.Config["repoUrl"] = repoURL
+			job.Config["branch"] = branch
+			job.Config["credentialId"] = credID
+			// depth 是后端从未实现过的假字段(没有任何执行点读它),存量一并抹掉。
+			delete(job.Config, "depth")
+			if repoURL == "" {
+				job.Summary = sourceSummaryUnbound
 				continue
 			}
-			if asStr(job.Config["repoUrl"]) == "" {
-				// 项目和任务都没给仓库:这张卡片说的是「本项目的源码来源 = 无」。
-				job.Summary = sourceSummaryUnbound
-			} else {
-				b := branch
-				if b == "" {
-					b = "main"
-				}
-				job.Summary = asStr(job.Config["repoUrl"]) + " · " + b
+			shownBranch := branch
+			if shownBranch == "" {
+				shownBranch = "main"
 			}
+			job.Summary = repoURL + " · " + shownBranch
 		}
 	}
 }
@@ -301,6 +295,10 @@ func (s *service) Save(ctx context.Context, projectID string, spec Spec) (*Confi
 	if err := s.enforceBuildEnvCatalog(normalized); err != nil {
 		return nil, err
 	}
+
+	// 源节点三键落库前也覆盖成项目真值:否则 API / YAML 导入塞进来的镜像会一直躺在库里,
+	// 而它既不参与克隆、又会被步骤日志当成真源读出来。
+	s.syncSourceMirror(ctx, projectID, &normalized)
 
 	specJSON, err := json.Marshal(normalized)
 	if err != nil {
@@ -429,10 +427,6 @@ func (s *service) sourceSummary(ctx context.Context, projectID string) (string, 
 
 // sourceSummaryUnbound 是没绑仓库项目(仅发布用)的源卡片摘要。
 const sourceSummaryUnbound = "未绑定仓库 · 仅用于发布"
-
-// sourceSummaryPushSuffix 是历史占位摘要的后缀(旧数据形如「main · push/tag/PR」)。
-// 只有空摘要或这种占位才允许重写,用户手写的摘要一律不碰。
-const sourceSummaryPushSuffix = " · push/tag/PR"
 
 // defaultSpec 构造默认种子:仅 源阶段(git_source 引用项目仓库)+ 空构建阶段。
 // 部署/通知等阶段不再预置——按需由用户「+添加阶段」动态加入,空阶段不写死、不冒充已配置

@@ -392,14 +392,17 @@ func TestGetFillsSourceDefaults(t *testing.T) {
 	}
 }
 
-// TestGetDoesNotOverrideExplicitSource 验证:用户显式填了仓库/分支时,Get 不覆盖。
-func TestGetDoesNotOverrideExplicitSource(t *testing.T) {
-	svc, _, projID := newSvc(t)
+// TestGetSourceMirrorAlwaysFollowsProject 验证:节点里残留的仓库/分支一律被项目真值覆盖
+// —— 源节点没有「自己的源」,这三键只是展示镜像,运行时克隆用的从来就是项目配置。
+// depth 是后端从未实现的假字段,读时一并抹掉。
+func TestGetSourceMirrorAlwaysFollowsProject(t *testing.T) {
+	svc, db, projID := newSvc(t)
 	spec := Spec{Stages: []Stage{
 		{Name: "源码", Kind: KindSource, Jobs: []Job{
 			{Name: "拉取", Type: "git_source", Config: map[string]any{
 				"repoUrl": "https://gitee.com/other/repo.git",
 				"branch":  "dev",
+				"depth":   "1",
 			}},
 		}},
 	}}
@@ -411,10 +414,21 @@ func TestGetDoesNotOverrideExplicitSource(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	job := cfg.Spec.Stages[0].Jobs[0]
-	if got, _ := job.Config["repoUrl"].(string); got != "https://gitee.com/other/repo.git" {
-		t.Fatalf("显式 repoUrl 被覆盖, got %q", got)
+	if got, _ := job.Config["repoUrl"].(string); got != "https://gitee.com/acme/shop.git" {
+		t.Fatalf("repoUrl 应跟随项目, got %q", got)
 	}
-	if got, _ := job.Config["branch"].(string); got != "dev" {
-		t.Fatalf("显式 branch 被覆盖, got %q", got)
+	if got, _ := job.Config["branch"].(string); got != "main" {
+		t.Fatalf("branch 应跟随项目, got %q", got)
+	}
+	if _, ok := job.Config["depth"]; ok {
+		t.Fatalf("depth 是假字段, 应被抹掉, got %v", job.Config["depth"])
+	}
+	// 存的路径也得是镜像:否则 API/YAML 塞进来的坏镜像会一直躺在库里等步骤日志去读。
+	var raw string
+	if err := db.QueryRow(`SELECT spec_json FROM pipeline_configs WHERE project_id = ?`, projID).Scan(&raw); err != nil {
+		t.Fatalf("read spec_json: %v", err)
+	}
+	if strings.Contains(raw, "other/repo.git") || strings.Contains(raw, "depth") {
+		t.Fatalf("落库 spec 不该残留节点自填的源与假字段:\n%s", raw)
 	}
 }

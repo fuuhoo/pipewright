@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-// 源卡片摘要必须说真话:项目没绑仓库时不能编一个分支名糊人(纯发布项目的源阶段
-// 压根没有源可拉)。旧数据里的占位摘要形如「main · push/tag/PR」,读时一并改对;
-// 用户在「摘要描述」里手写的文字不动。
+// 源卡片摘要必须说真话:它整行就是「项目仓库 · 项目默认分支」的镜像,项目没绑仓库时
+// 不能编一个分支名糊人(纯发布项目的源阶段压根没有源可拉)。节点自己存过的仓库/摘要
+// 一律按项目真值改对 —— 这三键不参与克隆,留旧值只会让画布和步骤日志各说一套。
 
 func TestGet_SourceSummaryTracksRepoBinding(t *testing.T) {
 	cases := []struct {
 		name    string
 		repoURL string // 项目绑定的仓库,'' = 未绑定
 		branch  string
-		cfgRepo string // 任务自己覆写的仓库(可从别处拉源码)
+		cfgRepo string // 节点里残留的仓库(旧数据/API 手填)
 		stored  string // 已落库的摘要
 		want    string
 	}{
@@ -35,13 +35,15 @@ func TestGet_SourceSummaryTracksRepoBinding(t *testing.T) {
 			stored: "", want: "https://gitee.com/acme/shop.git · dev",
 		},
 		{
-			name: "项目未绑定但任务自带仓库", repoURL: "", branch: "main",
+			// 源节点没有「自己的源」:项目没绑仓库时,节点里残留的仓库地址不算数。
+			name: "节点残留仓库_仍按项目走", repoURL: "", branch: "main",
 			cfgRepo: "https://gitee.com/other/lib.git", stored: "main · push/tag/PR",
-			want: "https://gitee.com/other/lib.git · main",
+			want: sourceSummaryUnbound,
 		},
 		{
-			name: "用户手写的摘要不动", repoURL: "", branch: "main",
-			stored: "自家镜像,源码在外部准备好", want: "自家镜像,源码在外部准备好",
+			// 摘要对源卡片是推导出来的展示文字,不是给用户写的第二标题。
+			name: "残留摘要_按项目真值改对", repoURL: "https://gitee.com/acme/shop.git", branch: "main",
+			stored: "自家镜像,源码在外部准备好", want: "https://gitee.com/acme/shop.git · main",
 		},
 	}
 
