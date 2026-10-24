@@ -223,16 +223,17 @@ func TestLoginAuthorizeURLRejectsDisabledOrUnconfigured(t *testing.T) {
 	}
 }
 
-// TestLoginScopesNeverAskForRepo 冻结四档的登录 scope 上限。
+// TestLoginScopesNeverAskForRepo 冻结五档的登录 scope 上限。
 // 登录流拿到的 token 只用来读身份;申请 repo 权限的登录按钮是不必要的越权面 ——
 // 用户以为「用 GitHub 登录」,实际授权了平台读写他的全部仓库。
 func TestLoginScopesNeverAskForRepo(t *testing.T) {
 	denied := map[string]bool{
 		"repo": true, "public_repo": true, "projects": true, "read_repository": true,
 		"write_repository": true, "api": true, "workflow": true, "admin:repo_hook": true,
+		"read:repository": true, "write:repository": true,
 	}
-	for _, name := range []string{ProviderGitee, ProviderGitHub, ProviderGitLab} {
-		p, err := resolveProvider(name, "")
+	for _, name := range []string{ProviderGitee, ProviderGitHub, ProviderGitLab, ProviderGitea} {
+		p, err := resolveProvider(name, "", "")
 		if err != nil {
 			t.Fatalf("%s resolve: %v", name, err)
 		}
@@ -245,14 +246,19 @@ func TestLoginScopesNeverAskForRepo(t *testing.T) {
 			}
 		}
 	}
-	// custom 的 DefaultScopes 含 read_repository,登录档必须把它摘掉。
-	p, err := resolveProvider(ProviderCustom, "https://git.example.com")
-	if err != nil {
-		t.Fatalf("custom resolve: %v", err)
-	}
-	for _, s := range p.LoginScopes {
-		if denied[s] {
-			t.Fatalf("custom 登录 scope 含仓库权限 %q", s)
+	// custom 的 DefaultScopes 含仓库读权限,登录档必须把它摘掉 —— 两种形态都要。
+	for _, shape := range []string{"", GitShapeGitLab, GitShapeGitea} {
+		p, err := resolveProvider(ProviderCustom, "https://git.example.com", shape)
+		if err != nil {
+			t.Fatalf("custom resolve (shape %q): %v", shape, err)
+		}
+		if len(p.LoginScopes) == 0 {
+			t.Fatalf("custom shape %q 没有独立的登录 scope", shape)
+		}
+		for _, s := range p.LoginScopes {
+			if denied[s] {
+				t.Fatalf("custom shape %q 登录 scope 含仓库权限 %q", shape, s)
+			}
 		}
 	}
 }
@@ -362,7 +368,7 @@ func TestParseIdentityFieldNamesPerProvider(t *testing.T) {
 		{ProviderGitHub, `{"id":11,"username":"fallback"}`, "fallback", "11"},
 	}
 	for _, c := range cases {
-		p, err := resolveProvider(c.provider, "https://git.example.com")
+		p, err := resolveProvider(c.provider, "https://git.example.com", "")
 		if err != nil {
 			t.Fatalf("%s resolve: %v", c.provider, err)
 		}
@@ -382,7 +388,7 @@ func TestParseIdentityFieldNamesPerProvider(t *testing.T) {
 func TestFetchIdentityFallsBackToEmailsURL(t *testing.T) {
 	stub := newStubProvider(t, `{"id":12,"login":"priv","email":null}`,
 		`[{"email":"other@example.com","primary":false,"verified":false},{"email":"Bob@Corp.Example.com","primary":true,"verified":true}]`)
-	p, err := resolveProvider(ProviderGitHub, "")
+	p, err := resolveProvider(ProviderGitHub, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -406,7 +412,7 @@ func TestFetchIdentityFallsBackToEmailsURL(t *testing.T) {
 // 登录侧会因缺邮箱被白名单拒(fail closed),连接侧本就不看邮箱。
 func TestFetchIdentitySurvivesEmailsFailure(t *testing.T) {
 	stub := newStubProvider(t, `{"id":13,"login":"nope"}`, "")
-	p, err := resolveProvider(ProviderGitHub, "")
+	p, err := resolveProvider(ProviderGitHub, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

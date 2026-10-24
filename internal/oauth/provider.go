@@ -1,7 +1,7 @@
 // Package oauth 是「多 provider OAuth 凭据接入」的领域层。
 //
-// 运营者一次性配置各 git 平台(gitee|github|gitlab|custom)的 OAuth 应用(client_id +
-// client_secret〔加密〕+ base_url〔自建用〕),用户在页面点「连接」→ 跳 git 平台授权 →
+// 运营者一次性配置各 git 平台(gitee|github|gitlab|gitea|custom)的 OAuth 应用(client_id +
+// client_secret〔加密〕+ base_url + git_shape〔自建用〕),用户在页面点「连接」→ 跳 git 平台授权 →
 // 平台回跳带 code → 后端用 client_id/client_secret 换 access_token → 拉登录名 → 把 token
 // 经 vault.Create 存成 git_token 凭据。之后克隆/构建直接复用该凭据(BasicAuth token)。
 //
@@ -11,6 +11,7 @@ package oauth
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -24,10 +25,14 @@ const (
 	ProviderGitHub = "github"
 	// ProviderGitLab 表示 gitlab.com。
 	ProviderGitLab = "gitlab"
-	// ProviderCustom 表示自建实例(据 base_url 推导 GitLab/Gitea 风格端点)。
+	// ProviderGitea 表示 gitea.com(托管版 Gitea)。自建 Gitea 走 custom + 形态 gitea。
+	ProviderGitea = "gitea"
+	// ProviderCustom 表示自建实例(据 base_url + git_shape 推导端点)。
 	ProviderCustom = "custom"
-	// ProviderOIDC 是通用 OIDC 身份源。**只属于登录流**:OIDC 服务器给不了 git token,
-	// 仓库凭据那条流继续只认上面四家(见 normalizeProvider 与 normalizeLoginProvider)。
+	// ProviderOIDC 是通用 OIDC 身份源。**只属于登录流**:仓库凭据那条流只认上面五家
+	// (见 normalizeProvider 与 normalizeLoginProvider)。 OIDC 档唯一能参与 git 令牌的地方,
+	// 是管理员显式声明「这个 IdP 背后同时是一家 GitLab/Gitea」(git_shape)后的凭据同步 ——
+	// 声明只改变「这次登录顺手落不落凭据」,不会让它进仓库凭据那张表。
 	ProviderOIDC = "oidc"
 	// 下面三家同样是「只属于登录流」的身份源,取值与 internal/notify 的渠道名保持一致
 	// (wecom / dingtalk / feishu),让同一套词汇在通知与登录两处不产生第二个拼法。
@@ -40,13 +45,93 @@ const (
 	ProviderWeCom = "wecom"
 )
 
+// git 平台形态。两处用得上,含义刻意不同一档:
+//   - provider=custom:选自建实例按哪家平台的地址形态推导端点(空 = GitLab 形态,
+//     与这个档位诞生以来的行为一致,存量配置不用改一个字);
+//   - provider=oidc:**声明**这个身份源背后同时是一家 git 平台。空 = 没声明,
+//     「登录即同步凭据」不许打开 —— 平台不能猜一个通用 IdP 的令牌能不能克隆仓库。
+//
+// 形态决定三件事:端点路径、申请的仓库读 scope、以及同步出来的凭据按哪家的规矩用。
+const (
+	GitShapeGitLab = "gitlab"
+	GitShapeGitea  = "gitea"
+)
+
 // 领域错误。错误体永不含 client_secret / access_token 明文。
 var (
-	// ErrInvalidProvider 表示 provider 枚举非法(非 gitee|github|gitlab|custom)。
+	// ErrInvalidProvider 表示 provider 枚举非法(非 gitee|github|gitlab|gitea|custom)。
 	ErrInvalidProvider = errors.New("oauth: invalid provider")
 	// ErrBaseURLRequired 表示 custom provider 缺 base_url(无从推导端点)。
 	ErrBaseURLRequired = errors.New("oauth: base url required for custom provider")
+	// ErrInvalidGitShape 表示 git 平台形态填了认识以外的值。保存期就拒:形态错了
+	// 不是「少一个功能」而是「整条授权地址都指向一个不存在的路径」,点了登录只会被跳回来说不明原因。
+	ErrInvalidGitShape = errors.New("oauth: invalid git platform shape")
 )
+
+// gitShapeSpec 是一家 git 平台的地址与权限形态(自建实例按它推导,预置档按它拼装)。
+type gitShapeSpec struct {
+	// 三个端点相对实例根地址的路径。
+	authorizePath string
+	tokenPath     string
+	userPath      string
+	// 仓库凭据流的 scope 与「只登录」的 scope。Gitea 1.23 起才真按 scope 收窄,
+	// 更早的版本压根忽略这个参数(授权即给全量),所以照发也不会失败。
+	credScopes  []string
+	loginScopes []string
+}
+
+// gitShapes 是已知形态注册表。key 即库里存的 git_shape 值。
+var gitShapes = map[string]gitShapeSpec{
+	GitShapeGitLab: {
+		authorizePath: "/oauth/authorize",
+		tokenPath:     "/oauth/token",
+		userPath:      "/api/v4/user",
+		credScopes:    []string{"read_repository", "read_user"},
+		loginScopes:   []string{"read_user"},
+	},
+	GitShapeGitea: {
+		// Gitea 用的是 GitHub 风格的那套路径,与 GitLab 的 /oauth/* 完全不同 ——
+		// 这正是「自建 Gitea 按 GitLab 形态推导必然授权页 404」的地方。
+		authorizePath: "/login/oauth/authorize",
+		tokenPath:     "/login/oauth/access_token",
+		userPath:      "/api/v1/user",
+		credScopes:    []string{"read:repository", "read:user"},
+		loginScopes:   []string{"read:user"},
+	},
+}
+
+// isGitShape 判断一个 git_shape 值是否是已知形态(空串不算:它是「未声明/未选」)。
+func isGitShape(s string) bool {
+	_, ok := gitShapes[strings.TrimSpace(s)]
+	return ok
+}
+
+// normalizeGitShape 清洗并校验形态取值。空串合法(语义见上面两个档位各自的说明)。
+func normalizeGitShape(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "", GitShapeGitLab, GitShapeGitea:
+		return s, nil
+	default:
+		return "", fmt.Errorf("%w: %s", ErrInvalidGitShape, s)
+	}
+}
+
+// shapeProviderAt 按形态拼出一家 git 平台的端点与 scope。
+// base 是实例根地址(不带尾斜杠);预置档与自建档共用它,免得 gitea.com 与自建 Gitea 两套写法漂移。
+func shapeProviderAt(name, base, shape string) Provider {
+	spec := gitShapes[shape]
+	return Provider{
+		Name:          name,
+		AuthorizeURL:  base + spec.authorizePath,
+		TokenURL:      base + spec.tokenPath,
+		UserURL:       base + spec.userPath,
+		DefaultScopes: append([]string(nil), spec.credScopes...),
+		LoginScopes:   append([]string(nil), spec.loginScopes...),
+		// GitLab 的登录名字段是 username,Gitea 也是 username(/api/v1/user 没有 login)。
+		parseIdentity: parseIdentityFields("username"),
+	}
+}
 
 // Identity 是从 provider user API 解析出的用户身份。
 //   - ExternalID 是 provider 内的稳定主键(数字 id 的字符串形式)。登录账号匹配只用它 ——
@@ -64,7 +149,7 @@ type Identity struct {
 // Provider 描述一个 OAuth provider 的端点与解析策略。
 // 内置预设为不可变模板;custom 经 resolve(baseURL) 据基址推导端点。
 type Provider struct {
-	// Name 是 provider 枚举值(gitee|github|gitlab|custom)。
+	// Name 是 provider 枚举值(gitee|github|gitlab|gitea|custom)。
 	Name string
 	// AuthorizeURL 是授权页地址(用户浏览器跳转目标)。
 	AuthorizeURL string
@@ -124,15 +209,10 @@ var presets = map[string]Provider{
 		LoginScopes:   []string{"read:user", "user:email"},
 		parseIdentity: parseIdentityFields("login"),
 	},
-	ProviderGitLab: {
-		Name:          ProviderGitLab,
-		AuthorizeURL:  "https://gitlab.com/oauth/authorize",
-		TokenURL:      "https://gitlab.com/oauth/token",
-		UserURL:       "https://gitlab.com/api/v4/user",
-		DefaultScopes: []string{"read_repository", "read_user"},
-		LoginScopes:   []string{"read_user"},
-		parseIdentity: parseIdentityFields("username"),
-	},
+	// GitLab 与 Gitea 的预置档直接从形态表拼出:自建实例填同一个根地址得到的端点与 scope
+	// 与官方站完全一致,加一家不用改两处。
+	ProviderGitLab: shapeProviderAt(ProviderGitLab, "https://gitlab.com", GitShapeGitLab),
+	ProviderGitea:  shapeProviderAt(ProviderGitea, "https://gitea.com", GitShapeGitea),
 }
 
 // parseIdentityFields 返回一个身份解析器:主字段定登录名,external_id 恒取 "id"。
@@ -174,7 +254,7 @@ func firstStringField(m map[string]any, fields ...string) string {
 }
 
 // normalizeProvider 校验并归一 **git** provider 枚举(空串非法)。
-// 仓库凭据流(oauth_apps)只认这四家 —— 只有它们能换出可用的 git 令牌。
+// 仓库凭据流(oauth_apps)只认这五家 —— 只有它们能换出可用的 git 令牌。
 func normalizeProvider(p string) (string, error) {
 	switch strings.TrimSpace(p) {
 	case ProviderGitee:
@@ -183,6 +263,8 @@ func normalizeProvider(p string) (string, error) {
 		return ProviderGitHub, nil
 	case ProviderGitLab:
 		return ProviderGitLab, nil
+	case ProviderGitea:
+		return ProviderGitea, nil
 	case ProviderCustom:
 		return ProviderCustom, nil
 	default:
@@ -190,7 +272,7 @@ func normalizeProvider(p string) (string, error) {
 	}
 }
 
-// normalizeLoginProvider 校验并归一「登录用」身份源枚举:git 四家 + OIDC + 钉钉/飞书/企业微信。
+// normalizeLoginProvider 校验并归一「登录用」身份源枚举:git 五家 + OIDC + 钉钉/飞书/企业微信。
 // 两条流刻意用不同枚举:把 oidc 塞进 oauth_apps 会得到一个「能配但永远换不出 git token」
 // 的死条目,而登录侧需要的是「任意能证明身份的提供方」。
 func normalizeLoginProvider(p string) (string, error) {
@@ -202,7 +284,7 @@ func normalizeLoginProvider(p string) (string, error) {
 }
 
 // isPlatformProvider 判断该身份源是否走 platform.go 那套异形报文(钉钉/飞书/企业微信)。
-// 三条流在这里分叉:标准 OAuth 那两条(git 四家、OIDC)继续共用 oauth.go 的兑换实现。
+// 三条流在这里分叉:标准 OAuth 那两条(git 五家、OIDC)继续共用 oauth.go 的兑换实现。
 func isPlatformProvider(name string) bool {
 	switch strings.TrimSpace(name) {
 	case ProviderDingTalk, ProviderFeishu, ProviderWeCom:
@@ -212,53 +294,47 @@ func isPlatformProvider(name string) bool {
 	}
 }
 
-// issuesGitToken 判断该身份源能否换出**可用于 git 仓库**的令牌:只有四家 git 平台能。
-// 凭据同步的开关只能在这四档打开 —— OIDC 的 access_token 拿去克隆仓库只会换来一个
-// 说不清的 401,钉钉/飞书/企微压根没有 git 端点。
+// issuesGitToken 判断该身份源**档位上**能否换出可用于 git 仓库的令牌:只有五家 git 平台能。
+// OIDC 是例外,它还看该应用有没有声明 git_shape —— 判这条请用 supportsGitCredential。
+// 凭据同步的开关只能在这些档打开:钉钉/飞书/企微压根没有 git 端点,OIDC 没声明时
+// 平台无从知道它的令牌能不能克隆仓库,拿去用只会换来一个说不清的 401。
 func issuesGitToken(name string) bool {
 	_, err := normalizeProvider(name)
 	return err == nil
 }
 
-// resolveProvider 据 provider 名 + 配置的 baseURL 返回可用的 Provider 端点模板。
-//   - gitee/github/gitlab:返回内置预设(忽略 baseURL,除非将来允许覆盖)。
-//   - custom:据 baseURL 推导 GitLab/Gitea 风格端点(authorize/token/user)。
-//     custom 缺 baseURL → ErrBaseURLRequired。
-func resolveProvider(name, baseURL string) (Provider, error) {
+// resolveProvider 据 provider 名 + 配置的 baseURL/gitShape 返回可用的 Provider 端点模板。
+//   - gitee/github/gitlab/gitea:返回内置预设(忽略 baseURL 与 shape)。
+//   - custom:据 baseURL 与形态(GitLab / Gitea)推导端点。缺 baseURL → ErrBaseURLRequired。
+func resolveProvider(name, baseURL, shape string) (Provider, error) {
 	n, err := normalizeProvider(name)
 	if err != nil {
 		return Provider{}, err
 	}
 	if n == ProviderCustom {
-		return customProvider(baseURL)
+		return customProvider(baseURL, shape)
 	}
 	return presets[n], nil
 }
 
-// customProvider 据自建实例 baseURL 推导 GitLab/Gitea 风格 OAuth 端点。
-// 约定(GitLab 与 Gitea 端点路径一致):
-//
-//	authorize: {base}/oauth/authorize
-//	token    : {base}/oauth/token
-//	user     : {base}/api/v4/user   (GitLab;Gitea 为 /api/v1/user,登录名字段均含 username/login)
-//
-// 解析器主字段取 username,回退 login,故同时兼容 GitLab(username)与 Gitea(login)。
-// Gitea 的用户主键同样是 id,external_id 判定不受影响。
-func customProvider(baseURL string) (Provider, error) {
+// customProvider 据自建实例的 baseURL 与平台形态推导 OAuth 端点。
+// shape 为空按 GitLab 形态处理:那是这个档位从第一天起的推导方式,存量配置不用重填。
+// 登录名解析器两种形态共用(GitLab 与 Gitea 的用户 API 都回 username,主键都叫 id)。
+func customProvider(baseURL, shape string) (Provider, error) {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
 		return Provider{}, ErrBaseURLRequired
 	}
-	if _, err := url.Parse(base); err != nil {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
 		return Provider{}, ErrBaseURLRequired
 	}
-	return Provider{
-		Name:          ProviderCustom,
-		AuthorizeURL:  base + "/oauth/authorize",
-		TokenURL:      base + "/oauth/token",
-		UserURL:       base + "/api/v4/user",
-		DefaultScopes: []string{"read_repository", "read_user"},
-		LoginScopes:   []string{"read_user"},
-		parseIdentity: parseIdentityFields("username"),
-	}, nil
+	sh, err := normalizeGitShape(shape)
+	if err != nil {
+		return Provider{}, err
+	}
+	if sh == "" {
+		sh = GitShapeGitLab
+	}
+	return shapeProviderAt(ProviderCustom, base, sh), nil
 }

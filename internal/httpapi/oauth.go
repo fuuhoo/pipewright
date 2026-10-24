@@ -18,9 +18,12 @@ import (
 // oauthAppDTO 是 GET /api/oauth/apps 列表项与 PUT 响应体(冻结契约)。
 // clientSecret 只暴露掩码 maskedSecret + configured 标志,绝无明文。
 type oauthAppDTO struct {
-	Provider     string  `json:"provider"`
-	ClientID     string  `json:"clientId"`
-	BaseURL      string  `json:"baseUrl"`
+	Provider string `json:"provider"`
+	ClientID string `json:"clientId"`
+	BaseURL  string `json:"baseUrl"`
+	// GitShape 只对 custom 有值(gitlab|gitea):自建实例按哪家平台的地址形态推导端点。
+	// 其余档位恒为空串,前端据此决定要不要出那个选择器。
+	GitShape     string  `json:"gitShape"`
 	Enabled      bool    `json:"enabled"`
 	MaskedSecret string  `json:"maskedSecret"`
 	Configured   bool    `json:"configured"`
@@ -33,6 +36,7 @@ func toOAuthAppDTO(c oauth.AppConfig) oauthAppDTO {
 		Provider:     c.Provider,
 		ClientID:     c.ClientID,
 		BaseURL:      c.BaseURL,
+		GitShape:     c.GitShape,
 		Enabled:      c.Enabled,
 		MaskedSecret: c.MaskedSecret,
 		Configured:   c.Configured,
@@ -49,9 +53,12 @@ func writeOAuthError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, oauth.ErrInvalidProvider):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_provider",
-			"provider 不在支持范围内:仓库凭据只认 gitee、github、gitlab、custom;登录身份源另加 oidc、dingtalk、feishu、wecom")
+			"provider 不在支持范围内:仓库凭据只认 gitee、github、gitlab、gitea、custom;登录身份源另加 oidc、dingtalk、feishu、wecom")
 	case errors.Is(err, oauth.ErrBaseURLRequired):
 		writeError(w, http.StatusUnprocessableEntity, "base_url_required", "自建(custom)provider 必须配置 baseUrl")
+	case errors.Is(err, oauth.ErrInvalidGitShape):
+		writeError(w, http.StatusUnprocessableEntity, "git_shape_invalid",
+			"平台形态只能留空、填 gitlab 或 gitea:填了别家,拼出来的授权地址指向一个不存在的路径")
 	case errors.Is(err, oauth.ErrClientIDRequired):
 		writeError(w, http.StatusUnprocessableEntity, "client_id_required", "clientId 不能为空")
 	case errors.Is(err, oauth.ErrClientSecretRequired):
@@ -108,6 +115,9 @@ func makeSaveOAuthAppHandler(svc oauth.Service) http.HandlerFunc {
 		var req struct {
 			ClientID string `json:"clientId"`
 			BaseURL  string `json:"baseUrl"`
+			// GitShape 只对 custom 有语义(gitlab|gitea);其余档位服务端一律落空串,
+			// 所以这里不需要「省略 vs 清空」两套语义,用普通字符串即可。
+			GitShape string `json:"gitShape"`
 			// ClientSecret 用指针区分「省略(nil)」与「显式空串」;两者均保留既有。
 			ClientSecret *string `json:"clientSecret"`
 			Enabled      bool    `json:"enabled"`
@@ -120,6 +130,7 @@ func makeSaveOAuthAppHandler(svc oauth.Service) http.HandlerFunc {
 			Provider:     provider,
 			ClientID:     req.ClientID,
 			BaseURL:      req.BaseURL,
+			GitShape:     req.GitShape,
 			ClientSecret: req.ClientSecret,
 			Enabled:      req.Enabled,
 		})

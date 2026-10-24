@@ -32,9 +32,12 @@ var (
 
 // AppConfig 是对外可见的 OAuth 应用配置视图:client_secret 仅掩码 + configured 标志,绝无明文。
 type AppConfig struct {
-	Provider     string
-	ClientID     string
-	BaseURL      string
+	Provider string
+	ClientID string
+	BaseURL  string
+	// GitShape 只对 custom 有意义:自建实例按哪家 git 平台的地址形态推导端点(gitlab|gitea)。
+	// 空 = gitlab,与加这一列之前的行为一致(存量自建 GitLab 不用重存)。其余档位一律为空。
+	GitShape     string
 	Enabled      bool
 	MaskedSecret string
 	Configured   bool
@@ -47,6 +50,7 @@ type SaveAppInput struct {
 	Provider     string
 	ClientID     string
 	BaseURL      string
+	GitShape     string
 	ClientSecret *string
 	Enabled      bool
 }
@@ -111,10 +115,38 @@ func (s *service) ConsumeState(state, bindKey string) (StateData, bool) {
 	return s.states.consume(state, bindKey)
 }
 
+// appRow 是 oauth_apps 的一行内存镜像(secret 为密文)。
+type appRow struct {
+	provider  string
+	clientID  string
+	sealed    []byte
+	baseURL   string
+	gitShape  string
+	enabled   bool
+	updatedAt string
+}
+
+// appRowColumns 是读一行的列序(与 scanAppRow 严格对应;两处 SELECT 共用,防漂移)。
+const appRowColumns = `provider, client_id, client_secret_ciphertext, base_url, git_shape, enabled, updated_at`
+
+// scanAppRow 把一行结果扫成 appRow。
+func scanAppRow(scan func(dest ...any) error) (appRow, error) {
+	var (
+		row        appRow
+		enabledInt int
+	)
+	err := scan(&row.provider, &row.clientID, &row.sealed, &row.baseURL, &row.gitShape,
+		&enabledInt, &row.updatedAt)
+	if err != nil {
+		return appRow{}, err
+	}
+	row.enabled = enabledInt != 0
+	return row, nil
+}
+
 func (s *service) ListApps(ctx context.Context) ([]AppConfig, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT provider, client_id, client_secret_ciphertext, base_url, enabled, updated_at
-		 FROM oauth_apps ORDER BY provider`)
+		`SELECT `+appRowColumns+` FROM oauth_apps ORDER BY provider`)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: list apps: %w", err)
 	}
@@ -122,18 +154,11 @@ func (s *service) ListApps(ctx context.Context) ([]AppConfig, error) {
 
 	apps := make([]AppConfig, 0)
 	for rows.Next() {
-		var (
-			provider   string
-			clientID   string
-			sealed     []byte
-			baseURL    string
-			enabledInt int
-			updatedStr string
-		)
-		if err := rows.Scan(&provider, &clientID, &sealed, &baseURL, &enabledInt, &updatedStr); err != nil {
+		row, err := scanAppRow(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("oauth: scan app: %w", err)
 		}
-		apps = append(apps, s.toAppConfig(provider, clientID, baseURL, enabledInt != 0, sealed, updatedStr))
+		apps = append(apps, toAppConfig(row))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("oauth: iterate apps: %w", err)
@@ -151,21 +176,30 @@ func (s *service) SaveApp(ctx context.Context, in SaveAppInput) (*AppConfig, err
 		return nil, ErrClientIDRequired
 	}
 	baseURL := strings.TrimSpace(in.BaseURL)
-	// 自建必填 baseUrl,且须能推导端点(否则 authorize/exchange 必失败)。
+	gitShape, sherr := normalizeGitShape(in.GitShape)
+	if sherr != nil {
+		return nil, sherr
+	}
+	// 形态只属于自建实例:其余 git 档位(gitee/github/gitlab/gitea)的端点由 presets 定死,
+	// 留着这个值只会让配置页出现一格永远不生效的选择器。
+	if provider != ProviderCustom {
+		gitShape = ""
+	}
+	// 自建必填 baseUrl,且须能按形态推导端点(否则 authorize/exchange 必失败)。
 	if provider == ProviderCustom {
-		if _, derr := customProvider(baseURL); derr != nil {
+		if _, derr := customProvider(baseURL, gitShape); derr != nil {
 			return nil, derr
 		}
 	}
 
 	// 读既有行以实现 client_secret 保留语义。
-	_, _, existingSealed, _, _, _, err := s.loadApp(ctx, provider)
+	existing, err := s.loadApp(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
 
 	// client_secret 保留语义:nil/空 → 沿用既有密文;非空 → 轮换(SealSecret 加密)。
-	sealed := existingSealed
+	sealed := existing.sealed
 	if in.ClientSecret != nil && *in.ClientSecret != "" {
 		if s.vault == nil {
 			return nil, ErrVaultUnconfigured
@@ -190,34 +224,37 @@ func (s *service) SaveApp(ctx context.Context, in SaveAppInput) (*AppConfig, err
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO oauth_apps
-		   (provider, client_id, client_secret_ciphertext, base_url, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?) `+
+		   (provider, client_id, client_secret_ciphertext, base_url, git_shape, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?) `+
 			store.UpsertSuffix(store.DialectOf(s.db), []string{"provider"},
-				[]string{"client_id", "client_secret_ciphertext", "base_url", "enabled", "updated_at"}),
-		provider, clientID, sealed, baseURL, enabled, now, now,
+				[]string{"client_id", "client_secret_ciphertext", "base_url", "git_shape", "enabled", "updated_at"}),
+		provider, clientID, sealed, baseURL, gitShape, enabled, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: upsert app: %w", err)
 	}
 
-	cfg := s.toAppConfig(provider, clientID, baseURL, in.Enabled, sealed, now)
+	cfg := toAppConfig(appRow{
+		provider: provider, clientID: clientID, sealed: sealed, baseURL: baseURL,
+		gitShape: gitShape, enabled: in.Enabled, updatedAt: now,
+	})
 	return &cfg, nil
 }
 
 func (s *service) AuthorizeURL(ctx context.Context, provider, state, redirectURI string) (string, error) {
-	prov, clientID, sealed, baseURL, enabled, _, err := s.loadApp(ctx, provider)
+	row, err := s.loadApp(ctx, provider)
 	if err != nil {
 		return "", err
 	}
 	// 未配置(无 client_id/secret)或未启用 → 不可发起授权。
-	if clientID == "" || len(sealed) == 0 || !enabled {
+	if row.clientID == "" || len(row.sealed) == 0 || !row.enabled {
 		return "", ErrAppNotConfigured
 	}
-	endpoints, err := resolveProvider(prov, baseURL)
+	endpoints, err := resolveProvider(row.provider, row.baseURL, row.gitShape)
 	if err != nil {
 		return "", err
 	}
-	return buildAuthorizeURL(endpoints, clientID, endpoints.scope(), state, redirectURI)
+	return buildAuthorizeURL(endpoints, row.clientID, endpoints.scope(), state, redirectURI)
 }
 
 // buildAuthorizeURL 拼授权跳转 URL。两条流(取凭据 / 登录)只差 scope 与 client_id。
@@ -237,28 +274,28 @@ func buildAuthorizeURL(p Provider, clientID, scope, state, redirectURI string) (
 }
 
 func (s *service) Exchange(ctx context.Context, provider, code, redirectURI string) (*TokenResult, error) {
-	prov, clientID, sealed, baseURL, _, _, err := s.loadApp(ctx, provider)
+	row, err := s.loadApp(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
-	if clientID == "" || len(sealed) == 0 {
+	if row.clientID == "" || len(row.sealed) == 0 {
 		return nil, ErrAppNotConfigured
 	}
 	if strings.TrimSpace(code) == "" {
 		return nil, ErrExchangeFailed
 	}
-	endpoints, err := resolveProvider(prov, baseURL)
+	endpoints, err := resolveProvider(row.provider, row.baseURL, row.gitShape)
 	if err != nil {
 		return nil, err
 	}
 
 	// 解密 client_secret(进程内即用即弃,绝不日志/回显)。
-	secret, err := s.openSecret(sealed)
+	secret, err := s.openSecret(row.sealed)
 	if err != nil {
 		return nil, err
 	}
 
-	grant, err := requestToken(ctx, s.client, endpoints, clientID, secret, code, redirectURI)
+	grant, err := requestToken(ctx, s.client, endpoints, row.clientID, secret, code, redirectURI)
 	// 明文 secret 用完即弃。
 	secret = ""
 	if err != nil {
@@ -419,31 +456,22 @@ func pickEmail(items []any) string {
 	}
 }
 
-// loadApp 读单个 provider 的应用行;返回 (provider, clientID, sealedSecret, baseURL, enabled, updatedAt, err)。
-// 无行 → 返回空默认(clientID="" / sealed=nil / enabled=false),无错误。
-func (s *service) loadApp(ctx context.Context, provider string) (string, string, []byte, string, bool, string, error) {
+// loadApp 读单个 provider 的应用行。无行 → 返回零值行(provider 已归一),无错误。
+func (s *service) loadApp(ctx context.Context, provider string) (appRow, error) {
 	prov, err := normalizeProvider(provider)
 	if err != nil {
-		return "", "", nil, "", false, "", err
+		return appRow{}, err
 	}
-	var (
-		clientID   string
-		sealed     []byte
-		baseURL    string
-		enabledInt int
-		updatedStr string
-	)
-	err = s.db.QueryRowContext(ctx,
-		`SELECT client_id, client_secret_ciphertext, base_url, enabled, updated_at
-		 FROM oauth_apps WHERE provider = ?`, prov,
-	).Scan(&clientID, &sealed, &baseURL, &enabledInt, &updatedStr)
+	row, err := scanAppRow(s.db.QueryRowContext(ctx,
+		`SELECT `+appRowColumns+` FROM oauth_apps WHERE provider = ?`, prov).Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return prov, "", nil, "", false, "", nil
+			return appRow{provider: prov}, nil
 		}
-		return "", "", nil, "", false, "", fmt.Errorf("oauth: load app: %w", err)
+		return appRow{}, fmt.Errorf("oauth: load app: %w", err)
 	}
-	return prov, clientID, sealed, baseURL, enabledInt != 0, updatedStr, nil
+	row.provider = prov
+	return row, nil
 }
 
 // openSecret 解密既有 client_secret 密文返回明文(供 Exchange 取用,用完即弃)。
@@ -464,18 +492,19 @@ func (s *service) openSecret(sealed []byte) (string, error) {
 
 // toAppConfig 组装对外视图:client_secret 仅掩码,绝无明文。
 // 掩码不解密(无需明文):有密文即回固定掩码 ••••••,configured = 有 clientID + 有密文。
-func (s *service) toAppConfig(provider, clientID, baseURL string, enabled bool, sealed []byte, updatedStr string) AppConfig {
+func toAppConfig(r appRow) AppConfig {
 	cfg := AppConfig{
-		Provider:   provider,
-		ClientID:   clientID,
-		BaseURL:    baseURL,
-		Enabled:    enabled,
-		Configured: clientID != "" && len(sealed) > 0,
+		Provider:   r.provider,
+		ClientID:   r.clientID,
+		BaseURL:    r.baseURL,
+		GitShape:   r.gitShape,
+		Enabled:    r.enabled,
+		Configured: r.clientID != "" && len(r.sealed) > 0,
 	}
-	if len(sealed) > 0 {
+	if len(r.sealed) > 0 {
 		cfg.MaskedSecret = "••••••"
 	}
-	if t, perr := time.Parse(time.RFC3339, updatedStr); perr == nil {
+	if t, perr := time.Parse(time.RFC3339, r.updatedAt); perr == nil {
 		cfg.UpdatedAt = &t
 	}
 	return cfg

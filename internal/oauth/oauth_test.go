@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -50,9 +51,10 @@ func TestResolveProviderPresets(t *testing.T) {
 		{ProviderGitee, "https://gitee.com/oauth/authorize", "https://gitee.com/oauth/token", "https://gitee.com/api/v5/user", "projects"},
 		{ProviderGitHub, "https://github.com/login/oauth/authorize", "https://github.com/login/oauth/access_token", "https://api.github.com/user", "repo"},
 		{ProviderGitLab, "https://gitlab.com/oauth/authorize", "https://gitlab.com/oauth/token", "https://gitlab.com/api/v4/user", "read_repository"},
+		{ProviderGitea, "https://gitea.com/login/oauth/authorize", "https://gitea.com/login/oauth/access_token", "https://gitea.com/api/v1/user", "read:repository"},
 	}
 	for _, c := range cases {
-		p, err := resolveProvider(c.name, "")
+		p, err := resolveProvider(c.name, "", "")
 		if err != nil {
 			t.Fatalf("%s resolve: %v", c.name, err)
 		}
@@ -65,24 +67,46 @@ func TestResolveProviderPresets(t *testing.T) {
 	}
 }
 
+// 自建实例的两种地址形态:Gitea 用的不是 GitLab 那套 /oauth/* 路径,
+// 拿 GitLab 形态去推 Gitea 会拼出一个根本不存在的授权页(这正是加这一列的原因)。
 func TestResolveCustomDerivesEndpoints(t *testing.T) {
-	p, err := resolveProvider(ProviderCustom, "https://git.internal.example.com/")
-	if err != nil {
-		t.Fatalf("custom resolve: %v", err)
+	cases := []struct {
+		shape                     string
+		authorize, token, userURL string
+		scopeHas                  string
+	}{
+		{"", "https://git.internal.example.com/oauth/authorize",
+			"https://git.internal.example.com/oauth/token",
+			"https://git.internal.example.com/api/v4/user", "read_repository"},
+		{GitShapeGitLab, "https://git.internal.example.com/oauth/authorize",
+			"https://git.internal.example.com/oauth/token",
+			"https://git.internal.example.com/api/v4/user", "read_repository"},
+		{GitShapeGitea, "https://git.internal.example.com/login/oauth/authorize",
+			"https://git.internal.example.com/login/oauth/access_token",
+			"https://git.internal.example.com/api/v1/user", "read:repository"},
 	}
-	if p.AuthorizeURL != "https://git.internal.example.com/oauth/authorize" {
-		t.Fatalf("custom authorize: %q", p.AuthorizeURL)
+	for _, c := range cases {
+		p, err := resolveProvider(ProviderCustom, "https://git.internal.example.com/", c.shape)
+		if err != nil {
+			t.Fatalf("custom resolve (shape %q): %v", c.shape, err)
+		}
+		if p.AuthorizeURL != c.authorize || p.TokenURL != c.token || p.UserURL != c.userURL {
+			t.Fatalf("custom shape %q endpoints mismatch: %+v", c.shape, p)
+		}
+		if !strings.Contains(p.scope(), c.scopeHas) {
+			t.Fatalf("custom shape %q scope %q missing %q", c.shape, p.scope(), c.scopeHas)
+		}
 	}
-	if p.TokenURL != "https://git.internal.example.com/oauth/token" {
-		t.Fatalf("custom token: %q", p.TokenURL)
-	}
-	if p.UserURL != "https://git.internal.example.com/api/v4/user" {
-		t.Fatalf("custom user: %q", p.UserURL)
+}
+
+func TestResolveCustomRejectsBadShape(t *testing.T) {
+	if _, err := resolveProvider(ProviderCustom, "https://git.internal.example.com", "bitbucket"); !errors.Is(err, ErrInvalidGitShape) {
+		t.Fatalf("bad shape err = %v, want ErrInvalidGitShape", err)
 	}
 }
 
 func TestResolveCustomRequiresBaseURL(t *testing.T) {
-	if _, err := resolveProvider(ProviderCustom, ""); err != ErrBaseURLRequired {
+	if _, err := resolveProvider(ProviderCustom, "", ""); err != ErrBaseURLRequired {
 		t.Fatalf("custom no baseURL err = %v, want ErrBaseURLRequired", err)
 	}
 }
@@ -320,6 +344,89 @@ func TestExchangeProviderErrorMapsToExchangeFailed(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "the-client-secret") || strings.Contains(err.Error(), "bad_verification_code") {
 		t.Fatalf("错误体泄漏了 provider 原文/secret: %v", err)
+	}
+}
+
+// ---- 自建 Gitea(仓库凭据流)--------------------------------------------
+
+// TestSelfHostedGiteaCredentialFlow 是加 git_shape 的原始动机:自建 Gitea 用
+// /login/oauth/* 与 /api/v1/user,GitLab 那套 /oauth/* 推导在 Gitea 上必然 404,
+// 而失败发生在用户授权之后,页面只会回一句看不懂的 exchange_failed。
+// 这里把「存形态 → 按形态拼授权地址 → 按形态换令牌与登录名 → 清单回显」四步钉死。
+func TestSelfHostedGiteaCredentialFlow(t *testing.T) {
+	mux := http.NewServeMux()
+	var gotTokenPath string
+	mux.HandleFunc("/login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
+		gotTokenPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"access_token":"gitea-tok-1","token_type":"bearer","expires_in":3600}`))
+	})
+	// Gitea 的身份接口用 username,没有 GitLab 那套 login 字段。
+	mux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer gitea-tok-1" {
+			t.Errorf("gitea user request bad auth header: %q", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"id":9,"username":"gitea-fan","full_name":"Gitea Fan"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	svc, _, _, _ := newService(t, srv.Client())
+	cfg, err := svc.SaveApp(ctx(), SaveAppInput{
+		Provider: ProviderCustom, ClientID: "cid", ClientSecret: strp("sec"),
+		BaseURL: srv.URL, GitShape: GitShapeGitea, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveApp: %v", err)
+	}
+	if cfg.GitShape != GitShapeGitea {
+		t.Fatalf("保存响应应回显形态,得到 %q", cfg.GitShape)
+	}
+	apps, err := svc.ListApps(ctx())
+	if err != nil || len(apps) != 1 || apps[0].GitShape != GitShapeGitea {
+		t.Fatalf("清单要带出形态(配置页靠它回填选择器): %+v err=%v", apps, err)
+	}
+
+	raw, err := svc.AuthorizeURL(ctx(), ProviderCustom, "ST", srv.URL+"/cb")
+	if err != nil {
+		t.Fatalf("AuthorizeURL: %v", err)
+	}
+	u, _ := url.Parse(raw)
+	if u.Path != "/login/oauth/authorize" {
+		t.Fatalf("authorize path = %q, want /login/oauth/authorize", u.Path)
+	}
+	if !strings.Contains(u.Query().Get("scope"), "read:repository") {
+		t.Fatalf("gitea 形态该申请仓库读权限: %q", u.Query().Get("scope"))
+	}
+
+	res, err := svc.Exchange(ctx(), ProviderCustom, "code-1", srv.URL+"/cb")
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if gotTokenPath != "/login/oauth/access_token" {
+		t.Fatalf("token path = %q, want /login/oauth/access_token", gotTokenPath)
+	}
+	if res.Login != "gitea-fan" {
+		t.Fatalf("exchange login = %q, want gitea-fan(username 字段)", res.Login)
+	}
+}
+
+// TestSaveAppShapeOnlyPersistedForCustom 冻结形态列的第二半:内置档位端点由平台定死,
+// 传了形态也必须清空落库 —— 留着只会让人以为 gitee.com 能被改成别的地址形态。
+func TestSaveAppShapeOnlyPersistedForCustom(t *testing.T) {
+	svc, _, db, _ := newService(t, http.DefaultClient)
+	for _, p := range []string{ProviderGitea, ProviderGitLab} {
+		if _, err := svc.SaveApp(ctx(), SaveAppInput{
+			Provider: p, ClientID: "cid", ClientSecret: strp("sec"), GitShape: GitShapeGitea, Enabled: true,
+		}); err != nil {
+			t.Fatalf("SaveApp %s: %v", p, err)
+		}
+		var shape string
+		if err := db.QueryRow(`SELECT git_shape FROM oauth_apps WHERE provider = ?`, p).Scan(&shape); err != nil {
+			t.Fatalf("读 %s 形态: %v", p, err)
+		}
+		if shape != "" {
+			t.Fatalf("内置档 %s 不该存形态,库里是 %q", p, shape)
+		}
 	}
 }
 

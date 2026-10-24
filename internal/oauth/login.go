@@ -56,7 +56,10 @@ type LoginAppConfig struct {
 	IDClaim        string
 	Scopes         string
 	AgentID        string
-	// SyncCredentials = 登录后把这次拿到的 git 令牌同步成该账号的个人凭据(仅 git 四档可开)。
+	// GitShape 只对 custom(自建实例)有语义:按哪家 git 平台的地址形态推导端点(gitlab|gitea;
+	// 空 = gitlab,存量语义)。其余档位一律为空 —— 它们的端点本就由平台定死,没有可声明的东西。
+	GitShape string
+	// SyncCredentials = 登录后把这次拿到的 git 令牌同步成该账号的个人凭据(仅 git 五档可开)。
 	// 开着它,登录申请的 scope 也随之从「只认身份」升到「能读仓库」(见 Provider.DefaultScopes)。
 	SyncCredentials bool
 }
@@ -64,8 +67,8 @@ type LoginAppConfig struct {
 // SaveLoginAppInput 是 upsert 登录应用配置的入参。
 // ClientSecret 只写:nil/空串 = 保留既有 secret;非空 = 轮换。
 // AllowedDomains 为 nil 时保留既有白名单(与 secret 同语义,避免前端漏传即清空)。
-// 端点/scope/主键声明/AgentID/凭据同步开关是**整份覆盖**语义:端点那组只对非 git 身份源生效
-// (git 档位落空值),而凭据同步反过来 —— 只有 git 四档能开,非 git 身份源一律落 false。
+// 端点/scope/主键声明/AgentID/git 形态/凭据同步开关是**整份覆盖**语义:端点那组只对非 git 身份源生效
+// (git 档位落空值),而凭据同步反过来 —— 只有 git 五档能开,非 git 身份源一律落 false。
 type SaveLoginAppInput struct {
 	Provider        string
 	ClientID        string
@@ -80,6 +83,7 @@ type SaveLoginAppInput struct {
 	IDClaim         string
 	Scopes          string
 	AgentID         string
+	GitShape        string
 	SyncCredentials bool
 }
 
@@ -99,13 +103,14 @@ type loginAppRow struct {
 	idClaim         string
 	scopes          string
 	agentID         string
+	gitShape        string
 	syncCredentials bool
 }
 
 // loginAppColumns 是读一行的列序(与 scanLoginApp 严格对应;两处 SELECT 共用,防漂移)。
 const loginAppColumns = `provider, client_id, client_secret_ciphertext, base_url, allowed_domains,
  enabled, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes, agent_id,
- sync_credentials`
+ git_shape, sync_credentials`
 
 // scanLoginApp 把一行结果扫成 loginAppRow。
 func scanLoginApp(scan func(dest ...any) error) (loginAppRow, error) {
@@ -117,7 +122,8 @@ func scanLoginApp(scan func(dest ...any) error) (loginAppRow, error) {
 	)
 	err := scan(&row.provider, &row.clientID, &row.sealed, &row.baseURL, &domainsRaw,
 		&enabledInt, &row.updatedAt, &row.discoveryURL, &row.authorizeURL,
-		&row.tokenURL, &row.userinfoURL, &row.idClaim, &row.scopes, &row.agentID, &syncInt)
+		&row.tokenURL, &row.userinfoURL, &row.idClaim, &row.scopes, &row.agentID,
+		&row.gitShape, &syncInt)
 	if err != nil {
 		return loginAppRow{}, err
 	}
@@ -213,8 +219,12 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		return nil, ErrClientIDRequired
 	}
 	baseURL := strings.TrimSpace(in.BaseURL)
+	gitShape, sherr := normalizeGitShape(in.GitShape)
+	if sherr != nil {
+		return nil, sherr
+	}
 	if provider == ProviderCustom {
-		if _, derr := customProvider(baseURL); derr != nil {
+		if _, derr := customProvider(baseURL, gitShape); derr != nil {
 			return nil, derr
 		}
 	}
@@ -249,6 +259,8 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		// 这三家的地址与主键字段名由平台定死:发现文档、自定义主键声明都用不上,清空别留残渣。
 		// scope 留空 = 用平台默认(见 resolvePlatformProvider),不把默认值写进库里,
 		// 将来改默认才不用洗数据。企业微信的扫码地址压根没有 scope 参数,一并清空。
+		// git 形态声明同样清掉:这三家的令牌永远换不成仓库权限,留着只会让人以为能开同步。
+		gitShape = ""
 		discoveryURL, idClaim = "", ""
 		if provider != ProviderWeCom {
 			agentID = ""
@@ -264,12 +276,15 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		}
 	default:
 		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes, agentID = "", "", "", "", "", "", ""
+		if provider != ProviderCustom {
+			gitShape = ""
+		}
 	}
 	domains, err := normalizeDomains(in.AllowedDomains)
 	if err != nil {
 		return nil, err
 	}
-	// 凭据同步只有 git 四档能开(见 issuesGitToken):OIDC 的令牌拿去克隆仓库只会换来一个
+	// 凭据同步只有 git 五档能开(见 issuesGitToken):OIDC 的令牌拿去克隆仓库只会换来一个
 	// 说不清的认证失败,钉钉/飞书/企微压根没有 git 端点。开错了必须在保存期报错而不是静默忽略 ——
 	// 静默忽略会让管理员以为开了,然后一直等不到凭据。
 	if in.SyncCredentials && !issuesGitToken(provider) {
@@ -317,14 +332,14 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		`INSERT INTO oauth_login_apps
 		   (provider, client_id, client_secret_ciphertext, base_url, allowed_domains, enabled,
 		    created_at, updated_at, discovery_url, authorize_url, token_url, userinfo_url, id_claim, scopes, agent_id,
-		    sync_credentials)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `+
+		    git_shape, sync_credentials)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `+
 			store.UpsertSuffix(store.DialectOf(s.db), []string{"provider"},
 				[]string{"client_id", "client_secret_ciphertext", "base_url", "allowed_domains", "enabled",
 					"updated_at", "discovery_url", "authorize_url", "token_url", "userinfo_url", "id_claim",
-					"scopes", "agent_id", "sync_credentials"}),
+					"scopes", "agent_id", "git_shape", "sync_credentials"}),
 		provider, clientID, sealed, baseURL, joinDomains(domains), enabled, now, now,
-		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes, agentID, sync,
+		discoveryURL, authorizeURL, tokenURL, userinfoURL, idClaim, scopes, agentID, gitShape, sync,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: upsert login app: %w", err)
@@ -335,7 +350,7 @@ func (s *service) SaveLoginApp(ctx context.Context, in SaveLoginAppInput) (*Logi
 		allowedDomains: domains, enabled: in.Enabled, updatedAt: now,
 		discoveryURL: discoveryURL, authorizeURL: authorizeURL, tokenURL: tokenURL,
 		userinfoURL: userinfoURL, idClaim: idClaim, scopes: scopes, agentID: agentID,
-		syncCredentials: syncCredentials,
+		gitShape: gitShape, syncCredentials: syncCredentials,
 	})
 	return &cfg, nil
 }
@@ -483,7 +498,8 @@ func (s *service) loadLoginApp(ctx context.Context, provider string) (*loginAppR
 }
 
 // loginProvider 据登录应用行解析出可用的端点模板。
-//   - git 四家:沿用 presets / base_url 推导,与「取仓库凭据」那条流同一套地址。
+//   - git 五家(gitee/github/gitlab/gitea):沿用 presets;custom 按 base_url + git_shape 推导,
+//     与「取仓库凭据」那条流同一套地址。
 //   - oidc:端点只能问服务器自己(发现文档 + 显式覆盖),所以这里要 ctx 与 http.Client。
 //   - 钉钉/飞书/企业微信:端点用平台预设(配置页可逐项覆盖),并带上各自的异形链路 flow。
 func (s *service) loginProvider(ctx context.Context, row loginAppRow) (Provider, error) {
@@ -497,7 +513,7 @@ func (s *service) loginProvider(ctx context.Context, row loginAppRow) (Provider,
 	case isPlatformProvider(row.provider):
 		return resolvePlatformProvider(row)
 	default:
-		return resolveProvider(row.provider, row.baseURL)
+		return resolveProvider(row.provider, row.baseURL, row.gitShape)
 	}
 }
 
@@ -517,6 +533,7 @@ func toLoginAppConfig(r loginAppRow) LoginAppConfig {
 		IDClaim:         r.idClaim,
 		Scopes:          r.scopes,
 		AgentID:         r.agentID,
+		GitShape:        r.gitShape,
 		SyncCredentials: r.syncCredentials,
 	}
 	if len(r.sealed) > 0 {

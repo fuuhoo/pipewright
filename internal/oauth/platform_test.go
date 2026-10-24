@@ -718,7 +718,7 @@ func TestPlatformProvidersNeverEnterGitCredentialFlow(t *testing.T) {
 		if _, err := normalizeProvider(p); !errors.Is(err, ErrInvalidProvider) {
 			t.Fatalf("git 枚举该拒 %s,得到 %v", p, err)
 		}
-		if _, err := resolveProvider(p, "https://example.com"); !errors.Is(err, ErrInvalidProvider) {
+		if _, err := resolveProvider(p, "https://example.com", ""); !errors.Is(err, ErrInvalidProvider) {
 			t.Fatalf("resolveProvider 该拒 %s,得到 %v", p, err)
 		}
 		svc, _, _ := newLoginService(t)

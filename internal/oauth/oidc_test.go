@@ -397,7 +397,7 @@ func TestOidcRejectedByGitTokenFlow(t *testing.T) {
 	if _, err := normalizeProvider(ProviderOIDC); !errors.Is(err, ErrInvalidProvider) {
 		t.Fatalf("git 枚举该拒 oidc,得到 %v", err)
 	}
-	if _, err := resolveProvider(ProviderOIDC, "https://sso.example.com"); !errors.Is(err, ErrInvalidProvider) {
+	if _, err := resolveProvider(ProviderOIDC, "https://sso.example.com", ""); !errors.Is(err, ErrInvalidProvider) {
 		t.Fatalf("resolveProvider 该拒 oidc,得到 %v", err)
 	}
 	svc, _, _ := newLoginService(t)

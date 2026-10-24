@@ -14,10 +14,6 @@ func init() {
 			"zh-TW": "name 不能為空", "en": "name must not be empty", "ja": "name は空にできません",
 			"ko": "name은 비워 둘 수 없습니다", "es": "name no debe estar vacío", "fr": "name ne doit pas être vide", "de": "name darf nicht leer sein",
 		},
-		"provider 只能为 gitee、github、gitlab 或 custom": {
-			"zh-TW": "provider 只能為 gitee、github、gitlab 或 custom", "en": "provider must be one of gitee, github, gitlab or custom", "ja": "provider は gitee、github、gitlab、custom のいずれかである必要があります",
-			"ko": "provider는 gitee, github, gitlab 또는 custom 중 하나여야 합니다", "es": "provider solo puede ser gitee, github, gitlab o custom", "fr": "provider doit être gitee, github, gitlab ou custom", "de": "provider muss gitee, github, gitlab oder custom sein",
-		},
 		"webhook 地址不被允许:不可指向云元数据或链路本地地址": {
 			"zh-TW": "webhook 位址不被允許:不可指向雲端中繼資料或鏈路本地位址", "en": "webhook URL not allowed: must not point to cloud metadata or link-local addresses", "ja": "webhook URL は許可されていません:クラウドメタデータまたはリンクローカルアドレスを指すことはできません",
 			"ko": "webhook 주소가 허용되지 않습니다: 클라우드 메타데이터 또는 링크 로컬 주소를 가리킬 수 없습니다", "es": "URL de webhook no permitida: no debe apuntar a metadatos de la nube ni a direcciones link-local", "fr": "URL de webhook non autorisée : ne doit pas pointer vers les métadonnées du cloud ni vers des adresses link-local", "de": "webhook-URL nicht zulässig: darf nicht auf Cloud-Metadaten oder Link-Local-Adressen verweisen",
