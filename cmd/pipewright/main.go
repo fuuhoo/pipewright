@@ -645,10 +645,18 @@ func main() {
 
 	// 运行数据保留清理器:按 retention_config 策略定期裁剪过期终态运行(连带其日志/步骤/产物),
 	// 防止无限增长撑爆磁盘。默认策略 enabled=0(不删);用户在设置里开启并配条数/天数后生效。
+	// 每轮裁剪后顺带回收制品库的孤儿字节:裁掉的运行带走了 run_artifacts 行,而产物字节在
+	// <artifacts>/<hash 前缀>/ 下没人动(内容寻址库只去重、不失效),不扫就永远占着盘。
 	retentionSvc := retention.NewService(st.DB)
 	retentionSweeper := retention.NewSweeper(retentionSvc, time.Hour)
+	if artStore != nil {
+		retentionSweeper.WithOrphans(retention.NewArtifactGC(st.DB, artStore, retention.DefaultArtifactGrace))
+	}
 	retentionSweeper.Start(context.Background())
 	log.Printf("[retention] 保留清理器已启动(每小时一扫;策略默认关,需在设置开启)")
+	if artStore != nil {
+		log.Printf("[retention] 制品库孤儿字节回收已挂上(每轮清理后扫一次;无 run_artifacts 引用且落盘超过 %s 才删)", retention.DefaultArtifactGrace)
+	}
 
 	// 工作区快照清理器:与上方采集装配成对。独立于保留清理器(那个默认关、按天裁剪整条 run),
 	// 快照窗口是小时级且**必须**清 —— 它带着整份目录清单,留着只会白占库。

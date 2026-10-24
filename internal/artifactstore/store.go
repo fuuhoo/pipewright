@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // 领域错误。错误体不含字节内容 / 绝对路径外的敏感信息。
@@ -49,7 +50,7 @@ func New(root string) (*Store, error) {
 // Put 把 r 的字节流式落库,返回内容寻址句柄(sha256 hex)与字节数。
 // 经临时文件 + 原子 rename 落盘:并发/中断不产生半截文件;内容相同 → 同句柄(去重)。
 func (s *Store) Put(r io.Reader) (key string, size int64, err error) {
-	tmp, err := os.CreateTemp(s.root, ".put-*")
+	tmp, err := os.CreateTemp(s.root, tempPrefix+"*")
 	if err != nil {
 		return "", 0, fmt.Errorf("artifactstore: temp: %w", err)
 	}
@@ -72,8 +73,16 @@ func (s *Store) Put(r io.Reader) (key string, size int64, err error) {
 	if err = os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return "", 0, fmt.Errorf("artifactstore: mkdir shard: %w", err)
 	}
-	// 已存在(同内容)→ 直接复用,不重复写(去重)。
+	// 已存在(同内容)→ 直接复用,不重复写(去重)。顺带把 mtime 推到此刻:孤儿回收拿 mtime
+	// 当「落盘时间」,而去重命中时库里可能正要为这份内容写一条新的 run_artifacts 行 ——
+	// 沿用几个月前的旧 mtime 会让回收误删这个正在进行中的产物。
 	if _, statErr := os.Stat(dest); statErr == nil {
+		now := time.Now()
+		if tErr := os.Chtimes(dest, time.Time{}, now); tErr != nil {
+			// 时间戳推不动 → 这份字节随时可能被回收误删,宁可让调用方退回占位引用,
+			// 也不能宣称「已归档」而把产物留在会被删的集合里。
+			return "", 0, fmt.Errorf("artifactstore: touch: %w", tErr)
+		}
 		return key, size, nil
 	}
 	if err = os.Rename(tmpName, dest); err != nil {
@@ -119,6 +128,21 @@ func (s *Store) Has(key string) bool {
 	}
 	_, err := os.Stat(s.pathFor(key))
 	return err == nil
+}
+
+// Delete 按句柄删除产物字节。不存在视为已删净(返回 nil):GC 与并发删除本就幂等,
+// 把 ErrNotFound 上抛只会让调用方多写一层无害的分支。
+func (s *Store) Delete(key string) error {
+	if !validKey(key) {
+		return ErrInvalidKey
+	}
+	if err := os.Remove(s.pathFor(key)); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("artifactstore: delete: %w", err)
+	}
+	return nil
 }
 
 // pathFor 把句柄映射为分片磁盘路径:<root>/<前 2 位>/<全 hash>(防单目录文件过多)。
