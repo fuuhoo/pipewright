@@ -449,20 +449,13 @@ func main() {
 		projectCacheOpt = build.WithProjectCache(projectCacheLayout)
 	}
 
-	// 工作区目录快照(buildsnap):script 节点**失败**或**声明的产物路径没命中**时,采集当时的
-	// 目录清单落库,供运行详情「构建目录」面板回看(解决"产物目录配错了,却看不出到底生成在哪")。
-	// 只在两种触发时各走一遍目录,采集上限深度 6 / 总计 3000 条 / 单目录 200 条;远程 runner 模式
-	// 不采集。快照是排障现场而非长期数据 → 默认只保留 2 小时(PIPEWRIGHT_SNAPSHOT_TTL 可覆盖,
-	// Go duration),由下方独立清理器按 10 分钟一扫裁剪;删 run 时靠表上的 ON DELETE CASCADE 连带清。
-	// PIPEWRIGHT_SNAPSHOT=0 整体关闭(不采集、面板查询返回空)。
-	snapshotTTL := buildsnap.DefaultTTL
-	if v := strings.TrimSpace(os.Getenv("PIPEWRIGHT_SNAPSHOT_TTL")); v != "" {
-		if d, perr := time.ParseDuration(v); perr == nil && d > 0 {
-			snapshotTTL = d
-		} else {
-			log.Printf("[buildsnap] 警告:PIPEWRIGHT_SNAPSHOT_TTL=%q 非法(须为正 Go duration),用默认 %s", v, snapshotTTL)
-		}
-	}
+	// 工作区目录快照(buildsnap):script 构建节点执行完都采一份目录清单落库(成功也采),镜像节点只在
+	// 失败时采(成功那份与同阶段 script 节点重复)。供运行详情「构建目录」面板回看 —— 既解决"产物目录
+	// 配错了,却看不出到底生成在哪",也让任何一次成功运行都回得到当时的目录。
+	// 采集上限深度 6 / 总计 3000 条 / 单目录 200 条,撞满上限的一份约 156KB;远程 runner 模式不采集。
+	// 保留**没有独立窗口**:表带 ON DELETE CASCADE,快照跟着那条运行记录一起活、一起被
+	// 设置页「运行数据保留」裁掉(默认保留最近 1000 条或一年内,满足其一即留)。
+	// PIPEWRIGHT_SNAPSHOT=0 整体关闭(不采集、面板查询返回 503)。
 	var snapStore *buildsnap.Store
 	if os.Getenv("PIPEWRIGHT_SNAPSHOT") != "0" {
 		snapStore = buildsnap.New(st.DB, buildsnap.Limits{})
@@ -659,15 +652,11 @@ func main() {
 		log.Printf("[retention] 制品库孤儿字节回收已挂上(每轮清理后扫一次;无 run_artifacts 引用且落盘超过 %s 才删)", retention.DefaultArtifactGrace)
 	}
 
-	// 工作区快照清理器:与上方采集装配成对。独立于保留清理器(那个默认关、按天裁剪整条 run),
-	// 快照窗口是小时级且**必须**清 —— 它带着整份目录清单,留着只会白占库。
-	var snapshotSweeper *buildsnap.Sweeper
+	// 工作区快照没有独立清理器:随运行记录保留,由上方保留清理器级联删表(见 workspace_snapshot.go)。
 	if snapStore != nil {
-		snapshotSweeper = buildsnap.NewSweeper(snapStore, snapshotTTL, 10*time.Minute)
-		snapshotSweeper.Start(context.Background())
-		log.Printf("[buildsnap] 工作区目录快照已启用(仅节点失败/声明产物未命中时采集;保留 %s,每 10 分钟清理;PIPEWRIGHT_SNAPSHOT=0 关闭,PIPEWRIGHT_SNAPSHOT_TTL 覆盖窗口)", snapshotTTL)
+		log.Printf("[buildsnap] 工作区目录快照已启用(每个构建节点执行完各采一份;随运行记录保留,PIPEWRIGHT_SNAPSHOT=0 关闭)")
 	} else {
-		log.Printf("[buildsnap] 工作区目录快照已按 PIPEWRIGHT_SNAPSHOT=0 关闭(构建失败不再采集目录清单)")
+		log.Printf("[buildsnap] 工作区目录快照已按 PIPEWRIGHT_SNAPSHOT=0 关闭(构建不再采集目录清单)")
 	}
 
 	// Per-PR 预览环境自动回收器(R4 E4.1 收尾):按固定间隔遍历 active 预览环境,查其 PR 是否
@@ -788,7 +777,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithProjectCopy(projectCopySvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithProjectCache(repoCache, projectCacheLayout), httpapi.WithArtifactStore(artStore), httpapi.WithSnapshots(snapStore, snapshotTTL), httpapi.WithServers(targetSvc), httpapi.WithKubeClusters(kubeSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithCerts(certSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithOAuthLogin(identitySvc, authSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithAPITokens(apiTokenSvc), httpapi.WithGroups(groupSvc), httpapi.WithRoles(roleSvc), httpapi.WithAccess(accessSvc)),
+		Handler:           httpapi.New(webFS, authSvc, httpapi.WithVault(credVault), httpapi.WithProjects(projectSvc), httpapi.WithProjectCopy(projectCopySvc), httpapi.WithTriggers(triggerSvc), httpapi.WithPipelines(pipelineSvc), httpapi.WithPipelineSettings(pipelineSettingsSvc), httpapi.WithRuns(runSvc, pool), httpapi.WithWebhooks(webhookReceiver), httpapi.WithAudit(auditRec), httpapi.WithAccount(authSvc), httpapi.WithAISettings(aiSvc), httpapi.WithAIGenerate(repoAnalyzer), httpapi.WithRunDiff(runDiffer), httpapi.WithSource(sourceReader), httpapi.WithRefs(refsLister), httpapi.WithProjectCache(repoCache, projectCacheLayout), httpapi.WithArtifactStore(artStore), httpapi.WithSnapshots(snapStore), httpapi.WithServers(targetSvc), httpapi.WithKubeClusters(kubeSvc), httpapi.WithRunnerConfig(runnerSvc), httpapi.WithDeploy(deploySvc), httpapi.WithNotifications(notifySvc), httpapi.WithRetention(retentionSvc), httpapi.WithProxy(proxySvc), httpapi.WithDNSProviders(dnsSvc), httpapi.WithCerts(certSvc), httpapi.WithPreviewEnvs(previewSvc), httpapi.WithDiagnosisFeedback(feedbackSvc), httpapi.WithAnomaly(anomalySvc), httpapi.WithAnomalyConfig(int(anomalyInterval.Seconds()), int(anomalyCooldown.Seconds())), httpapi.WithMetricsHistory(metricsHist), httpapi.WithSecretSource(secretSrc), httpapi.WithOAuth(oauthSvc), httpapi.WithOAuthLogin(identitySvc, authSvc), httpapi.WithCron(cronSvc), httpapi.WithChain(chainSvc), httpapi.WithApprovals(approvalCoord, approvalStore), httpapi.WithApprovalLinks(approvalSigner), httpapi.WithConcurrency(concurrencySvc), httpapi.WithParameters(parameterSvc), httpapi.WithPromotion(promotionStore), httpapi.WithEnvironments(environmentsSvc), httpapi.WithDoraMetrics(doraMetricsSvc), httpapi.WithTemplates(templateSvc), httpapi.WithVariableGroups(varGroupSvc), httpapi.WithCustomNodes(customNodeSvc), httpapi.WithBuildEnvs(buildEnvSvc, checker), httpapi.WithConfigProfiles(cpSvc), httpapi.WithUsers(usersSvc), httpapi.WithAPITokens(apiTokenSvc), httpapi.WithGroups(groupSvc), httpapi.WithRoles(roleSvc), httpapi.WithAccess(accessSvc)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// WriteTimeout 置 0:SSE 长连接(/api/runs/{id}/events)不可被写超时切断;
@@ -904,9 +893,6 @@ func main() {
 	// HTTP 停机后停 worker pool:取消在途运行执行,等 worker 退出(随 shutdownCtx 超时)。
 	cronScheduler.Stop()
 	retentionSweeper.Stop()
-	if snapshotSweeper != nil {
-		snapshotSweeper.Stop()
-	}
 	previewSweeper.Stop()
 	certMonitor.Stop()
 	pool.Stop(shutdownCtx)

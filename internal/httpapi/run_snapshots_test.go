@@ -36,7 +36,7 @@ func setupSnapshotServer(t *testing.T, enabled bool) (*httptest.Server, *http.Cl
 
 	srv := httptest.NewServer(New(testWebFSAuth(), svc,
 		WithVault(v), WithProjects(psvc), WithRuns(rsvc, run.NewWorkerPool(rsvc)),
-		WithSnapshots(snapStore, 2*time.Hour)))
+		WithSnapshots(snapStore)))
 	t.Cleanup(srv.Close)
 
 	client := newTestClient(t)
@@ -68,7 +68,7 @@ func newTestRun(t *testing.T, rsvc run.Service, projID string) string {
 }
 
 // TestRunSnapshotsEndpoint 验证 GET /api/runs/{id}/snapshots 的响应形状:快照按节点归位、
-// 声明路径带未命中证据、目录清单带路径/字节/截断数、保留窗口如实回传。
+// 声明路径带未命中证据、目录清单带路径/字节/截断数。
 func TestRunSnapshotsEndpoint(t *testing.T) {
 	srv, client, csrf, projID, rsvc, st := setupSnapshotServer(t, true)
 	runID := newTestRun(t, rsvc, projID)
@@ -99,9 +99,7 @@ func TestRunSnapshotsEndpoint(t *testing.T) {
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode snapshots: %v: %s", err, raw)
 	}
-	if body.RetentionSeconds != int((2 * time.Hour).Seconds()) {
-		t.Fatalf("retentionSeconds = %d,应如实回传生效窗口 7200", body.RetentionSeconds)
-	}
+	// 快照跟着运行记录保留,响应里不再有保留窗口字段(旧口径的 retentionSeconds 已删)。
 	if len(body.Snapshots) != 1 {
 		t.Fatalf("应有 1 份快照: %s", raw)
 	}

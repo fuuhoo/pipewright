@@ -99,9 +99,6 @@ func TestSaveNilSafe(t *testing.T) {
 	if err != nil || len(out) != 0 {
 		t.Fatalf("nil Store.ListByRun 应为空:%v err=%v", out, err)
 	}
-	if n, err := st.Prune(ctx, time.Now(), time.Hour); err != nil || n != 0 {
-		t.Fatalf("nil Store.Prune 应为 no-op:%d err=%v", n, err)
-	}
 }
 
 // TestListUnknownRunEmpty 验证无快照 / run 不存在都返回空切片而非错误(HTTP 层 404 由 run 存在性决定)。
@@ -114,32 +111,34 @@ func TestListUnknownRunEmpty(t *testing.T) {
 	}
 }
 
-// TestPruneTTL 验证只删超出保留窗口的快照,窗口内的留着。
-func TestPruneTTL(t *testing.T) {
+// TestAllAgesSurviveUntilRunGoes 钉住「快照随运行记录保留」:三份不同年龄的快照(含成功原因)
+// 一次性全读得到,库里没有任何按时间过期的通道 —— 唯一让它们消失的办法是删掉那条 run。
+func TestAllAgesSurviveUntilRunGoes(t *testing.T) {
 	db := storetest.OpenDB(t)
 	runID := seedRun(t, db)
 	st := New(db, Limits{})
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	fresh := Snapshot{RunID: runID, Reason: ReasonFailed, CreatedAt: now.Add(-30 * time.Minute), Entries: []Entry{{Path: "a"}}}
-	old := Snapshot{RunID: runID, Reason: ReasonFailed, CreatedAt: now.Add(-3 * time.Hour), Entries: []Entry{{Path: "b"}}}
-	for _, s := range []Snapshot{fresh, old} {
+	for i, s := range []Snapshot{
+		{RunID: runID, Reason: ReasonSuccess, CreatedAt: now, Entries: []Entry{{Path: "now"}}},
+		{RunID: runID, Reason: ReasonFailed, CreatedAt: now.Add(-30 * time.Minute), Entries: []Entry{{Path: "half-hour-ago"}}},
+		{RunID: runID, Reason: ReasonArtifactMiss, CreatedAt: now.Add(-72 * time.Hour), Entries: []Entry{{Path: "two-days-ago"}}},
+	} {
 		if err := st.Save(ctx, s); err != nil {
-			t.Fatalf("Save: %v", err)
+			t.Fatalf("Save %d: %v", i, err)
 		}
 	}
-	if n, err := st.Prune(ctx, now, DefaultTTL); err != nil || n != 1 {
-		t.Fatalf("Prune = %d, %v (want 1)", n, err)
-	}
 	left, err := st.ListByRun(ctx, runID)
-	if err != nil || len(left) != 1 || left[0].Entries[0].Path != "a" {
-		t.Fatalf("窗口内快照应幸存:%+v err=%v", left, err)
+	if err != nil || len(left) != 3 {
+		t.Fatalf("三份快照都该还在(没有 TTL 过期通道):%+v err=%v", left, err)
 	}
-
-	// ttl<=0 视为未启用:一条都不动。
-	if n, err := st.Prune(ctx, now, 0); err != nil || n != 0 {
-		t.Fatalf("ttl=0 不该删任何东西:%d err=%v", n, err)
+	// ListByRun 按 created_at 升序:三天前那份仍在最前面,和刚写进去的成功那份一起返回。
+	if left[0].Reason != ReasonArtifactMiss || left[0].Entries[0].Path != "two-days-ago" {
+		t.Fatalf("三天前那份不该被裁掉:%+v", left[0])
+	}
+	if left[2].Reason != ReasonSuccess || left[2].Entries[0].Path != "now" {
+		t.Fatalf("最新的一份归位不对:%+v", left[2])
 	}
 }
 

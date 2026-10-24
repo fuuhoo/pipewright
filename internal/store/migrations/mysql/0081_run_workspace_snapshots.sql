@@ -1,4 +1,4 @@
--- 0081 run_workspace_snapshots(MySQL):构建失败/产物未命中时的工作区目录快照,列义见 sqlite 同序注释。
+-- 0081 run_workspace_snapshots(MySQL):每个构建节点执行完时的工作区目录快照,列义与保留口径见 sqlite 同序注释。
 -- 两个 JSON 清单列用 LONGTEXT:上限 3000 条目录项约 180KB,已超 TEXT 的 64KB(与 spec_json 同档)。
 
 CREATE TABLE IF NOT EXISTS run_workspace_snapshots (

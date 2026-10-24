@@ -129,9 +129,8 @@ type options struct {
 	artifactStore   *artifactstore.Store
 	retention       *retention.Service
 	// snapshots 是工作区目录快照仓储(运行详情「构建目录」面板数据源);nil → 端点 503。
-	// snapshotTTL 为生效保留窗口,只用于在响应里如实标注"快照只保留多久"。
+	// 快照跟着运行记录一起保留,没有独立窗口,所以这里不需要 TTL。
 	snapshots    *buildsnap.Store
-	snapshotTTL  time.Duration
 	proxy        proxy.Service
 	dnsProviders dnsprovider.Service
 	// certs 是证书申请/导入/发布这条腿(internal/cert)。私钥经 vault,响应只有一处能拿到。
@@ -180,10 +179,9 @@ func WithArtifactStore(s *artifactstore.Store) Option {
 }
 
 // WithSnapshots 注入工作区目录快照仓储(buildsnap),挂载只读端点
-// GET /api/runs/{id}/snapshots。ttl 为生效保留窗口(响应里据此标注快照能回看多久)。
-// 传 nil(PIPEWRIGHT_SNAPSHOT=0)→ 端点回 503,面板显示「未启用」。
-func WithSnapshots(s *buildsnap.Store, ttl time.Duration) Option {
-	return func(o *options) { o.snapshots = s; o.snapshotTTL = ttl }
+// GET /api/runs/{id}/snapshots。传 nil(PIPEWRIGHT_SNAPSHOT=0)→ 端点回 503,面板显示「未启用」。
+func WithSnapshots(s *buildsnap.Store) Option {
+	return func(o *options) { o.snapshots = s }
 }
 
 // WithApprovals 注入审批门协调器 + 持久层(Story 8-4),挂载 /api/runs/{id}/{approve,reject,approvals} 路由。
@@ -834,8 +832,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/runs/{id}/logs", makeRunLogsHandler(rs))
 		// 构建产物契约(Story 3.4 / FR-6):只读 + 认证;按 (type, reference) 供 Epic 4 消费。
 		ar.Get("/runs/{id}/artifacts", makeRunArtifactsHandler(rs))
-		// 工作区目录快照(构建失败/产物未命中的现场目录清单):只读 + 认证。快照未启用 → 503。
-		ar.Get("/runs/{id}/snapshots", makeRunSnapshotsHandler(rs, o.snapshots, o.snapshotTTL))
+		// 工作区目录快照(每个构建节点执行完时的现场目录清单):只读 + 认证。快照未启用 → 503。
+		ar.Get("/runs/{id}/snapshots", makeRunSnapshotsHandler(rs, o.snapshots))
 		// 产物下载(Story 8-16 续):按 reference 句柄从制品库取真字节流下载。o.artifactStore 为 nil → 503。
 		ar.Get("/runs/{id}/artifacts/{artifactId}/download", makeArtifactDownloadHandler(rs, o.artifactStore))
 		// 测试报告 + 质量门禁(Story 8-6 / FR-8-6):只读 + 认证;通过/失败/跳过 + 覆盖率 + 门禁裁决。

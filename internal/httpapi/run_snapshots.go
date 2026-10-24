@@ -11,10 +11,11 @@ import (
 
 // run_snapshots.go 提供 GET /api/runs/{id}/snapshots —— 运行详情「构建目录」面板的数据源。
 //
-// 快照只在两种情况下产生:script 节点执行失败、或节点声明的产物路径没命中(产物根本没生成)。
-// 它记录的是**当时的容器工作区目录清单**,用来回答"我是不是把产物目录配错了":
-// 失败时能看出命令实际产出在哪;产物未命中时能看出声明路径的最近祖先目录里到底有什么。
-// 快照默认只保留 2 小时(见 buildsnap.Sweeper),过期后端点返回空列表 —— 面板要如实说明这点。
+// 每个构建节点执行完都会留一份目录清单(成功也算),记录的是**当时的容器工作区目录清单**,
+// 用来回答"我是不是把产物目录配错了":失败时能看出命令实际产出在哪;产物未命中时能看出声明路径的
+// 最近祖先目录里到底有什么;成功时也能回看那次构建到底产出了什么。
+// 快照没有独立的过期窗口 —— 保留多久跟着那条运行记录(设置页「运行数据保留」删 run 时级联清掉),
+// 所以响应里不再回传保留时长。远程 runner 构建不采集。
 
 // snapshotEntryDTO 是目录清单里的一项(路径相对容器工作区根,始终带尾斜杠表示目录)。
 type snapshotEntryDTO struct {
@@ -38,7 +39,7 @@ type workspaceSnapshotDTO struct {
 	Stage     string             `json:"stage"`
 	JobID     string             `json:"jobId"`
 	JobName   string             `json:"jobName"`
-	Reason    string             `json:"reason"` // failed | artifact_miss
+	Reason    string             `json:"reason"` // failed | artifact_miss | success
 	Declared  []declaredPathDTO  `json:"declared"`
 	Entries   []snapshotEntryDTO `json:"entries"`
 	Truncated bool               `json:"truncated"` // 撞总条数上限,清单不完整
@@ -48,8 +49,6 @@ type workspaceSnapshotDTO struct {
 // runSnapshotsDTO 是 GET /api/runs/{id}/snapshots 响应体。
 type runSnapshotsDTO struct {
 	Snapshots []workspaceSnapshotDTO `json:"snapshots"`
-	// RetentionSeconds 是快照保留窗口,供面板如实标注"只保留最近 N 小时"。
-	RetentionSeconds int `json:"retentionSeconds"`
 }
 
 func toSnapshotEntryDTO(e buildsnap.Entry) snapshotEntryDTO {
@@ -86,7 +85,7 @@ func toSnapshotDTOs(snaps []buildsnap.Snapshot) []workspaceSnapshotDTO {
 
 // makeRunSnapshotsHandler 返回 GET /api/runs/{id}/snapshots handler(认证 + 分组收口中间件;只读)。
 // store 为 nil(PIPEWRIGHT_SNAPSHOT=0)→ 503;run 不存在 → 404(与 /artifacts 同口径)。
-func makeRunSnapshotsHandler(svc run.Service, store *buildsnap.Store, ttl time.Duration) http.HandlerFunc {
+func makeRunSnapshotsHandler(svc run.Service, store *buildsnap.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "运行服务未初始化")
@@ -106,9 +105,6 @@ func makeRunSnapshotsHandler(svc run.Service, store *buildsnap.Store, ttl time.D
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return
 		}
-		writeJSON(w, http.StatusOK, runSnapshotsDTO{
-			Snapshots:        toSnapshotDTOs(snaps),
-			RetentionSeconds: int(ttl.Seconds()),
-		})
+		writeJSON(w, http.StatusOK, runSnapshotsDTO{Snapshots: toSnapshotDTOs(snaps)})
 	}
 }

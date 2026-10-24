@@ -85,8 +85,8 @@ type Builder struct {
 	// deployGate 是部署节点「首批后暂停」用的人工确认 hook(nil = 平台未装配审批服务)。
 	// 少了它,选了「首批后暂停」的节点没人能放行其余主机 —— 那台一台都不该发出去(见 runDeployJob)。
 	deployGate DeployPauseGate
-	// snapshots 是「构建目录快照」仓储:job 失败、或声明的产物路径没命中时,把那一刻的工作区目录
-	// 清单留一小会儿(默认 2 小时),让"产物到底生成在哪"在运行详情里有答案。
+	// snapshots 是「构建目录快照」仓储:每个构建节点跑完都把当时的工作区目录清单留一份
+	// (成功也采,保留多久跟着那条运行记录),让"产物到底生成在哪"在运行详情里随时有答案。
 	// nil(未装配)→ 完全不采,行为与旧版一致。由 main 注入(WithSnapshots)。
 	// 采集/写库全程 best-effort:绝不让构建因快照失败而失败(见 workspace_snapshot.go)。
 	snapshots *buildsnap.Store
@@ -160,8 +160,8 @@ func WithImageGC(enabled bool) BuilderOption {
 	return func(b *Builder) { b.disableImageGC = !enabled }
 }
 
-// WithSnapshots 注入「构建目录快照」仓储:script job 失败、或声明的产物路径没命中时,把那一刻的
-// 工作区目录清单留一小会儿(默认 2 小时),运行详情「构建目录」栏据此展示。
+// WithSnapshots 注入「构建目录快照」仓储:每个构建节点(含成功的)执行完把当时的
+// 工作区目录清单落一份,运行详情「构建目录」栏据此展示;随运行记录一起被保留清理器裁掉。
 // 传 nil(未装配)= 完全不采,行为与旧版一致。
 func WithSnapshots(s *buildsnap.Store) BuilderOption {
 	return func(b *Builder) { b.snapshots = s }

@@ -301,6 +301,9 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 					jrep := rep.JobReporter(jb.ID)
 					jsink := &reporterSink{rep: jrep}
 					if err := b.runBuildImageJob(ctx, jsink, jrep, jb, stage.Name, proj, settings, r.Trigger.ResolvedEnvironment, workspace, commitTag, hasPushJob); err != nil {
+						// 镜像节点成功时不再采:同阶段 script 节点刚存过同一份工作区,再存一遍是纯重复;
+						// 失败现场(Dockerfile COPY 的源文件到底在哪)则值得单独留一份。
+						b.snapshotOnJobFailure(ctx, jrep, r, stage.Name, jb, workspace)
 						_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
 						return err
 					}
@@ -309,10 +312,11 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 
 				// 产物收集按 job 逐条走一遍:采集器给出的判定要能归到具体节点(快照行记 job_id),
 				// 且「声明路径没命中」这一触发点才有对象可写。逐 job 与整批一次遍历的先后顺序一致。
+				// 顺带:每个 script 节点无论产物是否命中都留一份目录清单(成功也采),口径见 workspace_snapshot.go。
 				slug := slugify(proj.Name)
 				for _, jb := range scriptJobs {
 					declared := b.collectScriptArtifacts(ctx, []pipeline.Job{jb}, workspace, slug, stage.Name, rep)
-					b.snapshotIfArtifactMiss(ctx, rep, r, stage.Name, jb, workspace, declared)
+					b.snapshotOnJobSuccess(ctx, rep, r, stage.Name, jb, workspace, declared)
 				}
 				if err := collectStageReport(ctx, reportSink, r, stage, workspace, rep); err != nil {
 					return err
@@ -586,7 +590,7 @@ func (b *Builder) runScriptJobIsolated(
 	b.saveJobCache(ctx, rep, jb, r.Trigger.Branch, ws)
 	out := captureStageEnv(ctx, rep, ws)
 	declared := b.collectScriptArtifacts(ctx, []pipeline.Job{jb}, ws, slugify(proj.Name), stage.Name, rep)
-	b.snapshotIfArtifactMiss(ctx, rep, r, stage.Name, jb, ws, declared)
+	b.snapshotOnJobSuccess(ctx, rep, r, stage.Name, jb, ws, declared)
 	if rerr := collectStageReport(ctx, reportSink, r, stage, ws, rep); rerr != nil {
 		return out, rerr // 质量门禁阻断
 	}
@@ -611,7 +615,12 @@ func (b *Builder) runBuildImageJobIsolated(
 		return err
 	}
 	defer cleanup()
-	return b.runBuildImageJob(ctx, sink, rep, jb, stage.Name, proj, settings, r.Trigger.ResolvedEnvironment, ws, commitTag, hasPushJob)
+	if err := b.runBuildImageJob(ctx, sink, rep, jb, stage.Name, proj, settings, r.Trigger.ResolvedEnvironment, ws, commitTag, hasPushJob); err != nil {
+		// 与共用工作区那条路径同口径:镜像节点只在失败时留目录清单(成功那份与 script 节点重复)。
+		b.snapshotOnJobFailure(ctx, rep, r, stage.Name, jb, ws)
+		return err
+	}
+	return nil
 }
 
 // runDeployJob 执行一个部署节点(deploy_ssh / deploy_docker / deploy_k8s):把本 run 已产出的产物

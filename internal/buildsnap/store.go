@@ -1,8 +1,7 @@
-// store.go 是快照的持久化:写入、按 run 读取、按 TTL 删除。
+// store.go 是快照的持久化:写入、按 run 读取。
 //
-// 表 run_workspace_snapshots(迁移 0081)带 ON DELETE CASCADE,所以保留清理器删 run 时
-// 快照连带消失;本文件的 Prune 只负责另一件事 —— 快照比 run 短得多(默认 2 小时),
-// 因为它只是"刚才那次失败"的现场,不是需要长期回看的数据。
+// 表 run_workspace_snapshots(迁移 0081)带 ON DELETE CASCADE,所以保留清理器(设置页「运行数据
+// 保留」)删 run 时快照连带消失 —— 快照没有自己的过期窗口,活多久跟着那条运行记录多久。
 package buildsnap
 
 import (
@@ -109,20 +108,6 @@ func (s *Store) ListByRun(ctx context.Context, runID string) ([]Snapshot, error)
 		out = []Snapshot{}
 	}
 	return out, nil
-}
-
-// Prune 删除 created_at 早于 now-ttl 的快照,返回删除条数。ttl<=0 视为未启用,不删。
-func (s *Store) Prune(ctx context.Context, now time.Time, ttl time.Duration) (int, error) {
-	if s == nil || s.db == nil || ttl <= 0 {
-		return 0, nil
-	}
-	cutoff := now.UTC().Add(-ttl).Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `DELETE FROM run_workspace_snapshots WHERE created_at < ?`, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
 }
 
 // decodeJSON 解一个 JSON 数组列。解不动就退化为空切片:快照是**可丢的排障辅助数据**,
