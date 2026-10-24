@@ -4,5 +4,5 @@ export default {
   buildStage: '构建',
   deployStage: '部署',
   notifyStage: '通知',
-  gitSourceJob: 'Gitee 源',
+  gitSourceJob: 'Git 源',
 }

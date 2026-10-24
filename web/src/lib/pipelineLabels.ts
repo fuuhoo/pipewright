@@ -2,9 +2,13 @@
  * Localize backend-generated default stage/job names.
  *
  * The backend seeds new projects with Chinese default names (`流水线源`, `构建`,
- * job `Gitee 源`). Those are stored as data, so we localize them at *display*
+ * job `Git 源`). Those are stored as data, so we localize them at *display*
  * time: if a name matches a known default token, render the localized label by
  * kind; user-renamed stages/jobs (anything else) render verbatim.
+ *
+ * `Gitee 源` is the brand-specific seed older versions wrote. The backend rewrites
+ * it to `Git 源` on read, but historical run snapshots still carry it, so it keeps
+ * its own entry here.
  *
  * Uses the global i18n `t` (reactive in Composition mode), so labels follow the
  * active UI language without re-fetching.
@@ -16,6 +20,7 @@ const DEFAULT_NAME_KEYS: Record<string, string> = {
   构建: 'pipelineDefaults.buildStage',
   部署: 'pipelineDefaults.deployStage',
   通知: 'pipelineDefaults.notifyStage',
+  'Git 源': 'pipelineDefaults.gitSourceJob',
   'Gitee 源': 'pipelineDefaults.gitSourceJob',
 }
 

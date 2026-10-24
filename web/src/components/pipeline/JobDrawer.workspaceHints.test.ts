@@ -64,7 +64,7 @@ describe('JobDrawer · 工作区路径提示', () => {
       id: 's1',
       name: '源',
       kind: 'source',
-      jobs: [{ id: 'jsrc', name: 'Gitee 源', type: 'git_source', summary: '', config: {} }],
+      jobs: [{ id: 'jsrc', name: 'Git 源', type: 'git_source', summary: '', config: {} }],
     }
     const wrapper = mount(JobDrawer, {
       props: { job: stage.jobs[0], stage, allStages: [stage] },
