@@ -280,15 +280,19 @@ const stepCount = computed(() => steps.value.length)
               @blur="flush"
             />
           </div>
-          <input
-            :value="step.copyExcludes ?? ''"
-            class="sb-input is-mono"
-            type="text"
-            placeholder="node_modules .git *.map"
-            :aria-label="t('pipelineJob.sbCopyExclAria', { n: index + 1 })"
-            @input="patchStep(step.id, { copyExcludes: ($event.target as HTMLInputElement).value })"
-            @blur="flush"
-          />
+          <!-- 排除项独立成行,但光靠 placeholder 认不出它是干什么的,所以前面钉一个可见标签。 -->
+          <div class="sb-copy-excl">
+            <span class="sb-copy-excl-label">{{ t('pipelineJob.sbCopyExclLabel') }}</span>
+            <input
+              :value="step.copyExcludes ?? ''"
+              class="sb-input is-mono"
+              type="text"
+              placeholder="node_modules .git *.map"
+              :aria-label="t('pipelineJob.sbCopyExclAria', { n: index + 1 })"
+              @input="patchStep(step.id, { copyExcludes: ($event.target as HTMLInputElement).value })"
+              @blur="flush"
+            />
+          </div>
           <p class="sb-copy-hint">{{ t('pipelineJob.sbCopyHint') }}</p>
         </div>
 
@@ -556,6 +560,19 @@ const stepCount = computed(() => steps.value.length)
   color: var(--color-faint);
   font-family: var(--font-mono);
   font-weight: 700;
+}
+
+.sb-copy-excl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-copy-excl-label {
+  font-size: 0.7rem;
+  color: var(--color-dim);
+  white-space: nowrap;
 }
 
 .sb-copy-hint {
