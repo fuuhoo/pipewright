@@ -228,6 +228,12 @@ export default {
   snapNoMatch: '没有匹配的条目,换个关键词试试',
   snapNoEntries: '当时的容器工作区是空的(没有任何文件)',
   snapHiddenRows: '仅显示前 {limit} 条,还有 {hidden} 条未展示 — 用上方筛选缩小范围',
+  snapExpandAll: '全部展开',
+  snapCollapseAll: '全部折叠',
+  snapExpandAria: '展开目录 {path}',
+  snapCollapseAria: '折叠目录 {path}',
+  snapChildren: '{n} 项',
+  snapNoChildren: '无子项(或未采到)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: '其他步骤',

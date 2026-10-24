@@ -228,6 +228,12 @@ export default {
   snapNoMatch: 'Keine Einträge passen — anderes Stichwort versuchen',
   snapNoEntries: 'Der Arbeitsbereich war in diesem Moment leer (keine Dateien)',
   snapHiddenRows: 'Nur die ersten {limit} Zeilen angezeigt, {hidden} ausgeblendet — oben nach Stichwort filtern',
+  snapExpandAll: 'Alle ausklappen',
+  snapCollapseAll: 'Alle einklappen',
+  snapExpandAria: 'Verzeichnis {path} ausklappen',
+  snapCollapseAria: 'Verzeichnis {path} einklappen',
+  snapChildren: '{n} Einträge',
+  snapNoChildren: 'Keine Einträge (nicht erfasst)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Weitere Schritte',

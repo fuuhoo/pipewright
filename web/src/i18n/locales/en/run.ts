@@ -228,6 +228,12 @@ export default {
   snapNoMatch: 'No entries match — try another keyword',
   snapNoEntries: 'The workspace was empty at that moment (no files)',
   snapHiddenRows: 'Showing the first {limit} rows; {hidden} more hidden — narrow them down with the filter above',
+  snapExpandAll: 'Expand all',
+  snapCollapseAll: 'Collapse all',
+  snapExpandAria: 'Expand directory {path}',
+  snapCollapseAria: 'Collapse directory {path}',
+  snapChildren: '{n} items',
+  snapNoChildren: 'No children (or none captured)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Other steps',

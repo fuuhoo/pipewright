@@ -2,16 +2,20 @@ import { describe, expect, it } from 'vitest'
 
 import type { DeclaredPathDTO, SnapshotEntryDTO } from '../api/runs'
 import {
+  DEFAULT_EXPAND_DEPTH,
   RENDER_LIMIT,
   allDeclaredHit,
-  capEntries,
+  allDirPaths,
+  buildEntryTree,
+  countNodes,
   declaredStatusKey,
-  filterEntries,
-  isDirEntry,
+  flattenVisible,
+  isExpanded,
   missedDeclared,
   reasonKey,
   retentionWindow,
   snapshotTitle,
+  type SnapNode,
 } from './workspaceSnapshot'
 
 function entry(path: string, over: Partial<SnapshotEntryDTO> = {}): SnapshotEntryDTO {
@@ -26,55 +30,199 @@ function entries(n: number): SnapshotEntryDTO[] {
   return Array.from({ length: n }, (_, i) => entry(`f${i}.txt`))
 }
 
-describe('isDirEntry', () => {
-  it('尾斜杠即目录(采集器就是这么给的)', () => {
-    expect(isDirEntry(entry('target/'))).toBe(true)
-    expect(isDirEntry(entry('target/app.jar', { size: 1024 }))).toBe(false)
+describe('buildEntryTree', () => {
+  const flat = [
+    entry('package.json', { size: 12 }),
+    entry('backend/'),
+    entry('frontend/'),
+    entry('frontend/dist/'),
+    entry('frontend/dist/index.html', { size: 900 }),
+  ]
+
+  it('扁平路径还原成层级:目录先排、同类按名升序', () => {
+    const roots = buildEntryTree(flat)
+    expect(roots.map((n) => n.path)).toEqual(['backend/', 'frontend/', 'package.json'])
+    const frontend = roots[1]
+    expect(frontend.children.map((n) => n.path)).toEqual(['frontend/dist/'])
+    expect(frontend.children[0].children.map((n) => n.path)).toEqual(['frontend/dist/index.html'])
+  })
+
+  it('尾斜杠即目录(采集器就是这么给的,靠它决定能不能展开)', () => {
+    const roots = buildEntryTree(flat)
+    expect(roots.map((n) => n.isDir)).toEqual([true, true, false])
+    expect(roots[1].children[0].isDir).toBe(true)
+    expect(roots[1].children[0].children[0].isDir).toBe(false)
+  })
+
+  it('depth 从 0 起算,name 只留基名(渲染时不再重复整条路径)', () => {
+    const roots = buildEntryTree(flat)
+    const dist = roots[1].children[0]
+    expect([roots[0].depth, roots[1].depth, dist.depth, dist.children[0].depth]).toEqual([0, 0, 1, 2])
+    expect([dist.name, dist.children[0].name]).toEqual(['dist', 'index.html'])
+  })
+
+  it('大小与「另有 N 项未列出」原样挂在各自节点上', () => {
+    const roots = buildEntryTree([entry('node_modules/', { dropped: 3400 }), entry('a.txt', { size: 5 })])
+    expect(roots[0].dropped).toBe(3400)
+    expect(roots[1].size).toBe(5)
+  })
+
+  it('中间层缺失也补出隐式目录(不假设清单完整)', () => {
+    const roots = buildEntryTree([entry('a/b/c.txt', { size: 1 })])
+    expect(roots.map((n) => n.path)).toEqual(['a/'])
+    expect(roots[0].children.map((n) => n.path)).toEqual(['a/b/'])
+    expect(roots[0].children[0].children.map((n) => n.path)).toEqual(['a/b/c.txt'])
+  })
+
+  it('重复路径只留一份(否则 v-for 的 key 会撞车)', () => {
+    expect(buildEntryTree([entry('x/'), entry('x/')])).toHaveLength(1)
+  })
+
+  it('空清单 → 空树', () => {
+    expect(buildEntryTree([])).toEqual([])
+  })
+
+  describe('带筛选词', () => {
+    it('命中项的整条祖先链保留,不相关分支剪掉', () => {
+      const roots = buildEntryTree(flat, 'index.html')
+      expect(roots.map((n) => n.path)).toEqual(['frontend/'])
+      expect(roots[0].children.map((n) => n.path)).toEqual(['frontend/dist/'])
+      expect(roots[0].children[0].children.map((n) => n.path)).toEqual(['frontend/dist/index.html'])
+    })
+
+    it('大小写不敏感', () => {
+      expect(buildEntryTree(flat, 'DIST')[0].children.map((n) => n.path)).toEqual(['frontend/dist/'])
+    })
+
+    it('目录名命中 → 整支留下(子项的相对路径天然带着这段前缀)', () => {
+      const roots = buildEntryTree(flat, 'front')
+      expect(roots.map((n) => n.path)).toEqual(['frontend/'])
+      expect(roots[0].children.map((n) => n.path)).toEqual(['frontend/dist/'])
+      expect(roots[0].selfMatch).toBe(true)
+    })
+
+    it('命中判定同时看自身与分支(供渲染层决定强调谁)', () => {
+      const roots = buildEntryTree(flat, 'dist')
+      const frontend = roots[0]
+      expect([frontend.selfMatch, frontend.branchMatch]).toEqual([false, true])
+      expect([frontend.children[0].selfMatch, frontend.children[0].branchMatch]).toEqual([true, true])
+    })
+
+    it('搜不到 → 空数组(不是 undefined,也不是全量)', () => {
+      expect(buildEntryTree(flat, 'nope')).toEqual([])
+    })
+
+    it('纯空格查询等于不筛', () => {
+      expect(buildEntryTree(flat, '   ')).toHaveLength(3)
+    })
   })
 })
 
-describe('filterEntries', () => {
-  const list = [entry('dist/index.html'), entry('Target/app.jar'), entry('src/main.go')]
+function pick(roots: SnapNode[], path: string): SnapNode | undefined {
+  for (const n of roots) {
+    if (n.path === path) return n
+    const hit = pick(n.children, path)
+    if (hit) return hit
+  }
+  return undefined
+}
 
-  it('空查询(含纯空格)原样返回', () => {
-    expect(filterEntries(list, '')).toBe(list)
-    expect(filterEntries(list, '   ')).toBe(list)
+function find(roots: SnapNode[], path: string): SnapNode {
+  const hit = pick(roots, path)
+  if (!hit) throw new Error(`树里没有 ${path}`)
+  return hit
+}
+
+describe('isExpanded', () => {
+  const deep = buildEntryTree([entry('a/'), entry('a/b/'), entry('a/b/c/'), entry('a/b/c/d.txt')])
+  const a = find(deep, 'a/')
+  const b = find(deep, 'a/b/')
+  const c = find(deep, 'a/b/c/')
+
+  it('默认展开到第 2 层:depth 0/1 展开,更深折叠', () => {
+    expect(isExpanded(a, {}, false)).toBe(true)
+    expect(isExpanded(b, {}, false)).toBe(true)
+    expect(isExpanded(c, {}, false)).toBe(false)
+    expect(DEFAULT_EXPAND_DEPTH).toBe(2)
   })
 
-  it('大小写不敏感的子串匹配整条相对路径', () => {
-    expect(filterEntries(list, 'TARGET').map((e) => e.path)).toEqual(['Target/app.jar'])
-    expect(filterEntries(list, '.html').map((e) => e.path)).toEqual(['dist/index.html'])
-    expect(filterEntries(list, 'app')).toHaveLength(1)
+  it('手点的覆盖永远优先 —— 包括搜索态下手动折叠', () => {
+    expect(isExpanded(a, { 'a/': false }, false)).toBe(false)
+    expect(isExpanded(c, { 'a/b/c/': true }, false)).toBe(true)
+    expect(isExpanded(c, { 'a/b/c/': false }, true)).toBe(false)
   })
 
-  it('搜不到就返回空数组(不是 undefined)', () => {
-    expect(filterEntries(list, 'nope')).toEqual([])
+  it('搜索态默认全展开(否则命中要连点几下才看到)', () => {
+    expect(isExpanded(c, {}, true)).toBe(true)
   })
 })
 
-describe('capEntries', () => {
-  it('未超上限:全部展示、hidden=0', () => {
-    const list = entries(3)
-    expect(capEntries(list)).toEqual({ rows: list, hidden: 0, limit: RENDER_LIMIT })
+describe('flattenVisible', () => {
+  const tree = buildEntryTree([entry('a/'), entry('a/b/'), entry('a/b/c/'), entry('a/b/c/d.txt'), entry('z.txt')])
+
+  it('只摊开当前可见的行,深度随层级走', () => {
+    const v = flattenVisible(tree, {}, false)
+    expect(v.rows.map((r) => [r.node.path, r.node.depth])).toEqual([
+      ['a/', 0],
+      ['a/b/', 1],
+      ['a/b/c/', 2],
+      ['z.txt', 0],
+    ])
+    expect(v.hidden).toBe(0)
   })
 
-  it('正好等于上限:不算截断', () => {
-    const list = entries(RENDER_LIMIT)
-    expect(capEntries(list).hidden).toBe(0)
+  it('展开一个目录后它的子项才进列表', () => {
+    const v = flattenVisible(tree, { 'a/b/c/': true }, false)
+    expect(v.rows.map((r) => r.node.path)).toEqual(['a/', 'a/b/', 'a/b/c/', 'a/b/c/d.txt', 'z.txt'])
   })
 
-  it('超上限:只取前 N 条,并如实报未展示的行数', () => {
-    const list = entries(RENDER_LIMIT + 7)
-    const v = capEntries(list)
-    expect(v.rows).toHaveLength(RENDER_LIMIT)
-    expect(v.hidden).toBe(7)
+  it('没子项也没 dropped 的目录不给假箭头(往下既没内容也没截断线索)', () => {
+    const v = flattenVisible(buildEntryTree([entry('e/'), entry('f.txt')]), {}, false)
+    expect(v.rows.map((r) => [r.node.path, r.expandable])).toEqual([['e/', false], ['f.txt', false]])
+    // 有子项但当前折叠的目录仍然可点
+    const t = flattenVisible(tree, {}, false)
+    expect(t.rows.find((r) => r.node.path === 'a/b/c/')?.expandable).toBe(true)
   })
 
-  it('可传入更小上限(测试/窄面板用)', () => {
-    const v = capEntries(entries(10), 4)
-    expect(v.rows.map((e) => e.path)).toEqual(['f0.txt', 'f1.txt', 'f2.txt', 'f3.txt'])
+  it('只有 dropped 的目录仍可展开(展开后能看到「另有 N 项」这条线索)', () => {
+    const v = flattenVisible(buildEntryTree([entry('big/', { dropped: 99 })]), {}, false)
+    expect(v.rows[0].expandable).toBe(true)
+  })
+
+  it('超上限只取前 N 行,并如实报还有多少行没展示', () => {
+    const many = buildEntryTree(entries(10))
+    const v = flattenVisible(many, {}, false, 4)
+    expect(v.rows).toHaveLength(4)
     expect(v.hidden).toBe(6)
     expect(v.limit).toBe(4)
+  })
+
+  it('默认上限就是 RENDER_LIMIT', () => {
+    expect(flattenVisible(buildEntryTree(entries(RENDER_LIMIT + 3)), {}, false).hidden).toBe(3)
+  })
+})
+
+describe('allDirPaths', () => {
+  it('收全部目录(含嵌套),不含文件 —— 供「展开全部 / 折叠全部」', () => {
+    const roots = buildEntryTree([entry('a/'), entry('a/b/'), entry('a/b/c.txt'), entry('z.txt')])
+    expect(allDirPaths(roots)).toEqual(['a/', 'a/b/'])
+  })
+})
+
+describe('countNodes', () => {
+  const list = [entry('a/'), entry('a/b/'), entry('a/b/c.txt'), entry('z.txt')]
+
+  it('节点总数 = 目录 + 文件都算一层', () => {
+    expect(countNodes(buildEntryTree(list))).toBe(4)
+  })
+
+  it('搜索后即为命中数(与展开/折叠无关,面板计数的口径)', () => {
+    expect(countNodes(buildEntryTree(list, 'b/c'))).toBe(3) // a/ → a/b/ → a/b/c.txt
+  })
+
+  it('空清单 / 搜不到都是 0', () => {
+    expect(countNodes([])).toBe(0)
+    expect(countNodes(buildEntryTree(list, 'nope'))).toBe(0)
   })
 })
 

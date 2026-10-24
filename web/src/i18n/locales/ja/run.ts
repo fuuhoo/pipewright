@@ -228,6 +228,12 @@ export default {
   snapNoMatch: '一致するエントリがありません。別のキーワードをお試しください',
   snapNoEntries: 'その時点のコンテナワークスペースは空でした(ファイルなし)',
   snapHiddenRows: '先頭 {limit} 行のみ表示、ほか {hidden} 行は非表示 — 上の絞り込みをご利用ください',
+  snapExpandAll: 'すべて展開',
+  snapCollapseAll: 'すべて折りたたむ',
+  snapExpandAria: 'ディレクトリ {path} を展開',
+  snapCollapseAria: 'ディレクトリ {path} を折りたたむ',
+  snapChildren: '{n} 件',
+  snapNoChildren: '子項目なし(未取得の可能性)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'その他のステップ',

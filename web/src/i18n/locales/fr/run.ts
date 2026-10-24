@@ -228,6 +228,12 @@ export default {
   snapNoMatch: 'Aucune entrée ne correspond — essayez un autre mot-clé',
   snapNoEntries: 'L’espace de travail était vide à ce moment (aucun fichier)',
   snapHiddenRows: 'Seules les {limit} premières lignes sont affichées, {hidden} masquées — utilisez le filtre ci-dessus',
+  snapExpandAll: 'Tout développer',
+  snapCollapseAll: 'Tout replier',
+  snapExpandAria: 'Développer le répertoire {path}',
+  snapCollapseAria: 'Replier le répertoire {path}',
+  snapChildren: '{n} entrées',
+  snapNoChildren: 'Aucune entrée (non capturée)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Autres étapes',

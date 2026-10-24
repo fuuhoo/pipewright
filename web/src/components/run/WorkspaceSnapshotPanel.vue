@@ -9,6 +9,9 @@
   无快照 → 不渲染(不占视觉);仓储未启用(503)→ 同样不渲染。判定与截断口径全在
   lib/workspaceSnapshot.ts(有单测),本组件只管渲染。
 
+  清单按**树**渲染(后端给的是扁平相对路径):默认展开前两层,搜索时命中链自动展开,
+  另有「全部展开 / 折叠」兜底 —— 手点过的展开态优先于自动口径。
+
   保留窗口由后端如实回传(retentionSeconds),面板顶注说明"只保留最近 N 小时" —— 过期后
   这里就是空的,不能让用户以为"从没生成过"。
 -->
@@ -20,14 +23,18 @@ import type { DeclaredPathDTO, RunSnapshotsResponse, WorkspaceSnapshotDTO } from
 import { HttpError } from '../../api/http'
 import { formatBytes } from '../../lib/serverFs'
 import {
-  capEntries,
+  allDirPaths,
+  buildEntryTree,
+  countNodes,
   declaredStatusKey,
-  filterEntries,
-  isDirEntry,
+  flattenVisible,
+  isExpanded,
   missedDeclared,
   reasonKey,
   retentionWindow,
   snapshotTitle,
+  type ExpandOverrides,
+  type SnapNode,
 } from '../../lib/workspaceSnapshot'
 
 const { t } = useI18n()
@@ -85,17 +92,40 @@ function setQuery(id: string, v: string): void {
   queries.value = { ...queries.value, [id]: v }
 }
 
+// 手点过的展开态,按「快照 id → 目录路径 → 是否展开」记。切搜索词不清掉:用户刚折叠的
+// 大目录不该因为多打一个字符又摊开。
+const expandMap = ref<Record<string, ExpandOverrides>>({})
+
+function overridesOf(id: string): ExpandOverrides {
+  return expandMap.value[id] ?? {}
+}
+
+function toggleDir(id: string, node: SnapNode, queryActive: boolean): void {
+  const next = { ...overridesOf(id) }
+  next[node.path] = !isExpanded(node, next, queryActive)
+  expandMap.value = { ...expandMap.value, [id]: next }
+}
+
+function setAllDirs(id: string, roots: SnapNode[], open: boolean): void {
+  const next: ExpandOverrides = {}
+  for (const p of allDirPaths(roots)) next[p] = open
+  expandMap.value = { ...expandMap.value, [id]: next }
+}
+
 const views = computed(() =>
   snapshots.value.map((s) => {
     const missed = missedDeclared(s.declared)
     const hit = s.declared.filter((d) => d.status === 'ok')
-    const filtered = filterEntries(s.entries, queries.value[s.id] ?? '')
+    const query = (queries.value[s.id] ?? '').trim()
+    const roots = buildEntryTree(s.entries, query)
     return {
       snap: s,
       title: titleOf(s),
       missed,
       hit,
-      rows: capEntries(filtered),
+      query,
+      roots,
+      tree: flattenVisible(roots, overridesOf(s.id), query !== ''),
     }
   })
 )
@@ -165,7 +195,7 @@ function siblingsText(d: DeclaredPathDTO): string {
           </ul>
         </div>
 
-        <!-- 目录清单 -->
+        <!-- 目录清单(树形) -->
         <div class="entries">
           <div class="entries-bar">
             <input
@@ -177,7 +207,15 @@ function siblingsText(d: DeclaredPathDTO): string {
               @input="setQuery(v.snap.id, ($event.target as HTMLInputElement).value)"
             />
             <span class="entries-count mono">
-              {{ t('run.snapEntryCount', { shown: v.rows.rows.length, total: v.snap.entries.length }) }}
+              {{ t('run.snapEntryCount', { shown: countNodes(v.roots), total: v.snap.entries.length }) }}
+            </span>
+            <span class="entries-tools">
+              <button type="button" class="entries-tool" :disabled="v.roots.length === 0" @click="setAllDirs(v.snap.id, v.roots, true)">
+                {{ t('run.snapExpandAll') }}
+              </button>
+              <button type="button" class="entries-tool" :disabled="v.roots.length === 0" @click="setAllDirs(v.snap.id, v.roots, false)">
+                {{ t('run.snapCollapseAll') }}
+              </button>
             </span>
           </div>
 
@@ -185,11 +223,39 @@ function siblingsText(d: DeclaredPathDTO): string {
             {{ t('run.snapTruncated') }}
           </p>
 
-          <ul v-if="v.rows.rows.length > 0" class="entry-list mono" role="list">
-            <li v-for="e in v.rows.rows" :key="e.path" class="entry-row">
-              <span class="entry-path" :class="{ 'entry-path--dir': isDirEntry(e) }">{{ e.path }}</span>
-              <span v-if="e.size > 0" class="entry-size">{{ formatBytes(e.size) }}</span>
-              <span v-if="e.dropped > 0" class="entry-dropped">{{ t('run.snapDropped', { n: e.dropped }) }}</span>
+          <ul v-if="v.tree.rows.length > 0" class="tree-list mono" role="list">
+            <li
+              v-for="row in v.tree.rows"
+              :key="row.node.path"
+              class="tree-row"
+              :style="{ paddingInlineStart: 8 + row.node.depth * 14 + 'px' }"
+            >
+              <button
+                v-if="row.expandable"
+                type="button"
+                class="tree-toggle"
+                :aria-expanded="row.expanded"
+                :aria-label="t(row.expanded ? 'run.snapCollapseAria' : 'run.snapExpandAria', { path: row.node.path })"
+                @click="toggleDir(v.snap.id, row.node, v.query !== '')"
+              >
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true">
+                  <path v-if="row.expanded" d="M5 12h14" />
+                  <path v-else d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+              <span v-else class="tree-toggle is-void" aria-hidden="true" />
+
+              <span class="tree-name" :class="{ 'tree-name--dir': row.node.isDir, 'tree-name--hit': v.query !== '' && row.node.selfMatch }">
+                {{ row.node.name }}
+              </span>
+              <span v-if="row.node.isDir && !row.expanded && row.node.children.length > 0" class="tree-count">
+                {{ t('run.snapChildren', { n: row.node.children.length }) }}
+              </span>
+              <span v-else-if="row.node.isDir && row.node.children.length === 0 && row.node.dropped === 0" class="tree-leaf">
+                {{ t('run.snapNoChildren') }}
+              </span>
+              <span v-if="row.node.size > 0" class="tree-size">{{ formatBytes(row.node.size) }}</span>
+              <span v-if="row.node.dropped > 0" class="tree-dropped">{{ t('run.snapDropped', { n: row.node.dropped }) }}</span>
             </li>
           </ul>
           <p v-else-if="v.snap.entries.length > 0" class="entries-empty" role="status">
@@ -197,8 +263,8 @@ function siblingsText(d: DeclaredPathDTO): string {
           </p>
           <p v-else class="entries-empty" role="status">{{ t('run.snapNoEntries') }}</p>
 
-          <p v-if="v.rows.hidden > 0" class="entries-note" role="status">
-            {{ t('run.snapHiddenRows', { hidden: v.rows.hidden, limit: v.rows.limit }) }}
+          <p v-if="v.tree.hidden > 0" class="entries-note" role="status">
+            {{ t('run.snapHiddenRows', { hidden: v.tree.hidden, limit: v.tree.limit }) }}
           </p>
         </div>
       </article>
@@ -398,7 +464,30 @@ function siblingsText(d: DeclaredPathDTO): string {
   white-space: nowrap;
 }
 
-.entry-list {
+.entries-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.entries-tool {
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 3px 7px;
+  border-radius: var(--rounded-sm, 4px);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-card-2);
+  color: var(--color-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.entries-tool:disabled {
+  cursor: default;
+  color: var(--color-faint);
+  opacity: 0.6;
+}
+
+.tree-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -409,39 +498,80 @@ function siblingsText(d: DeclaredPathDTO): string {
   background: var(--color-inset);
 }
 
-.entry-row {
+.tree-row {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 3px 10px;
+  gap: 6px;
+  padding-block: 3px;
+  padding-inline-end: 10px;
   font-size: 0.74rem;
   border-bottom: 1px solid var(--color-border);
 }
 
-.entry-row:last-child {
+.tree-row:last-child {
   border-bottom: none;
 }
 
-.entry-path {
+.tree-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  /* 按钮要贴着基线上的文字,不能用 align-items: center(文字行高比按钮高会错位)。 */
+  align-self: center;
+  margin-block: -2px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-faint);
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  background: var(--color-card-2);
+  color: var(--color-text);
+}
+
+.tree-toggle.is-void {
+  cursor: default;
+}
+
+.tree-name {
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--color-dim);
 }
 
-.entry-path--dir {
+.tree-name--dir {
   color: var(--color-text);
   font-weight: 600;
 }
 
-.entry-size,
-.entry-dropped {
-  margin-left: auto;
+/* 搜索命中的那一项单独标出来:祖先链是为它才展开的,不标就分不清"谁才是答案"。 */
+.tree-name--hit {
+  color: var(--color-amber);
+}
+
+.tree-count,
+.tree-leaf {
+  flex: none;
+  font-size: 0.68rem;
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+
+.tree-size,
+.tree-dropped {
+  margin-inline-start: auto;
   font-size: 0.7rem;
   color: var(--color-faint);
   white-space: nowrap;
 }
 
-.entry-dropped {
+.tree-dropped {
   color: var(--color-amber);
 }
 

@@ -3,6 +3,9 @@
 // 后端给的是「一次采集 = 一串扁平相对路径」(目录带尾斜杠、单目录最多 200 条、整份最多 3000 条)。
 // 面板要做的是把这份清单变得可读:能搜、能截断、未命中的声明路径把证据顶到前面。
 // 判定全放这里,组件只渲染,便于单测。
+//
+// 清单以**树**呈现(扁平路径按目录层级还原 + 可折叠)。搜索时命中链自动展开,
+// 否则答案会被埋在两次点击之后 —— 见 buildEntryTree 与 isExpanded。
 
 import type {
   DeclaredPathDTO,
@@ -10,17 +13,6 @@ import type {
   SnapshotEntryDTO,
   SnapshotReason,
 } from '../api/runs'
-/** 目录条目(采集器始终给目录加尾斜杠,文件不加)。 */
-export function isDirEntry(e: SnapshotEntryDTO): boolean {
-  return e.path.endsWith('/')
-}
-
-/** 大小写不敏感的子串匹配(按整条相对路径)。空查询 = 原样返回。 */
-export function filterEntries(entries: SnapshotEntryDTO[], query: string): SnapshotEntryDTO[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return entries
-  return entries.filter((e) => e.path.toLowerCase().includes(q))
-}
 
 /**
  * 一屏最多渲染这么多行。3000 条全铺会把浏览器卡住,而"目录到底生成了什么"几乎都是
@@ -28,20 +20,205 @@ export function filterEntries(entries: SnapshotEntryDTO[], query: string): Snaps
  */
 export const RENDER_LIMIT = 400
 
-export interface EntryView {
-  rows: SnapshotEntryDTO[]
-  /** 未渲染的行数(0 = 全展示了) */
+/** 默认展开到第 2 层(depth 0/1 的目录),即不点任何东西就能看到第三层条目。 */
+export const DEFAULT_EXPAND_DEPTH = 2
+
+/** 树节点。path 与后端同形(目录带尾斜杠,文件不带),这样 dropped/截断口径能原样对上。 */
+export interface SnapNode {
+  path: string
+  name: string
+  isDir: boolean
+  /** 0 = 工作区根下第一层 */
+  depth: number
+  size: number
+  /** 该目录下因单目录上限未列出的子项数(采集期就定了,前端补不出来) */
+  dropped: number
+  children: SnapNode[]
+  /** 自身路径命中当前筛选词 */
+  selfMatch: boolean
+  /** 自身或任一子孙命中(搜索时决定这条分支留不留) */
+  branchMatch: boolean
+}
+
+function isDirPath(p: string): boolean {
+  return p.endsWith('/')
+}
+
+/** 条目所在目录的相对路径(带尾斜杠;根 = 空串)。 */
+function parentDir(p: string): string {
+  const s = isDirPath(p) ? p.slice(0, -1) : p
+  const i = s.lastIndexOf('/')
+  return i < 0 ? '' : s.slice(0, i + 1)
+}
+
+function baseName(p: string): string {
+  const s = isDirPath(p) ? p.slice(0, -1) : p
+  return s.slice(s.lastIndexOf('/') + 1)
+}
+
+function node(path: string, depth: number, size = 0, dropped = 0): SnapNode {
+  return {
+    path,
+    name: baseName(path),
+    isDir: isDirPath(path) || path === '',
+    depth,
+    size,
+    dropped,
+    children: [],
+    selfMatch: false,
+    branchMatch: false,
+  }
+}
+
+/** 目录先排、同类按名升序(与采集器的排序口径一致)。 */
+function sortChildren(n: SnapNode): void {
+  n.children.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+  })
+  n.children.forEach(sortChildren)
+}
+
+/** 自底向上算命中:整条相对路径做子串匹配(空查询 = 全不命中,由调用方按「无筛选」处理)。 */
+function markMatches(n: SnapNode, q: string): boolean {
+  const self = q !== '' && n.path.toLowerCase().includes(q)
+  let branch = self
+  for (const ch of n.children) {
+    if (markMatches(ch, q)) branch = true
+  }
+  n.selfMatch = self
+  n.branchMatch = branch
+  return branch
+}
+
+/** 剪枝:命中项所在分支整条留下(祖先要看得见),其余丢掉。 */
+function prune(n: SnapNode): SnapNode | null {
+  if (!n.branchMatch) return null
+  const kept: SnapNode[] = []
+  for (const ch of n.children) {
+    const k = prune(ch)
+    if (k) kept.push(k)
+  }
+  return { ...n, children: kept }
+}
+
+/**
+ * 扁平清单 → 树。query 非空时同时剪枝(只留命中分支)。
+ *
+ * 采集器保证「父目录一定先于子项入列」,但清单整体受总条数与单目录上限截断,所以这里仍
+ * 容忍缺失的中间层(补一个隐式目录节点),不假设数据完整。
+ */
+export function buildEntryTree(entries: SnapshotEntryDTO[], query = ''): SnapNode[] {
+  const root = node('', -1)
+  const dirs = new Map<string, SnapNode>([['', root]])
+  const seen = new Set<string>()
+  for (const e of entries) {
+    if (!e.path || seen.has(e.path)) continue // 重复行会让 v-for 的 key 撞车
+    seen.add(e.path)
+    const parent = ensureDir(dirs, parentDir(e.path))
+    const child = node(e.path, parent.depth + 1, e.size, e.dropped)
+    parent.children.push(child)
+    if (child.isDir) dirs.set(child.path, child)
+  }
+  sortChildren(root)
+  const q = query.trim().toLowerCase()
+  if (q === '') return root.children
+  markMatches(root, q)
+  return root.children
+    .map(prune)
+    .filter((n): n is SnapNode => n !== null)
+}
+
+function ensureDir(dirs: Map<string, SnapNode>, path: string): SnapNode {
+  const hit = dirs.get(path)
+  if (hit) return hit
+  const parent = ensureDir(dirs, parentDir(path))
+  const made = node(path, parent.depth + 1)
+  parent.children.push(made)
+  dirs.set(path, made)
+  return made
+}
+
+/** 用户手点过的展开态(按节点 path 记);没记过的走自动口径。 */
+export type ExpandOverrides = Record<string, boolean>
+
+/**
+ * 该目录的子项当前是否可见。
+ *
+ * 手点的永远优先(否则「展开全部」之后一搜索就被打回默认)。搜索态下默认全展开 ——
+ * 命中藏在第 5 层却要用户点四下才看到,这一栏就白做了。
+ */
+export function isExpanded(n: SnapNode, overrides: ExpandOverrides, queryActive: boolean): boolean {
+  const own = overrides[n.path]
+  if (own !== undefined) return own
+  if (queryActive) return true
+  return n.depth < DEFAULT_EXPAND_DEPTH
+}
+
+export interface SnapRow {
+  node: SnapNode
+  /** 有子项可展开(空目录/未采集到的目录不给假箭头) */
+  expandable: boolean
+  expanded: boolean
+}
+
+export interface TreeView {
+  rows: SnapRow[]
+  /** 因渲染上限未展示的行数(0 = 全展示了) */
   hidden: number
-  /** 渲染上限本身(供提示语说清"前 N 条"的 N 是上限,不是总数) */
   limit: number
 }
 
-export function capEntries(entries: SnapshotEntryDTO[], limit: number = RENDER_LIMIT): EntryView {
-  if (entries.length <= limit) {
-    return { rows: entries, hidden: 0, limit }
+/** 深度优先摊开「当前可见」的行,并按 RENDER_LIMIT 截断。 */
+export function flattenVisible(
+  roots: SnapNode[],
+  overrides: ExpandOverrides,
+  queryActive: boolean,
+  limit: number = RENDER_LIMIT,
+): TreeView {
+  const rows: SnapRow[] = []
+  const walk = (list: SnapNode[]): void => {
+    for (const n of list) {
+      const expandable = n.isDir && (n.children.length > 0 || n.dropped > 0)
+      const expanded = expandable && isExpanded(n, overrides, queryActive)
+      rows.push({ node: n, expandable, expanded })
+      if (expanded) walk(n.children)
+    }
   }
-  return { rows: entries.slice(0, limit), hidden: entries.length - limit, limit }
+  walk(roots)
+  return { rows: rows.slice(0, limit), hidden: Math.max(0, rows.length - limit), limit }
 }
+
+/** 所有目录路径(供「展开全部 / 折叠全部」一次性写覆盖表)。 */
+export function allDirPaths(roots: SnapNode[]): string[] {
+  const out: string[] = []
+  const walk = (list: SnapNode[]): void => {
+    for (const n of list) {
+      if (!n.isDir) continue
+      out.push(n.path)
+      walk(n.children)
+    }
+  }
+  walk(roots)
+  return out
+}
+
+/**
+ * 树里的节点总数。搜索后即为命中数,面板用它说「显示 N 条」——
+ * 不能用可见行数:那个数会随用户展开/折叠跳动,和「清单到底有多少条」不是一回事。
+ */
+export function countNodes(roots: SnapNode[]): number {
+  let n = 0
+  const walk = (list: SnapNode[]): void => {
+    for (const k of list) {
+      n += 1
+      walk(k.children)
+    }
+  }
+  walk(roots)
+  return n
+}
+
 
 /** 声明路径里"没命中"的那些(路径配错正是这块要解决的问题,必须顶在最前)。 */
 export function missedDeclared(declared: DeclaredPathDTO[]): DeclaredPathDTO[] {

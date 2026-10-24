@@ -228,6 +228,12 @@ export default {
   snapNoMatch: '일치하는 항목이 없습니다. 다른 키워드를 시도해 보세요',
   snapNoEntries: '당시 컨테이너 워크스페이스가 비어 있었습니다(파일 없음)',
   snapHiddenRows: '첫 {limit}행만 표시, {hidden}행은 미표시 — 위 필터로 좁히세요',
+  snapExpandAll: '모두 펼치기',
+  snapCollapseAll: '모두 접기',
+  snapExpandAria: '디렉터리 {path} 펼치기',
+  snapCollapseAria: '디렉터리 {path} 접기',
+  snapChildren: '{n}개 항목',
+  snapNoChildren: '하위 항목 없음(미수집)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: '기타 단계',

@@ -228,6 +228,12 @@ export default {
   snapNoMatch: 'Ninguna entrada coincide; pruebe otra palabra clave',
   snapNoEntries: 'El espacio de trabajo estaba vacío en ese momento (sin archivos)',
   snapHiddenRows: 'Solo se muestran las primeras {limit} filas, {hidden} ocultas — use el filtro superior',
+  snapExpandAll: 'Expandir todo',
+  snapCollapseAll: 'Contraer todo',
+  snapExpandAria: 'Expandir el directorio {path}',
+  snapCollapseAria: 'Contraer el directorio {path}',
+  snapChildren: '{n} elementos',
+  snapNoChildren: 'Sin elementos (no capturados)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Otros pasos',

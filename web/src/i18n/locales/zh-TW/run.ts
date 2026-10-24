@@ -228,6 +228,12 @@ export default {
   snapNoMatch: '沒有符合的條目,換一個關鍵字試試',
   snapNoEntries: '當時的容器工作區是空的(沒有任何檔案)',
   snapHiddenRows: '僅顯示前 {limit} 條,還有 {hidden} 條未顯示 — 用上方篩選縮小範圍',
+  snapExpandAll: '全部展開',
+  snapCollapseAll: '全部摺疊',
+  snapExpandAria: '展開目錄 {path}',
+  snapCollapseAria: '摺疊目錄 {path}',
+  snapChildren: '{n} 項',
+  snapNoChildren: '無子項(或未蒐集到)',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: '其他步驟',
