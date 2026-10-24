@@ -67,6 +67,12 @@ func TestMigrationsApplied(t *testing.T) {
 				t.Fatalf("%s 表缺失: %v", tbl, err)
 			}
 		}
+		// 0081 工作区快照:采集器与运行详情面板都按列名读写,某一方言漏列会在运行期才炸。
+		if _, err := st.DB.ExecContext(ctx,
+			`SELECT id, run_id, stage, job_id, job_name, reason, declared_json, entries_json, entry_count, truncated, created_at
+			 FROM run_workspace_snapshots WHERE 1=0`); err != nil {
+			t.Fatalf("run_workspace_snapshots 表/列缺失: %v", err)
+		}
 	})
 }
 

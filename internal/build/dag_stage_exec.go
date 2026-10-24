@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fuuhoo/pipewright/internal/buildsnap"
 	"github.com/fuuhoo/pipewright/internal/dag"
 	"github.com/fuuhoo/pipewright/internal/dagrun"
 	"github.com/fuuhoo/pipewright/internal/deploy"
@@ -282,6 +283,7 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 					// 任务级 timeout/retry(#63):零值时 runScriptStepWithOpts 退化为单次无超时执行(旧行为)。
 					b.restoreJobCache(ctx, jrep, jb, r.Trigger.Branch, workspace)
 					if err := b.runScriptStepWithOpts(ctx, jsink, 0, step, workspace, proj.ID); err != nil {
+						b.snapshotOnJobFailure(ctx, jrep, r, stage.Name, jb, workspace)
 						_ = rep.JobDone(ctx, jb.ID, run.StepFailed)
 						return err // ErrBuildFailed / run.ErrCanceled
 					}
@@ -305,7 +307,13 @@ func NewStageExecutor(b *Builder, reportSink TestReportSink) dagrun.StageExecuto
 					_ = rep.JobDone(ctx, jb.ID, run.StepSuccess)
 				}
 
-				b.collectScriptArtifacts(ctx, scriptJobs, workspace, slugify(proj.Name), stage.Name, rep)
+				// 产物收集按 job 逐条走一遍:采集器给出的判定要能归到具体节点(快照行记 job_id),
+				// 且「声明路径没命中」这一触发点才有对象可写。逐 job 与整批一次遍历的先后顺序一致。
+				slug := slugify(proj.Name)
+				for _, jb := range scriptJobs {
+					declared := b.collectScriptArtifacts(ctx, []pipeline.Job{jb}, workspace, slug, stage.Name, rep)
+					b.snapshotIfArtifactMiss(ctx, rep, r, stage.Name, jb, workspace, declared)
+				}
 				if err := collectStageReport(ctx, reportSink, r, stage, workspace, rep); err != nil {
 					return err
 				}
@@ -572,11 +580,13 @@ func (b *Builder) runScriptJobIsolated(
 	}
 	b.restoreJobCache(ctx, rep, jb, r.Trigger.Branch, ws)
 	if err := b.runScriptStepWithOpts(ctx, sink, 0, step, ws, proj.ID); err != nil {
+		b.snapshotOnJobFailure(ctx, rep, r, stage.Name, jb, ws)
 		return nil, err // ErrBuildFailed / run.ErrCanceled
 	}
 	b.saveJobCache(ctx, rep, jb, r.Trigger.Branch, ws)
 	out := captureStageEnv(ctx, rep, ws)
-	b.collectScriptArtifacts(ctx, []pipeline.Job{jb}, ws, slugify(proj.Name), stage.Name, rep)
+	declared := b.collectScriptArtifacts(ctx, []pipeline.Job{jb}, ws, slugify(proj.Name), stage.Name, rep)
+	b.snapshotIfArtifactMiss(ctx, rep, r, stage.Name, jb, ws, declared)
 	if rerr := collectStageReport(ctx, reportSink, r, stage, ws, rep); rerr != nil {
 		return out, rerr // 质量门禁阻断
 	}
@@ -1193,8 +1203,12 @@ func (b *Builder) runBuildImageJob(ctx context.Context, sink run.StepSink, rep d
 // 逐条定位工作区内路径 → 按类型(目录=dist、*.jar=jar、其它文件=archive)归档进制品库真字节 →
 // EmitArtifact 登记。一个 job 可声明多条(既出 jar 又出 dist 等);未声明则跳过。
 // 镜像类产物不走这里(走 build_image 节点);文件类才在此收集。
-func (b *Builder) collectScriptArtifacts(ctx context.Context, jobs []pipeline.Job, workspace, slug, stageName string, rep dagrun.StageReporter) {
+//
+// 返回逐条声明路径的判定(ok / missing / unmatched / rejected)—— 目录快照的第二个触发条件
+// (「声明的产物路径没命中」)据此判定,详见 workspace_snapshot.go。
+func (b *Builder) collectScriptArtifacts(ctx context.Context, jobs []pipeline.Job, workspace, slug, stageName string, rep dagrun.StageReporter) []buildsnap.Declared {
 	onLine := func(stream, line string) { _ = rep.Log(ctx, stream, line) }
+	var declared []buildsnap.Declared
 	for _, jb := range jobs {
 		for _, rel := range artifactPathsOf(jb) { // 渲染 {{参数}} + 按行拆分(与远程回传同一口径)
 			// 通配(如 backend/target/*.jar)→ 展开为实际文件逐个收集;否则按原路径收集。
@@ -1202,39 +1216,50 @@ func (b *Builder) collectScriptArtifacts(ctx context.Context, jobs []pipeline.Jo
 				clean := filepath.Clean(rel)
 				if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 					onLine(streamStderr, "产物路径越界,已拒绝:"+rel)
+					declared = append(declared, buildsnap.Declared{Path: rel, Status: buildsnap.StatusRejected})
 					continue
 				}
 				matches, _ := filepath.Glob(filepath.Join(workspace, clean))
 				if len(matches) == 0 {
 					onLine(streamStderr, "产物通配未匹配,跳过:"+rel)
+					declared = append(declared, buildsnap.Declared{Path: rel, Status: buildsnap.StatusUnmatched})
 					continue
 				}
+				status := buildsnap.StatusOK
 				for _, m := range matches {
 					if relMatch, rerr := filepath.Rel(workspace, m); rerr == nil {
-						b.collectOneFileArtifact(ctx, workspace, relMatch, slug, jb.ID, jb.Name, stageName, rep, onLine)
+						if s := b.collectOneFileArtifact(ctx, workspace, relMatch, slug, jb.ID, jb.Name, stageName, rep, onLine); s != buildsnap.StatusOK {
+							status = s
+						}
 					}
 				}
+				declared = append(declared, buildsnap.Declared{Path: rel, Status: status})
 				continue
 			}
-			b.collectOneFileArtifact(ctx, workspace, rel, slug, jb.ID, jb.Name, stageName, rep, onLine)
+			declared = append(declared, buildsnap.Declared{
+				Path:   rel,
+				Status: b.collectOneFileArtifact(ctx, workspace, rel, slug, jb.ID, jb.Name, stageName, rep, onLine),
+			})
 		}
 	}
+	return declared
 }
 
 // collectOneFileArtifact 收集单条文件产物路径:越界(.. / 绝对)拒绝;定位不到打日志跳过(不致命);
 // 类型按路径自动判(目录=dist、*.jar=jar、其它文件=archive)。产物 metadata 记来源节点(阶段 + job 名),
 // 供运行详情标注「哪个节点产的」。制品库未注入时 emit 占位引用,向后兼容。
-func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, slug, jobID, jobName, stageName string, rep dagrun.StageReporter, onLine func(stream, line string)) {
+// 返回该路径的收集判定(buildsnap.Status*),供调用方决定是否采目录快照。
+func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, slug, jobID, jobName, stageName string, rep dagrun.StageReporter, onLine func(stream, line string)) string {
 	clean := filepath.Clean(rel)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		onLine(streamStderr, "产物路径越界,已拒绝:"+rel)
-		return
+		return buildsnap.StatusRejected
 	}
 	full := filepath.Join(workspace, clean)
 	fi, err := os.Stat(full)
 	if err != nil {
 		onLine(streamStderr, "产物路径未找到,跳过:"+rel)
-		return
+		return buildsnap.StatusMissing
 	}
 	// 产物名带上路径基名,避免一个 job 多产物同名(如多个 dist 目录)难以区分。
 	base := filepath.Base(full)
@@ -1259,9 +1284,10 @@ func (b *Builder) collectOneFileArtifact(ctx context.Context, workspace, rel, sl
 	}
 	if err := rep.EmitArtifact(ctx, *art); err != nil {
 		onLine(streamStderr, "登记产物失败:"+err.Error())
-		return
 	}
 	onLine(streamStdout, "已产出产物:"+art.Name+"("+art.Type+","+rel+")")
+	// 路径确实在工作区里存在并已被处理 → ok(登记失败是另一回事,不是「产物没生成」)。
+	return buildsnap.StatusOK
 }
 
 // scriptStepFromJob 从画布 job.Config 构造一条 script 步骤(commands + 可选 workDir + 资源规格)。

@@ -45,6 +45,7 @@ import RunTerminal from '../components/run/RunTerminal.vue'
 import RunStepList from '../components/run/RunStepList.vue'
 import ArtifactList from '../components/run/ArtifactList.vue'
 import TestReportPanel from '../components/run/TestReportPanel.vue'
+import WorkspaceSnapshotPanel from '../components/run/WorkspaceSnapshotPanel.vue'
 import DeployTargets from '../components/run/DeployTargets.vue'
 import RunDagView from '../components/run/RunDagView.vue'
 import PromotionPanel from '../components/run/PromotionPanel.vue'
@@ -828,6 +829,9 @@ function nodeClass(status: StepStatus): string {
                 <RunTerminal :run-id="run.id" :live="true" :filter-ordinal="selectedStepOrdinal" />
               </div>
             </div>
+
+            <!-- 运行中也可能已有节点失败/产物没生成 → 快照照样出(无快照则整块不渲染) -->
+            <WorkspaceSnapshotPanel :run-id="run.id" />
           </div>
         </template>
 
@@ -866,6 +870,10 @@ function nodeClass(status: StepStatus): string {
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             -->
             <ArtifactList :artifacts="run.artifacts" :run-id="run.id" />
+
+            <!-- 构建目录快照:脚本节点成功但**声明的产物路径没命中**时也会采集(产物根本没生成)。
+                 成功态同样要能看出"东西其实躺在哪个目录",否则用户只会看到空产物列表。无快照 → 不渲染。 -->
+            <WorkspaceSnapshotPanel :run-id="run.id" />
 
             <!--
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1185,6 +1193,10 @@ function nodeClass(status: StepStatus): string {
                  (否则失败点只剩一行日志)。组件自取数据,无报告时不渲染。 -->
             <TestReportPanel :run-id="run.id" />
 
+            <!-- 构建目录快照:失败节点当时的容器工作区长什么样(命令实际产出在哪),
+                 配合上方日志回答"是构建没产出,还是产物路径配错了"。无快照 → 不渲染。 -->
+            <WorkspaceSnapshotPanel :run-id="run.id" />
+
             <!-- 失败日志证据(只读历史回放,Story 3-6)。在 AI 诊断面板之上;
                  不属于 7-2 的 DiagnosisPanel slot,二者共存。
                  与运行中/成功态同一套「步骤列表 + 按步骤过滤」布局:并行任务的输出各存
@@ -1244,6 +1256,9 @@ function nodeClass(status: StepStatus): string {
 
             <!-- 一成一败时成功节点的产物照样要能看/能下载 -->
             <ArtifactList v-if="run.artifacts.length > 0" :artifacts="run.artifacts" :run-id="run.id" />
+
+            <!-- 失败那半边的现场:目录快照 + 各节点产物声明是否命中 -->
+            <WorkspaceSnapshotPanel :run-id="run.id" />
 
             <!-- 历史日志回放(只读,Story 3-6):同样按步骤过滤,并行节点的输出才分得开 -->
             <div class="running-body">
@@ -1336,6 +1351,8 @@ function nodeClass(status: StepStatus): string {
 
             <!-- 回滚/终止态同样要能按步骤看日志、看已产出的产物 -->
             <ArtifactList v-if="run.artifacts.length > 0" :artifacts="run.artifacts" :run-id="run.id" />
+
+            <WorkspaceSnapshotPanel :run-id="run.id" />
 
             <div class="running-body">
               <RunStepList :steps="run.steps" :selected="selectedStepOrdinal" @select="selectedStepOrdinal = $event" />

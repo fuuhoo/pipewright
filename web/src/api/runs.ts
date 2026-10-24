@@ -367,6 +367,53 @@ export function getRunArtifacts(id: string): Promise<RunArtifactsResponse> {
   return http.get<RunArtifactsResponse>(`/api/runs/${id}/artifacts`)
 }
 
+// ─── Workspace snapshots (构建目录快照 · 排障现场) ──────────────────────────────
+//
+// GET /api/runs/{id}/snapshots → { snapshots: [...], retentionSeconds }
+// 只在两种情况下产生快照:脚本节点执行失败,或节点声明的产物路径没命中(产物根本没生成)。
+// 内容是该节点当时的**容器工作区目录清单**(相对路径,目录带尾斜杠),用来回答"产物到底生成在哪"。
+// 只保留数小时(retentionSeconds 如实回传),过期后该运行返回空数组。远程 runner 构建不采集。
+// 快照仓储未启用 → 503 snapshots_unavailable(与"没有快照"区分,前端不谎报)。
+
+export interface SnapshotEntryDTO {
+  path: string // 相对工作区根;目录以 / 结尾
+  size: number // 字节(目录为 0)
+  dropped: number // 该目录内因单目录上限未列出的条目数
+}
+
+export type DeclaredStatus = 'ok' | 'missing' | 'unmatched' | 'rejected'
+
+export interface DeclaredPathDTO {
+  path: string
+  status: DeclaredStatus
+  parent?: string // 未命中时:声明路径往上最近的**存在**目录
+  siblings?: string[] // 该目录里实际有什么(受单目录上限截断)
+  siblingsMore?: number // 另有几项没列出来
+}
+
+export type SnapshotReason = 'failed' | 'artifact_miss'
+
+export interface WorkspaceSnapshotDTO {
+  id: string
+  stage: string
+  jobId: string
+  jobName: string
+  reason: SnapshotReason
+  declared: DeclaredPathDTO[]
+  entries: SnapshotEntryDTO[]
+  truncated: boolean // 撞总条数上限:清单不完整
+  createdAt: string // RFC3339
+}
+
+export interface RunSnapshotsResponse {
+  snapshots: WorkspaceSnapshotDTO[]
+  retentionSeconds: number
+}
+
+export function getRunSnapshots(id: string): Promise<RunSnapshotsResponse> {
+  return http.get<RunSnapshotsResponse>(`/api/runs/${id}/snapshots`)
+}
+
 // ─── Test report + quality gate (Epic 8 · Story 8-6 — FR-8-6) ────────────────
 //
 // GET /api/runs/{id}/test-report → { reports: TestReportDTO[], gate: GateVerdict }

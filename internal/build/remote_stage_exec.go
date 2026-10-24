@@ -152,6 +152,9 @@ func (b *Builder) runStageRemote(ctx context.Context, r *run.Run, stage pipeline
 	// 4) 产物回传:远程工作区里声明的产物路径拉回中控机同一相对路径,之后交给**与本地同一个**
 	//    收集器归档进制品库(类型判定、metadata、下游部署按来源任务挑产物全部沿用)。
 	b.pullRemoteArtifacts(ctx, tgt, serverID, remoteWS, workspace, scriptJobs, func(stream, line string) { _ = rep.Log(ctx, stream, line) })
+	// 远程模式**不采目录快照**(采集点说明见 workspace_snapshot.go):这里的 workspace 只是回传产物
+	// 的中控机临时目录,列它等于列"回传了什么",与"runner 上产物生成在哪"是两回事;要拿远程清单得在
+	// runner 上多跑一整轮遍历。运行详情对远程构建直接显示「远程构建暂不采集」。
 	b.collectScriptArtifacts(ctx, scriptJobs, workspace, slugify(proj.Name), stage.Name, rep)
 
 	_ = rep.Log(ctx, streamStdout, fmt.Sprintf("✓ 远程 runner(%s)执行完成;测试报告/质量门禁在远程模式暂不回采(后续增量)", serverID))
