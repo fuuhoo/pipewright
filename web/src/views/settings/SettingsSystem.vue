@@ -171,7 +171,7 @@ async function copyCommand(): Promise<void> {
 }
 
 // ─── 运行数据保留策略 ─────────────────────────────────────────────────────────
-const rt = ref<RetentionConfig>({ enabled: false, keepPerProject: 0, maxAgeDays: 0 })
+const rt = ref<RetentionConfig>({ enabled: false, keepGlobal: 0, keepPerProject: 0, maxAgeDays: 0 })
 const rtLoading = ref(true)
 const rtSaving = ref(false)
 const rtSaved = ref(false)
@@ -195,6 +195,8 @@ async function saveRetention(): Promise<void> {
   try {
     rt.value = await setRetentionConfig({
       enabled: rt.value.enabled,
+      keepGlobal: Math.max(0, Math.floor(Number(rt.value.keepGlobal) || 0)),
+      // 旧维度界面不再暴露,但必须原样带回:PUT 缺省即 0,会把老实例配过的「每项目留 N 条」悄悄清掉。
       keepPerProject: Math.max(0, Math.floor(Number(rt.value.keepPerProject) || 0)),
       maxAgeDays: Math.max(0, Math.floor(Number(rt.value.maxAgeDays) || 0)),
     })
@@ -351,9 +353,9 @@ onMounted(() => {
 
       <div class="rt-fields" :class="{ 'rt-fields--off': !rt.enabled }">
         <label class="rt-field">
-          <span class="rt-label">{{ t('settingsSystem.retentionKeep') }}</span>
-          <input class="rt-input mono" type="number" min="0" step="1" v-model.number="rt.keepPerProject" :disabled="!rt.enabled || rtLoading" />
-          <span class="rt-hint">{{ t('settingsSystem.retentionKeepHint') }}</span>
+          <span class="rt-label">{{ t('settingsSystem.retentionKeepGlobal') }}</span>
+          <input class="rt-input mono" type="number" min="0" step="1" v-model.number="rt.keepGlobal" :disabled="!rt.enabled || rtLoading" />
+          <span class="rt-hint">{{ t('settingsSystem.retentionKeepGlobalHint') }}</span>
         </label>
         <label class="rt-field">
           <span class="rt-label">{{ t('settingsSystem.retentionAge') }}</span>
@@ -362,6 +364,7 @@ onMounted(() => {
         </label>
       </div>
 
+      <p class="rt-rule">{{ t('settingsSystem.retentionUnion') }}</p>
       <p class="rt-warn">{{ t('settingsSystem.retentionWarn') }}</p>
 
       <div class="rt-actions">
@@ -931,8 +934,15 @@ onMounted(() => {
   font-size: 0.74rem;
   color: var(--color-faint);
 }
-.rt-warn {
+.rt-rule {
   margin: 16px 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-soft);
+  border-left: 2px solid var(--color-border);
+  padding-left: 10px;
+}
+.rt-warn {
+  margin: 6px 0 0;
   font-size: 0.78rem;
   color: var(--color-faint);
   border-left: 2px solid var(--color-border);
