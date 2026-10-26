@@ -438,6 +438,8 @@ export default {
   sbCopyExclLabel: 'Excluir',
   sbCopyExclAria: 'Exclusiones de la copia {n}',
   sbCopyHint: 'Copia el contenido de la carpeta de origen. Las exclusiones se separan con espacios y se traducen en --exclude si rsync está instalado; cp no admite exclusiones, así que sin rsync se copia todo y las exclusiones se ignoran.',
+  sbCopyHintYes: 'Copia el contenido de la carpeta de origen. {image} incluye rsync, así que las exclusiones se traducen en --exclude y sí aplican.',
+  sbCopyHintNo: 'Copia el contenido de la carpeta de origen. {image} no tiene rsync: la copia recurre a cp y las exclusiones se ignoran (se copia todo, y el registro de la ejecución lo indica). Para usar exclusiones, elige una imagen de entorno de construcción con rsync; ninguna de las incluidas la trae.',
   sbCondAria: 'Condición {n}',
   sbCondHintPre: 'condición de shell; si no se cumple, ',
   sbCondHintStrong: 'omite todos los pasos posteriores',

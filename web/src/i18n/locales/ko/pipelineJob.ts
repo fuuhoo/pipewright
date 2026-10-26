@@ -438,6 +438,8 @@ export default {
   sbCopyExclLabel: '제외',
   sbCopyExclAria: '복사 제외 항목 {n}',
   sbCopyHint: '원본 디렉터리의 내용을 복사합니다. 제외 항목은 공백으로 구분하며 rsync가 있으면 --exclude로 변환됩니다. cp에는 제외 옵션이 없으므로 rsync가 없으면 전체가 복사되고 제외 항목은 무시됩니다.',
+  sbCopyHintYes: '원본 디렉터리의 내용을 복사합니다. {image}에는 rsync가 있어 제외 항목이 --exclude로 변환되어 적용됩니다.',
+  sbCopyHintNo: '원본 디렉터리의 내용을 복사합니다. {image}에는 rsync가 없어 복사가 cp로 대체되고 제외 항목이 무시됩니다. 전체가 복사되며 실행 로그에도 그 내용이 남습니다. 제외를 사용하려면 rsync가 포함된 빌드 환경 이미지로 바꾸세요. 기본 제공 이미지는 모두 rsync가 없습니다.',
   sbCondAria: '조건 {n}',
   sbCondHintPre: 'shell 조건, 충족되지 않으면 ',
   sbCondHintStrong: '후속 모든 단계를 건너뜀',

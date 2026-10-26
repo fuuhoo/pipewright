@@ -438,6 +438,8 @@ export default {
   sbCopyExclLabel: 'Ausschließen',
   sbCopyExclAria: 'Ausschlüsse kopieren {n}',
   sbCopyHint: 'Kopiert den Inhalt des Quellverzeichnisses. Ausschlüsse werden durch Leerzeichen getrennt und zu --exclude, wenn rsync installiert ist; cp kennt keine Ausschlussoption, ohne rsync wird daher alles kopiert und die Ausschlüsse bleiben wirkungslos.',
+  sbCopyHintYes: 'Kopiert den Inhalt des Quellverzeichnisses. {image} enthält rsync, daher werden Ausschlüsse zu --exclude kompiliert und greifen.',
+  sbCopyHintNo: 'Kopiert den Inhalt des Quellverzeichnisses. {image} hat kein rsync: die Kopie fällt auf cp zurück, Ausschlüsse bleiben wirkungslos (es wird alles kopiert), und das Protokoll des Laufs weist darauf hin. Für Ausschlüsse ein Build-Env-Image mit rsync wählen – die eingebauten Images haben keins.',
   sbCondAria: 'Bedingung {n}',
   sbCondHintPre: 'Shell-Bedingung; wenn nicht erfüllt, ',
   sbCondHintStrong: 'alle nachfolgenden Schritte überspringen',

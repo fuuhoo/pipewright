@@ -440,6 +440,13 @@ function buildEnvFieldValue(): string {
   return byTc?.id ?? ''
 }
 
+/** 节点跑在哪个镜像上(目录里的条目说了算,回填的旧 image 键只是影子)。
+ *  步骤构建器要用它判断「复制文件」的排除项生不生效 —— 那份判定只认镜像串。 */
+const stepBuilderImage = computed<string>(() => {
+  const env = presetById(buildEnvFieldValue())
+  return env?.image ?? currentConfig().image ?? ''
+})
+
 /** 旧值完全不在目录里时需展示告警占位(值为 '' 时下拉显示未选中,无法区分)。 */
 function hasUnmatchedLegacyImage(): boolean {
   const cfg = currentConfig()
@@ -887,7 +894,12 @@ async function confirmSave(): Promise<void> {
         <!-- 可视化步骤构建器(脚本类节点;编译进 commands,经 update 落库;产物目录仍是下面的固定字段)。
              插在这里 = 「编译等指令」在环境变量导入之上,与原始参数视图里 commands 格的位置一致。 -->
         <div v-if="showStepsHere(field, fieldIndex)" class="drawer-field step-builder-field">
-          <StepBuilder :config="typedConfig" :language="commandTemplateLang" @update="onStepsUpdate" />
+          <StepBuilder
+            :config="typedConfig"
+            :language="commandTemplateLang"
+            :image="stepBuilderImage"
+            @update="onStepsUpdate"
+          />
           <p class="field-hint">
             {{ t('pipelineJob.stepBuilderHint') }}
           </p>

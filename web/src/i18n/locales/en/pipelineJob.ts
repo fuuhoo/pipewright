@@ -439,6 +439,8 @@ export default {
   sbCopyExclLabel: 'Exclude',
   sbCopyExclAria: 'Copy exclusions {n}',
   sbCopyHint: 'Copies the contents of the source directory. Exclusions are space-separated and compile to --exclude when the build environment has rsync; cp has no exclusion option, so without rsync everything is copied and exclusions are ignored.',
+  sbCopyHintYes: 'Copies the contents of the source directory. {image} has rsync, so exclusions compile to --exclude and take effect.',
+  sbCopyHintNo: 'Copies the contents of the source directory. {image} has no rsync: the copy falls back to cp, exclusions are ignored (everything is copied), and the run log says so too. To use exclusions, switch to a build environment image that ships rsync — none of the built-in ones do.',
   sbCondAria: 'Condition {n}',
   sbCondHintPre: 'shell condition; if it fails, ',
   sbCondHintStrong: 'skip all subsequent steps',

@@ -438,6 +438,8 @@ export default {
   sbCopyExclLabel: '排除',
   sbCopyExclAria: '复制排除项 {n}',
   sbCopyHint: '复制的是源目录里的内容。排除项以空格分隔,构建环境里有 rsync 时编译成 --exclude;cp 没有排除选项,所以没装 rsync 时会整份复制,排除项不生效。',
+  sbCopyHintYes: '复制的是源目录里的内容。{image} 里装了 rsync,排除项会编译成 --exclude 并生效。',
+  sbCopyHintNo: '复制的是源目录里的内容。{image} 里没有 rsync:复制会退回 cp,排除项不生效(整份复制),运行时日志里也会写明这句。要用排除,得换成装了 rsync 的构建环境镜像 —— 内置目录里的都没装。',
   sbCondAria: '条件 {n}',
   sbCondHintPre: 'shell 条件,不成立则',
   sbCondHintStrong: '跳过后续所有步骤',

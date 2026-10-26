@@ -438,6 +438,8 @@ export default {
   sbCopyExclLabel: '排除',
   sbCopyExclAria: '複製排除項 {n}',
   sbCopyHint: '複製的是來源目錄裡的內容。排除項以空格分隔,建置環境裡有 rsync 時編譯成 --exclude;cp 沒有排除選項,所以沒裝 rsync 時會整份複製,排除項不生效。',
+  sbCopyHintYes: '複製的是來源目錄裡的內容。{image} 裝了 rsync,排除項會編譯成 --exclude 並生效。',
+  sbCopyHintNo: '複製的是來源目錄裡的內容。{image} 沒有 rsync:複製會退回 cp,排除項不生效(整份複製),執行期日誌也會寫明這句。要用排除,得換成裝了 rsync 的建置環境映像 —— 內建目錄裡的都沒裝。',
   sbCondAria: '條件 {n}',
   sbCondHintPre: 'shell 條件,不成立則',
   sbCondHintStrong: '跳過後續所有步驟',

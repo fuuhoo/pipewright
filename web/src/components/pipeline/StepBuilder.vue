@@ -23,6 +23,7 @@ import {
 } from './stepCompile'
 import type { CommandTemplate } from './commandTemplates'
 import CommandTemplateChips from './CommandTemplateChips.vue'
+import { rsyncSupportFor } from '../../lib/buildEnvRsync'
 
 const { t } = useI18n()
 
@@ -31,6 +32,11 @@ const props = defineProps<{
   config: Record<string, string>
   /** 所选构建环境的语言:命令模板芯片据此前置(父级知道,本组件不碰预置目录) */
   language?: string
+  /**
+   * 该节点实际用的镜像串(父级按 buildEnvId → 目录解析好再传进来)。
+   * 「复制文件」的排除项只有镜像装了 rsync 才生效,而这一格说了算。
+   */
+  image?: string
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +45,20 @@ const emit = defineEmits<{
 }>()
 
 const steps = ref<StepBlock[]>([])
+
+/**
+ * 「复制文件」能不能排除,只看镜像里装没装 rsync。编辑态问不了实时(要拉镜像 + `docker run`,
+ * 还只有本机 daemon 准),所以只认那份实测清单:内置目录里的镜像给确定答案,目录外一律
+ * 说「运行时决定」—— 绝不替用户猜一个没测过的镜像里有什么。
+ */
+const rsyncState = computed(() => rsyncSupportFor(props.image))
+
+const copyHintText = computed<string>(() => {
+  const image = (props.image ?? '').trim()
+  if (rsyncState.value === 'no') return t('pipelineJob.sbCopyHintNo', { image })
+  if (rsyncState.value === 'yes') return t('pipelineJob.sbCopyHintYes', { image })
+  return t('pipelineJob.sbCopyHint')
+})
 
 /** 初次 / 切换节点时从 config 反解析步骤(允许有损,空则起手给一个空命令步骤)。 */
 function hydrate(config: Record<string, string>): void {
@@ -293,7 +313,7 @@ const stepCount = computed(() => steps.value.length)
               @blur="flush"
             />
           </div>
-          <p class="sb-copy-hint">{{ t('pipelineJob.sbCopyHint') }}</p>
+          <p class="sb-copy-hint" :class="{ 'sb-copy-hint--warn': rsyncState === 'no' }">{{ copyHintText }}</p>
         </div>
 
         <!-- 条件守卫 -->
@@ -580,6 +600,11 @@ const stepCount = computed(() => steps.value.length)
   font-size: 0.68rem;
   line-height: 1.45;
   color: var(--color-faint);
+}
+
+/* 这个镜像明确没有 rsync → 排除项是空的,得说得住眼睛。 */
+.sb-copy-hint--warn {
+  color: var(--color-amber);
 }
 
 .sb-cond {

@@ -438,6 +438,8 @@ export default {
   sbCopyExclLabel: '除外',
   sbCopyExclAria: 'コピーの除外指定 {n}',
   sbCopyHint: 'コピー元ディレクトリの中身を複製します。除外指定はスペース区切りで、rsync があれば --exclude に変換されます。cp には除外オプションがないため、rsync がない環境ではすべてコピーされ、除外指定は無効です。',
+  sbCopyHintYes: 'コピー元ディレクトリの中身を複製します。{image} には rsync があるため、除外指定は --exclude に変換されて有効です。',
+  sbCopyHintNo: 'コピー元ディレクトリの中身を複製します。{image} には rsync がないため、コピーは cp にフォールバックし、除外指定は無効です（全体がコピーされ、実行ログにもその旨が出力されます）。除外を使うには rsync を含むビルド環境イメージに切り替えてください。内蔵カタログのイメージには rsync がありません。',
   sbCondAria: '条件 {n}',
   sbCondHintPre: 'shell 条件、不成立なら',
   sbCondHintStrong: '後続のすべてのステップをスキップ',
