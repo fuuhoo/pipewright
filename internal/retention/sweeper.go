@@ -13,6 +13,8 @@ import (
 // Pruner 是 Sweeper 依赖的清理能力(由 Service 实现;便于测试注入)。
 type Pruner interface {
 	Prune(ctx context.Context, now time.Time) (int, error)
+	// PruneDeliveries 裁剪通知台账里「不挂在现存运行上」的行(级联够不到的那部分)。
+	PruneDeliveries(ctx context.Context, now time.Time) (int, error)
 }
 
 // OrphanCollector 是每轮裁剪**之后**顺带做的一件事:回收制品库孤儿字节(由 *ArtifactGC 实现)。
@@ -88,7 +90,13 @@ func (s *Sweeper) runOnce(ctx context.Context) {
 	if err != nil {
 		log.Printf("[retention] 清理失败:%v", err)
 	} else if n > 0 {
-		log.Printf("[retention] 已清理 %d 条运行(连带其日志/步骤/产物/构建目录快照)", n)
+		log.Printf("[retention] 已清理 %d 条运行(连带其日志/步骤/产物/构建目录快照/通知台账)", n)
+	}
+	// 台账的独立裁剪:级联只覆盖挂在运行上的行,证书/异常这类全局事件要靠这条收尾。
+	if dn, derr := s.pruner.PruneDeliveries(ctx, now); derr != nil {
+		log.Printf("[retention] 通知台账清理失败:%v", derr)
+	} else if dn > 0 {
+		log.Printf("[retention] 已清理 %d 条通知台账(不挂在运行上的全局事件记录)", dn)
 	}
 	// 制品库孤儿回收与上面的判定无关(策略关着时删项目同样造孤儿),故 Prune 失败也照跑。
 	if s.orphans != nil {

@@ -203,6 +203,9 @@ type Service interface {
 
 	// TemplateService 嵌入通知模板 CRUD + 渲染(Story 5.3;FR-21)。
 	TemplateService
+
+	// DeliveryService 嵌入投递台账读侧(左栏「通知」页查历史;写侧在路由 dispatch 内落)。
+	DeliveryService
 }
 
 // service 是 store + vault + 注入 http.Client + 注入 emailSender 支撑的 Service 实现。

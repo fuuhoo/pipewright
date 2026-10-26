@@ -332,3 +332,142 @@ func TestConfigRoundTripNormalizesNegatives(t *testing.T) {
 		t.Fatalf("往返不一致, got %+v", got)
 	}
 }
+
+// insertDelivery 直接插一条通知台账行(projectID/runID 传空串 = 存 NULL);返回 id。
+func insertDelivery(t *testing.T, db *sql.DB, projectID, runID, createdAt string) string {
+	t.Helper()
+	id := uuid.NewString()
+	var p, r any
+	if projectID != "" {
+		p = projectID
+	}
+	if runID != "" {
+		r = runID
+	}
+	mustExec(t, db, `INSERT INTO notification_deliveries
+		(id, event, project_id, run_id, channel_id, channel_name, status, title, error_text, created_at)
+		VALUES (?, 'cert_expiring', ?, ?, 'ch-1', '默认渠道', 'ok', '证书即将到期', '', ?)`, id, p, r, createdAt)
+	return id
+}
+
+func deliveryExists(t *testing.T, db *sql.DB, id string) bool {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM notification_deliveries WHERE id = ?`, id).Scan(&n); err != nil {
+		t.Fatalf("delivery exists: %v", err)
+	}
+	return n > 0
+}
+
+// TestPruneDeliveriesUnionDims 验证台账沿用运行保留策略的「并集保留」口径,且条数排名
+// 只在**无运行可依**的行里算(证书/异常这类全局事件才是级联够不到的增长源)。
+func TestPruneDeliveriesUnionDims(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	ago := func(d time.Duration) string { return now.Add(-d).UTC().Format(time.RFC3339) }
+
+	recent := []string{
+		insertDelivery(t, db, "", "", ago(24*time.Hour)),
+		insertDelivery(t, db, "", "", ago(2*24*time.Hour)),
+		insertDelivery(t, db, "", "", ago(3*24*time.Hour)),
+	}
+	old1 := insertDelivery(t, db, "", "", ago(40*24*time.Hour))
+	old2 := insertDelivery(t, db, "", "", ago(41*24*time.Hour))
+
+	// 最近 2 条 + 30 天:排名 3 那条(3 天前)超条数但未到龄 → 留;两条 40+ 天的两个维度都越界 → 删。
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, KeepGlobal: 2, MaxAgeDays: 30}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	n, err := svc.PruneDeliveries(context.Background(), now)
+	if err != nil {
+		t.Fatalf("PruneDeliveries: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("应删 2 条(仅两个维度都越界的),实删 %d", n)
+	}
+	for _, id := range recent {
+		if !deliveryExists(t, db, id) {
+			t.Fatalf("并集保留内的台账 %s 不该被删", id)
+		}
+	}
+	for _, id := range []string{old1, old2} {
+		if deliveryExists(t, db, id) {
+			t.Fatalf("超条数又到龄的台账 %s 应被删", id)
+		}
+	}
+}
+
+// TestPruneDeliveriesSkipsRowsOfLiveRuns 钉住台账的归属边界:只要那条运行还在库里,它的通知记录
+// 就跟着它活 —— 否则运行详情页里的通知会凭空变空。这类行由 Prune(删运行)时的外键级联清。
+func TestPruneDeliveriesSkipsRowsOfLiveRuns(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	proj := seedProject(t, db)
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	// 进行中(非终态)的运行不会被 Prune 删,故它的台账行是「活运行 + 老记录」的组合。
+	running := insertRun(t, db, proj, "running", now.AddDate(0, 0, -400))
+	linked := insertDelivery(t, db, proj, running, now.AddDate(0, 0, -400).UTC().Format(time.RFC3339))
+	orphan := insertDelivery(t, db, "", "", now.AddDate(0, 0, -400).UTC().Format(time.RFC3339))
+
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, MaxAgeDays: 30}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	n, err := svc.PruneDeliveries(context.Background(), now)
+	if err != nil {
+		t.Fatalf("PruneDeliveries: %v", err)
+	}
+	if n != 1 || deliveryExists(t, db, orphan) {
+		t.Fatalf("只该删不挂在运行上的那条(n=%d, orphan还在=%v)", n, deliveryExists(t, db, orphan))
+	}
+	if !deliveryExists(t, db, linked) {
+		t.Fatal("运行还在,它的通知记录不该被单独裁掉")
+	}
+}
+
+// TestPruneCascadesDeliveries 验证 0083 的外键级联真生效:删运行连带清掉它的台账行,不留孤儿。
+func TestPruneCascadesDeliveries(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	proj := seedProject(t, db)
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	run := insertRun(t, db, proj, "success", old)
+	deliv := insertDelivery(t, db, proj, run, old.Format(time.RFC3339))
+
+	if err := svc.SetConfig(context.Background(), Config{Enabled: true, MaxAgeDays: 1}); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if _, err := svc.Prune(context.Background(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if runExists(t, db, run) {
+		t.Fatal("旧运行应被删")
+	}
+	if deliveryExists(t, db, deliv) {
+		t.Fatal("台账应随运行级联删除(外键未生效会留孤儿)")
+	}
+}
+
+// TestPruneDeliveriesDisabledNoop 验证总开关关闭 / 两个维度都不限时不删台账。
+func TestPruneDeliveriesDisabledNoop(t *testing.T) {
+	db := storetest.OpenDB(t)
+	svc := NewService(db)
+	ancient := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	ids := []string{
+		insertDelivery(t, db, "", "", ancient),
+		insertDelivery(t, db, "", "", ancient),
+	}
+	_ = svc.SetConfig(context.Background(), Config{Enabled: false, KeepGlobal: 1, MaxAgeDays: 1})
+	if n, err := svc.PruneDeliveries(context.Background(), time.Now()); err != nil || n != 0 {
+		t.Fatalf("关闭时不删, got n=%d err=%v", n, err)
+	}
+	_ = svc.SetConfig(context.Background(), Config{Enabled: true})
+	if n, err := svc.PruneDeliveries(context.Background(), time.Now()); err != nil || n != 0 {
+		t.Fatalf("无条件时不删, got n=%d err=%v", n, err)
+	}
+	for _, id := range ids {
+		if !deliveryExists(t, db, id) {
+			t.Fatal("两条都应保留")
+		}
+	}
+}

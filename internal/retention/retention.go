@@ -13,7 +13,8 @@
 //
 // 安全铁律:只删终态运行(success/failed);进行中(queued/running/waiting_approval)绝不动。
 // 删 run 时——deploy_targets 是唯一未配 ON DELETE CASCADE 的子表,显式先删;其余子表
-// (run_steps/run_logs/run_artifacts/反馈/审批/测试报告/晋级/构建目录快照)经外键级联连带删除。
+// (run_steps/run_logs/run_artifacts/反馈/审批/测试报告/晋级/构建目录快照/通知台账)经外键级联连带删除。
+// 通知台账里不挂在运行上的那部分(证书/异常这类全局事件)级联够不着,由 PruneDeliveries 用同一套维度裁剪。
 // 清理为 best-effort:出错记录并返回,绝不影响在跑的运行。
 package retention
 
@@ -222,6 +223,104 @@ func (s *Service) deleteChunk(ctx context.Context, ids []string) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("retention: commit: %w", err)
+	}
+	return nil
+}
+
+// PruneDeliveries 裁剪通知投递台账中「不挂在现存运行上」的那部分(证书到期/续期、指标异常这类全局事件),
+// 返回删除行数。挂在运行上的台账行不在这里管:外键级联随删运行一起清掉,而且只要那条运行还在,
+// 它的通知记录就该跟着它 —— 否则运行详情页里的「通知」会凭空变空。
+//
+// 维度沿用运行保留策略的 KeepGlobal 与 MaxAgeDays,口径与 Prune 一致(并集保留:两个维度都越界才删)。
+// 两者都没配(0=不限)或策略关闭 → 返回 0,不删。
+func (s *Service) PruneDeliveries(ctx context.Context, now time.Time) (int, error) {
+	cfg, err := s.GetConfig(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !cfg.Enabled || (cfg.KeepGlobal <= 0 && cfg.MaxAgeDays <= 0) {
+		return 0, nil
+	}
+
+	ids, err := s.prunableDeliveryIDs(ctx, cfg, now)
+	if err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if err := s.deleteDeliveries(ctx, ids); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+// prunableDeliveryIDs 算出应删除的无主台账行 id(倒序扫一趟,排名即扫过的条数;逻辑同 prunableIDs)。
+func (s *Service) prunableDeliveryIDs(ctx context.Context, cfg Config, now time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT nd.id, nd.created_at FROM notification_deliveries nd
+		 WHERE (nd.run_id IS NULL OR NOT EXISTS (SELECT 1 FROM pipeline_runs pr WHERE pr.id = nd.run_id))
+		 ORDER BY nd.created_at DESC, nd.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("retention: list deliveries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	cutoff := ""
+	if cfg.MaxAgeDays > 0 {
+		cutoff = now.UTC().AddDate(0, 0, -cfg.MaxAgeDays).Format(time.RFC3339)
+	}
+
+	var toDelete []string
+	seen := 0
+	for rows.Next() {
+		var id, createdAt string
+		if err := rows.Scan(&id, &createdAt); err != nil {
+			return nil, fmt.Errorf("retention: scan delivery: %w", err)
+		}
+		seen++
+
+		configured, exceeded := 0, 0
+		if cfg.KeepGlobal > 0 {
+			configured++
+			if seen > cfg.KeepGlobal {
+				exceeded++
+			}
+		}
+		// created_at 为 UTC RFC3339,可按字符串比较年龄。
+		if cfg.MaxAgeDays > 0 {
+			configured++
+			if cutoff != "" && createdAt < cutoff {
+				exceeded++
+			}
+		}
+		if exceeded == configured {
+			toDelete = append(toDelete, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("retention: iterate deliveries: %w", err)
+	}
+	return toDelete, nil
+}
+
+// deleteDeliveries 分批删除台账行(与 deleteRuns 同样的批量上界)。
+func (s *Service) deleteDeliveries(ctx context.Context, ids []string) error {
+	const batch = 500
+	for start := 0; start < len(ids); start += batch {
+		end := start + batch
+		if end > len(ids) {
+			end = len(ids)
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", end-start), ",")
+		args := make([]any, end-start)
+		for i, id := range ids[start:end] {
+			args[i] = id
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`DELETE FROM notification_deliveries WHERE id IN (`+placeholders+`)`, args...); err != nil {
+			return fmt.Errorf("retention: delete deliveries: %w", err)
+		}
 	}
 	return nil
 }

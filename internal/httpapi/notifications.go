@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/notify"
 	"github.com/go-chi/chi/v5"
 )
@@ -88,7 +90,9 @@ func writeNotifyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, notify.ErrRouteNotFound):
 		writeError(w, http.StatusNotFound, "route_not_found", "通知路由不存在")
 	case errors.Is(err, notify.ErrInvalidEvent):
-		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "事件类型非法:只能为 build_succeeded、build_failed、deploy_succeeded、deploy_failed、rollback 或 health_check_failed")
+		// 事件枚举会随能力增长(异常/证书三件就是这么加进来的),这里不再逐个列举,
+		// 权威清单由 GET /api/notifications/deliveries 的 events 字段给到前端。
+		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "事件类型非法:只能为平台内置的通知事件之一")
 	case errors.Is(err, notify.ErrRouteChannelNotFound):
 		writeError(w, http.StatusUnprocessableEntity, "route_channel_not_found", "路由引用的通知渠道不存在")
 	case errors.Is(err, notify.ErrTemplateNotFound):
@@ -107,6 +111,8 @@ func writeNotifyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "url_not_allowed", "webhook 地址不被允许:不可指向云元数据或链路本地地址")
 	case errors.Is(err, notify.ErrVaultUnconfigured):
 		writeError(w, http.StatusServiceUnavailable, "vault_unconfigured", "保险库未配置 master key,无法加密或读取敏感字段")
+	case errors.Is(err, notify.ErrInvalidDeliveryStatus):
+		writeError(w, http.StatusBadRequest, "invalid_status", "结论筛选非法:只能是 ok、failed 或 skipped")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}
@@ -549,5 +555,122 @@ func makeDeleteTemplateHandler(svc notify.Service) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// ---- 投递台账(GET /api/notifications/deliveries;左栏「通知」页数据源) ----
+
+// deliveryDTO 是一次投递的台账视图(冻结契约;camelCase)。
+// 无敏感字段:channelId/Name 是渠道标识不是凭据,errorText 是平台生成的人读原因(发送链路已双层脱敏)。
+type deliveryDTO struct {
+	ID          string `json:"id"`
+	Event       string `json:"event"`
+	ProjectID   string `json:"projectId,omitempty"`
+	ProjectName string `json:"projectName,omitempty"`
+	// RunID 非空时前端可跳回那条运行;运行被保留策略裁掉后这里变空(记录本身已随外键级联一起消失)。
+	RunID       string `json:"runId,omitempty"`
+	ChannelID   string `json:"channelId"`
+	ChannelName string `json:"channelName"`
+	Status      string `json:"status"`
+	Title       string `json:"title"`
+	// Body 是当时渲染出的正文(存库即按字符截过顶),所以列表直接带出:
+	// 点开一行不该再多打一次接口,而「失败/跳过的行本该发什么」恰是最要看的那半。
+	Body      string `json:"body,omitempty"`
+	ErrorText string `json:"errorText,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// deliveryListDTO 是台账列表响应。events/statuses 是筛选下拉的权威枚举(前端不硬编码)。
+type deliveryListDTO struct {
+	Items    []deliveryDTO `json:"items"`
+	Page     int           `json:"page"`
+	Total    int           `json:"total"`
+	Events   []string      `json:"events"`
+	Statuses []string      `json:"statuses"`
+}
+
+// toDeliveryDTO 把领域台账行转契约 DTO。
+func toDeliveryDTO(d *notify.Delivery) deliveryDTO {
+	return deliveryDTO{
+		ID:          d.ID,
+		Event:       d.Event,
+		ProjectID:   d.ProjectID,
+		ProjectName: d.ProjectName,
+		RunID:       d.RunID,
+		ChannelID:   d.ChannelID,
+		ChannelName: d.ChannelName,
+		Status:      d.Status,
+		Title:       d.Title,
+		Body:        d.Body,
+		ErrorText:   d.ErrorText,
+		CreatedAt:   d.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// makeListDeliveriesHandler 返回 GET /api/notifications/deliveries handler
+// (筛选 event/projectId/runId/status + 分页 page/pageSize;按时间倒序)。
+//
+// 可见范围走数据轴,与 GET /api/runs 同一口径:挂在项目上的记录随该项目分组的可见性收敛,
+// 证书/异常这类全局事件不属任何分组、照常可见。这条路径不匹配分组守卫认出的四种 URL 形态
+// (见 access_guard.resolveGuardTarget),收敛全靠这里的 visibleGroups —— 改动它等于改可见范围。
+func makeListDeliveriesHandler(svc notify.Service, acc *access.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "通知服务未初始化")
+			return
+		}
+		visible, err := visibleGroups(r, acc)
+		if err != nil {
+			writeAccessError(w, err)
+			return
+		}
+		q := r.URL.Query()
+		page := 1
+		if v := q.Get("page"); v != "" {
+			p, err := strconv.Atoi(v)
+			if err != nil || p < 1 {
+				writeError(w, http.StatusBadRequest, "invalid_page", "page 必须为不小于 1 的整数")
+				return
+			}
+			if p > maxPage {
+				writeError(w, http.StatusBadRequest, "invalid_page", "page 超出上界")
+				return
+			}
+			page = p
+		}
+		// 不给就留 0,由 notify 服务落到默认页大小;超上界同样由它钳,不在这里报错。
+		pageSize := 0
+		if v := q.Get("pageSize"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				writeError(w, http.StatusBadRequest, "invalid_page_size", "pageSize 必须为不小于 1 的整数")
+				return
+			}
+			pageSize = n
+		}
+		res, err := svc.ListDeliveries(r.Context(), notify.DeliveryFilter{
+			Event:         q.Get("event"),
+			ProjectID:     q.Get("projectId"),
+			RunID:         q.Get("runId"),
+			Status:        q.Get("status"),
+			Page:          page,
+			PageSize:      pageSize,
+			VisibleGroups: visible,
+		})
+		if err != nil {
+			writeNotifyError(w, err)
+			return
+		}
+		items := make([]deliveryDTO, 0, len(res.Items))
+		for i := range res.Items {
+			items = append(items, toDeliveryDTO(&res.Items[i]))
+		}
+		writeJSON(w, http.StatusOK, deliveryListDTO{
+			Items:    items,
+			Page:     res.Page,
+			Total:    res.Total,
+			Events:   notify.Events(),
+			Statuses: notify.DeliveryStatuses(),
+		})
 	}
 }

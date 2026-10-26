@@ -241,8 +241,8 @@ func (s *service) RouteEvent(ctx context.Context, event string, payload Payload)
 	channelIDs := s.channelIDsForEvent(ctx, event)
 	// 未配置任何路由(FR-20):不发送。
 	for _, cid := range channelIDs {
-		// SendVia 内部:渠道不存在 → ErrNotFound;未启用 → 优雅跳过(nil)。
-		if derr := s.SendVia(ctx, cid, payload); derr != nil {
+		// dispatch 内部:渠道不存在 → 记 failed;未启用 → 记 skipped 并优雅跳过(不发不报错)。
+		if derr := s.dispatch(ctx, Delivery{Event: event, ChannelID: cid, Title: payload.Title}, payload); derr != nil {
 			// 单渠道失败:记日志、续发其余(best-effort)。错误体已人读、绝无敏感字段。
 			log.Printf("[notify] route event %q: 渠道 %s 发送失败(已跳过续发):%v", event, cid, derr)
 		}
@@ -253,14 +253,20 @@ func (s *service) RouteEvent(ctx context.Context, event string, payload Payload)
 // RouteEventVars 路由一次事件并按渠道渲染模板(Story 5.3;FR-21,供 NotifyHook 消费)。
 //
 // 查该 event 的所有 enabled route → 对每个 channelID 经 RenderPayload 按该渠道最具体匹配的模板
-// 渲染 Payload(无模板 → 平台默认,5-2 行为不变)→ SendVia。**未配置任何路由 → 不发送**。
+// 渲染 Payload(无模板 → 平台默认,5-2 行为不变)→ dispatch 发送并落台账。**未配置任何路由 → 不发送**。
 // best-effort:单渠道失败仅记日志、续发其余;整体始终返回 nil(绝不阻断调用方,NFR-10)。
 func (s *service) RouteEventVars(ctx context.Context, event string, vars TemplateVars) error {
 	channelIDs := s.channelIDsForEvent(ctx, event)
 	for _, cid := range channelIDs {
 		// 按渠道渲染:channelID 精确模板 > 该事件通用模板 > 平台默认(无 RCE 纯文本替换)。
 		payload := s.RenderPayload(ctx, event, cid, vars)
-		if derr := s.SendVia(ctx, cid, payload); derr != nil {
+		// 全局路由不带项目归属;运行维度仍能关联上(台账里 project_id 为 NULL 的行 = 全局事件)。
+		if derr := s.dispatch(ctx, Delivery{
+			Event:     event,
+			RunID:     vars.RunID,
+			ChannelID: cid,
+			Title:     payload.Title,
+		}, payload); derr != nil {
 			log.Printf("[notify] route event %q: 渠道 %s 发送失败(已跳过续发):%v", event, cid, derr)
 		}
 	}
@@ -271,13 +277,20 @@ func (s *service) RouteEventVars(ctx context.Context, event string, vars Templat
 //
 // **整体覆盖语义**:先查 projectID + event 的 enabled 项目级路由;非空 → **只**用项目级渠道集
 // (不与全局合并);空 → 回退全局(project_id IS NULL)路由。projectID 为空时直接走全局。
-// 渠道集确定后按渠道渲染模板(RenderPayload)→ SendVia。**未配置任何路由 → 不发送**;
+// 渠道集确定后按渠道渲染模板(RenderPayload)→ dispatch 发送并落台账(带项目/运行归属)。
+// **未配置任何路由 → 不发送**;
 // best-effort:单渠道失败仅记日志、续发其余;整体始终返回 nil(绝不阻断调用方,NFR-10)。
 func (s *service) RouteEventForProject(ctx context.Context, projectID, event string, vars TemplateVars) error {
 	channelIDs := s.channelIDsForEventScoped(ctx, projectID, event)
 	for _, cid := range channelIDs {
 		payload := s.RenderPayload(ctx, event, cid, vars)
-		if derr := s.SendVia(ctx, cid, payload); derr != nil {
+		if derr := s.dispatch(ctx, Delivery{
+			Event:     event,
+			ProjectID: strings.TrimSpace(projectID),
+			RunID:     vars.RunID,
+			ChannelID: cid,
+			Title:     payload.Title,
+		}, payload); derr != nil {
 			log.Printf("[notify] route event %q(project=%q): 渠道 %s 发送失败(已跳过续发):%v", event, projectID, cid, derr)
 		}
 	}

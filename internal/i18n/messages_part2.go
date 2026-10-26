@@ -18,6 +18,10 @@ func init() {
 			"zh-TW": "page 必須為不小於 1 的整數", "en": "page must be an integer no less than 1", "ja": "page は 1 以上の整数である必要があります",
 			"ko": "page는 1 이상의 정수여야 합니다", "es": "page debe ser un entero no menor que 1", "fr": "page doit être un entier supérieur ou égal à 1", "de": "page muss eine Ganzzahl von mindestens 1 sein",
 		},
+		"pageSize 必须为不小于 1 的整数": {
+			"zh-TW": "pageSize 必須為不小於 1 的整數", "en": "pageSize must be an integer no less than 1", "ja": "pageSize は 1 以上の整数である必要があります",
+			"ko": "pageSize는 1 이상의 정수여야 합니다", "es": "pageSize debe ser un entero no menor que 1", "fr": "pageSize doit être un entier supérieur ou égal à 1", "de": "pageSize muss eine Ganzzahl von mindestens 1 sein",
+		},
 		"secret 不能为空": {
 			"zh-TW": "secret 不能為空", "en": "secret must not be empty", "ja": "secret を空にすることはできません",
 			"ko": "secret은 비워 둘 수 없습니다", "es": "secret no puede estar vacío", "fr": "secret ne peut pas être vide", "de": "secret darf nicht leer sein",

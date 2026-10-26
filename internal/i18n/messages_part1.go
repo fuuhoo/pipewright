@@ -37,10 +37,10 @@ func init() {
 			"ko": "다운스트림 대상은 업스트림 프로젝트 자신이 될 수 없습니다(자기 루프)", "es": "El destino descendente no puede ser el propio proyecto ascendente (bucle propio)",
 			"fr": "La cible en aval ne peut pas être le projet en amont lui-même (boucle réflexive)", "de": "Das Downstream-Ziel darf nicht das Upstream-Projekt selbst sein (Selbstschleife)",
 		},
-		"事件类型非法:只能为 build_succeeded、build_failed、deploy_succeeded、deploy_failed、rollback 或 health_check_failed": {
-			"zh-TW": "事件類型非法:只能為 build_succeeded、build_failed、deploy_succeeded、deploy_failed、rollback 或 health_check_failed", "en": "Invalid event type: must be one of build_succeeded, build_failed, deploy_succeeded, deploy_failed, rollback or health_check_failed", "ja": "イベントタイプが不正です:build_succeeded、build_failed、deploy_succeeded、deploy_failed、rollback または health_check_failed のいずれかである必要があります",
-			"ko": "이벤트 유형이 잘못되었습니다: build_succeeded, build_failed, deploy_succeeded, deploy_failed, rollback 또는 health_check_failed 중 하나여야 합니다", "es": "Tipo de evento no válido: debe ser build_succeeded, build_failed, deploy_succeeded, deploy_failed, rollback o health_check_failed",
-			"fr": "Type d'événement invalide : doit être build_succeeded, build_failed, deploy_succeeded, deploy_failed, rollback ou health_check_failed", "de": "Ungültiger Ereignistyp: muss build_succeeded, build_failed, deploy_succeeded, deploy_failed, rollback oder health_check_failed sein",
+		"事件类型非法:只能为平台内置的通知事件之一": {
+			"zh-TW": "事件類型非法:只能為平台內建的通知事件之一", "en": "Invalid event type: must be one of the platform's built-in notification events", "ja": "イベントタイプが不正です:プラットフォーム内蔵の通知イベントのいずれかである必要があります",
+			"ko": "이벤트 유형이 잘못되었습니다: 플랫폼 기본 제공 알림 이벤트 중 하나여야 합니다", "es": "Tipo de evento no válido: debe ser uno de los eventos de notificación integrados de la plataforma",
+			"fr": "Type d'événement invalide : doit être l'un des événements de notification intégrés de la plateforme", "de": "Ungültiger Ereignistyp: muss einer der integrierten Benachrichtigungsereignisse der Plattform sein",
 		},
 		"代码管理区未启用,无法列分支": {
 			"zh-TW": "程式碼管理區未啟用,無法列出分支", "en": "Source management is not enabled; cannot list branches", "ja": "コード管理エリアが有効でないため、ブランチを一覧表示できません",

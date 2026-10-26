@@ -150,11 +150,17 @@ func TestArtifactGCStopsWhenLiveSetUnreadable(t *testing.T) {
 }
 
 type fakePruner struct {
-	deleted int
-	err     error
+	deleted  int
+	err      error
+	deliv    int
+	delivErr error
 }
 
 func (f fakePruner) Prune(context.Context, time.Time) (int, error) { return f.deleted, f.err }
+
+func (f fakePruner) PruneDeliveries(context.Context, time.Time) (int, error) {
+	return f.deliv, f.delivErr
+}
 
 type fakeCollector struct {
 	ran int
@@ -188,6 +194,37 @@ func TestSweeperOrphansRunAfterPrune(t *testing.T) {
 // TestSweeperWithoutCollector 验证没挂回收器时一切照旧(制品库不可用的部署形态)。
 func TestSweeperWithoutCollector(t *testing.T) {
 	NewSweeper(fakePruner{deleted: 2}, time.Hour).runOnce(context.Background()) // 不该 panic
+}
+
+// countPruner 记录两个裁剪各被调用几次(值接收者的 fakePruner 记不了状态)。
+type countPruner struct {
+	runs     int
+	delivs   int
+	delivErr error
+}
+
+func (p *countPruner) Prune(context.Context, time.Time) (int, error) {
+	p.runs++
+	return 0, nil
+}
+
+func (p *countPruner) PruneDeliveries(context.Context, time.Time) (int, error) {
+	p.delivs++
+	return 0, p.delivErr
+}
+
+// TestSweeperPrunesLedgerEveryRound 验证台账裁剪是每轮固定动作,且它自己报错不影响其余两件事
+// —— 运行裁剪、孤儿回收、台账裁剪三者互不依赖。
+func TestSweeperPrunesLedgerEveryRound(t *testing.T) {
+	p := &countPruner{delivErr: errors.New("ledger locked")}
+	col := &fakeCollector{}
+	NewSweeper(p, time.Hour).WithOrphans(col).runOnce(context.Background())
+	if p.runs != 1 || p.delivs != 1 {
+		t.Fatalf("每轮应各裁一次运行与台账,实得 runs=%d delivs=%d", p.runs, p.delivs)
+	}
+	if col.ran != 1 {
+		t.Fatal("台账裁剪失败也不该拦住孤儿回收")
+	}
 }
 
 func TestHumanBytes(t *testing.T) {

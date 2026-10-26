@@ -1191,6 +1191,10 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Put("/notifications/templates/{id}", makeUpdateTemplateHandler(nf))
 		ar.Delete("/notifications/templates/{id}", makeDeleteTemplateHandler(nf))
 
+		// 通知投递台账(只读)。上面那些是「怎么发」的配置,这里回答「发出去了什么」:
+		// 逐渠道的 ok/failed/skipped 记录。可见范围随项目分组收敛(同 GET /api/runs)。
+		ar.Get("/notifications/deliveries", makeListDeliveriesHandler(nf, o.access))
+
 		// 可配置异常检测与告警(Story 6.5;FR-23)。an 为 nil 时 handler 返回 503。
 		// 规则 CRUD + 立即检测 + 告警列表;检测复用 6-1 指标采集(metricsCollector 适配
 		// collectServerMetrics)逐服务器逐 enabled 规则求值,命中产告警入库(指标 null /
