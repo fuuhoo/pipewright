@@ -12,6 +12,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
+import { useSessionStore } from '../stores/session'
 import { HttpError } from '../api/http'
 import {
   listTemplates,
@@ -44,6 +45,11 @@ const message = useMessage()
 const route = useRoute()
 const router = useRouter()
 const tab = ref<Tab>(route.query.tab === 'customNodes' ? 'customNodes' : route.query.tab === 'variableGroups' ? 'variableGroups' : 'templates')
+
+const session = useSessionStore()
+// 三类资产都不归组,所以「能不能改」只看角色有没有 library.edit:后端在同一把尺上拦写请求
+// (internal/httpapi/access_guard.go 的 requireLibraryPerm),这里只是把按不动的按钮收起来。
+const canEdit = computed(() => session.canPerm('library.edit'))
 
 // ─── templates ────────────────────────────────────────────────────────────────
 const tplState = ref<LoadState>('idle')
@@ -396,6 +402,8 @@ onMounted(() => {
       <button
         v-if="tab === 'variableGroups'"
         class="btn-primary"
+        :disabled="!canEdit"
+        :title="canEdit ? '' : t('library.needEditTip')"
         @click="openCreateGroup"
       >
         {{ t('library.newGroup') }}
@@ -403,6 +411,8 @@ onMounted(() => {
       <button
         v-if="tab === 'customNodes'"
         class="btn-primary"
+        :disabled="!canEdit"
+        :title="canEdit ? '' : t('library.needEditTip')"
         @click="openCreateStudio"
       >
         {{ t('library.newStudioNode') }}
@@ -461,6 +471,7 @@ onMounted(() => {
         <div class="empty-icon">▦</div>
         <p class="empty-label">{{ t('library.emptyTemplatesTitle') }}</p>
         <p class="empty-hint">{{ t('library.emptyTemplatesHint') }}</p>
+        <p v-if="!canEdit" class="empty-hint">{{ t('library.needEditTip') }}</p>
       </div>
 
       <ul v-else class="card-grid" role="list">
@@ -472,7 +483,7 @@ onMounted(() => {
           <p class="tpl-desc">{{ tpl.description || t('library.noDescription') }}</p>
           <div class="tpl-card-foot">
             <span class="tpl-time">{{ t('library.updatedAt', { time: new Date(tpl.updatedAt).toLocaleDateString() }) }}</span>
-            <button class="link-danger" @click="removeTemplate(tpl)">{{ t('library.delete') }}</button>
+            <button v-if="canEdit" class="link-danger" @click="removeTemplate(tpl)">{{ t('library.delete') }}</button>
           </div>
         </li>
       </ul>
@@ -496,7 +507,7 @@ onMounted(() => {
         <div class="empty-icon">{ }</div>
         <p class="empty-label">{{ t('library.emptyGroupsTitle') }}</p>
         <p class="empty-hint">{{ t('library.emptyGroupsHint') }}</p>
-        <button class="btn-primary" @click="openCreateGroup">{{ t('library.newGroup') }}</button>
+        <button class="btn-primary" :disabled="!canEdit" :title="canEdit ? '' : t('library.needEditTip')" @click="openCreateGroup">{{ t('library.newGroup') }}</button>
       </div>
 
       <ul v-else class="card-grid" role="list">
@@ -519,7 +530,7 @@ onMounted(() => {
             </li>
             <li v-if="g.vars.length === 0" class="vg-var vg-var--more">{{ t('library.noVars') }}</li>
           </ul>
-          <div class="vg-card-foot">
+          <div v-if="canEdit" class="vg-card-foot">
             <button class="btn-secondary btn-sm" @click="openEditGroup(g)">{{ t('library.edit') }}</button>
             <button class="link-danger" @click="removeGroup(g)">{{ t('library.delete') }}</button>
           </div>
@@ -545,7 +556,7 @@ onMounted(() => {
         <div class="empty-icon">◇</div>
         <p class="empty-label">{{ t('library.emptyNodesTitle') }}</p>
         <p class="empty-hint">{{ t('library.emptyNodesHint') }}</p>
-        <button class="btn-primary" @click="openCreateStudio">{{ t('library.newStudioNode') }}</button>
+        <button class="btn-primary" :disabled="!canEdit" :title="canEdit ? '' : t('library.needEditTip')" @click="openCreateStudio">{{ t('library.newStudioNode') }}</button>
       </div>
 
       <ul v-else class="card-grid" role="list">
@@ -567,7 +578,7 @@ onMounted(() => {
           </ul>
           <div class="cn-card-foot">
             <span class="cn-time">{{ t('library.updatedAt', { time: new Date(n.updatedAt).toLocaleDateString() }) }}</span>
-            <div class="cn-card-actions">
+            <div v-if="canEdit" class="cn-card-actions">
               <button class="btn-secondary btn-sm" @click="openEditCustomNode(n)">{{ t('library.edit') }}</button>
               <button class="link-danger" @click="removeCustomNode(n)">{{ t('library.delete') }}</button>
             </div>

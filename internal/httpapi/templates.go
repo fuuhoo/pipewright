@@ -127,6 +127,9 @@ func makeCreatePipelineTemplateHandler(svc library.TemplateService, aud audit.Re
 			writeError(w, http.StatusServiceUnavailable, "internal", "模板服务未初始化")
 			return
 		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<18) // 256KB
 		var req struct {
 			Name        string     `json:"name"`
@@ -163,6 +166,9 @@ func makeDeletePipelineTemplateHandler(svc library.TemplateService, aud audit.Re
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "模板服务未初始化")
+			return
+		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
 			return
 		}
 		id := chi.URLParam(r, "id")

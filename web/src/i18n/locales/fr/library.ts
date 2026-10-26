@@ -4,6 +4,7 @@ export default {
   subtitle: 'Modèles de pipeline, groupes de variables et nœuds personnalisés partagés entre projets · définir une fois, réutiliser partout',
   newGroup: '+ Nouveau groupe de variables',
   newStudioNode: '+ Nouveau nœud de studio',
+  needEditTip: 'Votre rôle ne dispose pas de la permission « Gérer la bibliothèque et le studio de nœuds » ; demandez un ajustement de rôle à un administrateur',
 
   // ─── segmented tabs ────────────────────────────────────────────
   segAria: 'Catégories de la bibliothèque',

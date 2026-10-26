@@ -4,6 +4,7 @@ export default {
   subtitle: 'Plantillas de pipeline, grupos de variables y nodos personalizados compartidos entre proyectos · define una vez, reutiliza en todas partes',
   newGroup: '+ Nuevo grupo de variables',
   newStudioNode: '+ Nuevo nodo de estudio',
+  needEditTip: 'Tu rol no tiene el permiso «Gestionar la biblioteca y el estudio de nodos»; pide a un administrador que ajuste tu rol',
 
   // ─── segmented tabs ────────────────────────────────────────────
   segAria: 'Categorías de la biblioteca',

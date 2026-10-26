@@ -127,6 +127,9 @@ func makeCreateVarGroupHandler(svc library.VarGroupService, aud audit.Recorder) 
 			writeError(w, http.StatusServiceUnavailable, "internal", "变量组服务未初始化")
 			return
 		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req varGroupReqBody
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -154,6 +157,9 @@ func makeUpdateVarGroupHandler(svc library.VarGroupService, aud audit.Recorder) 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "变量组服务未初始化")
+			return
+		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
 			return
 		}
 		id := chi.URLParam(r, "id")
@@ -184,6 +190,9 @@ func makeDeleteVarGroupHandler(svc library.VarGroupService, aud audit.Recorder) 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "变量组服务未初始化")
+			return
+		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
 			return
 		}
 		id := chi.URLParam(r, "id")

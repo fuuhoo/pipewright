@@ -9,8 +9,9 @@
  *
  * Templates carry no plaintext secret (credentials remain vault references in 2-4 settings).
  */
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useSessionStore } from '../../stores/session'
 import {
   listTemplates,
   applyTemplate,
@@ -27,6 +28,10 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const session = useSessionStore()
+// 「另存为模板」写的是复用库,后端按 library.edit 拦(见 internal/httpapi/access_guard.go
+// 的 requireLibraryPerm);这里没有该点就不摆一个点了必然 403 的 tab。
+const canEdit = computed(() => session.canPerm('library.edit'))
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -153,6 +158,7 @@ onMounted(loadTemplates)
           {{ t('pipelinePanels.tplApplyTab') }}
         </button>
         <button
+          v-if="canEdit"
           class="seg-item"
           role="tab"
           :aria-selected="mode === 'save'"

@@ -7,12 +7,39 @@
  */
 import { vi } from 'vitest'
 import { config } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { i18n, setLocale } from '../i18n'
+import { PERM_LABEL_KEY } from '../lib/roleEditor'
+import type { PermId, ResourceKind, SessionUser } from '../api/auth'
+import { useSessionStore } from '../stores/session'
 
 // 组件普遍使用 useI18n() → 全局为所有 mount 安装 i18n 插件,避免每个 spec 重复配置。
 // locale 钉到 zh-CN(产品默认),让既有「断言中文文案」的组件测试保持确定性。
 setLocale('zh-CN')
-config.global.plugins = [...(config.global.plugins ?? []), i18n]
+
+// 带权限判断的控件(复用库、节点工作室、JobDrawer 的「存为自定义节点」)在 setup 里读
+// session store → 没有活动 pinia 就直接抛。这里给一份默认「全权限」会话,让既有断言照旧
+// 看得见受权限收起的区块;要验「没权限」的那种 spec 自己 createPinia() 覆盖即可
+// (mount 的 global.plugins 排在 config.global 之后,后装的那个 pinia 生效)。
+const pinia = createPinia()
+setActivePinia(pinia)
+const allPerms = Object.keys(PERM_LABEL_KEY) as PermId[]
+const fullSession: SessionUser = {
+  username: 'tester',
+  role: 'admin',
+  displayName: '',
+  email: '',
+  capabilities: {
+    settings: true,
+    kinds: Object.fromEntries(
+      (['project', 'run', 'server', 'kube_cluster'] as ResourceKind[]).map((k) => [k, 'manage']),
+    ),
+    perms: allPerms,
+  },
+}
+useSessionStore().setUser(fullSession)
+
+config.global.plugins = [...(config.global.plugins ?? []), i18n, pinia]
 
 // Node 25 ships a native global `localStorage` stub (the `--localstorage-file`
 // experiment) that shadows jsdom's implementation but lacks getItem/clear/etc.

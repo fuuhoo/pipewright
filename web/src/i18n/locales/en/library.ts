@@ -4,6 +4,7 @@ export default {
   subtitle: 'Pipeline templates, variable groups and custom nodes shared across projects · define once, reuse everywhere',
   newGroup: '+ New variable group',
   newStudioNode: '+ New studio node',
+  needEditTip: 'Your role lacks the "Manage the reuse library and node studio" permission; ask an administrator to adjust it',
 
   // ─── segmented tabs ────────────────────────────────────────────
   segAria: 'Library categories',

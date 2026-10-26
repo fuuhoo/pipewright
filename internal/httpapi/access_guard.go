@@ -184,6 +184,32 @@ func requireServerPoint(w http.ResponseWriter, r *http.Request, svc *access.Serv
 	return true
 }
 
+// permLibraryEdit 是复用库这条线的功能点 ID(internal/access/perms.go 的字典项)。写成常量同
+// permServerExec 的理由:守卫散在三个文件的每个写 handler 里,手抄错一个字母不报错,
+// 只会让那道门对所有人静默消失(或静默敞开)。
+const permLibraryEdit = "library.edit"
+
+// requireLibraryPerm 判定当前会话角色是否持有某个复用库功能点。
+//
+// 为什么不走 accessGuardMiddleware:那条中间件按 URL 认出「在动哪个分组资源」,而模板 / 变量组 /
+// 自定义节点都不归组 —— 复用库的立项语义就是跨项目共享,数据轴在这里没有落点(见 resolveGuardTarget)。
+// 与证书同一条口径(见 requireCertPerm):功能轴判点,数据轴只在真的动到分组资源时叠加。
+//
+// 只有写方法判它。读(list/detail)维持「登录即可 + 列表按可见范围收敛」,与 /api/runs、
+// /api/servers 一致;按点判 GET 会让流水线编辑器里的「我的自定义节点」对没这个点的角色静默变空。
+func requireLibraryPerm(w http.ResponseWriter, r *http.Request, point string) bool {
+	sess, ok := sessionFromContext(r.Context())
+	if !ok || sess == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
+		return false
+	}
+	if !access.HasPerm(sess.Role, point) {
+		writeError(w, http.StatusForbidden, "role_denied", "你的角色不允许修改复用库,需要管理员调整角色")
+		return false
+	}
+	return true
+}
+
 // visibleGroups 算出 actor 的资源列表可见分组范围(项目 / 服务器共用:运行与服务器都挂在
 // 同一套分组语义上)。未装配权限服务时返回「不受限」(与中间件同策略)。
 func visibleGroups(r *http.Request, svc *access.Service) (access.ListFilter, error) {

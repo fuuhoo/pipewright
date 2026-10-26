@@ -124,6 +124,9 @@ func makeCreateCustomNodeHandler(svc library.CustomNodeService, aud audit.Record
 			writeError(w, http.StatusServiceUnavailable, "internal", "自定义节点服务未初始化")
 			return
 		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<18) // 256KB
 		var req customNodeReqBody
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -151,6 +154,9 @@ func makeUpdateCustomNodeHandler(svc library.CustomNodeService, aud audit.Record
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "自定义节点服务未初始化")
+			return
+		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
 			return
 		}
 		id := chi.URLParam(r, "id")
@@ -181,6 +187,9 @@ func makeDeleteCustomNodeHandler(svc library.CustomNodeService, aud audit.Record
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "自定义节点服务未初始化")
+			return
+		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
 			return
 		}
 		id := chi.URLParam(r, "id")

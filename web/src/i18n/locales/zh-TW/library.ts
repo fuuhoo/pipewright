@@ -4,6 +4,7 @@ export default {
   subtitle: '跨專案共享的流水線範本、變數組與自訂節點 · 一處定義,處處複用',
   newGroup: '+ 建立變數組',
   newStudioNode: '+ 建立工作室節點',
+  needEditTip: '你的角色沒有「增刪改重用譜與節點工作室」權限,需要管理員調整角色',
 
   // ─── segmented tabs ────────────────────────────────────────────
   segAria: '複用庫分類',

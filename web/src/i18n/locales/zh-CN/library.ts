@@ -4,6 +4,7 @@ export default {
   subtitle: '跨项目共享的流水线模板、变量组与自定义节点 · 一处定义,处处复用',
   newGroup: '+ 新建变量组',
   newStudioNode: '+ 新建工作室节点',
+  needEditTip: '你的角色没有「增删改复用库与节点工作室」权限,需要管理员调整角色',
 
   // ─── segmented tabs ────────────────────────────────────────────
   segAria: '复用库分类',

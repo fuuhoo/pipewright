@@ -41,6 +41,7 @@ import {
   type PromotedParam,
 } from './studioCompile'
 import { createCustomNode } from '../../api/customNodes'
+import { useSessionStore } from '../../stores/session'
 import JobTypeIcon from './JobTypeIcon.vue'
 import StepBuilder from './StepBuilder.vue'
 import CommandTemplateChips from './CommandTemplateChips.vue'
@@ -67,6 +68,10 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const session = useSessionStore()
+// 「存为自定义节点」写的是复用库,判点和后端一致(POST /api/custom-nodes 要 library.edit):
+// 没有该点的角色点了只会拿 403,所以整段收起。
+const canEditLibrary = computed(() => session.canPerm('library.edit'))
 
 // ─── Local editable copy ──────────────────────────────────────────────────────
 
@@ -1224,7 +1229,7 @@ async function confirmSave(): Promise<void> {
     </div>
 
     <!-- Save as custom node (复用库 Tier 2) -->
-    <div class="drawer-section drawer-reuse">
+    <div v-if="canEditLibrary" class="drawer-section drawer-reuse">
       <div v-if="!savePanelOpen" class="reuse-row">
         <button class="reuse-btn" @click="openSavePanel">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

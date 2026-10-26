@@ -4,6 +4,7 @@ export default {
   subtitle: 'Projektübergreifend geteilte Pipeline-Vorlagen, Variablengruppen und benutzerdefinierte Knoten · einmal definieren, überall wiederverwenden',
   newGroup: '+ Neue Variablengruppe',
   newStudioNode: '+ Neuer Studio-Knoten',
+  needEditTip: 'Ihr Profil hat nicht die Berechtigung „Bibliothek und Knoten-Studio verwalten"; bitte einen Administrator, die Rolle anzupassen',
 
   // ─── segmented tabs ────────────────────────────────────────────
   segAria: 'Bibliothekskategorien',
