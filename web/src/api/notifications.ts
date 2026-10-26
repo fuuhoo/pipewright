@@ -266,3 +266,70 @@ export async function getNotifyConfig(): Promise<NotifyConfig> {
 export async function setNotifyConfig(language: string): Promise<NotifyConfig> {
   return http.put<NotifyConfig>('/api/notifications/config', { language })
 }
+
+/**
+ * Notification Deliveries ledger — 投递台账(左栏「通知记录」页数据源)。
+ *
+ * GET /api/notifications/deliveries → { items, page, total, events, statuses }
+ *
+ * 渠道 / 路由 / 模板那三组接口回答「怎么发」,这里回答「发出去了没有」:每次「事件 → 渠道」
+ * 的路由投递记一行,结论三档 ok / failed / skipped(skipped = 路由配了但渠道被停用,平台按
+ * 既有语义优雅跳过)。正文随列表一起带出,点开一行不再多打一次接口。
+ *
+ * 只覆盖**路由投递**;流水线里的「通知」节点走直发通道,结果在那条运行的日志里,不进台账。
+ * 失败原因是平台生成的人读文本,不含凭据明文(出站内容在构造变量时已双层脱敏)。
+ */
+
+/** 台账三档结论。 */
+export type DeliveryStatus = 'ok' | 'failed' | 'skipped'
+
+export interface NotificationDelivery {
+  id: string
+  /** 事件 ID(如 build_failed)。刻意不用 NotificationEvent 联合类型:枚举由后端持有。 */
+  event: string
+  /** 空 = 全局事件(证书到期 / 指标异常),不属于任何项目。 */
+  projectId?: string
+  projectName?: string
+  /** 空 = 本次投递不挂在某次运行上;非空可跳回那条运行(运行被保留策略裁掉时整行一起消失)。 */
+  runId?: string
+  channelId: string
+  /** 投递当时的渠道名(渠道改名或事后被删,历史仍可辨)。 */
+  channelName: string
+  status: DeliveryStatus
+  title: string
+  /** 当时渲染出的正文(存库即按字符截过顶)。 */
+  body?: string
+  /** 人读失败原因;成功 / 跳过为空。 */
+  errorText?: string
+  createdAt: string
+}
+
+export interface ListDeliveriesParams {
+  event?: string
+  projectId?: string
+  runId?: string
+  status?: string
+  page?: number
+  pageSize?: number
+}
+
+export interface DeliveryListResponse {
+  items: NotificationDelivery[]
+  page: number
+  total: number
+  /** 筛选下拉的权威枚举(前端不硬编码:事件早已从 6 个涨到 11 个)。 */
+  events: string[]
+  statuses: DeliveryStatus[]
+}
+
+export function listDeliveries(params: ListDeliveriesParams = {}): Promise<DeliveryListResponse> {
+  const qs = new URLSearchParams()
+  if (params.event) qs.set('event', params.event)
+  if (params.projectId) qs.set('projectId', params.projectId)
+  if (params.runId) qs.set('runId', params.runId)
+  if (params.status) qs.set('status', params.status)
+  if (params.page !== undefined) qs.set('page', String(params.page))
+  if (params.pageSize !== undefined) qs.set('pageSize', String(params.pageSize))
+  const query = qs.toString()
+  return http.get<DeliveryListResponse>(`/api/notifications/deliveries${query ? `?${query}` : ''}`)
+}
