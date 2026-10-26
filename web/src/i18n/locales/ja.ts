@@ -31,7 +31,7 @@ const ja: typeof zhCN = {
     certs: '証明書管理',
     previews: 'プレビュー環境',
     anomaly: '異常検知',
-    notifications: '通知',
+    notifications: '通知履歴',
     settings: '設定',
     logout: 'ログアウト',
     ariaMain: 'メインナビゲーション',

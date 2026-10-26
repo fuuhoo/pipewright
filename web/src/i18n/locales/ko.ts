@@ -31,7 +31,7 @@ const ko: typeof zhCN = {
     certs: '인증서 관리',
     previews: '미리보기 환경',
     anomaly: '이상 감지',
-    notifications: '알림',
+    notifications: '알림 기록',
     settings: '설정',
     logout: '로그아웃',
     ariaMain: '주 내비게이션',

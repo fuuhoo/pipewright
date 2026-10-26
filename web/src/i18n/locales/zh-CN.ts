@@ -30,7 +30,7 @@ export default {
     certs: '证书管理',
     previews: '预览环境',
     anomaly: '异常检测',
-    notifications: '通知',
+    notifications: '通知记录',
     settings: '设置',
     logout: '退出登录',
     ariaMain: '主导航',

@@ -31,7 +31,7 @@ const zhTW: typeof zhCN = {
     certs: '憑證管理',
     previews: '預覽環境',
     anomaly: '異常偵測',
-    notifications: '通知',
+    notifications: '通知記錄',
     settings: '設定',
     logout: '登出',
     ariaMain: '主導覽',

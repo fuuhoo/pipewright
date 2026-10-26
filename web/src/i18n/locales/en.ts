@@ -31,7 +31,7 @@ const en: typeof zhCN = {
     certs: 'Certificate Manager',
     previews: 'Previews',
     anomaly: 'Anomaly Detection',
-    notifications: 'Notifications',
+    notifications: 'Notification log',
     settings: 'Settings',
     logout: 'Log out',
     ariaMain: 'Main navigation',
