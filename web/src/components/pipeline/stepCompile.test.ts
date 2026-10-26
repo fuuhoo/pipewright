@@ -269,6 +269,39 @@ describe('stepCompile', () => {
       expect(lineToStep(edited).kind).toBe('command')
       expect(lineToStep('if command -v rsync >/dev/null 2>&1; then echo hi; fi').kind).toBe('command')
     })
+
+    it('把「cp 不吃排除项」写进兜底分支的日志,只在真填了排除项时', () => {
+      const warned = copyStepLine('src', 'out', ['node_modules'])
+      expect(warned).toContain(
+        "; else echo '没有 rsync,复制退回 cp:排除项未生效'; mkdir -p 'out/' && cp -a 'src/.' 'out/'; fi",
+      )
+      expect(warned.includes('\n')).toBe(false)
+      // 没排除项时两条分支语义一致,不该多嘴一句。
+      expect(copyStepLine('src', 'out', [])).not.toContain('echo')
+    })
+
+    it('告警段照样还原成 copy(新生成的行 round-trip 不丢排除项)', () => {
+      const back = lineToStep(copyStepLine('src', 'out', ['node_modules .git']))
+      expect(back.kind).toBe('copy')
+      expect(back.copyExcludes).toBe('node_modules .git')
+    })
+
+    it('认老配置:没有告警段的复制行仍还原成 copy', () => {
+      const legacy =
+        "if command -v rsync >/dev/null 2>&1; then mkdir -p 'out/' && rsync -a --exclude='node_modules' 'src/' 'out/';" +
+        " else mkdir -p 'out/' && cp -a 'src/.' 'out/'; fi"
+      const back = lineToStep(legacy)
+      expect(back.kind).toBe('copy')
+      expect(back.copyExcludes).toBe('node_modules')
+    })
+
+    it('没有排除项却插了告警 → 整行退回运行命令(归成 copy 会把手插的那句重生成丢掉)', () => {
+      const tampered = copyStepLine('src', 'out', []).replace(
+        "; else mkdir -p ",
+        "; else echo '没有 rsync,复制退回 cp:排除项未生效'; mkdir -p ",
+      )
+      expect(lineToStep(tampered).kind).toBe('command')
+    })
   })
 
   describe('configUsesTemplate', () => {

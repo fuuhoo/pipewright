@@ -22,6 +22,8 @@
  * else cp -a …; fi`:优先 rsync(支持排除目录/通配、增量覆盖),容器里没装则退回 `cp -a`。
  * 两条分支同一语义 —— 把「源目录的内容」铺进目标目录(rsync 靠源尾斜杠、cp 靠 `源/.`)。
  * `command -v` 探针跑在 `if` 测试上下文里,对 `set -e` 安全;整条单行仍能逐行反解析还原。
+ * 填了排除项时,else 分支前额外挂一句 `echo '…排除项未生效'`:cp 没有排除选项,静默整份复制
+ * 是最难发现的失败,所以让运行日志自己说清「这镜像没 rsync,排除项被忽略了」。
  *
  * 编译(steps → config):把有序步骤列表展开成 `commands` 多行串。产物目录不属于步骤,
  * 它是节点的固定属性(`artifactPath`,档位=产物时表单里始终有这一格),由调用方单独持有;
@@ -91,10 +93,15 @@ export function conditionGuardLine(cond: string): string {
 // 复制步骤的单行骨架(逐段拼,反解析按同样字面切回去;改动须两侧同步)。
 const COPY_HEAD = 'if command -v rsync >/dev/null 2>&1; then mkdir -p '
 const COPY_RSYNC = ' && rsync -a '
-const COPY_ELSE = '; else mkdir -p '
+const COPY_ELSE = '; else '
+const COPY_MKDIR = 'mkdir -p '
 const COPY_CP = ' && cp -a '
 const COPY_TAIL = '; fi'
 const COPY_EXCLUDE = '--exclude='
+// cp 没有排除选项 → 填了排除项却没 rsync 时,那几项会被静默丢掉。光靠 UI 猜不出镜像里
+// 到底有没有 rsync(只有容器里知道),所以把告警下到这行命令里:真走了兜底,运行日志就说实话。
+// 必须是常量 —— 反解析按字面吃这一段,带变量的文案切不回来。
+const COPY_WARN = "echo '没有 rsync,复制退回 cp:排除项未生效'; "
 
 /** 排除项文本 → 列表:空格与逗号都是分隔符(rsync 的 --exclude 本身不含空格)。 */
 export function splitExcludes(text: string): string[] {
@@ -109,6 +116,7 @@ function trimTrailingSlash(p: string): string {
 /**
  * 把「源目录内容 → 目标目录」编译成单行:有 rsync 用 `rsync -a [--exclude=…] 'src/' 'dest/'`,
  * 没装退回 `cp -a 'src/.' 'dest/'`。两条分支都先 `mkdir -p 'dest/'`,语义一致。
+ * 有排除项时兜底分支先 echo 一句告警(cp 不吃排除,日志必须说清那几项没生效)。
  * 源/目标尾斜杠会被归一(带不带都同一个意思);任一空 → 返回空串(该步骤不发命令)。
  */
 export function copyStepLine(src: string, dest: string, excludes: readonly string[]): string {
@@ -117,9 +125,10 @@ export function copyStepLine(src: string, dest: string, excludes: readonly strin
   if (!s || !d) return ''
   const destTok = shellQuote(`${d}/`)
   const excludeTok = excludes.map((e) => `${COPY_EXCLUDE}${shellQuote(e)} `).join('')
+  const warn = excludes.length ? COPY_WARN : ''
   return (
     `${COPY_HEAD}${destTok}${COPY_RSYNC}${excludeTok}${shellQuote(`${s}/`)} ${destTok}` +
-    `${COPY_ELSE}${destTok}${COPY_CP}${shellQuote(`${s}/.`)} ${destTok}${COPY_TAIL}`
+    `${COPY_ELSE}${warn}${COPY_MKDIR}${destTok}${COPY_CP}${shellQuote(`${s}/.`)} ${destTok}${COPY_TAIL}`
   )
 }
 
@@ -282,6 +291,11 @@ export function parseCopyLine(line: string): { src: string; dest: string; exclud
   if (!rsyncSrc || !rsyncSrc.value.endsWith('/') || !skip(' ')) return null
   const rsyncDest = take()
   if (!rsyncDest || rsyncDest.value !== destMkdir.value || !skip(COPY_ELSE)) return null
+  // 兜底告警段:生成器只在有排除项时才写它。老配置里没有这一段(可选吃掉),
+  // 而「没有排除项却有告警」只可能是手插的 —— 归成 copy 会把它重生成丢掉,所以退回 command。
+  const warned = skip(COPY_WARN)
+  if (warned && excludes.length === 0) return null
+  if (!skip(COPY_MKDIR)) return null
   const destAgain = take()
   if (!destAgain || destAgain.value !== destMkdir.value || !skip(COPY_CP)) return null
   const cpSrc = take()
