@@ -98,9 +98,10 @@ const navItems: NavItem[] = [
   { name: 'previews',      to: '/previews',      icon: Browser,    labelKey: 'nav.previews',      ariaKey: 'nav.previews', requires: { perm: 'preview.view' } },
   // Story 6-5: configurable anomaly detection & alerts (FR-23)
   { name: 'anomaly',       to: '/anomaly',       icon: AlertTriangle, labelKey: 'nav.anomaly',    ariaKey: 'nav.anomaly', requires: { perm: 'anomaly.view' } },
-  // 通知渠道是平台设置(端点收在 RequireAdmin 后),入口也跟着设置点走 —— 以前它在左栏
-  // 对所有角色亮着,普通用户点进来落在一整组他没有上限的页面上。
-  { name: 'notifications', to: '/settings/notifications', icon: Bell, labelKey: 'nav.notifications', ariaKey: 'nav.notifications', requires: { settings: true } },
+  // 左栏这一格指的是「通知记录」(每次事件→渠道的投递台账),它和普通用户有关,
+  // 门跟着 run.view 走 —— 与 /api/notifications/deliveries 的鉴权口径一致(登录即可,按可见分组收窄)。
+  // 通知的渠道/路由/模板设置仍在 设置 → 通知,那是设置点,不在这个入口。
+  { name: 'notification-records', to: '/notifications', icon: Bell, labelKey: 'nav.notifications', ariaKey: 'nav.notifications', requires: { perm: 'run.view' } },
   // v6.2 §3.1/§3.3:构建环境预置与配置资源管理(设置类入口;一级页面)。
   { name: 'build-envs',    to: '/build-envs', icon: Package, labelKey: 'nav.buildEnvs', ariaKey: 'nav.buildEnvs', requires: { settings: true } },
   { name: 'config-profiles', to: '/config-profiles', icon: FileCode, labelKey: 'nav.configProfiles', ariaKey: 'nav.configProfiles', requires: { settings: true } },

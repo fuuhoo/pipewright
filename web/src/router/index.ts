@@ -44,6 +44,8 @@ const SettingsKubeClusters = () => import('../views/settings/SettingsKubeCluster
 const SettingsAPITokens = () => import('../views/settings/SettingsAPITokens.vue')
 // Story 5-1: notification channels (FR-19)
 const SettingsNotifications = () => import('../views/settings/SettingsNotifications.vue')
+// 通知台账:左栏那一格现在指这里(配置留在 设置 → 通知)
+const NotificationRecords = () => import('../views/NotificationRecords.vue')
 // Story 7-5: diagnosis feedback-loop stats (FR-26)
 const SettingsDiagnosisStats = () => import('../views/settings/SettingsDiagnosisStats.vue')
 // 系统信息 + 一键检查更新
@@ -199,8 +201,15 @@ const router = createRouter({
         },
         // 旧路径保留重定向(书签 + 外部链接)。
         { path: 'groups', redirect: { name: 'permissions-groups' } },
-        // 顶层「通知」占位页 → 重定向到真实的通知配置页。
-        { path: 'notifications', name: 'notifications', redirect: { name: 'settings-notifications' } },
+        // 通知台账一级页(左栏「通知」指这里;渠道/路由/模板的配置仍在 设置 → 通知)。
+        // 门用 run.view:GET /api/notifications/deliveries 只要求登录,能看多少条由可见分组收窄,
+        // 它不是设置点 —— 用 settings 会把普通用户挡在他本来有权看的记录页外。
+        {
+          path: 'notifications',
+          name: 'notification-records',
+          component: NotificationRecords,
+          meta: { title: '通知记录', requires: { perm: 'run.view' } },
+        },
         {
           path: 'settings',
           name: 'settings',
