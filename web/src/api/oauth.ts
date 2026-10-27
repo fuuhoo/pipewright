@@ -161,6 +161,16 @@ export interface OAuthLoginApp {
    * 打开它等于把登录申请的 scope 从「只认身份」升到「能读仓库」,所以是管理员的显式选择,默认关。
    */
   syncCredentials: boolean
+  /**
+   * 这次登录**只认身份**时向平台申请的 scope 串(空格分隔)。服务端按当前配置现算,
+   * 管理员照抄进平台的 OAuth 应用登记即可;钉钉/飞书/企业微信 返回空串(它们不吃 scope)。
+   */
+  identityScope: string
+  /**
+   * 打开「登录即同步凭据」后改申请的 scope 串 —— 比上面多出读仓库那几项。
+   * 平台侧没登记这些 scope 的话,授权页会直接拒(invalid_scope),所以这两串都要看得见。
+   */
+  syncScope: string
 }
 
 /** PUT /api/admin/oauth/login-apps/{provider} 请求体。 */

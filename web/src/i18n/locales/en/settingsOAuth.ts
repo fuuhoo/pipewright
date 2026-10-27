@@ -107,6 +107,15 @@ export default {
     'This identity source cannot hand out a token that clones a repository: credential sync at sign-in is open only to git platforms (Gitee / GitHub / GitLab / Gitea / self-hosted) and to an OIDC provider that declares a git shape',
   errSyncNeedsGitPlatform:
     'This OIDC identity provider has not declared which git platform it fronts (GitLab / Gitea), so "Sync a git credential at sign-in" cannot be enabled: pick one under "Also a git platform" first, or leave this switch off',
+  // The scope strings are computed server-side from the one platform table, so
+  // the page never carries a second copy that could drift from what is asked.
+  identityScopeLabel: 'Scope requested for identity only',
+  syncScopeLabel: 'Scope requested when this is on',
+  scopeEchoSavedOnly: '(from the saved config)',
+  scopeEchoHint:
+    'This is what the sign-in actually asks the platform for — check that the OAuth app on the platform side has every one of these registered. A scope it does not know is refused on the consent screen, and you come back to nothing but "the platform refused the permissions". Turning this on also asks for the repository read scopes; if you change "Also a git platform" or the Scopes field above, save first — this line follows the saved config.',
+  syncMasterKeyNote:
+    'A synced token is encrypted into the vault, so the server needs its master key first (the PIPEWRIGHT_MASTER_KEY environment variable or a master key file). Without one, signing in still succeeds but produces no credential at all — that limit sits on the server, not on this page.',
 
   // ─── OIDC identity source (only ever listed under "Platform sign-in") ──────
   // The backend resolves the endpoints for real when you save: a wrong config

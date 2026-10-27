@@ -136,6 +136,13 @@ interface CardState {
    * 打开它会把登录申请的 scope 从「只认身份」升到「能读仓库」,所以默认关,且要管理员显式勾选。
    */
   syncCredentials: boolean
+  /**
+   * 服务端按**已保存的配置**算出的两串 scope:开关关着时申请的(只认身份)与打开后申请的(多要仓库读)。
+   * 平台侧的 OAuth 应用没登记对应 scope,授权页会当场拒(invalid_scope),而该登记哪几项
+   * 只有平台自己的表知道 —— 所以让服务端从唯一的形态表算出来回显,前端不再抄一份对照表。
+   */
+  identityScope: string
+  syncScope: string
   errors: { clientId: string; baseUrl: string; gitShape: string; allowedDomains: string; endpoints: string; agentId: string; syncCredentials: string }
   saving: boolean
 }
@@ -335,6 +342,8 @@ function newCard(meta: ProviderMeta): CardState {
     agentId: '',
     enabled: false,
     syncCredentials: false,
+    identityScope: '',
+    syncScope: '',
     errors: noErrors(),
     saving: false,
   }
@@ -420,6 +429,19 @@ const showSyncSwitch = computed<boolean>(
 /** 这个开关此刻开得了吗 —— 与后端 supportsGitCredentialFor 同一判据。 */
 const syncAvailable = computed<boolean>(
   () => supportsGitCredential(active.value, form.value.gitShape),
+)
+
+/**
+ * 「登录即同步凭据」这一栏要显式的两串 scope:开关关着申请哪串、打开后改申请哪串。
+ * 值全部来自服务端(它按唯一的形态表算),前端只按开关当前状态选边显示。
+ * 自建那档没填 base URL 时服务端给不出端点也就给不出 scope,此时整行不出(别摆一个空框)。
+ */
+const currentScope = computed<string>(
+  () => (form.value.syncCredentials ? form.value.syncScope : form.value.identityScope),
+)
+
+const scopeEchoLabelKey = computed<string>(
+  () => (form.value.syncCredentials ? 'settingsOAuth.syncScopeLabel' : 'settingsOAuth.identityScopeLabel'),
 )
 
 /** git 形态选择器:custom 与 oidc 用同一份选项、两套说法(一个定端点,一个作声明)。 */
@@ -593,6 +615,8 @@ function applyLoginApp(card: CardState, app: OAuthLoginApp): void {
   card.enabled = app.enabled
   // 换不出 git 令牌的那几档,库里就算存着 true 也当没开:开关按住的态和勾上的态不能同时出现。
   card.syncCredentials = supportsGitCredential(app.provider, card.gitShape) && app.syncCredentials
+  card.identityScope = app.identityScope
+  card.syncScope = app.syncScope
   card.errors = noErrors()
 }
 
@@ -1201,6 +1225,30 @@ function relativeTime(iso: string | null): string {
                    这条流能不能落成凭据只有管理员知道自己那台服务器是什么,所以让他显式声明,而不是默默关掉。 -->
               <p v-else-if="!syncAvailable" class="sync-note">{{ t('settingsOAuth.syncNeedsShapeHint') }}</p>
               <p v-else class="sync-note">{{ t('settingsOAuth.syncNote') }}</p>
+
+              <!-- 实际申请的 scope 回显:该去平台侧登记哪几项,只有服务端那张形态表知道,
+                   所以照 Callback URL 的做法只读摊出来(点一下全选),前端不再抄一份对照表。 -->
+              <div v-if="currentScope" class="field">
+                <label class="field-label" :for="`oauth-scope-${active}`">
+                  {{ t(scopeEchoLabelKey) }}
+                  <span class="field-optional">{{ t('settingsOAuth.scopeEchoSavedOnly') }}</span>
+                </label>
+                <input
+                  :id="`oauth-scope-${active}`"
+                  class="field-input field-input--mono"
+                  :value="currentScope"
+                  type="text"
+                  readonly
+                  :title="t('settingsOAuth.callbackCopy')"
+                  @click="selectCallback"
+                />
+                <span class="field-hint">{{ t('settingsOAuth.scopeEchoHint') }}</span>
+              </div>
+
+              <!-- 主密钥前提:同步出来的令牌要加密进保险库,没密钥时登录照样成功但静默没有凭据。 -->
+              <p v-if="syncAvailable && form.syncCredentials" class="sync-note">
+                {{ t('settingsOAuth.syncMasterKeyNote') }}
+              </p>
             </div>
 
             <!-- Enabled toggle + save -->
@@ -1683,6 +1731,11 @@ function relativeTime(iso: string | null): string {
   line-height: 1.5;
   color: var(--color-faint);
   max-width: 92ch;
+}
+
+/* 面板本身就是 inset 底色,只读框要跟它拉开层次才看得出「这一串能点选/复制」。 */
+.sync-box .field-input {
+  background: var(--color-bg);
 }
 
 /* ─── toggle ──────────────────────────────────────────────────────────────── */

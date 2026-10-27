@@ -105,6 +105,15 @@ export default {
     'Cette source d’identité ne peut pas délivrer de jeton permettant de cloner un dépôt : la synchronisation à la connexion n’est ouverte qu’aux plateformes git (Gitee / GitHub / GitLab / Gitea / auto-hébergée) ou à un fournisseur OIDC déclarant une forme git',
   errSyncNeedsGitPlatform:
     'Ce fournisseur d’identité OIDC n’a pas déclaré la plateforme git qu’il front (GitLab / Gitea), « Synchroniser un identifiant git à la connexion » ne peut donc pas être activé : choisissez-en une sous « Est aussi une plateforme git », ou laissez l’option désactivée',
+  // Les scopes réellement demandés sont calculés côté serveur à partir de la
+  // seule table de formes : la page n’en garde pas une copie qui pourrait dériver.
+  identityScopeLabel: 'Scope demandé pour la seule identité',
+  syncScopeLabel: 'Scope demandé une fois activé',
+  scopeEchoSavedOnly: '(d’après la configuration enregistrée)',
+  scopeEchoHint:
+    'Voici ce que la connexion demande réellement à la plateforme : vérifiez que l’application OAuth côté plateforme enregistre bien chacun de ces éléments. Un scope inconnu est refusé sur l’écran de consentement et vous ne revenez qu’avec « La plateforme a refusé les permissions demandées ». Activer cette option ajoute les droits de lecture des dépôts ; si vous modifiez « Est aussi une plateforme git » ou le champ Scopes ci-dessus, enregistrez d’abord — cette ligne suit la configuration enregistrée.',
+  syncMasterKeyNote:
+    'Le jeton synchronisé est chiffré dans le coffre-fort : le serveur a donc besoin au préalable de sa clé maîtresse (la variable d’environnement PIPEWRIGHT_MASTER_KEY ou un fichier de clé maîtresse). Sans elle, la connexion réussit quand même mais ne produit aucun identifiant — cette limite se joue côté serveur, pas sur cette page.',
 
   // ─── Source d’identité OIDC (uniquement sous « Connexion à la plateforme ») ──
   // Le backend résout réellement les points d’accès à l’enregistrement : une

@@ -104,6 +104,15 @@ export default {
     'Esta fuente de identidad no puede dar un token que clone un repositorio: la sincronización al iniciar sesión solo está abierta a plataformas git (Gitee / GitHub / GitLab / Gitea / autoalojada) o a un OIDC que declare su forma git',
   errSyncNeedsGitPlatform:
     'Esta fuente de identidad OIDC no ha declarado qué plataforma git hay detrás (GitLab / Gitea), así que no se puede activar «Sincronizar una credencial git al iniciar sesión»: elija una en «También es una plataforma git» o deje el interruptor apagado',
+  // El server calcula los scopes desde la única tabla de formas de plataforma;
+  // la página no lleva una segunda copia que pueda separarse de lo que se pide.
+  identityScopeLabel: 'Scope pedido solo para la identidad',
+  syncScopeLabel: 'Scope pedido con esto activado',
+  scopeEchoSavedOnly: '(según la configuración guardada)',
+  scopeEchoHint:
+    'Esto es lo que el inicio de sesión pide de verdad a la plataforma: comprueba que la aplicación OAuth de la plataforma tenga registrado cada uno de estos valores. Un scope desconocido se rechaza en la pantalla de consentimiento y no vuelves con más que «La plataforma rechazó los permisos». Activar esto añade los permisos de lectura de repositorios; si cambias «También es una plataforma git» o el campo Scopes de arriba, guarda primero: esta línea sigue a la configuración guardada.',
+  syncMasterKeyNote:
+    'El token sincronizado se cifra en la bóveda, así que el servidor necesita antes su clave maestra (la variable de entorno PIPEWRIGHT_MASTER_KEY o un archivo de clave maestra). Sin ella, iniciar sesión sigue funcionando pero no produce ninguna credencial: ese límite está en el servidor, no en esta página.',
 
   // ─── Proveedor de identidad OIDC (solo aparece bajo «Inicio de sesión») ─────
   // El backend resuelve los endpoints al guardar: con una mala configuración el

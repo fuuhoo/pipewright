@@ -105,6 +105,15 @@ export default {
     'Diese Identitätsquelle kann kein Token für das Klonen eines Repository ausstellen: die Synchronisierung bei Anmeldung gibt es nur für Git-Plattformen (Gitee / GitHub / GitLab / Gitea / selbst gehostet) oder ein OIDC mit erklärter Git-Form',
   errSyncNeedsGitPlatform:
     'Diese OIDC-Identitätsquelle hat nicht erklärt, welche Git-Plattform dahintersteht (GitLab / Gitea), deshalb kann „Git-Zugangsdaten bei Anmeldung synchronisieren“ nicht aktiviert werden: wähle zuerst eine unter „Ist auch eine git-Plattform“ oder lass den Schalter aus',
+  // Die tatsächlich angefragten Scopes rechnet der Server aus der einen
+  // Formtabelle — die Seite kopiert sie nicht, sonst driftet die Kopie weg.
+  identityScopeLabel: 'Scope bei nur Identität',
+  syncScopeLabel: 'Scope, wenn das aktiv ist',
+  scopeEchoSavedOnly: '(aus der gespeicherten Konfiguration)',
+  scopeEchoHint:
+    'Das fordert die Anmeldung bei der Plattform tatsächlich an — prüf in der OAuth-App auf der Plattformseite, ob jeder dieser Werte hinterlegt ist. Ein unbekannter Scope wird auf der Consent-Seite abgelehnt, und zurück kommst du nur mit „Die Plattform hat die angefragten Berechtigungen abgelehnt“. Schaltest du das ein, kommen die Leseberechtigungen für Repositories dazu; änderst du „Ist auch eine git-Plattform“ oder das Scopes-Feld oben, speichere zuerst — diese Zeile folgt der gespeicherten Konfiguration.',
+  syncMasterKeyNote:
+    'Das synchronisierte Token wird verschlüsselt in den Tresor geschrieben, der Server braucht dafür seinen Hauptschlüssel (Umgebungsvariable PIPEWRIGHT_MASTER_KEY oder eine Hauptschlüsseldatei). Ohne ihn gelingt die Anmeldung weiterhin, erzeugt aber keinerlei Zugangsdaten — diese Grenze sitzt auf dem Server, nicht auf dieser Seite.',
 
   // ─── OIDC-Identitätsquelle (erscheint nur unter „Plattform-Anmeldung“) ──────
   // Beim Speichern löst das Backend die Endpunkte tatsächlich auf: eine kaputte
