@@ -157,7 +157,8 @@ func Ready(issues []Issue) bool {
 	return true
 }
 
-// validateCanvas 校验 2-2 spec:源阶段存在性 + build/deploy 阶段存在性 + deploy 需环境定义。
+// validateCanvas 校验 2-2 spec:源阶段存在性 + build/deploy 阶段存在性 + deploy 需环境定义
+// + 专用节点是否摆在自己的阶段(见 validateJobStageFit)。
 func validateCanvas(in ValidationInput) []Issue {
 	var issues []Issue
 
@@ -201,6 +202,56 @@ func validateCanvas(in ValidationInput) []Issue {
 		})
 	}
 
+	issues = append(issues, validateJobStageFit(in.Stages)...)
+
+	return issues
+}
+
+// jobTypeHomeStage 是「专用节点认阶段」的后端判据:类型 → 它归属的阶段 kind。
+// 与前端 jobConfigSchema 的 STAGE_CATEGORY_ALLOW 同源:构建/部署/通知类节点各归本阶段。
+// script / templated 与复用库节点不在表内 = 通用节点,放哪个阶段都不出声;历史别名
+// (build_image、deploy_frontend 等)同样不在表内 —— 存量流水线不迁移,只对新配的错类型提示。
+var jobTypeHomeStage = map[string]string{
+	"git_source":        KindSource,
+	JobTypeBuild:        KindBuild,
+	"deploy_ssh":        KindDeploy,
+	JobTypeDeployDocker: KindDeploy,
+	JobTypeDeployK8s:    KindDeploy,
+	"notify":            KindNotify,
+}
+
+// stageKindLabels 是阶段 kind 的人读名(校验信息为中文,前端原样渲染)。
+var stageKindLabels = map[string]string{
+	KindSource: "源",
+	KindBuild:  "构建",
+	KindDeploy: "部署",
+	KindNotify: "通知",
+}
+
+// validateJobStageFit 报告「专用节点摆错阶段」。只发 warning 不发 error:AI 提案与
+// .pipewright.yml 导入都可能带出这种组合,阻塞保存会让整条流水线改不动。
+func validateJobStageFit(stages []Stage) []Issue {
+	var issues []Issue
+	for si, st := range stages {
+		kind := strings.TrimSpace(st.Kind)
+		// 自定义阶段由用户自己造,除源节点外任何类型都算落点正确。
+		if kind == KindCustom || kind == "" {
+			continue
+		}
+		for ji, jb := range st.Jobs {
+			jobType := strings.TrimSpace(jb.Type)
+			want, specialized := jobTypeHomeStage[jobType]
+			if !specialized || want == kind {
+				continue
+			}
+			issues = append(issues, Issue{
+				Severity: SeverityWarning, Code: "job_type_stage_mismatch", Scope: ScopeCanvas,
+				Field: "stages[" + itoa(si) + "].jobs[" + itoa(ji) + "].type",
+				Message: "任务「" + strings.TrimSpace(jb.Name) + "」的类型 " + jobType + " 属于「" +
+					stageKindLabels[want] + "」阶段,放在「" + strings.TrimSpace(st.Name) + "」里不会按预期执行",
+			})
+		}
+	}
 	return issues
 }
 

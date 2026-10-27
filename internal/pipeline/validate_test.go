@@ -1,6 +1,9 @@
 package pipeline
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // hasCode 报告 issues 中是否含指定 code(可选校验 severity)。
 func hasCode(issues []Issue, code string) (Issue, bool) {
@@ -85,6 +88,48 @@ func TestValidateDeployWithoutEnvironment(t *testing.T) {
 	}
 	if is.Severity != SeverityWarning {
 		t.Fatalf("应为 warning, got %s", is.Severity)
+	}
+}
+
+// 部署阶段里能加出构建节点(用户报的问题):前端选择器已按阶段收窄,后端补一条 warning,
+// 让 AI 提案与 .pipewright.yml 导入带出的同类错配也能在「校验」面板看到。
+func TestValidateJobTypeStageMismatch(t *testing.T) {
+	in := validBase()
+	// 部署阶段(s3)里塞一个构建节点。
+	in.Stages[2].Jobs = append(in.Stages[2].Jobs, Job{ID: "j6", Name: "误放的构建", Type: JobTypeBuild})
+	// 自定义阶段(s4)允许一切:同一条流水线里的构建/通知节点不该因此告警。
+	in.Stages = append(in.Stages, Stage{ID: "s4", Name: "收尾", Kind: KindCustom, Jobs: []Job{
+		{ID: "j4", Name: "通知", Type: "notify"},
+		{ID: "j5", Name: "打包", Type: JobTypeBuild},
+	}})
+
+	issues := Validate(in)
+	is, ok := hasCode(issues, "job_type_stage_mismatch")
+	if !ok {
+		t.Fatalf("应报 job_type_stage_mismatch: %+v", issues)
+	}
+	if is.Severity != SeverityWarning {
+		t.Fatalf("应为 warning, got %s", is.Severity)
+	}
+	if !strings.Contains(is.Message, "部署") || !strings.Contains(is.Message, JobTypeBuild) {
+		t.Fatalf("信息应点名错配的阶段与类型, got %s", is.Message)
+	}
+	for _, x := range issues {
+		if x.Code == "job_type_stage_mismatch" && strings.Contains(x.Message, "打包") {
+			t.Fatalf("自定义阶段不该告警: %+v", x)
+		}
+	}
+	if !Ready(issues) {
+		t.Fatalf("错配只应是 warning,不该挡住保存: %+v", issues)
+	}
+}
+
+// 历史别名(build_image / deploy_frontend …)不在收窄表内:存量流水线不迁移,不该因此刷屏。
+func TestValidateJobTypeStageMismatchSilentForLegacyTypes(t *testing.T) {
+	in := validBase()
+	in.Stages[2].Jobs = []Job{{ID: "j7", Name: "旧镜像构建", Type: JobTypeBuildImage}}
+	if _, ok := hasCode(Validate(in), "job_type_stage_mismatch"); ok {
+		t.Fatalf("历史类型不该告警")
 	}
 }
 
