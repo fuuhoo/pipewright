@@ -460,3 +460,75 @@ func TestDomainsRoundTrip(t *testing.T) {
 		t.Fatalf("往返不符: %+v", got)
 	}
 }
+
+// ---- 配置页回显给管理员的那两串 scope ----
+
+// TestLoginScopePairValues 钉住每个档位实际会申请的 scope 串。
+// 为什么值得钉死:这串字是管理员拿去在平台侧 OAuth 应用里勾权限的依据,勾少了的表现为
+// 授权页直接 invalid_scope、人弹回登录页,而配置页每个框看着都填对了 —— 最难自查的一种失败。
+func TestLoginScopePairValues(t *testing.T) {
+	const base = "https://git.example.com"
+	cases := []struct {
+		provider, shape, configuredScopes string
+		wantIdentity, wantRepo            string
+	}{
+		{ProviderGitee, "", "", "user_info", "user_info projects"},
+		{ProviderGitHub, "", "", "read:user user:email", "repo read:user"},
+		{ProviderGitLab, "", "", "read_user", "read_repository read_user"},
+		{ProviderGitea, "", "", "read:user", "read:repository read:user"},
+		// 自建:形态决定 scope;留空按 GitLab 形态(存量语义)。
+		{ProviderCustom, GitShapeGitLab, "", "read_user", "read_repository read_user"},
+		{ProviderCustom, GitShapeGitea, "", "read:user", "read:repository read:user"},
+		{ProviderCustom, "", "", "read_user", "read_repository read_user"},
+		// OIDC:身份档取配置(留空用默认),仓库档在它之上追加声明那家的权限;没声明时两串相同。
+		{ProviderOIDC, "", "", "openid profile email", "openid profile email"},
+		{ProviderOIDC, "", "openid profile email", "openid profile email", "openid profile email"},
+		{ProviderOIDC, GitShapeGitLab, "openid profile", "openid profile", "openid profile read_repository read_user"},
+		{ProviderOIDC, GitShapeGitea, "openid email", "openid email", "openid email read:repository read:user"},
+		// 这三家换不出 git 令牌:宁可回空串让页面不显示,也不要编一个平台侧勾不出来的权限名。
+		{ProviderDingTalk, "", "openid", "", ""},
+		{ProviderFeishu, "", "openid", "", ""},
+		{ProviderWeCom, "", "", "", ""},
+	}
+	for _, c := range cases {
+		ident, repo := LoginScopePair(c.provider, c.shape, base, c.configuredScopes)
+		if ident != c.wantIdentity || repo != c.wantRepo {
+			t.Errorf("%s shape=%q scopes=%q: 回显 = (%q, %q),想要 (%q, %q)",
+				c.provider, c.shape, c.configuredScopes, ident, repo, c.wantIdentity, c.wantRepo)
+		}
+	}
+}
+
+// TestLoginScopePairCustomWithoutBaseURLStaysSilent 自建档还没填根地址时回空串:
+// 页面这时不该显示回显行,而不是编一串端点都算不出来的权限。
+func TestLoginScopePairCustomWithoutBaseURLStaysSilent(t *testing.T) {
+	ident, repo := LoginScopePair(ProviderCustom, GitShapeGitLab, "", "")
+	if ident != "" || repo != "" {
+		t.Fatalf("缺 base_url 应回空串,得到 (%q, %q)", ident, repo)
+	}
+}
+
+// TestLoginScopePairMatchesLoginScopeFor 回显与真发出去的 scope 必须同源:
+// 开关关着 → 申请身份档,开着 → 申请仓库档(判据见 loginScopeFor)。
+// 这条断言管的是「改了 loginScopeFor 或 Provider 的 scope 字段,忘了改回显」那类漂移。
+func TestLoginScopePairMatchesLoginScopeFor(t *testing.T) {
+	const base = "https://git.example.com"
+	for _, c := range []struct{ provider, shape string }{
+		{ProviderGitLab, ""}, {ProviderGitea, ""}, {ProviderGitee, ""}, {ProviderGitHub, ""},
+		{ProviderCustom, GitShapeGitLab}, {ProviderCustom, GitShapeGitea},
+	} {
+		p, err := resolveProvider(c.provider, base, c.shape)
+		if err != nil {
+			t.Fatalf("%s shape=%q resolve: %v", c.provider, c.shape, err)
+		}
+		ident, repo := LoginScopePair(c.provider, c.shape, base, "")
+		off := loginScopeFor(loginAppRow{provider: c.provider, gitShape: c.shape, baseURL: base}, p)
+		if off != ident {
+			t.Errorf("%s shape=%q 开关关着:申请 %q 但回显 %q", c.provider, c.shape, off, ident)
+		}
+		on := loginScopeFor(loginAppRow{provider: c.provider, gitShape: c.shape, baseURL: base, syncCredentials: true}, p)
+		if on != repo {
+			t.Errorf("%s shape=%q 开关开着:申请 %q 但回显 %q", c.provider, c.shape, on, repo)
+		}
+	}
+}

@@ -110,6 +110,12 @@ type oauthLoginAppDTO struct {
 	// 其余身份源给不出 git 令牌,服务端在保存期就报错(见 sync_unsupported),不会静默关掉。
 	// 打开它等于把登录申请的 scope 从「只认身份」升到「能读仓库」,所以是管理员的显式选择。
 	SyncCredentials bool `json:"syncCredentials"`
+	// 两串 scope 由服务端按同一张形态表算出,原样回显给管理员去平台侧照着登记:
+	// identityScope = 开关关着时申请的(只认身份),syncScope = 打开开关后申请的(多要仓库读)。
+	// 勾少了的表现为授权页直接拒绝、人弹回登录页,而配置页一切看着正常 —— 所以宁可在这里说清。
+	// 钉钉 / 飞书 / 企业微信 两串都是空(它们没有 git 令牌这一说,前端也就不显示这一行)。
+	IdentityScope string `json:"identityScope"`
+	SyncScope     string `json:"syncScope"`
 }
 
 // identityBindingDTO 是一条外部身份映射(账户页;camelCase;无 token、无口令)。
@@ -610,6 +616,7 @@ func toLoginAppDTO(c oauth.LoginAppConfig, r *http.Request) oauthLoginAppDTO {
 		GitShape:        c.GitShape,
 		SyncCredentials: c.SyncCredentials,
 	}
+	dto.IdentityScope, dto.SyncScope = oauth.LoginScopePair(c.Provider, c.GitShape, c.BaseURL, c.Scopes)
 	if c.UpdatedAt != nil {
 		s := c.UpdatedAt.UTC().Format(time.RFC3339)
 		dto.UpdatedAt = &s

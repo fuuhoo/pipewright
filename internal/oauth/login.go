@@ -193,6 +193,28 @@ func loginScopeFor(row loginAppRow, p Provider) string {
 	return p.loginScope()
 }
 
+// LoginScopePair 报出这一档 + 这一份声明下,「只认身份」与「开了凭据同步」分别向平台申请的 scope 串。
+//
+// 为什么要单独回吐给配置页:管理员要在身份提供方那个 OAuth 应用里把权限勾齐,而勾哪几项是
+// 这张表(形态 → scope)说了算的、写在代码里的东西 —— 让人去猜「read_repository 还是 repo」
+// 猜错了,表现是授权页直接被拒(invalid_scope)、人弹回登录页,而配置页每个框看着都填对了。
+// 判据与上面的 loginScopeFor 共用同一张表,两处不会各说一套。
+// 钉钉 / 飞书 / 企业微信 回两个空串:这三家换不出 git 令牌,配置页也没有这条回显。
+func LoginScopePair(provider, gitShape, baseURL, configuredScopes string) (identityScope, repoScope string) {
+	switch provider {
+	case ProviderOIDC:
+		loginList, credList := oidcScopeLists(configuredScopes, gitShape)
+		return strings.Join(loginList, " "), strings.Join(credList, " ")
+	case ProviderDingTalk, ProviderFeishu, ProviderWeCom:
+		return "", ""
+	}
+	p, err := resolveProvider(provider, baseURL, gitShape)
+	if err != nil {
+		return "", ""
+	}
+	return p.loginScope(), p.scope()
+}
+
 // NewBindKey 生成一次性的高熵 bind key(匿名登录流用它做双提交 cookie 的值:
 // state 记录它,回调比对 cookie)。与会话 token 同量级随机,不复用任何既有凭据。
 func NewBindKey() (string, error) {

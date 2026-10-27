@@ -130,29 +130,35 @@ func resolveOidcEndpoints(ctx context.Context, client *http.Client, row loginApp
 // 没声明的 OIDC(Keycloak / Authentik / 企业 IDaaS)DefaultScopes 与 LoginScopes 相同:
 // 多要一层没有对应东西的权限,只会让授权页多一句让人困惑的同意条款。
 func oidcProvider(endpoints oidcEndpoints, scopes, idClaim, gitShape string) Provider {
-	scopeList := strings.Fields(scopes)
-	if len(scopeList) == 0 {
-		scopeList = strings.Fields(defaultOidcScopes)
-	}
+	loginList, credList := oidcScopeLists(scopes, gitShape)
 	claim := strings.TrimSpace(idClaim)
 	if claim == "" {
 		claim = defaultOidcIDClaim
-	}
-	credScopes := scopeList
-	if isGitShape(gitShape) {
-		credScopes = mergeScopes(scopeList, gitShapes[gitShape].credScopes)
 	}
 	return Provider{
 		Name:          ProviderOIDC,
 		AuthorizeURL:  endpoints.authorizeURL,
 		TokenURL:      endpoints.tokenURL,
 		UserURL:       endpoints.userinfoURL,
-		DefaultScopes: credScopes,
-		LoginScopes:   scopeList,
+		DefaultScopes: credList,
+		LoginScopes:   loginList,
 		parseIdentity: func(m map[string]any) Identity {
 			return oidcIdentity(m, claim)
 		},
 	}
+}
+
+// oidcScopeLists 单独算出 OIDC 档的两串 scope(身份档 / 开了凭据同步那档)。
+// 拆出来是因为配置页要回显这两串给管理员照着登记,而那时不该去拉发现文档(那是网络活儿)。
+func oidcScopeLists(scopes, gitShape string) (loginList, credList []string) {
+	scopeList := strings.Fields(scopes)
+	if len(scopeList) == 0 {
+		scopeList = strings.Fields(defaultOidcScopes)
+	}
+	if !isGitShape(gitShape) {
+		return scopeList, scopeList
+	}
+	return scopeList, mergeScopes(scopeList, gitShapes[gitShape].credScopes)
 }
 
 // mergeScopes 把要追加的 scope 并进来,已申请过的不重复(GitLab 的 OIDC 应用本就常带 read_user,
