@@ -208,7 +208,7 @@ function buildHealthCheck(): HealthCheckInput | undefined {
   if (hcType.value === 'none') return undefined
   const base = {
     retries: clampInt(hcRetries.value, 1, 20, 3),
-    intervalSeconds: clampInt(hcIntervalSeconds.value, 0, 3600, 3),
+    intervalSeconds: clampInt(hcIntervalSeconds.value, 0, 60, 3),
     timeoutSeconds: clampInt(hcTimeoutSeconds.value, 1, 60, 5),
   }
   if (hcType.value === 'http') {
@@ -1038,7 +1038,7 @@ function nodeClass(status: StepStatus): string {
                     </label>
                     <label class="hc-param">
                       <span class="hc-param-key">{{ t('runDetail.hcInterval') }}</span>
-                      <input v-model.number="hcIntervalSeconds" class="hc-num" type="number" min="0" max="3600" />
+                      <input v-model.number="hcIntervalSeconds" class="hc-num" type="number" min="0" max="60" />
                     </label>
                     <label class="hc-param">
                       <span class="hc-param-key">{{ t('runDetail.hcTimeout') }}</span>
