@@ -176,6 +176,16 @@ const (
 	HealthProbeCommand = "command"
 )
 
+// healthConfigKeyLabels 是健康门禁这 6 个键在报错文案里的中文名,顺序就是抽屉里的显示顺序。
+var healthConfigKeyLabels = [...]struct{ key, label string }{
+	{ConfigKeyHealthProbe, "探测方式"},
+	{ConfigKeyHealthURL, "探测 URL"},
+	{ConfigKeyHealthCommand, "探测命令"},
+	{ConfigKeyHealthRetries, "重试次数"},
+	{ConfigKeyHealthInterval, "间隔秒"},
+	{ConfigKeyHealthTimeout, "超时秒"},
+}
+
 // 发机器类部署节点的「落点 + 分批」job.Config 键。
 const (
 	// ConfigKeyServerIDs 是目标主机多选,值为逗号分隔的服务器 ID(与 configProfileIds 同一形状)。
@@ -328,6 +338,11 @@ func issuef(sentinel error, format string, args ...any) error {
 // validateHealthProbe 校验部署节点的健康探测:探测方式合法且对应必填项非空。
 // 未开探测(空 / none)直接通过 —— 那是「不探测」的显式选择,不是漏配。
 func validateHealthProbe(stageName, jobName, jobType string, cfg map[string]any) error {
+	// K8s 档根本不跑探测,所以这里不校验:填了 http 却没填 URL 报的不是真问题,
+	// 「这一档没有健康门禁、把键清掉」才由 validateDeployK8s 说。
+	if jobType == JobTypeDeployK8s {
+		return nil
+	}
 	if !IsDeployJobType(jobType) {
 		return nil
 	}
@@ -538,6 +553,22 @@ func validateDeployK8s(stageName, jobName, jobType string, cfg map[string]any) e
 	// 滚动由集群控制器做:选 blue_green / canary 不会有任何效果,那就等于向用户假承诺。
 	if st := ConfigString(cfg, "strategy"); st != "" && st != "rolling" {
 		return issuef(ErrK8sDeployInvalid, "%s:K8s 发布的滚动策略由集群控制器决定,不支持策略 %q(留空或 rolling)", where, st)
+	}
+	// 健康门禁同样跑不到集群上:探测是在落点机器上跑 curl / 命令,K8s 档的落点是一个 API server,
+	// 整条链路没有 shell。这一档的把关是集群自己的 rollout 就绪(必要时 autoRollback)。
+	// 所以抽屉里不给它渲染探测这几格,存量的键也不能继续躺在配置里假装生效 ——
+	// 空值与 none 等于「没配」,不拦;真正填过的才要清掉。
+	var stray []string
+	for _, h := range healthConfigKeyLabels {
+		v := strings.TrimSpace(ConfigString(cfg, h.key))
+		if v == "" || v == HealthProbeNone {
+			continue
+		}
+		stray = append(stray, h.label)
+	}
+	if len(stray) > 0 {
+		return issuef(ErrK8sDeployInvalid,
+			"%s:K8s 发布不跑健康门禁(落点是集群,由「等待滚动」与 autoRollback 把关),请清空 %s", where, strings.Join(stray, "、"))
 	}
 	return nil
 }

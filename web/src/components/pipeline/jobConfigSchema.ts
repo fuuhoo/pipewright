@@ -606,7 +606,8 @@ const SCRIPT_FIELDS: JobField[] = [
 ]
 
 // 部署后的健康门控字段(原「健康检查」节点迁到这里):部署命令在目标机跑成功后,经**同一条 SSH 链路**
-// 再探测该机,不通即判本节点失败并阻断下游(蓝绿策略下还会回滚上一版)。
+// 再探测该机,不通即判该机 failed 并阻断下游。失败后会不会退回去按档位不同 —— 只有 docker 单容器档回滚
+// 上一镜像,文件直铺与 compose 整栈都只标记(README「部署到目标机」有表)。
 // deploy_ssh 与 deploy_docker 共用同一套 —— 探测方式的必填校验在后端 validateHealthProbe 是同一出处,
 // 表单两侧就不该长得不一样。
 // 没有「期望状态码」这类字段 —— 执行侧用的是 `curl -fsS`,4xx/5xx 即视为不通。
@@ -663,6 +664,10 @@ const DEPLOY_HEALTH_FIELDS: JobField[] = [
     when: (c) => c.healthProbe === 'http' || c.healthProbe === 'command',
   },
 ]
+
+// DEPLOY_HEALTH_KEYS 是健康门禁这一组键的名字清单(与上面的字段同源,加字段不会漏)。
+// 不给健康探测的部署类型用它声明 droppedKeys;后端的拒绝清单是 pipeline.healthConfigKeyLabels,两处同一组键。
+const DEPLOY_HEALTH_KEYS: string[] = DEPLOY_HEALTH_FIELDS.map((f) => f.key)
 
 // 部署节点的字段(deploy_ssh 与遗留 deploy_frontend 节点共用同一套表单)。
 const DEPLOY_SSH_FIELDS: JobField[] = [
@@ -1354,6 +1359,10 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
     accent: 'green',
     category: 'deploy',
     fields: DEPLOY_K8S_FIELDS,
+    // 健康探测这几格在 K8s 档既填不了也没人执行(落点是集群 API,链路里没有 shell),所以按假字段处理:
+    // 从「产物/主机档」切成 K8s 的节点会带着存量的 health* 键,抽屉一打开就抹掉,也不许在「原始参数」里补回。
+    // 后端 validateDeployK8s 同判据拒绝保存,两侧口径一致。
+    droppedKeys: [...DEPLOY_HEALTH_KEYS],
     defaultConfig: { workloadKind: 'Deployment', manifestSource: 'none' },
   },
 

@@ -12,7 +12,7 @@ import JobDrawer from './JobDrawer.vue'
 import StageDrawer from './StageDrawer.vue'
 import JobTypePicker from './JobTypePicker.vue'
 import type { CustomNode } from '../../api/customNodes'
-import { jobTypeLabel, getJobTypeSpec, jobTemplatePrefill } from './jobConfigSchema'
+import { jobTypeLabel, getJobTypeSpec, jobTemplatePrefill, droppedKeys } from './jobConfigSchema'
 import { hasAnyNeeds } from './stageDeps'
 import { boxOf, countBy, edgePath, fanAnchor, type EdgeBox } from './dagEdges'
 import './pipeline.css'
@@ -194,7 +194,20 @@ function onPickerSelect(type: string, templateId?: string): void {
     }
     addJobToStage(p.stageId, newJob)
   } else {
-    updateJob(p.stageId, p.jobId, { type })
+    // 换类型只改 type 的话,旧类型的键会原样留在 config 里。新类型不认的那些(droppedKeys,
+    // 如切到 deploy_k8s 时的 health*)此刻就该抹掉 —— 否则要等用户打开抽屉才消失,中间那次保存
+    // 会撞一个指向「看不见的字段」的 422。其余历史键(原始参数)不动。
+    const drop = droppedKeys(type)
+    if (drop.size === 0) {
+      updateJob(p.stageId, p.jobId, { type })
+    } else {
+      const cur = props.stages.find((s) => s.id === p.stageId)?.jobs.find((j) => j.id === p.jobId)
+      const config: Record<string, string> = {}
+      for (const [k, v] of Object.entries(cur?.config ?? {})) {
+        if (!drop.has(k)) config[k] = v
+      }
+      updateJob(p.stageId, p.jobId, { type, config })
+    }
   }
   closePicker()
 }

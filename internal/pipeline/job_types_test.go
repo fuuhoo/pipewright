@@ -374,6 +374,12 @@ func TestNormalizeSpecValidatesK8sDeploy(t *testing.T) {
 		{"仓库清单齐备", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo, ConfigKeyManifestFile: "deploy/k8s/deployment.yaml"}, false},
 		// 换来源时另一路的残留值只是藏起来的旧输入,不该卡住保存(执行侧按来源取用)。
 		{"换到仓库文件仍留着粘贴正文", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyManifestSource: ManifestSourceRepo, ConfigKeyManifestFile: "k8s.yml", ConfigKeyManifestYaml: "kind: Deployment"}, false},
+		// 健康门禁跑不到集群上(落点没有 shell):从主机档切过来的探测键必须清掉,不能躺在配置里假装生效。
+		// 哨兵要指向 K8s(由 validateDeployK8s 说「请清空」),而不是探测校验的「填了 http 却没填 URL」。
+		{"带了 http 探测", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyHealthProbe: HealthProbeHTTP, ConfigKeyHealthURL: "http://localhost:8080/healthz"}, true},
+		{"探测方式认不出", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyHealthProbe: "tcp"}, true},
+		{"探测方式写 none(等于没配)", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyHealthProbe: HealthProbeNone}, false},
+		{"只留个空的间隔秒", map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyHealthInterval: ""}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -391,6 +397,18 @@ func TestNormalizeSpecValidatesK8sDeploy(t *testing.T) {
 				t.Fatalf("want no error, got %v", err)
 			}
 		})
+	}
+}
+
+// 拒绝的理由要说清「哪一格要清掉」—— 抽屉里根本没有这几格,只报「不跑健康门禁」用户无从下手。
+func TestDeployK8sRejectsHealthProbeNamesTheKey(t *testing.T) {
+	_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "K8s 发布", Type: JobTypeDeployK8s,
+		Config: map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyHealthCommand: "curl -fsS localhost"}}))
+	if !errors.Is(err, ErrK8sDeployInvalid) {
+		t.Fatalf("err = %v, want wraps ErrK8sDeployInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "探测命令") {
+		t.Errorf("报错要点名要清空的键,got %q", err.Error())
 	}
 }
 

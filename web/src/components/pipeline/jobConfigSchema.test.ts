@@ -704,4 +704,25 @@ describe('jobConfigSchema', () => {
       expect(splitConfig('git_source', { repoUrl: 'https://gitee.com/acme/shop.git', depth: '1' }).extras).toEqual([])
     })
   })
+
+  // 健康门禁要在落点机器上跑命令,K8s 档的落点是集群 API —— 那几格既不渲染也不执行,
+  // 就按假字段处理(与 depth 同一机制)。清单与后端 pipeline.healthConfigKeyLabels 同一组键。
+  describe('deploy_k8s has no health probe', () => {
+    const HEALTH = ['healthProbe', 'healthUrl', 'healthCommand', 'healthRetries', 'healthInterval', 'healthTimeout']
+
+    it('drops every health key from the form and from raw params', () => {
+      for (const k of HEALTH) {
+        expect(droppedKeys('deploy_k8s').has(k), k).toBe(true)
+        expect(splitConfig('deploy_k8s', { clusterId: 'c1', [k]: 'x' }).extras, k).toHaveLength(0)
+      }
+    })
+
+    it('keeps the health keys on the two machine-targeted deploy types', () => {
+      for (const t of ['deploy_ssh', 'deploy_docker']) {
+        const keys = schemaKeys(t)
+        for (const k of HEALTH) expect(keys.has(k), `${t} owns ${k}`).toBe(true)
+        expect(droppedKeys(t).has('healthProbe'), t).toBe(false)
+      }
+    })
+  })
 })
