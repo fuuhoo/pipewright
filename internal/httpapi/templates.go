@@ -17,10 +17,13 @@ import (
 //	GET    /api/templates                              → 列模板(画廊)
 //	POST   /api/templates                              → 建模板(name + spec;走 pipeline 校验)
 //	GET    /api/templates/{id}                         → 取单模板(含 stages)
+//	PUT    /api/templates/{id}                         → 覆盖模板(改名/改说明/改内容,同一套校验)
 //	DELETE /api/templates/{id}                         → 删模板
 //	POST   /api/projects/{id}/pipeline/apply-template  → 把模板 stages 应用到项目流水线(校验后落库)
 //
-// 模板 spec 不含任何明文 secret(凭据走保险库引用)。写操作过 auth + CSRF + 审计(detail 仅元数据)。
+// 模板 spec 不含任何明文 secret(凭据走保险库引用)。写操作过 auth + CSRF + 审计(detail 仅元数据),
+// 并在同一把尺上再判一次角色功能点 library.edit(见 requireLibraryPerm):模板跨项目共享,
+// 没有归属可言,分组那条轴在这里没有落点。
 
 // pipelineTemplateSummaryDTO 是模板列表项 DTO(不含完整 spec,只元数据 + 阶段数,列表更轻)。
 type pipelineTemplateSummaryDTO struct {
@@ -121,6 +124,22 @@ func makeGetPipelineTemplateHandler(svc library.TemplateService) http.HandlerFun
 	}
 }
 
+// templateReqBody 是建/改模板的请求体。PUT 与 POST 同形状:改一次就是整份覆盖,
+// 不做「只传 name 就只改 name」的 PATCH 语义 —— 模板内容(stages)才是它的主体,漏传等于清空。
+type templateReqBody struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Stages      []reqStage `json:"stages"`
+}
+
+func (b templateReqBody) toInput() library.TemplateInput {
+	return library.TemplateInput{
+		Name:        b.Name,
+		Description: b.Description,
+		Spec:        pipeline.Spec{Stages: reqStagesToDomain(b.Stages)},
+	}
+}
+
 func makeCreatePipelineTemplateHandler(svc library.TemplateService, aud audit.Recorder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -131,21 +150,13 @@ func makeCreatePipelineTemplateHandler(svc library.TemplateService, aud audit.Re
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<18) // 256KB
-		var req struct {
-			Name        string     `json:"name"`
-			Description string     `json:"description"`
-			Stages      []reqStage `json:"stages"`
-		}
+		var req templateReqBody
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
 
-		t, err := svc.Create(r.Context(), library.TemplateInput{
-			Name:        req.Name,
-			Description: req.Description,
-			Spec:        pipeline.Spec{Stages: reqStagesToDomain(req.Stages)},
-		})
+		t, err := svc.Create(r.Context(), req.toInput())
 		if err != nil {
 			writeTemplateError(w, err)
 			return
@@ -159,6 +170,39 @@ func makeCreatePipelineTemplateHandler(svc library.TemplateService, aud audit.Re
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, toPipelineTemplateDTO(t))
+	}
+}
+
+func makeUpdatePipelineTemplateHandler(svc library.TemplateService, aud audit.Recorder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "模板服务未初始化")
+			return
+		}
+		if !requireLibraryPerm(w, r, permLibraryEdit) {
+			return
+		}
+		id := chi.URLParam(r, "id")
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<18) // 256KB
+		var req templateReqBody
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		t, err := svc.Update(r.Context(), id, req.toInput())
+		if err != nil {
+			writeTemplateError(w, err)
+			return
+		}
+		recordAudit(r.Context(), aud, audit.Entry{
+			Actor:      auditActor,
+			Action:     audit.ActionTemplateUpdate,
+			TargetType: audit.TargetTemplate,
+			TargetID:   t.ID,
+			Detail:     map[string]any{"name": t.Name, "stageCount": len(t.Spec.Stages)},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, toPipelineTemplateDTO(t))
 	}
 }
 

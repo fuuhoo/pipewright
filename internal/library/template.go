@@ -3,7 +3,7 @@
 //
 // 两类可复用资产,跨项目共享、与具体项目解耦:
 //   - 流水线模板(Template):命名、可复用的流水线定义(与项目流水线同一套 stages 模型)。
-//     创建/列出/获取/删除模板 + 「应用模板到项目」(把模板 stages 拷进项目流水线,
+//     创建/列出/获取/覆盖更新/删除模板 + 「应用模板到项目」(把模板 stages 拷进项目流水线,
 //     经 pipeline.Service.Save 同一套规范化/校验/渲染落库)。校验复用 pipeline.NormalizeSpec。
 //   - 变量组(VarGroup,见 vargroup.go):命名、可复用的变量集合,镜像每流水线变量模型;
 //     secret 只存 vault 凭据引用,明文绝不入库。
@@ -49,7 +49,7 @@ type Template struct {
 	UpdatedAt   time.Time
 }
 
-// TemplateInput 是创建模板的入参。
+// TemplateInput 是创建/覆盖更新模板的入参(Update 整体覆盖,含名称 —— 没有 PATCH 语义)。
 type TemplateInput struct {
 	Name        string
 	Description string
@@ -65,6 +65,9 @@ type TemplateService interface {
 	// Create 校验(名称非空 + spec 经 pipeline.NormalizeSpec 规范化/校验)→ 持久化 → 回读。
 	// 名称重复 → ErrTemplateNameTaken;spec 非法 → ErrInvalidTemplate(包裹底层 pipeline 错误)。
 	Create(ctx context.Context, in TemplateInput) (*Template, error)
+	// Update 同 Create 的校验/持久化,按 id 整体覆盖(名称也在内,撞别人 → ErrTemplateNameTaken);
+	// 不存在 → ErrTemplateNotFound。模板没有「编辑中的草稿」概念:一次 PUT 就是这份资产的新现状。
+	Update(ctx context.Context, id string, in TemplateInput) (*Template, error)
 	// Delete 删除模板;不存在 → ErrTemplateNotFound。
 	Delete(ctx context.Context, id string) error
 	// Apply 把模板的 stages 应用到目标项目流水线(经注入的 pipeline.Service.Save 同一套规范化/
@@ -122,19 +125,9 @@ func (s *templateService) Get(ctx context.Context, id string) (*Template, error)
 }
 
 func (s *templateService) Create(ctx context.Context, in TemplateInput) (*Template, error) {
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		return nil, fmt.Errorf("%w: name must not be empty", ErrInvalidTemplate)
-	}
-
-	// spec 经 pipeline 同一套规范化/校验(补 id、trim、kind 枚举、恰一个 source、needs DAG)。
-	normalized, err := pipeline.NormalizeSpec(in.Spec)
+	name, stagesJSON, err := s.validate(in)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidTemplate, err.Error())
-	}
-	stagesJSON, err := json.Marshal(normalized.Stages)
-	if err != nil {
-		return nil, fmt.Errorf("library: marshal template stages: %w", err)
+		return nil, err
 	}
 
 	id := uuid.NewString()
@@ -143,13 +136,39 @@ func (s *templateService) Create(ctx context.Context, in TemplateInput) (*Templa
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO pipeline_templates (id, name, description, stages_json, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id, name, strings.TrimSpace(in.Description), string(stagesJSON), nowStr, nowStr,
+		id, name, strings.TrimSpace(in.Description), stagesJSON, nowStr, nowStr,
 	)
 	if err != nil {
 		if isUniqueErr(err) {
 			return nil, ErrTemplateNameTaken
 		}
 		return nil, fmt.Errorf("library: insert template: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+func (s *templateService) Update(ctx context.Context, id string, in TemplateInput) (*Template, error) {
+	id = strings.TrimSpace(id)
+	// 先确认存在(给明确 404,而非静默 0 行)。
+	if _, err := s.Get(ctx, id); err != nil {
+		return nil, err
+	}
+	name, stagesJSON, err := s.validate(in)
+	if err != nil {
+		return nil, err
+	}
+
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE pipeline_templates SET name = ?, description = ?, stages_json = ?, updated_at = ?
+		 WHERE id = ?`,
+		name, strings.TrimSpace(in.Description), stagesJSON, nowStr, id,
+	)
+	if err != nil {
+		if isUniqueErr(err) {
+			return nil, ErrTemplateNameTaken
+		}
+		return nil, fmt.Errorf("library: update template: %w", err)
 	}
 	return s.Get(ctx, id)
 }
@@ -187,6 +206,25 @@ func (s *templateService) Apply(ctx context.Context, templateID, projectID strin
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// validate 校验名称非空 + 经 pipeline.NormalizeSpec 规范化 spec(补 id、trim、kind 枚举、
+// 恰一个源阶段、needs DAG),返回 trim 后名称 + 落库用的 stages JSON。Create/Update 共用,
+// 保证「新建能过、改坏也过不了」是同一把尺。
+func (s *templateService) validate(in TemplateInput) (string, string, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return "", "", fmt.Errorf("%w: name must not be empty", ErrInvalidTemplate)
+	}
+	normalized, err := pipeline.NormalizeSpec(in.Spec)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: %s", ErrInvalidTemplate, err.Error())
+	}
+	stagesJSON, err := json.Marshal(normalized.Stages)
+	if err != nil {
+		return "", "", fmt.Errorf("library: marshal template stages: %w", err)
+	}
+	return name, string(stagesJSON), nil
 }
 
 // rowScanner 抽象 *sql.Row / *sql.Rows 的 Scan,供 Get/List 共用扫描逻辑。

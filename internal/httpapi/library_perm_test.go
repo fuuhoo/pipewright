@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fuuhoo/pipewright/internal/access"
@@ -89,22 +90,27 @@ func setupLibraryPerm(t *testing.T) *libPermEnv {
 	}
 }
 
-// libWrites 是三类资产各自的建端点 + 最小合法请求体:形状不对会拿到 422,
-// 那会把「校验拦下」冒充成「权限拦下」,所以每条都得先确认能建得成。
-var libWrites = []struct{ name, path, body, takenCode string }{
+// libWrites 是三类资产各自的写端点 + 最小合法请求体:建一份(POST)和整份覆盖(PUT)。
+// 形状不对会拿到 422,那会把「校验拦下」冒充成「权限拦下」,所以两份体都得先确认写得成。
+// PUT 体只把 description/summary 改掉(同名覆盖自己是允许的),好在被拦下时一眼看出这行动没动。
+var libWrites = []struct{ name, path, body, put string }{
 	{"模板", "/api/templates", `{"name":"tpl-1","description":"","stages":[` +
 		`{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]},` +
 		`{"name":"构建","kind":"build","jobs":[{"name":"compile","type":"build","config":{"artifactType":"jar","commands":"make"}}]}]}`,
-		"template_name_taken"},
+		`{"name":"tpl-1","description":"改过","stages":[` +
+			`{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]}]}`},
 	{"变量组", "/api/variable-groups", `{"name":"vg-1","description":"","vars":[{"key":"K","value":"v","secret":false}]}`,
-		"variable_group_name_taken"},
+		`{"name":"vg-1","description":"改过","vars":[{"key":"K","value":"v2","secret":false}]}`},
 	{"自定义节点", "/api/custom-nodes", `{"name":"cn-1","nodeType":"script","summary":"","config":{"commands":"echo hi"}}`,
-		"custom_node_name_taken"},
+		`{"name":"cn-1","nodeType":"script","summary":"改过","config":{"commands":"echo hi"}}`},
 }
 
 // TestLibraryWriteNeedsEditPoint 逐格钉死:没有 library.edit 的账号对三类资产的任何写方法都 403,
 // 且错误码是功能轴的 role_denied(不是伪装成分组问题 —— 这里根本没有分组可申请);
-// 有这一点的账号建得成、也删得掉。
+// 有这一点的账号建得成、改得动、也删得掉。
+//
+// PUT 单独钉一遍有实际理由:模板的覆盖更新是这次新加的端点,而变量组/自定义节点的 PUT
+// 早就存在却被漏在守卫之外过 —— 只测 POST/DELETE 会放过「漏一个方法」这类缺口。
 func TestLibraryWriteNeedsEditPoint(t *testing.T) {
 	env := setupLibraryPerm(t)
 	for _, w := range libWrites {
@@ -119,7 +125,7 @@ func TestLibraryWriteNeedsEditPoint(t *testing.T) {
 				t.Fatalf("POST %s 错误码 = %q, want role_denied", w.path, code)
 			}
 		})
-		t.Run(w.name+"有 library.edit 应可建可删", func(t *testing.T) {
+		t.Run(w.name+"有 library.edit 应可建可改可删", func(t *testing.T) {
 			resp := doJSON(t, env.clEdit, http.MethodPost, env.srv.URL+w.path, env.csEdit, w.body)
 			defer resp.Body.Close()
 			raw := readAll(t, resp)
@@ -130,15 +136,39 @@ func TestLibraryWriteNeedsEditPoint(t *testing.T) {
 			if id == "" {
 				t.Fatalf("创建响应没有 id: %s", raw)
 			}
+			// 无点 PUT:拦下,且那一行还是空的 description(没写进去半个字)。
+			denied := doJSON(t, env.clView, http.MethodPut, env.srv.URL+w.path+"/"+id, env.csView, w.put)
+			defer denied.Body.Close()
+			deniedRaw := readAll(t, denied)
+			if denied.StatusCode != http.StatusForbidden {
+				t.Fatalf("PUT %s 无点应 403,得 %d(%s)", w.path, denied.StatusCode, deniedRaw)
+			}
+			if code := errCode(decodeJSONBody(t, deniedRaw)); code != "role_denied" {
+				t.Fatalf("PUT %s 错误码 = %q, want role_denied", w.path, code)
+			}
+			status, _, body := getJSON(t, env.clEdit, env.srv.URL+w.path+"/"+id, env.csEdit)
+			if status != http.StatusOK || strings.Contains(body, "改过") {
+				t.Fatalf("被 403 拦下的 PUT 仍改了这行: %d %s", status, body)
+			}
+			// 有点 PUT:整份覆盖成功。
+			own := doJSON(t, env.clEdit, http.MethodPut, env.srv.URL+w.path+"/"+id, env.csEdit, w.put)
+			defer own.Body.Close()
+			ownRaw := readAll(t, own)
+			if own.StatusCode != http.StatusOK {
+				t.Fatalf("PUT %s = %d, want 200(%s)", w.path, own.StatusCode, ownRaw)
+			}
+			if !strings.Contains(ownRaw, "改过") {
+				t.Fatalf("PUT %s 响应没体现覆盖后的内容: %s", w.path, ownRaw)
+			}
 			del := doJSON(t, env.clView, http.MethodDelete, env.srv.URL+w.path+"/"+id, env.csView, "")
 			defer del.Body.Close()
 			if del.StatusCode != http.StatusForbidden {
 				t.Fatalf("DELETE %s 无点应 403,得 %d(%s)", w.path, del.StatusCode, readAll(t, del))
 			}
-			own := doJSON(t, env.clEdit, http.MethodDelete, env.srv.URL+w.path+"/"+id, env.csEdit, "")
-			defer own.Body.Close()
-			if own.StatusCode != http.StatusNoContent {
-				t.Fatalf("DELETE %s = %d, want 204(%s)", w.path, own.StatusCode, readAll(t, own))
+			drop := doJSON(t, env.clEdit, http.MethodDelete, env.srv.URL+w.path+"/"+id, env.csEdit, "")
+			defer drop.Body.Close()
+			if drop.StatusCode != http.StatusNoContent {
+				t.Fatalf("DELETE %s = %d, want 204(%s)", w.path, drop.StatusCode, readAll(t, drop))
 			}
 		})
 	}

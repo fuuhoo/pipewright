@@ -141,6 +141,117 @@ func TestTemplateDuplicateName(t *testing.T) {
 	}
 }
 
+func TestTemplateUpdateOverwritesNameAndSpec(t *testing.T) {
+	db := testDB(t)
+	svc := NewTemplateService(db, pipeline.New(db))
+	ctx := context.Background()
+	got, err := svc.Create(ctx, TemplateInput{Name: "old", Description: "第一版", Spec: sampleSpec()})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// 改名 + 换内容:构建阶段撤掉,只剩源阶段会被 NormalizeSpec 拒(恰一个源但仍要至少……),
+	// 所以这里给一份同构但阶段名不同的 spec,证明 stages_json 真的被覆盖而不是追加。
+	upd, err := svc.Update(ctx, got.ID, TemplateInput{
+		Name:        "new",
+		Description: "第二版",
+		Spec: pipeline.Spec{Stages: []pipeline.Stage{
+			{Name: "源", Kind: pipeline.KindSource, Jobs: []pipeline.Job{{Name: "git", Type: "git_source"}}},
+			{Name: "部署", Kind: pipeline.KindDeploy, Jobs: []pipeline.Job{{Name: "push", Type: "deploy",
+				Config: map[string]any{pipeline.ConfigKeyServerID: "srv-1"}}}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if upd.Name != "new" || upd.Description != "第二版" {
+		t.Fatalf("元数据没改到位: %+v", upd)
+	}
+	if len(upd.Spec.Stages) != 2 || upd.Spec.Stages[1].Name != "部署" {
+		t.Fatalf("stages 未覆盖: %+v", upd.Spec.Stages)
+	}
+	// updated_at 是秒精度(RFC3339 落库),同一秒内的建→改比不出大小,断言它会随机红。
+	// 这里钉得住、也更该钉的是「覆盖内容不动出生时间」——列表页按它排序,改一次就变新创建时间算 bug。
+	if !upd.CreatedAt.Equal(got.CreatedAt) {
+		t.Fatalf("更新改动了 created_at: got=%v upd=%v", got.CreatedAt, upd.CreatedAt)
+	}
+	// 覆盖后的模板仍要能被应用 —— 否则「改完就废了」。
+	projID := seedProject(t, db)
+	cfg, err := svc.Apply(ctx, got.ID, projID)
+	if err != nil || len(cfg.Spec.Stages) != 2 {
+		t.Fatalf("Apply 覆盖后的模板 = %+v, err=%v", cfg, err)
+	}
+}
+
+func TestTemplateUpdateNotFound(t *testing.T) {
+	db := testDB(t)
+	svc := NewTemplateService(db, pipeline.New(db))
+	_, err := svc.Update(context.Background(), "missing", TemplateInput{Name: "x", Spec: sampleSpec()})
+	if err != ErrTemplateNotFound {
+		t.Fatalf("err = %v, want ErrTemplateNotFound", err)
+	}
+}
+
+func TestTemplateUpdateNameTakenKeepsOriginal(t *testing.T) {
+	db := testDB(t)
+	svc := NewTemplateService(db, pipeline.New(db))
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, TemplateInput{Name: "keep", Spec: sampleSpec()}); err != nil {
+		t.Fatalf("Create keep: %v", err)
+	}
+	target, err := svc.Create(ctx, TemplateInput{Name: "mine", Spec: sampleSpec()})
+	if err != nil {
+		t.Fatalf("Create mine: %v", err)
+	}
+	if _, err := svc.Update(ctx, target.ID, TemplateInput{Name: "keep", Spec: sampleSpec()}); err != ErrTemplateNameTaken {
+		t.Fatalf("撞名 err = %v, want ErrTemplateNameTaken", err)
+	}
+	// 撞名那次不能把原模板改成半截(名称仍是 mine,内容仍可应用)。
+	got, err := svc.Get(ctx, target.ID)
+	if err != nil || got.Name != "mine" {
+		t.Fatalf("撞名后原模板被改坏: %+v, err=%v", got, err)
+	}
+}
+
+func TestTemplateUpdateSelfNameIsAllowed(t *testing.T) {
+	db := testDB(t)
+	svc := NewTemplateService(db, pipeline.New(db))
+	ctx := context.Background()
+	created, err := svc.Create(ctx, TemplateInput{Name: "same", Spec: sampleSpec()})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// 只改说明、名字原样回填 —— 详情弹窗里最常见的保存动作,不该被自己的唯一约束拦下。
+	upd, err := svc.Update(ctx, created.ID, TemplateInput{Name: "same", Description: "只改说明", Spec: sampleSpec()})
+	if err != nil {
+		t.Fatalf("用原名更新自己: %v", err)
+	}
+	if upd.Description != "只改说明" {
+		t.Fatalf("说明没存进去: %+v", upd)
+	}
+}
+
+func TestTemplateUpdateRejectsInvalidSpec(t *testing.T) {
+	db := testDB(t)
+	svc := NewTemplateService(db, pipeline.New(db))
+	ctx := context.Background()
+	created, err := svc.Create(ctx, TemplateInput{Name: "ok", Spec: sampleSpec()})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err = svc.Update(ctx, created.ID, TemplateInput{
+		Name: "ok",
+		Spec: pipeline.Spec{Stages: []pipeline.Stage{{Name: "构建", Kind: pipeline.KindBuild}}},
+	})
+	if !isWrapped(err, ErrInvalidTemplate) {
+		t.Fatalf("err = %v, want ErrInvalidTemplate", err)
+	}
+	// 非法的那次 PUT 不留痕。
+	got, err := svc.Get(ctx, created.ID)
+	if err != nil || len(got.Spec.Stages) != 2 {
+		t.Fatalf("非法更新改动了原模板: %+v, err=%v", got, err)
+	}
+}
+
 func TestTemplateGetDeleteNotFound(t *testing.T) {
 	db := testDB(t)
 	svc := NewTemplateService(db, pipeline.New(db))

@@ -1243,12 +1243,14 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/metrics/dora", makeDoraMetricsHandler(o.doraMetrics))
 
 		// 流水线模板(FR-8-13 复用基座):命名、可复用的流水线定义,跨项目共享。
-		// tpl 为 nil → handler 返回 503。GET(列表/详情)过 auth;POST/DELETE/apply 为写方法,
-		// 过 auth + CSRF + 审计。模板 spec 不含明文 secret。apply-template 比 /pipeline 多一段,不会被吞。
+		// tpl 为 nil → handler 返回 503。GET(列表/详情)过 auth;POST/PUT/DELETE/apply 为写方法,
+		// 过 auth + CSRF + 审计,并在 handler 里按 library.edit 判点。模板 spec 不含明文 secret。
+		// apply-template 比 /pipeline 多一段,不会被吞。
 		tpl := o.templates
 		ar.Get("/templates", makeListPipelineTemplatesHandler(tpl))
 		ar.Post("/templates", makeCreatePipelineTemplateHandler(tpl, aud))
 		ar.Get("/templates/{id}", makeGetPipelineTemplateHandler(tpl))
+		ar.Put("/templates/{id}", makeUpdatePipelineTemplateHandler(tpl, aud))
 		ar.Delete("/templates/{id}", makeDeletePipelineTemplateHandler(tpl, aud))
 		ar.Post("/projects/{id}/pipeline/apply-template", makeApplyTemplateHandler(tpl, aud))
 

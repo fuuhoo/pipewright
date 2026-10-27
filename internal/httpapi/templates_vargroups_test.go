@@ -187,3 +187,172 @@ func TestVariableGroupDuplicateKeysRejectedHTTP(t *testing.T) {
 		t.Fatalf("status = %d, want 422, body=%s", resp.StatusCode, raw)
 	}
 }
+
+// tplV1 是建模板用的最小合法 stages(源 + 构建)。
+const tplV1 = `{"name":"go-svc","description":"第一版","stages":[
+	{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]},
+	{"name":"构建","kind":"build","jobs":[{"name":"compile","type":"build","config":{"artifactType":"jar","commands":"go build ./..."}}]}
+]}`
+
+// tplV2 是覆盖更新用的另一份:改名 + 改说明 + 把构建阶段整个换成打包阶段。
+// 阶段名不同才验得出「覆盖」而不是「追加」或「没写进去」。
+const tplV2 = `{"name":"go-svc-v2","description":"第二版","stages":[
+	{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]},
+	{"name":"打包","kind":"build","jobs":[{"name":"dist","type":"build","config":{"artifactType":"jar","commands":"make package"}}]}
+]}`
+
+// createTemplateHTTP 建一个模板并返回它的 id(失败即 t.Fatal,带上响应体)。
+func createTemplateHTTP(t *testing.T, srv *httptest.Server, client *http.Client, csrf, body string) string {
+	t.Helper()
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/templates", csrf, body)
+	defer resp.Body.Close()
+	raw := readAll(t, resp)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("建模板 = %d, body=%s", resp.StatusCode, raw)
+	}
+	id, _ := decodeJSONBody(t, raw)["id"].(string)
+	if id == "" {
+		t.Fatalf("建模板响应没有 id: %s", raw)
+	}
+	return id
+}
+
+// stageNames 取模板详情 DTO 里的阶段名序列(顺序即画布顺序)。
+func stageNames(t *testing.T, dto map[string]any) []string {
+	t.Helper()
+	list, _ := dto["stages"].([]any)
+	out := make([]string, 0, len(list))
+	for _, s := range list {
+		m, _ := s.(map[string]any)
+		name, _ := m["name"].(string)
+		out = append(out, name)
+	}
+	return out
+}
+
+// TestTemplateUpdateOverwritesHTTP 钉住 PUT 的「整份覆盖」语义:名称、说明、stages 一次全换,
+// 且覆盖后的模板真的能被项目应用 —— 改完的项目流水线读到的必须是新阶段,不是旧的那份。
+func TestTemplateUpdateOverwritesHTTP(t *testing.T) {
+	srv, client, csrf, projID := setupLibraryServer(t)
+	tplID := createTemplateHTTP(t, srv, client, csrf, tplV1)
+
+	resp := doJSON(t, client, http.MethodPut, srv.URL+"/api/templates/"+tplID, csrf, tplV2)
+	defer resp.Body.Close()
+	raw := readAll(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT = %d, want 200, body=%s", resp.StatusCode, raw)
+	}
+	dto := decodeJSONBody(t, raw)
+	if dto["name"] != "go-svc-v2" || dto["description"] != "第二版" {
+		t.Fatalf("元数据没覆盖: %v / %v", dto["name"], dto["description"])
+	}
+	if got := stageNames(t, dto); len(got) != 2 || got[1] != "打包" {
+		t.Fatalf("响应里的 stages 未覆盖: %v", got)
+	}
+
+	// 读回确认落库(不是只改了响应体)。
+	status, got, gotRaw := getJSON(t, client, srv.URL+"/api/templates/"+tplID, csrf)
+	if status != http.StatusOK {
+		t.Fatalf("GET = %d(%s)", status, gotRaw)
+	}
+	if names := stageNames(t, got); len(names) != 2 || names[1] != "打包" || names[0] != "源" {
+		t.Fatalf("落库的 stages = %v, want [源 打包]", names)
+	}
+	// created_at 不该被 PUT 挪动(列表按更新时间/创建时间排序时,改一次就变「新建」算 bug)。
+	if created, _ := got["createdAt"].(string); created == "" {
+		t.Fatalf("详情缺 createdAt: %s", gotRaw)
+	}
+
+	// 覆盖后的模板仍要能应用到项目 —— 且项目拿到的是新内容。
+	apply := doJSON(t, client, http.MethodPost,
+		srv.URL+"/api/projects/"+projID+"/pipeline/apply-template", csrf,
+		`{"templateId":"`+tplID+`"}`)
+	defer apply.Body.Close()
+	rawApply := readAll(t, apply)
+	if apply.StatusCode != http.StatusOK {
+		t.Fatalf("apply = %d, want 200, body=%s", apply.StatusCode, rawApply)
+	}
+	if names := stageNames(t, decodeJSONBody(t, rawApply)); len(names) != 2 || names[1] != "打包" {
+		t.Fatalf("应用后项目阶段 = %v, want 覆盖后的 [源 打包]", names)
+	}
+}
+
+// TestTemplateUpdateErrorCodesHTTP 逐个钉 PUT 的四种失败:各自的状态码 + 契约错误码,
+// 且每一次都不许把原模板改成半截 —— 前端详情弹窗靠这些码区分「改名撞车」和「内容不合法」。
+func TestTemplateUpdateErrorCodesHTTP(t *testing.T) {
+	srv, client, csrf, _ := setupLibraryServer(t)
+	tplID := createTemplateHTTP(t, srv, client, csrf, tplV1)
+	otherID := createTemplateHTTP(t, srv, client, csrf,
+		`{"name":"other","description":"","stages":[{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]}]}`)
+
+	cases := []struct {
+		name       string
+		path       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{"不存在", "/api/templates/nope", tplV2, http.StatusNotFound, "template_not_found"},
+		// 缺源阶段:pipeline.NormalizeSpec 拒 → 422(不是 400,前端要把它当「内容不合法」显示)。
+		{"spec 非法", "/api/templates/" + tplID,
+			`{"name":"go-svc","description":"","stages":[{"name":"构建","kind":"build","jobs":[]}]}`,
+			http.StatusUnprocessableEntity, "invalid_template"},
+		// 撞别人的名 → 409;撞自己的名不算撞(见 TestTemplateUpdateSelfRenameHTTP)。
+		{"撞名", "/api/templates/" + tplID,
+			`{"name":"other","description":"","stages":[{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]}]}`,
+			http.StatusConflict, "template_name_taken"},
+		{"请求体坏", "/api/templates/" + tplID, `{"name":`, http.StatusBadRequest, "bad_request"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp := doJSON(t, client, http.MethodPut, srv.URL+c.path, csrf, c.body)
+			defer resp.Body.Close()
+			raw := readAll(t, resp)
+			if resp.StatusCode != c.wantStatus {
+				t.Fatalf("PUT %s = %d, want %d(%s)", c.path, resp.StatusCode, c.wantStatus, raw)
+			}
+			if code := errCode(decodeJSONBody(t, raw)); code != c.wantCode {
+				t.Fatalf("PUT %s 错误码 = %q, want %q", c.path, code, c.wantCode)
+			}
+			// 撞名那次是「往别人的 id 上写」——被拦下时对方那行也不许动。
+			if c.name == "撞名" {
+				s, other, otherRaw := getJSON(t, client, srv.URL+"/api/templates/"+otherID, csrf)
+				if s != http.StatusOK || other["name"] != "other" || len(stageNames(t, other)) != 1 {
+					t.Fatalf("撞名 PUT 波及了对方模板: %d %s", s, otherRaw)
+				}
+			}
+		})
+	}
+
+	// 四连失败之后,原模板必须还是 tplV1 那两份阶段(非法 PUT 不留痕)。
+	status, got, raw := getJSON(t, client, srv.URL+"/api/templates/"+tplID, csrf)
+	if status != http.StatusOK {
+		t.Fatalf("GET = %d(%s)", status, raw)
+	}
+	if got["name"] != "go-svc" {
+		t.Fatalf("失败 PUT 改了名称: %v", got["name"])
+	}
+	if names := stageNames(t, got); len(names) != 2 || names[1] != "构建" {
+		t.Fatalf("失败 PUT 改了 stages: %v", names)
+	}
+}
+
+// TestTemplateUpdateSelfRenameHTTP 钉住详情弹窗最常见的保存动作:名字原样回填、只改说明 → 200。
+// 若 UPDATE 把自己撞自己的唯一约束当成冲突,用户会看到「模板名已被占用」却什么都没改。
+func TestTemplateUpdateSelfRenameHTTP(t *testing.T) {
+	srv, client, csrf, _ := setupLibraryServer(t)
+	tplID := createTemplateHTTP(t, srv, client, csrf, tplV1)
+	body := `{"name":"go-svc","description":"只改说明","stages":[
+		{"name":"源","kind":"source","jobs":[{"name":"git","type":"git_source"}]},
+		{"name":"构建","kind":"build","jobs":[{"name":"compile","type":"build","config":{"artifactType":"jar","commands":"go build ./..."}}]}
+	]}`
+	resp := doJSON(t, client, http.MethodPut, srv.URL+"/api/templates/"+tplID, csrf, body)
+	defer resp.Body.Close()
+	raw := readAll(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("原名保存 = %d, want 200(%s)", resp.StatusCode, raw)
+	}
+	if desc := decodeJSONBody(t, raw)["description"]; desc != "只改说明" {
+		t.Fatalf("说明没存进去: %v", desc)
+	}
+}
