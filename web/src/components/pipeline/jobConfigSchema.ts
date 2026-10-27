@@ -15,6 +15,7 @@
  */
 
 import type { CredentialType } from '../../api/credentials'
+import type { StageKind } from '../../api/pipeline'
 import { composeIssue, stackNameIssue } from '../../lib/composePaste'
 import { envBodyIssue, nacosBaseUrlIssue, nacosCoordIssue, repoEnvPathIssue, NACOS_DEFAULT_GROUP } from '../../lib/envFileImport'
 import { t } from '../../i18n'
@@ -1586,12 +1587,43 @@ export const JOB_CATEGORIES: ReadonlyArray<{ id: CategoryId; label: string }> = 
   { id: 'custom', get label() { return t('pipelineJob.categoryCustom') } },
 ]
 
+/**
+ * 阶段 kind → 允许出现的类别。判据只有一条:专用节点认阶段,通用节点不认。
+ * 构建/部署/通知三类节点各自只在自己的阶段里摆;脚本与复用库节点(类别 custom)
+ * 是「平台没预置的那一步」,放哪个阶段都成立,所以每个阶段都带上 custom。
+ * 自定义阶段(kind=custom)是用户自己造的,除了源节点(每条流水线恰一个,由后端保留)全给。
+ */
+const STAGE_CATEGORY_ALLOW: Record<StageKind, readonly CategoryId[]> = {
+  source: ['source'],
+  build: ['build', 'quality', 'custom'],
+  deploy: ['deploy', 'custom'],
+  notify: ['notify', 'custom'],
+  custom: ['build', 'deploy', 'quality', 'notify', 'custom'],
+}
+
+/** 这一类节点能不能放进这一阶段;未知 kind(旧数据)一律放行,宁可不收窄也不让人加不了节点。 */
+export function categoryAllowedInStage(category: CategoryId, stageKind: StageKind | string): boolean {
+  const allow = STAGE_CATEGORY_ALLOW[stageKind as StageKind]
+  return allow ? allow.includes(category) : true
+}
+
+/** 某个具体类型能否放进这一阶段;不在选择清单里的历史类型(如 build_image)按 custom 放行。 */
+export function typeAllowedInStage(type: string, stageKind: StageKind | string): boolean {
+  const spec = JOB_TYPE_SPECS[type]
+  if (!spec || !PICKABLE_TYPES.includes(type)) return true
+  return categoryAllowedInStage(spec.category, stageKind)
+}
+
 /** Pickable specs grouped by category, in display order; empty groups omitted. */
-export function groupedJobTypes(): Array<{ id: CategoryId; label: string; specs: JobTypeSpec[] }> {
+export function groupedJobTypes(
+  stageKind?: StageKind,
+): Array<{ id: CategoryId; label: string; specs: JobTypeSpec[] }> {
   return JOB_CATEGORIES.map((cat) => ({
     id: cat.id,
     label: cat.label,
-    specs: PICKABLE_TYPES.map((t) => JOB_TYPE_SPECS[t]).filter((s) => s.category === cat.id),
+    specs: PICKABLE_TYPES.map((t) => JOB_TYPE_SPECS[t]).filter(
+      (s) => s.category === cat.id && (stageKind === undefined || categoryAllowedInStage(cat.id, stageKind)),
+    ),
   })).filter((g) => g.specs.length > 0)
 }
 

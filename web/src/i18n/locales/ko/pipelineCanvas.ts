@@ -101,6 +101,7 @@ export default {
   // ─── JobTypePicker ────────────────────────────────────────────
   pickerDefaultTitle: '작업 유형 선택',
   pickerSub: '작업 유형을 하나 선택하세요. 각 유형에는 고유한 구성 매개변수가 있습니다',
+  pickerStageScopedNote: '여기서는 현재 스테이지에 배치할 수 있는 유형만 표시됩니다. 빌드·배포·알림 작업은 각각 자신의 스테이지에 속합니다. 다른 유형이 필요하면 해당 스테이지를 새로 만들거나 사용자 지정 스테이지를 사용하세요.',
   pickerClose: '닫기',
   myCustomNodes: '내 사용자 정의 노드',
   loading: '로딩 중…',

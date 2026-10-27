@@ -101,6 +101,7 @@ export default {
   // ─── JobTypePicker ────────────────────────────────────────────
   pickerDefaultTitle: '选择任务类型',
   pickerSub: '挑选一个任务类型,每类有自己的配置参数',
+  pickerStageScopedNote: '这里只列出可放入当前阶段的类型。构建、部署、通知节点各归自己的阶段;需要别的类型请新建对应阶段,或使用自定义阶段。',
   pickerClose: '关闭',
   myCustomNodes: '我的自定义节点',
   loading: '加载中…',

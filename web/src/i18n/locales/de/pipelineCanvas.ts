@@ -101,6 +101,7 @@ export default {
   // ─── JobTypePicker ────────────────────────────────────────────
   pickerDefaultTitle: 'Job-Typ auswählen',
   pickerSub: 'Wählen Sie einen Job-Typ; jeder hat seine eigenen Konfigurationsparameter',
+  pickerStageScopedNote: 'Hier werden nur Typen angezeigt, die zur aktuellen Phase passen. Build-, Bereitstellungs- und Benachrichtigungs-Jobs gehören jeweils in ihre eigene Phase; für andere Typen eine passende Phase oder eine benutzerdefinierte Phase anlegen.',
   pickerClose: 'Schließen',
   myCustomNodes: 'Meine benutzerdefinierten Knoten',
   loading: 'Wird geladen…',

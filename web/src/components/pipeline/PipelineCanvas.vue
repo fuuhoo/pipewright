@@ -150,6 +150,11 @@ interface PickerState {
 
 const picker = ref<PickerState>({ open: false, mode: 'add', stageId: '', jobId: '', current: '', needs: [] })
 
+/** 面板服务的目标阶段:选择器据此只列属于该阶段的类型(部署阶段不再给出构建节点)。 */
+const pickerStageKind = computed<StageKind | undefined>(() =>
+  props.stages.find((s) => s.id === picker.value.stageId)?.kind,
+)
+
 /** Open the type picker to add a new job to a stage. `needs` seeds intra-stage deps. */
 function requestAddJob(stageId: string, needs: string[] = []): void {
   picker.value = { open: true, mode: 'add', stageId, jobId: '', current: '', needs }
@@ -476,6 +481,7 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
     <JobTypePicker
       :open="picker.open"
       :current="picker.mode === 'change' ? picker.current : ''"
+      :stage-kind="pickerStageKind"
       :title="picker.mode === 'change' ? t('pipelineCanvas.pickerTitleChange') : t('pipelineCanvas.pickerTitleAdd')"
       @select="onPickerSelect"
       @select-custom="onPickerSelectCustom"

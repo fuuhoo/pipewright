@@ -101,6 +101,7 @@ export default {
   // ─── JobTypePicker ────────────────────────────────────────────
   pickerDefaultTitle: 'Sélectionner le type de tâche',
   pickerSub: 'Choisissez un type de tâche ; chacun a ses propres paramètres de configuration',
+  pickerStageScopedNote: 'Seuls les types correspondant à la phase actuelle sont listés ici. Les tâches de build, de déploiement et de notification appartiennent à leur propre phase ; pour un autre type, créez la phase correspondante ou utilisez une phase personnalisée.',
   pickerClose: 'Fermer',
   myCustomNodes: 'Mes nœuds personnalisés',
   loading: 'Chargement…',

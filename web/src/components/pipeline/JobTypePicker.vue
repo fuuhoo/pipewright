@@ -11,8 +11,9 @@
  */
 import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { groupedJobTypes } from './jobConfigSchema'
+import { groupedJobTypes, typeAllowedInStage } from './jobConfigSchema'
 import { listCustomNodes, type CustomNode } from '../../api/customNodes'
+import type { StageKind } from '../../api/pipeline'
 import JobTypeIcon from './JobTypeIcon.vue'
 
 const props = defineProps<{
@@ -21,6 +22,8 @@ const props = defineProps<{
   current?: string
   /** Heading — "添加任务" vs "更换任务类型" */
   title?: string
+  /** 目标阶段 kind:专用节点(构建/部署/通知)只在本阶段可见;省略则不过滤。 */
+  stageKind?: StageKind
 }>()
 
 const emit = defineEmits<{
@@ -32,13 +35,28 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 // 模板文案走 i18n getter:spec 里的 label 是 computed getter,模块顶层求值会拿到未就绪的实例。
-const groups = computed(() => groupedJobTypes())
+const allGroups = computed(() => groupedJobTypes())
+const groups = computed(() => groupedJobTypes(props.stageKind))
 const dialogRef = ref<HTMLElement | null>(null)
 let focusedBeforeOpen: HTMLElement | null = null
 
 // 复用库 Tier 2:挑选时加载已保存的自定义节点(选中即插入预填好 config 的 Job)。
 const customNodes = ref<CustomNode[]>([])
 const customLoading = ref(false)
+
+/** 复用库节点同样按阶段收窄:节点存的是内建 type,该 type 不属本阶段就不给选。 */
+const visibleCustomNodes = computed(() => {
+  const kind = props.stageKind
+  if (kind === undefined) return customNodes.value
+  return customNodes.value.filter((n) => typeAllowedInStage(n.nodeType, kind))
+})
+
+/** 本阶段被收掉的内建类型数 — 用于给一行「不是没有,是不属于这里」的说明。 */
+const hiddenBuiltInCount = computed(() => {
+  if (props.stageKind === undefined) return 0
+  const count = (gs: typeof allGroups.value) => gs.reduce((n, g) => n + g.specs.length, 0)
+  return count(allGroups.value) - count(groups.value)
+})
 
 async function loadCustomNodes(): Promise<void> {
   customLoading.value = true
@@ -111,12 +129,12 @@ watch(
 
           <div class="jtp-body">
             <!-- 复用库 Tier 2:我的自定义节点(已保存的单节点,选中即预填 config) -->
-            <section v-if="customLoading || customNodes.length" class="jtp-group">
+            <section v-if="customLoading || visibleCustomNodes.length" class="jtp-group">
               <h3 class="jtp-group-label">{{ t('pipelineCanvas.myCustomNodes') }}</h3>
               <p v-if="customLoading" class="jtp-custom-hint">{{ t('pipelineCanvas.loading') }}</p>
               <div v-else class="jtp-grid jtp-grid--plain">
                 <button
-                  v-for="node in customNodes"
+                  v-for="node in visibleCustomNodes"
                   :key="node.id"
                   class="type-card type-card--custom"
                   @click="chooseCustom(node)"
@@ -168,6 +186,9 @@ watch(
                 </div>
               </div>
             </section>
+
+            <!-- 按阶段收窄后,给一行说明:专用类型不是没有,是不属于本阶段。 -->
+            <p v-if="hiddenBuiltInCount > 0" class="jtp-stage-note">{{ t('pipelineCanvas.pickerStageScopedNote') }}</p>
           </div>
         </div>
       </div>
@@ -342,6 +363,15 @@ watch(
 .jtp-custom-hint {
   margin: 0;
   font-size: 0.78rem;
+  color: var(--color-faint);
+}
+
+.jtp-stage-note {
+  margin: 18px 0 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--color-border);
+  font-size: 0.76rem;
+  line-height: 1.5;
   color: var(--color-faint);
 }
 

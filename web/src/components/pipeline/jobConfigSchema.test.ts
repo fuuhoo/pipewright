@@ -7,6 +7,7 @@ import {
   jobTypeLabel,
   jobTypeAccent,
   groupedJobTypes,
+  typeAllowedInStage,
   canonicalJobType,
   jobTemplatePrefill,
   isScriptClassType,
@@ -75,6 +76,57 @@ describe('jobConfigSchema', () => {
       expect(PICKABLE_TYPES).not.toContain('health_check')
       expect(getJobTypeSpec('health_check')).toBeNull()
       expect(groupedJobTypes().map((g) => g.id)).not.toContain('quality')
+    })
+
+    // 按阶段收窄:专用节点只在自己的阶段列出(部署阶段曾能加出构建节点 = 用户报的问题)。
+    describe('stage-scoped narrowing', () => {
+      const typesIn = (kind: Parameters<typeof groupedJobTypes>[0]) =>
+        groupedJobTypes(kind).flatMap((g) => g.specs.map((s) => s.type))
+
+      it('deploy stage offers deploy + generic nodes only, never build or notify', () => {
+        const types = typesIn('deploy')
+        expect(types).toContain('deploy_ssh')
+        expect(types).toContain('script')
+        expect(types).not.toContain('build')
+        expect(types).not.toContain('notify')
+        expect(types).not.toContain('git_source')
+      })
+
+      it('build stage offers build nodes but no deploy or notify nodes', () => {
+        const types = typesIn('build')
+        expect(types).toContain('build')
+        expect(types).toContain('script')
+        expect(types).not.toContain('deploy_ssh')
+        expect(types).not.toContain('notify')
+      })
+
+      it('notify stage offers only the notify node plus generic nodes', () => {
+        expect(typesIn('notify').sort()).toEqual(['notify', 'script', 'templated'].sort())
+      })
+
+      it('source stage offers only the source node', () => {
+        expect(typesIn('source')).toEqual(['git_source'])
+      })
+
+      it('custom stage offers every type except the source node', () => {
+        const types = typesIn('custom')
+        expect(types).not.toContain('git_source')
+        expect(types).toContain('build')
+        expect(types).toContain('deploy_k8s')
+        expect(types).toContain('notify')
+        expect(types.length).toBe(PICKABLE_TYPES.length - 1)
+      })
+
+      it('omitting the stage keeps the full catalog (backward compatible)', () => {
+        expect(typesIn(undefined).slice().sort()).toEqual([...PICKABLE_TYPES].sort())
+      })
+
+      it('lets legacy types through so old nodes stay editable', () => {
+        expect(typeAllowedInStage('build_image', 'deploy')).toBe(true)
+        expect(typeAllowedInStage('totally_unknown', 'deploy')).toBe(true)
+        expect(typeAllowedInStage('build', 'deploy')).toBe(false)
+        expect(typeAllowedInStage('build', 'weird-kind')).toBe(true)
+      })
     })
   })
 

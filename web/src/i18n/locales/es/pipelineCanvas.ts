@@ -101,6 +101,7 @@ export default {
   // ─── JobTypePicker ────────────────────────────────────────────
   pickerDefaultTitle: 'Seleccionar tipo de tarea',
   pickerSub: 'Elige un tipo de tarea; cada uno tiene sus propios parámetros de configuración',
+  pickerStageScopedNote: 'Aquí solo se muestran los tipos que corresponden a la fase actual. Las tareas de build, despliegue y notificación pertenecen a su propia fase; para otros tipos, crea la fase correspondiente o usa una fase personalizada.',
   pickerClose: 'Cerrar',
   myCustomNodes: 'Mis nodos personalizados',
   loading: 'Cargando…',

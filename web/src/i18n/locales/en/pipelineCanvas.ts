@@ -101,6 +101,7 @@ export default {
   // ─── JobTypePicker ────────────────────────────────────────────
   pickerDefaultTitle: 'Select job type',
   pickerSub: 'Pick a job type; each has its own configuration parameters',
+  pickerStageScopedNote: 'Only types that belong to the current stage are listed here. Build, deploy, and notify jobs stay in their own stage; to use another type, add that stage or use a custom stage.',
   pickerClose: 'Close',
   myCustomNodes: 'My custom nodes',
   loading: 'Loading…',
