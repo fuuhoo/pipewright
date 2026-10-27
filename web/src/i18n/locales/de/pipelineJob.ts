@@ -267,7 +267,7 @@ export default {
   stackNameTooLong: 'Projektname ist auf 128 Zeichen begrenzt',
   composeTooLarge: 'Der compose-Inhalt überschreitet die Grenze von 512 KiB',
   fieldHealthProbeLabel: 'Health-Probe',
-  fieldHealthProbeHint: 'Läuft nach erfolgreicher Bereitstellung über denselben SSH-Kanal; schlägt sie fehl, schlägt die Aufgabe fehl und blockiert die nachgelagerten Schritte (Blue-Green rollt auf die vorherige Version zurück)',
+  fieldHealthProbeHint: 'Läuft nach erfolgreicher Bereitstellung über denselben SSH-Kanal; schlägt sie fehl, schlägt die Aufgabe fehl und blockiert die nachgelagerten Schritte (nur der Docker-Einzelcontainer rollt auf das vorherige Image zurück; direkte Dateiablage und der Compose-Stack werden nicht zurückgerollt)',
   fieldHealthUrlLabel: 'Probe-URL',
   fieldHealthUrlHint: 'Aus Sicht des Zielhosts angeben, z. B. http://localhost:8080/actuator/health; gleiche Semantik wie `curl -fsS`, 4xx/5xx gelten als Fehler',
   fieldHealthCommandLabel: 'Probe-Befehl',

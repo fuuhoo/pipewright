@@ -267,7 +267,7 @@ export default {
   stackNameTooLong: '프로젝트명은 최대 128자',
   composeTooLarge: 'compose 본문이 512 KiB 상한을 넘었습니다',
   fieldHealthProbeLabel: '헬스 프로브',
-  fieldHealthProbeHint: '배포 명령 성공 후 같은 SSH 경로에서 대상 서버를 프로브합니다. 실패하면 이 작업이 실패하고 하류를 차단합니다(블루그리인은 이전 버전으로 롤백)',
+  fieldHealthProbeHint: '배포 명령 성공 후 같은 SSH 경로에서 대상 서버를 프로브합니다. 실패하면 이 작업이 실패하고 하류를 차단합니다(docker 단일 컨테이너만 이전 이미지로 롤백, 파일 직접 배치·compose 스택은 롤백하지 않음)',
   fieldHealthUrlLabel: '프로브 URL',
   fieldHealthUrlHint: '대상 서버 로컬 관점으로 입력, 예: http://localhost:8080/actuator/health. `curl -fsS` 와 동일하게 4xx/5xx는 실패로 봅니다',
   fieldHealthCommandLabel: '프로브 명령',

@@ -267,7 +267,7 @@ export default {
   stackNameTooLong: '專案名最長 128 字元',
   composeTooLarge: 'compose 正文超過 512 KiB 上限',
   fieldHealthProbeLabel: '健康探測',
-  fieldHealthProbeHint: '部署命令成功後,在同一條 SSH 鏈路上探測該機;不通則本任務失敗並阻斷下游(藍綠策略會回復上一版)',
+  fieldHealthProbeHint: '部署命令成功後,在同一條 SSH 鏈路上探測該機;不通則本任務失敗並阻斷下游(只有 docker 單容器檔會回復到上一映像,檔案直鋪與 compose 整棧不回滾)',
   fieldHealthUrlLabel: '探測 URL',
   fieldHealthUrlHint: '依目標機本機視角填寫,如 http://localhost:8080/actuator/health;語義同 `curl -fsS`,4xx/5xx 即算不通',
   fieldHealthCommandLabel: '探測命令',

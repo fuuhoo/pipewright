@@ -268,7 +268,7 @@ export default {
   stackNameTooLong: 'Project name is limited to 128 characters',
   composeTooLarge: 'Compose body exceeds the 512 KiB limit',
   fieldHealthProbeLabel: 'Health probe',
-  fieldHealthProbeHint: 'Runs on the same SSH link after the deploy command succeeds; a failing probe fails this task and blocks downstream (blue-green rolls back to the previous release)',
+  fieldHealthProbeHint: 'Runs on the same SSH link after the deploy command succeeds; a failing probe fails this task and blocks downstream (only the docker single-container tier rolls back to the previous image; direct file placement and the whole compose stack are not rolled back)',
   fieldHealthUrlLabel: 'Probe URL',
   fieldHealthUrlHint: 'Resolved on the target host itself, e.g. http://localhost:8080/actuator/health; same semantics as `curl -fsS`, so 4xx/5xx counts as down',
   fieldHealthCommandLabel: 'Probe command',

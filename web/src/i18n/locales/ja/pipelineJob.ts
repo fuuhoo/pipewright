@@ -267,7 +267,7 @@ export default {
   stackNameTooLong: 'プロジェクト名は最長 128 文字',
   composeTooLarge: 'compose の本文が 512 KiB の上限を超えています',
   fieldHealthProbeLabel: 'ヘルスプローブ',
-  fieldHealthProbeHint: 'デプロイコマンド成功後、同じ SSH 経路で対象マシンを探測。不通ならこのタスクが失敗し下流を停止(ブルーグリーンでは前バージョンへロールバック)',
+  fieldHealthProbeHint: 'デプロイコマンド成功後、同じ SSH 経路で対象マシンを探測。不通ならこのタスクが失敗し下流を停止(docker 単一コンテナのみ前のイメージへロールバック、ファイル直接配置と compose スタックはロールバックなし)',
   fieldHealthUrlLabel: 'プローブ URL',
   fieldHealthUrlHint: '対象マシンのローカル視点で記入、例 http://localhost:8080/actuator/health。`curl -fsS` と同じ意味で 4xx/5xx は不通',
   fieldHealthCommandLabel: 'プローブコマンド',

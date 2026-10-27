@@ -267,7 +267,7 @@ export default {
   stackNameTooLong: 'El nombre admite como máximo 128 caracteres',
   composeTooLarge: 'El contenido de compose supera el límite de 512 KiB',
   fieldHealthProbeLabel: 'Sonda de salud',
-  fieldHealthProbeHint: 'Se ejecuta por el mismo enlace SSH tras un despliegue correcto; si falla, la tarea falla y bloquea lo siguiente (blue-green revierte a la versión anterior)',
+  fieldHealthProbeHint: 'Se ejecuta por el mismo enlace SSH tras un despliegue correcto; si falla, la tarea falla y bloquea lo siguiente (solo el contenedor único de Docker revierte a la imagen anterior; la colocación directa de archivos y el stack de compose no se revierten)',
   fieldHealthUrlLabel: 'URL de sonda',
   fieldHealthUrlHint: 'Se resuelve desde el propio servidor de destino, p. ej. http://localhost:8080/actuator/health; misma semántica que `curl -fsS`: 4xx/5xx cuenta como caída',
   fieldHealthCommandLabel: 'Comando de sonda',
