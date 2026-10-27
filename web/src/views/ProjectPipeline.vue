@@ -183,9 +183,11 @@ function showSaveSuccess(): void {
 /** Maps 422 error codes to user-visible hints. */
 function mapSaveError(err: HttpError): string {
   const code = err.apiError?.code
+  const msg = err.apiError?.message
   switch (code) {
-    case 'invalid_stage':        return t('projectPipeline.errInvalidStage')
-    case 'invalid_job':          return t('projectPipeline.errInvalidJob')
+    // 这两码后端按节点回显具体原因(如「K8s 发布不跑健康门禁…请清空 探测方式」),固定兜底文案会把它盖掉。
+    case 'invalid_stage':        return msg || t('projectPipeline.errInvalidStage')
+    case 'invalid_job':          return msg || t('projectPipeline.errInvalidJob')
     case 'duplicate_id':         return t('projectPipeline.errDuplicateId')
     case 'invalid_build':        return t('projectPipeline.errInvalidBuild')
     case 'invalid_var':          return t('projectPipeline.errInvalidVar')
