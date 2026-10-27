@@ -443,7 +443,18 @@ docker exec -it <容器名> /pipewright reset-admin-password --stdin   # compose
 - **时间预算 8 分钟**(建目录 + 上传 + `up`,因为 `up` 要在目标机拉镜像)。这一档**不读 `strategy`**:分批是「多台机器逐台铺」的编排,单个栈没有分批对象;多主机时仍是逐台执行。
 - **与 `run` 的分工**:只换镜像、拓扑不变 → `run`(它复用镜像产物链路,自带停旧起新与失败回滚);服务数量/网络/卷要一起变 → `compose`。
 
-健康门控对 `deploy_ssh` 与 `deploy_docker` 两档都可选:`healthProbe: http` + `healthUrl`(地址是**部署机本机视角**,如 `http://localhost:8080/healthz`),或 `healthProbe: command` + `healthCommand`;探测不通即该部署任务失败并阻断下游。
+健康门控是部署节点上的可选配置(不是独立节点),对 `deploy_ssh` 与 `deploy_docker` 两档都能开:`healthProbe: http` + `healthUrl`(地址是**部署机本机视角**,如 `http://localhost:8080/healthz`),或 `healthProbe: command` + `healthCommand`(在目标机执行,非零退出即不通)。重试节奏 `healthRetries`(默认 3、上限 20)/ `healthInterval`(默认 3 秒、上限 60 秒,填 0 就是不等)/ `healthTimeout`(单次超时,默认 5 秒、上限 60 秒);任意一次通过就放行,次数用尽则**该机判失败并阻断下游**。
+
+`deploy_k8s` 不跑这套门控,配了也会被保存期拒绝 —— 它的落点是一个 API server,整条链路没有 shell;这一档的把关是集群自己的 rollout 就绪(见上表)。
+
+探测不通之后各档做什么并不一样,**只有单容器那一档会自己退回去**:
+
+| 档位 | 探测不通时 |
+|---|---|
+| `deploy_ssh`(文件直铺 / 部署命令) | 该机记 failed,**不回滚** —— 直铺已就地覆盖,没有「上一版本」可切,要退回就重跑上一次发布 |
+| `deploy_docker` · `run` | 停掉新容器、**回滚到上一镜像**(首次部署没有上一镜像,则记 failed) |
+| `deploy_docker` · `compose` | 该机记 failed,**不回滚**栈(`up -d` 的结果就停在那里),其余机器继续,可只重试失败机 |
+| `deploy_k8s` | 不做探测;滚动不就绪由集群把关,默认回填上一镜像 |
 
 ```yaml
 version: 1
