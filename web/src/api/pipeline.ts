@@ -119,6 +119,8 @@ export interface SavePipelineInput {
       type: string
       summary?: string
       config?: Record<string, string>
+      /** 阶段内任务依赖(同 PipelineJob.needs);后端 reqStage 认这个键,PUT 是整份覆盖所以也得带上。 */
+      needs?: string[]
     }>
   }>
 }

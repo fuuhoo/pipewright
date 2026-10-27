@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: '模板让你把一份流水线定义沉淀下来,在任意项目的流水线编辑器里一键应用。在项目流水线编辑器中可把当前流水线另存为模板。',
   stageCount: '{n} 阶段',
 
+  // ─── template detail(详情弹窗:改名/改说明 + 只读阶段预览)──────
+  detail: '详情',
+  templateDetail: '模板详情',
+  tplNamePlaceholder: '如 go-service-standard',
+  tplDescPlaceholder: '这个模板的用途',
+  tplStagesTitle: '阶段与任务',
+  tplLoadingDetail: '加载阶段中…',
+  tplNoStages: '这个模板还没有阶段',
+  tplGateTag: '需审批',
+  tplNeedsTag: '依赖 {n} 个阶段',
+  tplStagesEditHint: '阶段内容请在流水线编辑器里改,配好后用「另存为模板 → 覆盖已有」写回。',
+  tplStagesViewOnlyHint: '只读预览;你的角色没有「增删改复用库与节点工作室」权限,不能保存。',
+  tplNameRequired: '模板名称不能为空',
+  tplStagesMissing: '还没读到模板阶段(上一步加载可能失败),此时保存会把模板覆盖成空定义,已拦下。',
+  updatedTemplate: '已更新模板「{name}」',
+  loadDetailFailed: '加载模板详情失败',
+  loadDetailFailedStatus: '加载模板详情失败({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: '还没有变量组',
   emptyGroupsHint: '把一组共享变量(如同一套环境地址、令牌引用)定义为变量组,在多条流水线间复用。secret 变量只保存保险库引用,绝不存明文。',

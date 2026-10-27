@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: 'Mit Vorlagen können Sie eine Pipeline-Definition festhalten und sie mit einem Klick im Pipeline-Editor eines beliebigen Projekts anwenden. Im Pipeline-Editor eines Projekts können Sie die aktuelle Pipeline als Vorlage speichern.',
   stageCount: '{n} Phasen',
 
+  // ─── template detail(Details-Modal: Umbenennen/Beschreibung + schreibgeschützte Phasen-Vorschau)──
+  detail: 'Details',
+  templateDetail: 'Vorlagendetails',
+  tplNamePlaceholder: 'z. B. go-service-standard',
+  tplDescPlaceholder: 'Wofür diese Vorlage dient',
+  tplStagesTitle: 'Phasen und Aufgaben',
+  tplLoadingDetail: 'Phasen werden geladen…',
+  tplNoStages: 'Diese Vorlage hat noch keine Phasen',
+  tplGateTag: 'Genehmigung erforderlich',
+  tplNeedsTag: 'Hängt von {n} Phasen ab',
+  tplStagesEditHint: 'Ändern Sie den Phaseninhalt im Pipeline-Editor und schreiben Sie ihn über „Als Vorlage speichern → Vorhandene überschreiben“ zurück.',
+  tplStagesViewOnlyHint: 'Schreibgeschützte Vorschau; Ihr Profil hat nicht die Berechtigung „Bibliothek und Knoten-Studio verwalten" und kann nicht speichern.',
+  tplNameRequired: 'Der Name der Vorlage darf nicht leer sein',
+  tplStagesMissing: 'Die Phasen der Vorlage wurden noch nicht geladen (der vorherige Schritt ist möglicherweise fehlgeschlagen). Speichern würde die Vorlage mit einer leeren Definition überschreiben, daher wurde es blockiert.',
+  updatedTemplate: 'Vorlage „{name}“ aktualisiert',
+  loadDetailFailed: 'Vorlagendetails konnten nicht geladen werden',
+  loadDetailFailedStatus: 'Vorlagendetails konnten nicht geladen werden ({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: 'Noch keine Variablengruppen',
   emptyGroupsHint: 'Definieren Sie einen Satz gemeinsam genutzter Variablen (etwa dieselben Umgebungsadressen oder Token-Referenzen) als Variablengruppe und verwenden Sie ihn in mehreren Pipelines wieder. Secret-Variablen speichern nur eine Vault-Referenz, niemals den Klartext.',

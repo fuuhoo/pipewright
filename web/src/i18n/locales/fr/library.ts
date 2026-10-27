@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: 'Les modèles vous permettent de capturer une définition de pipeline et de l’appliquer en un clic dans l’éditeur de pipeline de n’importe quel projet. Vous pouvez enregistrer le pipeline actuel comme modèle depuis l’éditeur de pipeline d’un projet.',
   stageCount: '{n} étapes',
 
+  // ─── template detail(modale Détails : renommage/description + aperçu en lecture seule)──
+  detail: 'Détails',
+  templateDetail: 'Détails du modèle',
+  tplNamePlaceholder: 'ex. go-service-standard',
+  tplDescPlaceholder: 'À quoi sert ce modèle',
+  tplStagesTitle: 'Étapes et tâches',
+  tplLoadingDetail: 'Chargement des étapes…',
+  tplNoStages: 'Ce modèle n’a pas encore d’étapes',
+  tplGateTag: 'Approbation requise',
+  tplNeedsTag: 'Dépend de {n} étapes',
+  tplStagesEditHint: 'Modifiez le contenu des étapes dans l’éditeur de pipeline puis réenregistrez-le via « Enregistrer comme modèle → Écraser l’existant ».',
+  tplStagesViewOnlyHint: 'Aperçu en lecture seule ; votre rôle ne dispose pas de la permission « Gérer la bibliothèque et le studio de nœuds » et ne peut pas enregistrer.',
+  tplNameRequired: 'Le nom du modèle ne peut pas être vide',
+  tplStagesMissing: 'Les étapes du modèle n’ont pas encore été chargées (l’étape précédente a peut-être échoué) ; enregistrer écraserait le modèle avec une définition vide, l’action a donc été bloquée.',
+  updatedTemplate: 'Modèle « {name} » mis à jour',
+  loadDetailFailed: 'Échec du chargement des détails du modèle',
+  loadDetailFailedStatus: 'Échec du chargement des détails du modèle ({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: 'Aucun groupe de variables pour le moment',
   emptyGroupsHint: 'Définissez un ensemble de variables partagées (comme les mêmes adresses d’environnement ou références de jetons) en tant que groupe de variables et réutilisez-le dans plusieurs pipelines. Les variables secrètes ne stockent qu’une référence au coffre, jamais le texte en clair.',

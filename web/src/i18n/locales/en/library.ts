@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: 'Templates let you capture a pipeline definition once and apply it with one click in any project’s pipeline editor. You can save the current pipeline as a template from a project pipeline editor.',
   stageCount: '{n} stages',
 
+  // ─── template detail (details modal: rename/describe + read-only stage preview) ──
+  detail: 'Details',
+  templateDetail: 'Template details',
+  tplNamePlaceholder: 'e.g. go-service-standard',
+  tplDescPlaceholder: 'What this template is for',
+  tplStagesTitle: 'Stages and jobs',
+  tplLoadingDetail: 'Loading stages…',
+  tplNoStages: 'This template has no stages yet',
+  tplGateTag: 'Approval required',
+  tplNeedsTag: 'Depends on {n} stages',
+  tplStagesEditHint: 'Edit stage content in the pipeline editor, then write it back with “Save as template → Overwrite existing”.',
+  tplStagesViewOnlyHint: 'Read-only preview; your role lacks the "Manage the reuse library and node studio" permission, so you cannot save.',
+  tplNameRequired: 'Template name is required',
+  tplStagesMissing: 'No template stages have been loaded (the previous load may have failed); saving now would overwrite the template with an empty definition, so it was blocked.',
+  updatedTemplate: 'Updated template “{name}”',
+  loadDetailFailed: 'Failed to load template details',
+  loadDetailFailedStatus: 'Failed to load template details ({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: 'No variable groups yet',
   emptyGroupsHint: 'Define a set of shared variables (such as the same environment addresses or token references) as a variable group and reuse it across multiple pipelines. Secret variables store only a vault reference, never plaintext.',

@@ -3,7 +3,8 @@
  * 复用库(Library)— FR-8-13:流水线模板 + 变量组。
  *
  * 两类跨项目可复用资产,合并在一个带分段切换的管理界面:
- *   - 模板(Templates):命名、可复用的流水线定义;在流水线编辑器内「应用到项目」。
+ *   - 模板(Templates):命名、可复用的流水线定义。「详情」弹窗改名称/说明;阶段内容不在这里拼
+ *     画布 —— 在流水线编辑器里配好,用「另存为模板 → 覆盖已有」整份写回(PUT 是整份覆盖)。
  *   - 变量组(Variable Groups):命名、可复用的变量集合(key=value + secret 引用)。
  *
  * secret 变量绝无明文:仅存/回 credentialId + maskedValue。HttpError 形状 err.apiError?.code/.message/.status。
@@ -16,9 +17,14 @@ import { useSessionStore } from '../stores/session'
 import { HttpError } from '../api/http'
 import {
   listTemplates,
+  getTemplate,
+  updateTemplate,
   deleteTemplate,
   type TemplateSummary,
 } from '../api/templates'
+import type { PipelineStage } from '../api/pipeline'
+import { toTemplateStages } from '../lib/templateStages'
+import { localizeName } from '../lib/pipelineLabels'
 import {
   listVariableGroups,
   createVariableGroup,
@@ -78,6 +84,83 @@ async function removeTemplate(ts: TemplateSummary): Promise<void> {
     await loadTemplates()
   } catch (err: unknown) {
     message.error(err instanceof HttpError ? err.apiError?.message ?? t('library.deleteFailed') : t('library.deleteFailed'))
+  }
+}
+
+// ─── template detail modal ────────────────────────────────────────────────────
+// 这里改名称/说明;阶段内容不在库页里拼画布(编辑流水线的能力都在流水线编辑器),
+// 改完在那里用「另存为模板 → 覆盖已有」写回。PUT 是整份覆盖,所以保存必须把 stages 一并送回。
+const tplDetailOpen = ref(false)
+const tplDetailLoading = ref(false)
+const tplDetailSaving = ref(false)
+const tplDetailId = ref('')
+const tplDetailName = ref('')
+const tplDetailDesc = ref('')
+const tplDetailStages = ref<PipelineStage[]>([])
+const tplDetailBanner = ref('')
+
+async function openTemplateDetail(ts: TemplateSummary): Promise<void> {
+  tplDetailOpen.value = true
+  tplDetailLoading.value = true
+  tplDetailBanner.value = ''
+  tplDetailId.value = ts.id
+  tplDetailStages.value = []
+  // 列表项已带名称/说明,先填上再等详情:弹窗不该空着一片等接口。
+  tplDetailName.value = ts.name
+  tplDetailDesc.value = ts.description
+  try {
+    const tpl = await getTemplate(ts.id)
+    tplDetailName.value = tpl.name
+    tplDetailDesc.value = tpl.description
+    tplDetailStages.value = tpl.stages ?? []
+  } catch (err: unknown) {
+    tplDetailBanner.value = err instanceof HttpError
+      ? err.apiError?.message ?? t('library.loadDetailFailedStatus', { status: err.status })
+      : t('library.loadDetailFailed')
+  } finally {
+    tplDetailLoading.value = false
+  }
+}
+
+function stageKindLabel(kind: PipelineStage['kind']): string {
+  const map: Record<PipelineStage['kind'], string> = {
+    source: t('pipelinePanels.wizKindSource'),
+    build: t('pipelinePanels.wizKindBuild'),
+    deploy: t('pipelinePanels.wizKindDeploy'),
+    notify: t('pipelinePanels.wizKindNotify'),
+    custom: t('pipelinePanels.wizKindCustom'),
+  }
+  return map[kind] ?? kind
+}
+
+async function saveTemplateDetail(): Promise<void> {
+  tplDetailBanner.value = ''
+  const name = tplDetailName.value.trim()
+  if (!name) {
+    tplDetailBanner.value = t('library.tplNameRequired')
+    return
+  }
+  // 详情没读到就保存等于提交一份空 spec:后端会判 422,但这里的提示比那句错误码更贴近用户动作。
+  if (tplDetailStages.value.length === 0) {
+    tplDetailBanner.value = t('library.tplStagesMissing')
+    return
+  }
+  tplDetailSaving.value = true
+  try {
+    await updateTemplate(tplDetailId.value, {
+      name,
+      description: tplDetailDesc.value.trim(),
+      stages: toTemplateStages(tplDetailStages.value),
+    })
+    message.success(t('library.updatedTemplate', { name }))
+    tplDetailOpen.value = false
+    await loadTemplates()
+  } catch (err: unknown) {
+    tplDetailBanner.value = err instanceof HttpError
+      ? err.apiError?.message ?? t('library.saveFailedStatus', { status: err.status })
+      : t('library.saveFailed')
+  } finally {
+    tplDetailSaving.value = false
   }
 }
 
@@ -483,7 +566,10 @@ onMounted(() => {
           <p class="tpl-desc">{{ tpl.description || t('library.noDescription') }}</p>
           <div class="tpl-card-foot">
             <span class="tpl-time">{{ t('library.updatedAt', { time: new Date(tpl.updatedAt).toLocaleDateString() }) }}</span>
-            <button v-if="canEdit" class="link-danger" @click="removeTemplate(tpl)">{{ t('library.delete') }}</button>
+            <div class="tpl-card-actions">
+              <button class="btn-secondary btn-sm" @click="openTemplateDetail(tpl)">{{ t('library.detail') }}</button>
+              <button v-if="canEdit" class="link-danger" @click="removeTemplate(tpl)">{{ t('library.delete') }}</button>
+            </div>
           </div>
         </li>
       </ul>
@@ -585,6 +671,84 @@ onMounted(() => {
           </div>
         </li>
       </ul>
+    </div>
+
+    <!-- ─── Template detail modal ─── -->
+    <div v-if="tplDetailOpen" class="modal-scrim" @click.self="tplDetailOpen = false">
+      <div class="modal" role="dialog" aria-modal="true" :aria-label="t('library.templateDetail')">
+        <header class="modal-head">
+          <h2 class="modal-title">{{ t('library.templateDetail') }}</h2>
+          <button class="modal-close" :aria-label="t('library.close')" @click="tplDetailOpen = false">✕</button>
+        </header>
+
+        <div v-if="tplDetailBanner" class="banner banner--error">{{ tplDetailBanner }}</div>
+
+        <div class="field">
+          <label class="field-label" for="tpl-detail-name">{{ t('library.fieldName') }}</label>
+          <input
+            id="tpl-detail-name"
+            v-model="tplDetailName"
+            class="input"
+            :disabled="!canEdit"
+            :placeholder="t('library.tplNamePlaceholder')"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label" for="tpl-detail-desc">{{ t('library.fieldDescriptionOptional') }}</label>
+          <input
+            id="tpl-detail-desc"
+            v-model="tplDetailDesc"
+            class="input"
+            :disabled="!canEdit"
+            :placeholder="t('library.tplDescPlaceholder')"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <span class="field-label">{{ t('library.tplStagesTitle') }}</span>
+            <span class="tpl-stage-pill">{{ t('library.stageCount', { n: tplDetailStages.length }) }}</span>
+          </div>
+          <p v-if="tplDetailLoading" class="cn-rows-empty">{{ t('library.tplLoadingDetail') }}</p>
+          <ul v-else-if="tplDetailStages.length > 0" class="td-stage-list" role="list">
+            <li v-for="st in tplDetailStages" :key="st.id" class="td-stage">
+              <div class="td-stage-head">
+                <span class="td-stage-name">{{ localizeName(st.name) }}</span>
+                <span class="td-stage-kind">{{ stageKindLabel(st.kind) }}</span>
+                <span v-if="st.gate" class="td-stage-flag">{{ t('library.tplGateTag') }}</span>
+                <span v-if="st.needs && st.needs.length > 0" class="td-stage-flag">
+                  {{ t('library.tplNeedsTag', { n: st.needs.length }) }}
+                </span>
+              </div>
+              <ul class="td-job-list" role="list">
+                <li v-for="j in st.jobs" :key="j.id" class="td-job">
+                  <span class="td-job-name">{{ localizeName(j.name) }}</span>
+                  <span class="td-job-type">{{ jobTypeLabel(j.type) }}</span>
+                </li>
+              </ul>
+            </li>
+          </ul>
+          <p v-else class="cn-rows-empty">{{ t('library.tplNoStages') }}</p>
+          <p v-if="!tplDetailLoading && canEdit" class="td-hint">{{ t('library.tplStagesEditHint') }}</p>
+          <p v-else-if="!tplDetailLoading" class="td-hint">{{ t('library.tplStagesViewOnlyHint') }}</p>
+        </div>
+
+        <footer class="modal-foot">
+          <button class="btn-secondary" :disabled="tplDetailSaving" @click="tplDetailOpen = false">
+            {{ canEdit ? t('library.cancel') : t('library.close') }}
+          </button>
+          <button
+            v-if="canEdit"
+            class="btn-primary"
+            :disabled="tplDetailSaving || tplDetailLoading"
+            @click="saveTemplateDetail"
+          >
+            {{ tplDetailSaving ? t('library.saving') : t('library.save') }}
+          </button>
+        </footer>
+      </div>
     </div>
 
     <!-- ─── Variable-group editor modal ─── -->
@@ -955,7 +1119,8 @@ onMounted(() => {
   font-size: 0.76rem;
   color: var(--color-faint);
 }
-.cn-card-actions {
+.cn-card-actions,
+.tpl-card-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -977,6 +1142,52 @@ onMounted(() => {
   color: var(--color-faint);
   font-style: italic;
 }
+
+/* Template detail modal — 只读阶段/任务预览 + 无权限时的只读输入框 */
+.input:disabled { opacity: 0.6; cursor: not-allowed; }
+.td-stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.td-stage {
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  padding: 0.6rem 0.75rem;
+  background: var(--color-inset);
+}
+.td-stage-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.td-stage-name { font-size: 0.86rem; font-weight: 600; color: var(--color-text); }
+.td-stage-kind,
+.td-stage-flag {
+  font-size: 0.7rem;
+  font-weight: 560;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  background: var(--color-card-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-dim);
+}
+.td-job-list {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.td-job { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--color-dim); }
+.td-job-name { color: var(--color-text); }
+.td-job-type { font-size: 0.72rem; color: var(--color-faint); }
+.td-hint { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--color-faint); line-height: 1.5; }
 
 .vg-var-list {
   list-style: none;

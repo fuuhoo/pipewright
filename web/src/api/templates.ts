@@ -7,10 +7,12 @@
  *   GET    /api/templates                              → { templates: TemplateSummary[] }
  *   POST   /api/templates                              → Template      (needs CSRF)
  *   GET    /api/templates/{id}                         → Template
+ *   PUT    /api/templates/{id}                         → Template      (needs CSRF)
  *   DELETE /api/templates/{id}                         → 204           (needs CSRF)
  *   POST   /api/projects/{id}/pipeline/apply-template  → PipelineDTO   (needs CSRF)
  *
  * Templates carry no plaintext secret (credentials stay vault references in 2-4 settings).
+ * PUT overwrites the whole template — name included — so callers must send the stages back too.
  */
 
 import { http } from './http'
@@ -57,6 +59,13 @@ export async function getTemplate(id: string): Promise<Template> {
 
 export async function createTemplate(input: CreateTemplateInput): Promise<Template> {
   return http.post<Template>('/api/templates', input)
+}
+
+/** Overwrite payload — same shape as create: one PUT replaces the whole template, stages included. */
+export type UpdateTemplateInput = CreateTemplateInput
+
+export async function updateTemplate(id: string, input: UpdateTemplateInput): Promise<Template> {
+  return http.put<Template>(`/api/templates/${id}`, input)
 }
 
 export async function deleteTemplate(id: string): Promise<void> {

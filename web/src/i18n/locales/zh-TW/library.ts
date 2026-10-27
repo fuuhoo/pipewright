@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: '範本讓你把一份流水線定義沉澱下來,在任意專案的流水線編輯器裡一鍵套用。在專案流水線編輯器中可把目前流水線另存為範本。',
   stageCount: '{n} 階段',
 
+  // ─── template detail(詳細資料彈窗:改名/改說明 + 唯讀階段預覽)──────
+  detail: '詳細資料',
+  templateDetail: '範本詳細資料',
+  tplNamePlaceholder: '如 go-service-standard',
+  tplDescPlaceholder: '這個範本的用途',
+  tplStagesTitle: '階段與任務',
+  tplLoadingDetail: '載入階段中…',
+  tplNoStages: '這個範本還沒有階段',
+  tplGateTag: '需審批',
+  tplNeedsTag: '依賴 {n} 個階段',
+  tplStagesEditHint: '階段內容請在流水線編輯器裡改,配好後用「另存為範本 → 覆蓋既有」寫回。',
+  tplStagesViewOnlyHint: '唯讀預覽;你的角色沒有「增刪改重用譜與節點工作室」權限,無法儲存。',
+  tplNameRequired: '範本名稱不能為空',
+  tplStagesMissing: '還沒讀到範本的階段(上一步載入可能失敗),此時儲存會把範本覆蓋成空定義,已擋下。',
+  updatedTemplate: '已更新範本「{name}」',
+  loadDetailFailed: '載入範本詳細資料失敗',
+  loadDetailFailedStatus: '載入範本詳細資料失敗({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: '還沒有變數組',
   emptyGroupsHint: '把一組共享變數(如同一套環境位址、權杖引用)定義為變數組,在多條流水線間複用。secret 變數只儲存保險庫引用,絕不儲存明文。',

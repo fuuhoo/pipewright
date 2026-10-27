@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: 'Las plantillas te permiten capturar una definición de pipeline y aplicarla con un clic en el editor de pipeline de cualquier proyecto. Puedes guardar el pipeline actual como plantilla desde el editor de pipeline de un proyecto.',
   stageCount: '{n} etapas',
 
+  // ─── template detail(modal de detalles: renombrar/descripción + vista previa de solo lectura)──
+  detail: 'Detalles',
+  templateDetail: 'Detalles de la plantilla',
+  tplNamePlaceholder: 'p. ej. go-service-standard',
+  tplDescPlaceholder: 'Para qué sirve esta plantilla',
+  tplStagesTitle: 'Etapas y tareas',
+  tplLoadingDetail: 'Cargando etapas…',
+  tplNoStages: 'Esta plantilla aún no tiene etapas',
+  tplGateTag: 'Requiere aprobación',
+  tplNeedsTag: 'Depende de {n} etapas',
+  tplStagesEditHint: 'Edita el contenido de las etapas en el editor de pipeline y escríbelo de nuevo con «Guardar como plantilla → Sobrescribir existente».',
+  tplStagesViewOnlyHint: 'Vista previa de solo lectura; tu rol no tiene el permiso «Gestionar la biblioteca y el estudio de nodos» y no puede guardar.',
+  tplNameRequired: 'El nombre de la plantilla no puede estar vacío',
+  tplStagesMissing: 'Aún no se han cargado las etapas de la plantilla (el paso anterior puede haber fallado); guardar ahora sobrescribiría la plantilla con una definición vacía, así que se ha bloqueado.',
+  updatedTemplate: 'Plantilla «{name}» actualizada',
+  loadDetailFailed: 'Error al cargar los detalles de la plantilla',
+  loadDetailFailedStatus: 'Error al cargar los detalles de la plantilla ({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: 'Aún no hay grupos de variables',
   emptyGroupsHint: 'Define un conjunto de variables compartidas (como las mismas direcciones de entorno o referencias de tokens) como un grupo de variables y reutilízalo en varios pipelines. Las variables secretas solo almacenan una referencia al vault, nunca el texto plano.',

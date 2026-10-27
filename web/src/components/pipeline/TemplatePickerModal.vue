@@ -1,24 +1,28 @@
 <script setup lang="ts">
 /**
  * TemplatePickerModal — apply a reusable pipeline template to this project, or save the
- * current pipeline as a new template (FR-8-13).
+ * current pipeline as a template (FR-8-13).
  *
  * Two modes (segmented):
  *   - 应用模板:pick a template → applyTemplate() copies its stages into this project's pipeline.
- *   - 另存为模板:name + describe → createTemplate() snapshots the current canvas stages.
+ *   - 另存为模板:name + describe → snapshot the current canvas stages, then either create a new
+ *     template or overwrite an existing one (the 保存为 selector). PUT overwrites the whole
+ *     template — name included — so the canvas snapshot always travels with it.
  *
  * Templates carry no plaintext secret (credentials remain vault references in 2-4 settings).
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../../stores/session'
 import {
   listTemplates,
   applyTemplate,
   createTemplate,
+  updateTemplate,
   type TemplateSummary,
 } from '../../api/templates'
 import type { PipelineDTO, PipelineStage } from '../../api/pipeline'
+import { toTemplateStages } from '../../lib/templateStages'
 import { HttpError } from '../../api/http'
 
 const props = defineProps<{
@@ -90,6 +94,22 @@ const saveName = ref('')
 const saveDesc = ref('')
 const saving = ref(false)
 const saveDone = ref(false)
+/** '' = 新建模板;否则为要覆盖的模板 id。 */
+const overwriteId = ref('')
+
+// 覆盖是整份 PUT,名称也在内:选中目标就把它现在的名称/说明填进输入框,
+// 免得用户选了「覆盖 A」却因为输入框是空的(或上次新建留下的名字)把 A 改名成别的。
+watch(overwriteId, (id) => {
+  const tpl = templates.value.find((x) => x.id === id)
+  if (!tpl) return
+  saveName.value = tpl.name
+  saveDesc.value = tpl.description
+  saveDone.value = false
+})
+
+const overwriteTarget = computed(
+  () => templates.value.find((x) => x.id === overwriteId.value) ?? null,
+)
 
 async function doSave(): Promise<void> {
   const name = saveName.value.trim()
@@ -97,29 +117,23 @@ async function doSave(): Promise<void> {
     errorMsg.value = t('pipelinePanels.tplNameRequired')
     return
   }
+  if (overwriteId.value) {
+    if (
+      !window.confirm(t('pipelinePanels.tplConfirmOverwrite', { name: overwriteTarget.value?.name ?? name }))
+    ) {
+      return
+    }
+  }
   saving.value = true
   errorMsg.value = ''
   try {
-    await createTemplate({
+    const payload = {
       name,
       description: saveDesc.value.trim(),
-      stages: props.stages.map((s) => ({
-        id: undefined,
-        name: s.name,
-        kind: s.kind,
-        needs: s.needs,
-        allowFailure: s.allowFailure,
-        when: s.when,
-        gate: s.gate,
-        jobs: s.jobs.map((j) => ({
-          id: undefined,
-          name: j.name,
-          type: j.type,
-          summary: j.summary,
-          config: j.config,
-        })),
-      })),
-    })
+      stages: toTemplateStages(props.stages),
+    }
+    if (overwriteId.value) await updateTemplate(overwriteId.value, payload)
+    else await createTemplate(payload)
     saveDone.value = true
     // Refresh the apply list so the new template is pickable immediately.
     await loadTemplates()
@@ -208,7 +222,21 @@ onMounted(loadTemplates)
 
       <!-- Save as template -->
       <div v-else class="body">
-        <p v-if="saveDone" class="ok">{{ t('pipelinePanels.tplSavedOk') }}</p>
+        <p v-if="saveDone" class="ok">
+          {{ overwriteId ? t('pipelinePanels.tplOverwrittenOk') : t('pipelinePanels.tplSavedOk') }}
+        </p>
+        <div class="field">
+          <label class="label" for="tpl-target">{{ t('pipelinePanels.tplSaveTarget') }}</label>
+          <select id="tpl-target" v-model="overwriteId" class="input">
+            <option value="">{{ t('pipelinePanels.tplSaveAsNew') }}</option>
+            <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">
+              {{ t('pipelinePanels.tplSaveOverwrite', { name: tpl.name }) }}
+            </option>
+          </select>
+          <p v-if="overwriteId" class="hint">
+            {{ t('pipelinePanels.tplOverwriteTargetHint', { count: props.stages.length, name: overwriteTarget?.name ?? '' }) }}
+          </p>
+        </div>
         <div class="field">
           <label class="label" for="tpl-name">{{ t('pipelinePanels.tplName') }}</label>
           <input

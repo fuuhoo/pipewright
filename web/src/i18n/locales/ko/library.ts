@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: '템플릿을 사용하면 파이프라인 정의를 저장해 두고 모든 프로젝트의 파이프라인 편집기에서 한 번의 클릭으로 적용할 수 있습니다. 프로젝트 파이프라인 편집기에서 현재 파이프라인을 템플릿으로 저장할 수 있습니다.',
   stageCount: '{n}개 단계',
 
+  // ─── template detail ───────────────────────────────────────────
+  detail: '상세',
+  templateDetail: '템플릿 상세',
+  tplNamePlaceholder: '예: go-service-standard',
+  tplDescPlaceholder: '이 템플릿의 용도',
+  tplStagesTitle: '단계 및 작업',
+  tplLoadingDetail: '단계 불러오는 중…',
+  tplNoStages: '이 템플릿에는 아직 단계가 없습니다',
+  tplGateTag: '승인 필요',
+  tplNeedsTag: '{n}개 단계에 의존',
+  tplStagesEditHint: '단계 내용은 파이프라인 편집기에서 수정하고 “템플릿으로 저장 → 기존 덮어쓰기”로 다시 저장하세요.',
+  tplStagesViewOnlyHint: '읽기 전용 미리보기입니다. 현재 롤에 “재사용 라이브러리·노드 스튜디오 관리” 권한이 없어 저장할 수 없습니다.',
+  tplNameRequired: '템플릿 이름은 필수입니다',
+  tplStagesMissing: '템플릿 단계를 아직 불러오지 않았습니다(이전 불러오기가 실패했을 수 있습니다). 이때 저장하면 빈 정의로 덮어쓰게 되어 차단했습니다.',
+  updatedTemplate: '템플릿 “{name}” 업데이트 완료',
+  loadDetailFailed: '템플릿 상세를 불러오지 못했습니다',
+  loadDetailFailedStatus: '템플릿 상세를 불러오지 못했습니다({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: '아직 변수 그룹이 없습니다',
   emptyGroupsHint: '공유 변수 집합(예: 동일한 환경 주소, 토큰 참조)을 변수 그룹으로 정의하여 여러 파이프라인 간에 재사용하세요. secret 변수는 vault 참조만 저장하며 평문은 절대 저장하지 않습니다.',

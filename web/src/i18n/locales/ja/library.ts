@@ -30,6 +30,24 @@ export default {
   emptyTemplatesHint: 'テンプレートを使うとパイプライン定義を保存し、任意のプロジェクトのパイプラインエディタでワンクリックで適用できます。プロジェクトのパイプラインエディタで現在のパイプラインをテンプレートとして保存できます。',
   stageCount: '{n} ステージ',
 
+  // ─── template detail ───────────────────────────────────────────
+  detail: '詳細',
+  templateDetail: 'テンプレートの詳細',
+  tplNamePlaceholder: '例: go-service-standard',
+  tplDescPlaceholder: 'このテンプレートの用途',
+  tplStagesTitle: 'ステージとジョブ',
+  tplLoadingDetail: 'ステージを読み込み中…',
+  tplNoStages: 'このテンプレートにまだステージがありません',
+  tplGateTag: '承認が必要',
+  tplNeedsTag: '{n} 個のステージに依存',
+  tplStagesEditHint: 'ステージの内容はパイプラインエディタで編集し、「テンプレートとして保存 → 既存を上書き」で書き戻してください。',
+  tplStagesViewOnlyHint: '読み取り専用のプレビューです。あなたのロールには「再利用ライブラリとノードスタジオの管理」権限がないため、保存できません。',
+  tplNameRequired: 'テンプレート名は必須です',
+  tplStagesMissing: 'テンプレートのステージが読み込まれていません(前の読み込みに失敗した可能性があります)。このまま保存すると空の定義で上書きされるため、ブロックしました。',
+  updatedTemplate: 'テンプレート「{name}」を更新しました',
+  loadDetailFailed: 'テンプレートの詳細読み込みに失敗しました',
+  loadDetailFailedStatus: 'テンプレートの詳細読み込みに失敗しました({status})',
+
   // ─── variable groups ───────────────────────────────────────────
   emptyGroupsTitle: '変数グループがまだありません',
   emptyGroupsHint: '共有変数のセット(同じ環境アドレスやトークン参照など)を変数グループとして定義し、複数のパイプライン間で再利用できます。secret 変数は vault 参照のみを保存し、平文は決して保存しません。',
