@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSessionStore } from '../stores/session'
+import { planChunkReload } from '../lib/chunkReload'
 import { landingRouteName, type AccessRequires } from '../lib/roles'
 
 // Lazy-loaded views
@@ -324,6 +325,15 @@ export function setDocumentTitle(part?: string): void {
 router.afterEach((to) => {
   const title = to.meta.title
   setDocumentTitle(typeof title === 'string' ? title : undefined)
+})
+
+// ——— 旧标签页撞上服务端更新:分块没了就整页重取 ———
+// 每个视图都是 () => import(...),分块按内容哈希命名。实例一升级,升级前打开的标签页
+// 再切路由就会 404 掉旧分块,而 vue-router 只把这次导航静默中止 —— 表现是「点了没反应」
+// (退出登录后停在原页就是这么来的)。硬跳一次重新拿 index.html,就换到新入口了。
+router.onError((error, to) => {
+  const target = planChunkReload(error, to?.fullPath ?? '/', sessionStorage)
+  if (target) window.location.replace(target)
 })
 
 export default router
