@@ -43,7 +43,7 @@ const loadState = ref<'idle' | 'loading' | 'error'>('idle')
 const loadError = ref('')
 /** 后台刷新失败:旧数据继续留在屏上,只在标题下补一行说明。 */
 const staleError = ref('')
-/** 上一轮**全部**采完的本地时刻(「更新于 HH:MM:SS」)。 */
+/** 上一轮取到缓存的本地时刻(「更新于 HH:MM:SS」)。采集时刻在各卡「采集于 …」。 */
 const updatedAt = ref('')
 /** 逐台上屏:一台一张卡,按 serverId 就地替换(所以刷新既不增卡也不闪)。 */
 const metrics = ref<ServerMetrics[]>([])
@@ -57,6 +57,11 @@ const inFlight = ref(false)
 const manualRound = ref(false)
 /** 刷新按钮的转圈态:首屏(骨架)或用户手点的那一轮在飞。 */
 const refreshing = computed(() => loadState.value === 'loading' || (inFlight.value && manualRound.value))
+
+/** 从未采到过、后台还在采:这是「占位」,不是「不可达」——不灰显、不报错。 */
+function isPlaceholder(m: ServerMetrics): boolean {
+  return m.collecting && !m.collectedAt && !m.reachable && !m.error
+}
 
 // ─── 分组筛选(数据轴)─────────────────────────────────────────────────────────
 // 服务器自己带 groupId(登记时定的),组名来自 GET /api/groups(后端已按可见范围收敛)。
@@ -122,13 +127,17 @@ function closeRemote(): void {
   remoteId.value = null
 }
 
-// 可达的排前面,不可达的沉底(两组内部都保持上屏顺序 = 登记时间倒序)。
+// 可达的排前面,不可达的沉底,还在采的占位卡排最后(两组内部都保持上屏顺序 = 登记时间倒序)。
 // 只排当前筛选档的那些台:排序与筛选都收在这一份上,卡片和列表看到的是同一个序列。
 const sortedMetrics = computed(() => {
   const up: ServerMetrics[] = []
   const down: ServerMetrics[] = []
-  for (const m of shownMetrics.value) (m.reachable ? up : down).push(m)
-  return up.length && down.length ? [...up, ...down] : shownMetrics.value
+  const pending: ServerMetrics[] = []
+  for (const m of shownMetrics.value) {
+    if (isPlaceholder(m)) pending.push(m)
+    else (m.reachable ? up : down).push(m)
+  }
+  return [...up, ...down, ...pending]
 })
 
 function displayName(m: ServerMetrics): string {
@@ -253,6 +262,8 @@ async function load(manual = false): Promise<void> {
   } finally {
     inFlight.value = false
     manualRound.value = false
+    // 还有占位卡(后端首轮还没采到)就短暂加密读缓存,不必干等满一分钟。
+    schedulePlaceholderRetry()
   }
 }
 
@@ -277,10 +288,31 @@ async function loadGroups(): Promise<void> {
   }
 }
 // ─── 自动刷新 ────────────────────────────────────────────────────────────────
-// 指标实时、不落库,这里定时轮询:旧数据留屏、后台静默重取,成功就地替换,失败也不动画面。
-// 标签页隐藏时暂停(省 SSH;终端常在新标签开,这页可能被晾在后台),回到前台立即补一次。
-const REFRESH_INTERVAL_MS = 12_000
+// 采集节奏由后端定(默认 60s 一轮),前端只按同一节奏读缓存 —— 开几个页面都不会多采一次。
+// 旧数据留屏、后台静默重取,成功就地替换,失败也不动画面。
+// 标签页隐藏时暂停(省请求;终端常在新标签开,这页可能被晾在后台),回到前台立即补一次。
+const REFRESH_INTERVAL_MS = 60_000
+const REFRESH_SECONDS = REFRESH_INTERVAL_MS / 1000
+// 刚进页时后端那一轮可能还没采到:占位卡在屏上时短暂加密轮询(只读缓存,不触发采集),
+// 数据一到位就回落到 60s。
+const PLACEHOLDER_RETRY_MS = 5_000
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+function schedulePlaceholderRetry(): void {
+  if (retryTimer !== null || !metrics.value.some(isPlaceholder)) return
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (!inFlight.value) void load()
+  }, PLACEHOLDER_RETRY_MS)
+}
+
+function clearRetry(): void {
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+}
 
 function startPolling(): void {
   if (pollTimer !== null) return
@@ -294,6 +326,7 @@ function stopPolling(): void {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  clearRetry()
 }
 
 function onVisibilityChange(): void {
@@ -327,7 +360,7 @@ onUnmounted(() => {
           <span v-if="totalCount > 0" class="view-sub__count">
             · {{ t('serverStatus.reachableSummary', { reachable: reachableCount, total: totalCount }) }}
           </span>
-          <span class="view-sub__count">· {{ t('serverStatus.autoRefresh', { n: 12 }) }}</span>
+          <span class="view-sub__count">· {{ t('serverStatus.autoRefresh', { n: REFRESH_SECONDS }) }}</span>
           <span v-if="updatedAt" class="view-sub__count">· {{ t('serverStatus.updatedAt', { time: updatedAt }) }}</span>
         </p>
         <p v-if="staleError" class="view-sub__stale">{{ t('serverStatus.staleError', { msg: staleError }) }}</p>
@@ -430,15 +463,41 @@ onUnmounted(() => {
       @remote="openRemote"
     />
     <div v-else class="metrics-grid">
-      <ServerMetricsCard
-        v-for="m in sortedMetrics"
-        :key="m.serverId"
-        :name="displayName(m)"
-        :group-label="groupTagOf(m.serverId)"
-        :metrics="m"
-        :can-remote="canRemote"
-        @remote="openRemote"
-      />
+      <template v-for="m in sortedMetrics" :key="m.serverId">
+        <!-- 占位卡:后台还没采到这台(首轮/新登记),不是「不可达」—— 不灰显、不报错 -->
+        <article
+          v-if="isPlaceholder(m)"
+          class="metrics-card metrics-card--placeholder"
+          role="status"
+          aria-busy="true"
+          :aria-label="t('opsServer.metrics.cardAria', { name: displayName(m) })"
+        >
+          <header class="metrics-card__head">
+            <div class="metrics-card__ident">
+              <h3 class="metrics-card__name" :title="displayName(m)">{{ displayName(m) }}</h3>
+              <span v-if="groupTagOf(m.serverId)" class="metrics-card__group">{{ groupTagOf(m.serverId) }}</span>
+            </div>
+            <span class="reach-badge reach-badge--pending">
+              <span class="reach-badge__dot" aria-hidden="true" />
+              {{ t('opsServer.metrics.collecting') }}
+            </span>
+          </header>
+          <div class="placeholder-body">
+            <SkeletonBlock :height="16" width="70%" />
+            <SkeletonBlock :height="12" width="90%" />
+            <SkeletonBlock :height="12" width="55%" />
+          </div>
+          <p class="placeholder-hint">{{ t('opsServer.metrics.collectingHint') }}</p>
+        </article>
+        <ServerMetricsCard
+          v-else
+          :name="displayName(m)"
+          :group-label="groupTagOf(m.serverId)"
+          :metrics="m"
+          :can-remote="canRemote"
+          @remote="openRemote"
+        />
+      </template>
     </div>
 
     <!-- 远程:上半屏终端、下半屏文件面板(挂载即连,卸载即断 —— 不给后台留一条 PTY) -->
@@ -571,6 +630,83 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+}
+
+/* 占位卡:与真卡同尺寸,数据一到就原地换成内容(网格不跳)。 */
+.metrics-card--placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 18px 14px;
+  border: 1px dashed var(--color-line);
+  border-radius: var(--rounded-lg);
+  background: var(--color-surface);
+}
+.metrics-card--placeholder .metrics-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.metrics-card--placeholder .metrics-card__ident {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.metrics-card--placeholder .metrics-card__name {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-body);
+  font-weight: 650;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.metrics-card--placeholder .metrics-card__group {
+  flex-shrink: 0;
+  max-width: 12em;
+  padding: 1px 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-inset);
+  color: var(--color-dim);
+  font-size: var(--text-label);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reach-badge--pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px 9px 3px 8px;
+  border-radius: var(--rounded-md);
+  color: var(--color-dim);
+  background: var(--color-inset);
+  font-size: var(--text-label);
+  font-weight: 600;
+  line-height: 1;
+}
+.reach-badge--pending .reach-badge__dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: var(--rounded-full);
+  background: var(--color-dim);
+}
+.placeholder-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.placeholder-hint {
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--color-faint);
 }
 
 .skeleton-card {

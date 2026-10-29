@@ -52,6 +52,10 @@ function metric(id: string, over: Partial<ServerMetrics> = {}): ServerMetrics {
     disk: null,
     system: null,
     collectedAt: '2026-09-28T09:00:00Z',
+    lastAttemptAt: '2026-09-28T09:00:00Z',
+    lastError: '',
+    stale: false,
+    collecting: false,
     ...over,
   }
 }
@@ -111,6 +115,46 @@ describe('ServerStatus — 逐台出卡', () => {
     // 分母 = 登记台数,死机上一台也不会把可达数凑成 2/2。
     expect(wrapper.text()).toContain('1/2 可达')
     expect(wrapper.text()).toContain('更新于')
+  })
+
+  it('后台还没采到的台画占位卡:排在最后,不冒充不可达', async () => {
+    listServersMock.mockResolvedValue([server('a', 'local-A'), server('b', 'local-B'), server('c', 'local-C')])
+    emitAll(
+      metric('a'),
+      metric('b', { reachable: false, error: '无法连接服务器' }),
+      metric('c', { reachable: false, error: '', collectedAt: '', collecting: true }),
+    )
+    const wrapper = mountStatus()
+    await flushPromises()
+
+    const names = wrapper.findAll('.metrics-card__name').map((n) => n.text())
+    expect(names).toEqual(['local-A', 'local-B', 'local-C'])
+    const placeholder = wrapper.findAll('.metrics-card--placeholder')
+    expect(placeholder).toHaveLength(1)
+    expect(placeholder[0].text()).toContain('采集中')
+    expect(placeholder[0].find('.reach-badge--pending').exists()).toBe(true)
+    // 占位不是故障:不套不可达的灰显样式。
+    expect(wrapper.find('.metrics-card--unreachable').exists()).toBe(true) // 那是 local-B
+    expect(placeholder[0].classes()).not.toContain('metrics-card--unreachable')
+  })
+
+  it('后一次采集失败:保留上次数据并标注失败,采集时刻仍是旧数据的', async () => {
+    emitAll(
+      metric('a', {
+        stale: true,
+        lastError: '无法连接服务器:端口未开放、主机不可达或超时',
+        lastAttemptAt: '2026-09-28T09:05:00Z',
+      }),
+    )
+    const wrapper = mountStatus()
+    await flushPromises()
+
+    const card = wrapper.get('.metrics-card')
+    expect(card.classes()).not.toContain('metrics-card--unreachable')
+    expect(card.text()).toContain('采集于')
+    const stale = card.get('.metrics-card__stale')
+    expect(stale.text()).toContain('最近一次采集失败')
+    expect(stale.text()).toContain('端口未开放')
   })
 
   it('下一轮就地替换同名卡:不增卡', async () => {

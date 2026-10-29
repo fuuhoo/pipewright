@@ -62,6 +62,11 @@ interface RowView {
   diskPath: string
   diskLine: string
   clock: string
+  /** 后台还没采到这台(占位),不是不可达。 */
+  placeholder: boolean
+  /** 最近一次采集失败、当前是旧数据。 */
+  stale: boolean
+  staleMsg: string
 }
 
 /** 一次算完一行要的所有展示值:模板里反复调 memoryView 只会让同一格算出两种口径的机会变多。 */
@@ -101,11 +106,15 @@ const views = computed<RowView[]>(() =>
       diskPath: disk?.path ?? '/',
       diskLine: disk ? `${humanBytes(disk.usedBytes)} / ${humanBytes(disk.totalBytes)}` : '',
       clock: collectedClock(m.collectedAt),
+      placeholder: m.collecting && !m.collectedAt && !m.reachable && !m.error,
+      stale: m.stale,
+      staleMsg: m.lastError,
     }
   }),
 )
 
 const na = computed(() => t('opsServer.metrics.unavailable'))
+const pendingText = computed(() => t('opsServer.metrics.collecting'))
 </script>
 
 <template>
@@ -128,15 +137,16 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
         <tr
           v-for="r in views"
           :key="r.metrics.serverId"
-          :class="{ 'metrics-table__row--down': !r.metrics.reachable }"
+          :class="{ 'metrics-table__row--down': !r.metrics.reachable && !r.placeholder }"
         >
           <td class="col-server">
             <span class="st-name" :title="r.name">{{ r.name }}</span>
             <!-- 分组跟着名字走,不另开一列:列表已经有八列,再加一列每列都更挤 -->
             <span v-if="r.group" class="st-group" :title="r.group">{{ r.group }}</span>
-            <span v-if="!r.metrics.reachable" class="st-name__err" role="alert">
+            <span v-if="!r.metrics.reachable && !r.placeholder" class="st-name__err" role="alert">
               {{ r.metrics.error || t('opsServer.metrics.collectFailed') }}
             </span>
+            <span v-else-if="r.placeholder" class="st-pending">{{ pendingText }}</span>
           </td>
           <td class="col-addr">
             <span class="st-addr" :title="r.addr">{{ r.addr }}</span>
@@ -144,10 +154,24 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
           <td class="col-status">
             <span
               class="reach-dot"
-              :class="r.metrics.reachable ? 'reach-dot--ok' : 'reach-dot--down'"
-              :title="r.metrics.reachable ? t('opsServer.metrics.reachable') : t('opsServer.metrics.unreachable')"
+              :class="
+                r.placeholder ? 'reach-dot--pending' : r.metrics.reachable ? 'reach-dot--ok' : 'reach-dot--down'
+              "
+              :title="
+                r.placeholder
+                  ? pendingText
+                  : r.metrics.reachable
+                    ? t('opsServer.metrics.reachable')
+                    : t('opsServer.metrics.unreachable')
+              "
             >
-              {{ r.metrics.reachable ? t('opsServer.metrics.reachable') : t('opsServer.metrics.unreachable') }}
+              {{
+                r.placeholder
+                  ? pendingText
+                  : r.metrics.reachable
+                    ? t('opsServer.metrics.reachable')
+                    : t('opsServer.metrics.unreachable')
+              }}
             </span>
           </td>
 
@@ -159,7 +183,7 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
             <span v-else class="st-na">{{ na }}</span>
           </td>
           <td v-else class="col-num">
-            <span class="st-na">{{ na }}</span>
+            <span class="st-na">{{ r.placeholder ? '—' : na }}</span>
           </td>
 
           <td v-if="r.metrics.reachable" class="col-usage">
@@ -167,7 +191,7 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
                  第一行 = 真 CPU 时间使用率(后端跨两轮 /proc/stat 求差);
                  第二行 = 负载 ÷ 核数(排队压力,可以超 100%)。
                  首轮还没有上一轮 / 该机没有 /proc/stat(macOS)→ 进度条整行不画,
-                 12s 后自己会长出来,而不是把「还没测到」画成 0%。 -->
+                 下一轮(默认 60s)自己会长出来,而不是把「还没测到」画成 0%。 -->
             <template v-if="r.cpuUsage !== null">
               <ProgressBar
                 :value="r.cpuUsage"
@@ -192,7 +216,7 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
             </span>
           </td>
           <td v-else class="col-usage">
-            <span class="st-na">{{ na }}</span>
+            <span class="st-na">{{ r.placeholder ? '—' : na }}</span>
           </td>
 
           <td v-if="r.metrics.reachable" class="col-usage">
@@ -215,7 +239,7 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
             <span v-else class="st-na">{{ na }}</span>
           </td>
           <td v-else class="col-usage">
-            <span class="st-na">{{ na }}</span>
+            <span class="st-na">{{ r.placeholder ? '—' : na }}</span>
           </td>
 
           <td v-if="r.metrics.reachable" class="col-usage">
@@ -233,11 +257,12 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
             <span v-else class="st-na">{{ na }}</span>
           </td>
           <td v-else class="col-usage">
-            <span class="st-na">{{ na }}</span>
+            <span class="st-na">{{ r.placeholder ? '—' : na }}</span>
           </td>
 
           <td class="col-clock">
             <span v-if="r.metrics.reachable" class="st-clock">{{ r.clock }}</span>
+            <span v-if="r.stale" class="st-stale" :title="r.staleMsg">{{ t('opsServer.metrics.staleShort') }}</span>
           </td>
           <td class="col-ops">
             <!-- 只有可达的机器、且角色持有 server.exec 才给「远程」:不可达点了只是再拿到一条连不上的错误。 -->
@@ -335,6 +360,14 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
   color: var(--color-red);
   line-height: 1.4;
 }
+/* 占位(后台还没采到):说明状态,不用红色 —— 这不是错误。 */
+.st-pending {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-faint);
+  font-style: italic;
+  line-height: 1.4;
+}
 /* 所属分组:名称下面一行小字,和地址列一样是「这台是谁」的补充,不是指标 */
 .st-group {
   display: block;
@@ -381,6 +414,10 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
 .reach-dot--down {
   color: var(--color-red);
   background: var(--color-red-soft);
+}
+.reach-dot--pending {
+  color: var(--color-dim);
+  background: var(--color-inset);
 }
 
 /* ——— 系统 / 数值 / 用量 ——— */
@@ -453,6 +490,13 @@ const na = computed(() => t('opsServer.metrics.unavailable'))
 .st-clock {
   color: var(--color-faint);
   font-variant-numeric: tabular-nums;
+}
+/* 采集失败标注:采集时刻这一格是「数据多旧」最直接的提示位。 */
+.st-stale {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-amber);
+  white-space: normal;
 }
 
 .st-remote {

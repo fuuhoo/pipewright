@@ -216,9 +216,13 @@ export function subscribeServerLogs(
 // ─── Server-layer metrics (Story 6-1, FR-15) ─────────────────────────────────
 //
 // GET /api/servers/:id/metrics  → ServerMetrics      (single host; read-only)
-// GET /api/servers/metrics      → { items: ServerMetrics[] }  (batch; parallel)
-// GET /api/servers/metrics?stream=1 → NDJSON, one ServerMetrics per line as each
-//                                     host finishes (see streamAllServerMetrics)
+// GET /api/servers/metrics      → { items: ServerMetrics[]; collecting }  (batch)
+// GET /api/servers/metrics?stream=1 → NDJSON, one ServerMetrics per line
+//                                     (see streamAllServerMetrics)
+//
+// 采集由后端统一驱动(默认 60s 一轮),端点只读后端快照 —— 同时打开几个页面也只采一次。
+// 某台后一次采集失败时,它的 DTO 仍是上一次成功的数据(reachable:true),另带
+// `stale:true` + `lastError` + `lastAttemptAt`;从未采到过的台 `collecting:true`(占位卡)。
 //
 // Metrics are collected over SSH by running a FIXED read-only command whitelist
 // (`cat /proc/loadavg`/`uptime`, `nproc`/`getconf`, `free -b`/`vm_stat`, `df -B1 /`/`df -k /`,
@@ -302,8 +306,16 @@ export interface ServerMetrics {
   disk: DiskMetric | null
   /** 该机自报的系统标识;不可达时为 null。字段逐条 best-effort(见 SystemMetric)。 */
   system: SystemMetric | null
-  /** RFC3339 collection timestamp. */
+  /** RFC3339 collection timestamp(最近一次**成功**采集;stale 时它仍是旧数据的时刻)。 */
   collectedAt: string
+  /** 后台最近一次尝试采集的时刻(成败都记);"" = 还没尝试过。 */
+  lastAttemptAt: string
+  /** 最近一次采集失败的原因;"" = 最近一次成功。 */
+  lastError: string
+  /** true = 最近一次采集失败,屏上仍是上一次成功的数据。 */
+  stale: boolean
+  /** true = 后台这一轮还没给出这台的结果(含从未采到过),界面画占位卡。 */
+  collecting: boolean
 }
 
 /** Fetch resource metrics for a single registered server (one-shot, read-only). */

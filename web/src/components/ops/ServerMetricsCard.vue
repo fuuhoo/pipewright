@@ -131,7 +131,7 @@ const cpuUsage = computed(() => cpuUsagePercent(props.metrics.cpu))
 
       <!-- CPU 时间使用率:后端拿 /proc/stat 两次采样求差算出的真占用。
            首轮(还没有上一轮)或该机没有 /proc/stat(macOS/BSD)→ 整行不画,
-           而不是留一行「不可用」:12s 后自己会出来,而非 Linux 永远不会有。 -->
+           而不是留一行「不可用」:下一轮(默认 60s)后自己会出来,而非 Linux 永远不会有。 -->
       <div v-if="cpuUsage !== null" class="metric-row">
         <dt class="metric-row__label">{{ t('opsServer.metrics.cpuUsage') }}</dt>
         <dd class="metric-row__value">
@@ -214,7 +214,7 @@ const cpuUsage = computed(() => cpuUsagePercent(props.metrics.cpu))
     </dl>
 
     <footer v-if="metrics.reachable" class="metrics-card__foot">
-      <span class="metrics-card__collected">
+      <span class="metrics-card__collected" :class="{ 'metrics-card__collected--stale': metrics.stale }">
         {{ t('opsServer.metrics.collectedAt', { time: collectedClock(metrics.collectedAt) }) }}
       </span>
       <!-- 只有可达 + 角色持有 server.exec 才给按钮:点一个注定 403 的入口不如什么都不画。 -->
@@ -222,6 +222,11 @@ const cpuUsage = computed(() => cpuUsagePercent(props.metrics.cpu))
         {{ t('remoteWorkspace.button') }}
       </button>
     </footer>
+
+    <!-- 最近一次采集失败:数据仍是上一次成功的,但必须把失败说清楚,别让人当实时值看。 -->
+    <p v-if="metrics.stale" class="metrics-card__stale" role="status">
+      {{ t('opsServer.metrics.staleNote', { time: collectedClock(metrics.lastAttemptAt), msg: metrics.lastError }) }}
+    </p>
   </article>
 </template>
 
@@ -414,6 +419,17 @@ const cpuUsage = computed(() => cpuUsagePercent(props.metrics.cpu))
   font-size: var(--text-label);
   color: var(--color-faint);
   font-variant-numeric: tabular-nums;
+}
+/* 采集失败后,采集时刻本身也要显眼 —— 这行数字已经不代表「现在」。 */
+.metrics-card__collected--stale {
+  color: var(--color-amber);
+}
+.metrics-card__stale {
+  margin: 0;
+  font-size: var(--text-label);
+  line-height: 1.5;
+  color: var(--color-amber);
+  word-break: break-word;
 }
 
 /* 「远程」开弹窗(终端 + 文件面板)。与采集时间同一行:卡片主体留给指标,入口不占高度。 */
