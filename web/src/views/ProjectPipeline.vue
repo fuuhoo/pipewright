@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * ProjectPipeline — 4-tab pipeline configuration editor.
- * Tabs: 流水线编排 / 变量与缓存 / 触发设置 / 环境与凭据
- * URL state: ?tab=canvas|vars|triggers|envs  (shareable)
+ * ProjectPipeline — 3-tab pipeline configuration editor.
+ * Tabs: 流水线编排 / 变量与缓存 / 触发设置
+ * URL state: ?tab=canvas|vars|triggers  (shareable)
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -27,7 +27,6 @@ import PipelineCanvas from '../components/pipeline/PipelineCanvas.vue'
 import { canonicalJobType } from '../components/pipeline/jobConfigSchema'
 import VarsCacheTab from '../components/pipeline/VarsCacheTab.vue'
 import ProjectCacheCard from '../components/pipeline/ProjectCacheCard.vue'
-import EnvCredsTab from '../components/pipeline/EnvCredsTab.vue'
 import TriggersPanel from '../components/TriggersPanel.vue'
 import ValidationPanel from '../components/pipeline/ValidationPanel.vue'
 import AIGenerateWizard from '../components/pipeline/AIGenerateWizard.vue'
@@ -49,18 +48,17 @@ const projectId = computed(() => route.params.id as string)
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-type TabKey = 'canvas' | 'vars' | 'triggers' | 'envs'
+type TabKey = 'canvas' | 'vars' | 'triggers'
 
 const TABS = computed<Array<{ key: TabKey; label: string }>>(() => [
   { key: 'canvas',   label: t('projectPipeline.tabCanvas') },
   { key: 'vars',     label: t('projectPipeline.tabVars') },
   { key: 'triggers', label: t('projectPipeline.tabTriggers') },
-  { key: 'envs',     label: t('projectPipeline.tabEnvs') },
 ])
 
 const activeTab = computed<TabKey>(() => {
   const q = route.query.tab
-  if (q === 'canvas' || q === 'vars' || q === 'triggers' || q === 'envs') return q
+  if (q === 'canvas' || q === 'vars' || q === 'triggers') return q
   return 'canvas'
 })
 
@@ -145,17 +143,13 @@ async function loadSettings(): Promise<void> {
     clusters.value = kcs
     channels.value = chs
   } catch {
-    // Settings load failure is non-fatal for the canvas; the vars/envs tabs show
-    // their own empty state until a successful save. Surfaced on save attempts.
+    // Settings load failure is non-fatal for the canvas; the vars tab shows
+    // its own empty state until a successful save. Surfaced on save attempts.
   }
 }
 
 function handleBuildUpdate(build: BuildConfig): void {
   editBuild.value = build
-}
-
-function handleEnvsUpdate(envs: Environment[]): void {
-  editEnvs.value = envs
 }
 
 watch(projectId, () => { void loadProject(); void loadPipeline(); void loadSettings() })
@@ -243,8 +237,8 @@ async function handleSave(): Promise<void> {
   saveSuccess.value    = false
 
   try {
-    // The vars/envs tabs persist build/deploy settings; canvas/triggers persist the spec.
-    if (activeTab.value === 'vars' || activeTab.value === 'envs') {
+    // The vars tab persists build/deploy settings; canvas/triggers persist the spec.
+    if (activeTab.value === 'vars') {
       const payload = buildSettingsPayload()
       if (payload) {
         const dto = await saveSettings(projectId.value, payload)
@@ -376,7 +370,8 @@ function handleValidationClose(): void {
 
 /** Emitted by ValidationPanel when user clicks an issue row. */
 function handleLocate(scope: IssueScope): void {
-  setTab(scope as TabKey)
+  // 环境与凭据 tab 已隐藏:envs 作用域的校验项没有可跳转的目的地。
+  if (scope === 'canvas' || scope === 'vars' || scope === 'triggers') setTab(scope)
 }
 
 // Re-fetch after tab switch (debounced, only when panel is open).
@@ -755,22 +750,6 @@ function onRunTriggered(runId: string): void {
             <!-- R4 / E4.1: 每项目 PR 预览环境配置 -->
             <ProjectPreviewConfig :project-id="projectId" />
           </div>
-        </div>
-
-        <!-- 环境与凭据 -->
-        <div
-          v-show="activeTab === 'envs'"
-          id="tabpanel-envs"
-          class="tab-panel"
-          role="tabpanel"
-          aria-labelledby="tab-envs"
-        >
-          <EnvCredsTab
-            :environments="editEnvs"
-            :credentials="credentials"
-            :disabled="saveSubmitting"
-            @update="handleEnvsUpdate"
-          />
         </div>
 
       </div><!-- /tab-panels -->

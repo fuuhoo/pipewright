@@ -16,7 +16,6 @@ import {
   Bell,
   Settings,
   Stack2,
-  Rocket,
   Browser,
   ChevronRight,
   Logout,
@@ -82,8 +81,6 @@ const navItems: NavItem[] = [
   { name: 'runs',          to: '/runs',          icon: GitFork,    labelKey: 'nav.runs',          ariaKey: 'nav.runs', requires: { perm: 'run.view' } },
   // FR-8-13: 复用库(流水线模板 + 变量组)。
   { name: 'library',       to: '/library',       icon: Stack2,     labelKey: 'nav.library',       ariaKey: 'nav.library', requires: { perm: 'library.view' } },
-  // 环境一等公民:按环境聚合的部署历史 + 一键回滚(对标 GitLab environments)。
-  { name: 'environments',  to: '/environments',  icon: Rocket,     labelKey: 'nav.environments',  ariaKey: 'nav.ariaEnvironments', requires: { perm: 'environments.view' } },
   // FR-8-15: DORA 四指标仪表盘(交付效能;只读聚合)。
   { name: 'dora',          to: '/metrics/dora',  icon: ChartBar,   labelKey: 'nav.dora',          ariaKey: 'nav.dora', requires: { perm: 'metrics.dora.view' } },
   // Story 6-1: 多机状态总览(服务器层指标 FR-15);登记在 设置 → 服务器。
