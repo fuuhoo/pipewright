@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
@@ -108,8 +109,9 @@ func buildValidationInput(
 	v vault.Vault,
 ) pipeline.ValidationInput {
 	in := pipeline.ValidationInput{
-		Stages: cfg.Spec.Stages,
-		Build:  st.Build,
+		Stages:         cfg.Spec.Stages,
+		Build:          st.Build,
+		ProjectHasRepo: strings.TrimSpace(proj.RepoURL) != "",
 	}
 
 	// 构建变量 secret 引用存在性。

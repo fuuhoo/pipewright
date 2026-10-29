@@ -32,6 +32,7 @@ func validBase() ValidationInput {
 			{BranchPattern: "main", Environment: "生产"},
 		},
 		Events:              ValidationEvents{Push: true},
+		ProjectHasRepo:      true,
 		ProjectCredentialOK: true,
 	}
 }

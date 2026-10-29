@@ -209,8 +209,12 @@ func (s *templateService) Apply(ctx context.Context, templateID, projectID strin
 }
 
 // validate 校验名称非空 + 经 pipeline.NormalizeSpec 规范化 spec(补 id、trim、kind 枚举、
-// 恰一个源阶段、needs DAG),返回 trim 后名称 + 落库用的 stages JSON。Create/Update 共用,
+// needs DAG)+ 模板必须带源阶段,返回 trim 后名称 + 落库用的 stages JSON。Create/Update 共用,
 // 保证「新建能过、改坏也过不了」是同一把尺。
+//
+// 源阶段是模板与项目流水线唯一的差别:项目可以不绑仓库(纯发布),模板却是要套到任意项目上的
+// 骨架,套给绑了仓库的项目时 pipeline.Save 要求恰有一个源阶段 —— 模板自己先不带,应用时才报错
+// 就晚了。
 func (s *templateService) validate(in TemplateInput) (string, string, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
@@ -219,6 +223,16 @@ func (s *templateService) validate(in TemplateInput) (string, string, error) {
 	normalized, err := pipeline.NormalizeSpec(in.Spec)
 	if err != nil {
 		return "", "", fmt.Errorf("%w: %s", ErrInvalidTemplate, err.Error())
+	}
+	hasSource := false
+	for _, st := range normalized.Stages {
+		if st.Kind == pipeline.KindSource {
+			hasSource = true
+			break
+		}
+	}
+	if !hasSource {
+		return "", "", fmt.Errorf("%w: %w", ErrInvalidTemplate, pipeline.ErrSourceStageRequired)
 	}
 	stagesJSON, err := json.Marshal(normalized.Stages)
 	if err != nil {

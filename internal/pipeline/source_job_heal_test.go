@@ -2,9 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // 「流水线源」那张卡片的可自愈性:源阶段是画布上唯一没有「+ 加任务」入口的列
@@ -120,6 +124,82 @@ func TestGet_HealsStoredSpecWithoutSourceJob(t *testing.T) {
 	}
 	if got := countSourceJobs(cfg.Spec); got != 1 {
 		t.Fatalf("Get 后 git_source 卡片数 = %d, want 1", got)
+	}
+}
+
+// seedUnboundProject 建一个「只发布、未绑定仓库」的项目。
+func seedUnboundProject(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := uuid.NewString()
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, name, repo_url, default_branch, created_at, updated_at)
+		 VALUES (?, 'release-only', '', '', ?, ?)`, id, now, now,
+	); err != nil {
+		t.Fatalf("seed unbound project: %v", err)
+	}
+	return id
+}
+
+// 未绑定仓库的项目:默认种子就是一个空部署阶段,画布上没有「Git 源」。
+func TestUnboundProject_DefaultHasNoSourceStage(t *testing.T) {
+	db := testDB(t)
+	svc := New(db)
+	projID := seedUnboundProject(t, db)
+
+	cfg, err := svc.Get(context.Background(), projID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := countSourceStages(&cfg.Spec); got != 0 {
+		t.Fatalf("纯发布项目不应有源阶段, got %d", got)
+	}
+	if len(cfg.Spec.Stages) != 1 || cfg.Spec.Stages[0].Kind != KindDeploy {
+		t.Fatalf("默认种子应为单个部署阶段, got %+v", cfg.Spec.Stages)
+	}
+	if len(cfg.Spec.Stages[0].Jobs) != 0 {
+		t.Fatalf("部署阶段应为空任务, got %d", len(cfg.Spec.Stages[0].Jobs))
+	}
+}
+
+// 存量/导入带进来的源阶段:未绑定仓库的项目在保存时会被摘掉,悬空 needs 一并清理。
+func TestUnboundProject_SaveStripsSourceStage(t *testing.T) {
+	db := testDB(t)
+	svc := New(db)
+	projID := seedUnboundProject(t, db)
+
+	cfg, err := svc.Save(context.Background(), projID, sourceStageWith(
+		Job{ID: "job_s", Name: "Git 源", Type: "git_source", Config: map[string]any{}},
+	))
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := countSourceStages(&cfg.Spec); got != 0 {
+		t.Fatalf("保存后源阶段数 = %d, want 0", got)
+	}
+	for _, st := range cfg.Spec.Stages {
+		for _, n := range st.Needs {
+			if n == "st_src" {
+				t.Fatalf("阶段 %q 仍引用已摘掉的源阶段", st.Name)
+			}
+		}
+	}
+}
+
+// 未绑定仓库的项目不该因为「缺源阶段 / 缺仓库凭据」被判不就绪。
+func TestValidateReleaseOnlyProjectIsReady(t *testing.T) {
+	in := validBase()
+	in.ProjectHasRepo = false
+	in.ProjectCredentialOK = false
+	in.Stages = []Stage{{ID: "s3", Name: "部署", Kind: KindDeploy, Jobs: []Job{
+		{ID: "j3", Name: "上线", Type: "script", Config: map[string]any{"commands": "echo hi"}},
+	}}}
+	issues := Validate(in)
+	if _, ok := hasCode(issues, "source_stage_missing"); ok {
+		t.Fatalf("纯发布项目不应报 source_stage_missing: %+v", issues)
+	}
+	if _, ok := hasCode(issues, "project_credential_missing"); ok {
+		t.Fatalf("纯发布项目不应报 project_credential_missing: %+v", issues)
 	}
 }
 

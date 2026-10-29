@@ -182,13 +182,26 @@ func New(db *sql.DB, opts ...ServiceOption) Service {
 func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 	cfg, err := s.load(ctx, projectID)
 	if err == nil {
-		// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
-		// 放回去,用户不必先保存一次才看得到。
-		restoreSourceJob(&cfg.Spec)
-		// 旧版本把源卡片种成了「Gitee 源」,而平台并不知道用户用的是哪家 git 平台:读到就收敛成中性名。
-		healLegacySourceJobNames(&cfg.Spec)
-		// 源节点的仓库/分支/凭据 + 摘要:一律回写成项目配置的镜像(画布上只读展示)。
-		s.syncSourceMirror(ctx, projectID, &cfg.Spec)
+		bound, berr := s.projectHasRepo(ctx, projectID)
+		if berr != nil {
+			return nil, berr
+		}
+		if bound {
+			// 存量自愈:纯发布阶段跑过、之后又绑上仓库的项目,画布上没有「+添加源阶段」的入口,
+			// 源阶段只能在读取时补回来,否则这张图永远缺源头且校验一直报 source_stage_missing。
+			restoreSourceStage(&cfg.Spec)
+			// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
+			// 放回去,用户不必先保存一次才看得到。
+			restoreSourceJob(&cfg.Spec)
+			// 旧版本把源卡片种成了「Gitee 源」,而平台并不知道用户用的是哪家 git 平台:读到就收敛成中性名。
+			healLegacySourceJobNames(&cfg.Spec)
+			// 源节点的仓库/分支/凭据 + 摘要:一律回写成项目配置的镜像(画布上只读展示)。
+			s.syncSourceMirror(ctx, projectID, &cfg.Spec)
+		} else {
+			// 只发布项目(未绑定仓库)没有源可拉:旧版本种下的源阶段在这里摘掉,
+			// 画布从部署开始,而不是先摆一张永远拉不到东西的「Git 源」。
+			stripSourceStages(&cfg.Spec)
+		}
 		return cfg, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -196,6 +209,31 @@ func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 	}
 	// 首次访问无配置:惰性生成默认种子。
 	return s.createDefault(ctx, projectID)
+}
+
+// restoreSourceStage 给绑定了仓库、spec 里却一个源阶段都没有的流水线补回一张(就地改)。
+// 典型来源:项目先按纯发布用(未绑仓库,保存时源阶段被摘掉),后来又绑上了仓库。
+// 画布上没有「+添加源阶段」的入口,不补回来这张图就永远缺源头。返回是否发生了补回。
+func restoreSourceStage(spec *Spec) bool {
+	if countSourceStages(spec) > 0 {
+		return false
+	}
+	id := "stg_src"
+	if specHasStageID(spec, id) {
+		id = uuid.NewString()
+	}
+	spec.Stages = append([]Stage{{ID: id, Name: "流水线源", Kind: KindSource}}, spec.Stages...)
+	return true
+}
+
+// specHasStageID 报告 spec 里是否已有同 id 的阶段。
+func specHasStageID(spec *Spec, id string) bool {
+	for _, st := range spec.Stages {
+		if st.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // restoreSourceJob 给缺了 git_source 任务的源阶段补回一张卡片(就地改 spec)。
@@ -293,6 +331,22 @@ func (s *service) Save(ctx context.Context, projectID string, spec Spec) (*Confi
 		return nil, err
 	}
 
+	// 源阶段的去留由项目仓库绑定决定(纯函数只守「最多一个」):
+	//   - 绑了仓库:必须恰好一个源阶段,缺 git_source 卡片就补回(画布上没有补加入口);
+	//   - 未绑仓库:整个源阶段摘掉(纯发布项目,画布从部署开始),悬空的 needs 一并清理。
+	bound, err := s.projectHasRepo(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if bound {
+		if countSourceStages(&normalized) != 1 {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidStage, ErrSourceStageRequired)
+		}
+		restoreSourceJob(&normalized)
+	} else {
+		stripSourceStages(&normalized)
+	}
+
 	// 预置构建环境白名单(R4/R6 · #8):未选/选错/引用已删或已禁用环境的节点一律拒绝落库。
 	if err := s.enforceBuildEnvCatalog(normalized); err != nil {
 		return nil, err
@@ -359,16 +413,20 @@ func (s *service) load(ctx context.Context, projectID string) (*Config, error) {
 	return &Config{Spec: spec, YAML: specYAML, Status: status, UpdatedAt: updated}, nil
 }
 
-// createDefault 惰性生成项目默认流水线配置:源阶段(1 个 git_source 任务引用项目仓库)
-// + 空的 构建/部署/通知 三阶段。项目不存在 → ErrProjectNotFound。
+// createDefault 惰性生成项目默认流水线配置。绑了仓库:源阶段(1 个 git_source 任务引用
+// 项目仓库)+ 空的构建阶段;未绑仓库(纯发布项目):只有一个空的部署阶段 —— 没有源码可拉,
+// 现场也就不该出现一张拉不到东西的「Git 源」卡片。项目不存在 → ErrProjectNotFound。
 // 并发首访同项目时 ON CONFLICT DO NOTHING + 回读权威行,防双方各持不同种子。
 func (s *service) createDefault(ctx context.Context, projectID string) (*Config, error) {
-	summary, err := s.sourceSummary(ctx, projectID)
+	repoURL, branch, err := s.projectRepo(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	spec := defaultSpec(summary)
+	spec := defaultReleaseSpec()
+	if strings.TrimSpace(repoURL) != "" {
+		spec = defaultSpec(sourceSummaryOf(repoURL, branch))
+	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: marshal default spec: %w", err)
@@ -403,19 +461,32 @@ func (s *service) createDefault(ctx context.Context, projectID string) (*Config,
 	return cfg, err
 }
 
-// sourceSummary 读取项目仓库信息拼出源阶段任务摘要;项目不存在 → ErrProjectNotFound。
-// 仓库信息读取失败时退化为通用摘要(不阻断惰性默认生成)。
-func (s *service) sourceSummary(ctx context.Context, projectID string) (string, error) {
+// projectRepo 读取项目的仓库地址与默认分支;项目不存在 → ErrProjectNotFound。
+func (s *service) projectRepo(ctx context.Context, projectID string) (string, string, error) {
 	var repoURL, defaultBranch string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT repo_url, default_branch FROM projects WHERE id = ?`, projectID,
 	).Scan(&repoURL, &defaultBranch)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrProjectNotFound
+			return "", "", ErrProjectNotFound
 		}
-		return "", fmt.Errorf("pipeline: load project: %w", err)
+		return "", "", fmt.Errorf("pipeline: load project: %w", err)
 	}
+	return strings.TrimSpace(repoURL), strings.TrimSpace(defaultBranch), nil
+}
+
+// projectHasRepo 报告项目是否绑定了 Git 仓库。未绑定 = 纯发布项目,源阶段/源任务都不该存在。
+func (s *service) projectHasRepo(ctx context.Context, projectID string) (bool, error) {
+	repoURL, _, err := s.projectRepo(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	return repoURL != "", nil
+}
+
+// sourceSummaryOf 由仓库信息拼出源阶段任务摘要。
+func sourceSummaryOf(repoURL, defaultBranch string) string {
 	repoURL = strings.TrimSpace(repoURL)
 	branch := strings.TrimSpace(defaultBranch)
 	if branch == "" {
@@ -423,9 +494,9 @@ func (s *service) sourceSummary(ctx context.Context, projectID string) (string, 
 	}
 	if repoURL == "" {
 		// 没绑仓库:源阶段无源可拉,别拼一个凭空的分支名糊人。
-		return sourceSummaryUnbound, nil
+		return sourceSummaryUnbound
 	}
-	return repoURL + " · " + branch, nil
+	return repoURL + " · " + branch
 }
 
 // sourceSummaryUnbound 是没绑仓库项目(仅发布用)的源卡片摘要。
@@ -479,6 +550,52 @@ func defaultSpec(sourceSummary string) Spec {
 		},
 		{ID: "stg_build", Name: "构建", Kind: KindBuild, Jobs: []Job{}},
 	}}
+}
+
+// defaultReleaseSpec 构造「纯发布项目」(项目未绑定仓库)的默认种子:只有一个空的部署阶段。
+// 没有源码可拉,就不用源阶段占位;构建阶段也只有在外部的产物/镜像需要打包时才由用户添加。
+func defaultReleaseSpec() Spec {
+	return Spec{Stages: []Stage{
+		{ID: "stg_deploy", Name: "部署", Kind: KindDeploy, Jobs: []Job{}},
+	}}
+}
+
+// stripSourceStages 摘掉 spec 里所有源阶段,并清掉其它阶段指向它们的 needs(就地改)。
+// 用于未绑定仓库的项目:源阶段引用的仓库根本不存在,留着只会得到一个永远拉不到东西的节点。
+func stripSourceStages(spec *Spec) {
+	removed := map[string]struct{}{}
+	kept := spec.Stages[:0]
+	for _, st := range spec.Stages {
+		if st.Kind == KindSource {
+			removed[st.ID] = struct{}{}
+			continue
+		}
+		kept = append(kept, st)
+	}
+	spec.Stages = kept
+	if len(removed) == 0 {
+		return
+	}
+	for i := range spec.Stages {
+		needs := spec.Stages[i].Needs[:0]
+		for _, n := range spec.Stages[i].Needs {
+			if _, gone := removed[n]; !gone {
+				needs = append(needs, n)
+			}
+		}
+		spec.Stages[i].Needs = needs
+	}
+}
+
+// countSourceStages 统计 spec 里的源阶段数量。
+func countSourceStages(spec *Spec) int {
+	n := 0
+	for _, st := range spec.Stages {
+		if st.Kind == KindSource {
+			n++
+		}
+	}
+	return n
 }
 
 // normalizeSpec 校验并规范化 spec:trim 各字段、补空 id(uuid)、Config nil 补 {}、
@@ -566,13 +683,9 @@ func normalizeSpec(in Spec) (Spec, error) {
 			})
 		}
 
-		// 源阶段恒有一个 git_source 任务:它是「项目仓库」在画布上的那一张卡片,
-		// 删掉后这阶段就没有任何补加入口(加任务只挂在已有任务上)。所以缺了就补回来,
-		// 让存量流水线在下次读/存时自愈,而不是留一列死的给执行人看。
-		if kind == KindSource && !hasSourceJob(jobs) {
-			jobs = append([]Job{{ID: uuid.NewString(), Name: sourceJobDefaultName, Type: "git_source", Config: map[string]any{}}}, jobs...)
-			seen[jobs[0].ID] = struct{}{}
-		}
+		// 源阶段的内容由「项目是否绑定仓库」决定,不在这里补:
+		// 绑了仓库 → Save 阶段补回 git_source(画布上没有补加入口);未绑仓库 → Save 阶段整个摘掉源阶段。
+		// 纯函数拿不到项目行,别在这里猜。
 
 		// 阶段内 job 依赖校验:引用须为同阶段 job、不自指、不成环(阶段内 job 级 DAG)。
 		// 复用 dag 构造期校验(Kahn 环检测),错误归一为 ErrInvalidJob(不外泄内部细节)。
@@ -604,15 +717,9 @@ func normalizeSpec(in Spec) (Spec, error) {
 		out.Stages = append(out.Stages, Stage{ID: stageID, Name: name, Kind: kind, Needs: needs, AllowFailure: st.AllowFailure, When: normalizeWhen(st.When), Gate: st.Gate, Matrix: matrix, Post: post, Services: services, Jobs: jobs})
 	}
 
-	// 源阶段不变式:流水线必须恰有一个 source 阶段(引用项目仓库)。前端不渲染删源阶段的入口,
-	// 但 API 层须守住此不变式——否则 PUT `{"stages":[]}` 或漏传源阶段会静默抹除仓库引用。
-	sourceCount := 0
-	for _, st := range out.Stages {
-		if st.Kind == KindSource {
-			sourceCount++
-		}
-	}
-	if sourceCount != 1 {
+	// 源阶段最多一个(纯函数只能守上界):绑了仓库的项目由 service 层要求恰好一个,
+	// 未绑仓库的纯发布项目允许没有源阶段(默认种子就是一个部署阶段)。
+	if countSourceStages(&out) > 1 {
 		return Spec{}, fmt.Errorf("%w: %w", ErrInvalidStage, ErrSourceStageRequired)
 	}
 

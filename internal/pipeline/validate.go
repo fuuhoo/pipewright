@@ -100,6 +100,9 @@ type ValidationInput struct {
 	BranchMappings []ValidationBranchMapping
 	// Events 是 2-3 触发事件开关。
 	Events ValidationEvents
+	// ProjectHasRepo 表示项目绑定了 Git 仓库。未绑定时流水线可以没有源阶段(纯发布项目),
+	// 不能拿「缺源阶段」判它不就绪。
+	ProjectHasRepo bool
 	// ProjectCredentialOK 表示项目主凭据存在且可读(handler 层预判)。
 	ProjectCredentialOK bool
 	// VaultUnconfigured 表示保险库未配置 master key(环境级状态)。为 true 时抑制
@@ -178,8 +181,8 @@ func validateCanvas(in ValidationInput) []Issue {
 		}
 	}
 
-	// 源阶段缺失(2-2 不变式已基本兜住,此为聚合复述)。
-	if !hasSource {
+	// 源阶段缺失(仅绑了仓库的项目才算错误:纯发布项目本来就没有源码环节)。
+	if !hasSource && in.ProjectHasRepo {
 		issues = append(issues, Issue{
 			Severity: SeverityError, Code: "source_stage_missing", Scope: ScopeCanvas,
 			Field: "stages", Message: "流水线缺少源阶段,无法引用项目仓库",
@@ -383,8 +386,9 @@ func validateTriggers(in ValidationInput) []Issue {
 }
 
 // validateProject 校验项目主凭据存在性(项目创建已要求凭据,此为兜底)。
+// 纯发布项目(未绑定仓库)没有主凭据是正常的:没有源码要拉。
 func validateProject(in ValidationInput) []Issue {
-	if !in.ProjectCredentialOK {
+	if in.ProjectHasRepo && !in.ProjectCredentialOK {
 		return []Issue{{
 			Severity: SeverityError, Code: "project_credential_missing", Scope: ScopeCanvas,
 			Field: "credentialId", Message: "项目仓库凭据不存在或不可读,无法拉取源码",
