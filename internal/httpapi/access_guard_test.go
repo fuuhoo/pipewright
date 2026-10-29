@@ -69,10 +69,11 @@ type guardEnv struct {
 	other    *http.Client
 	otherCS  string
 
-	privateID   string
-	publicID    string
-	memberUID   string
-	strangerUID string
+	privateID      string
+	publicID       string
+	otherPrivateID string // 别人的私有组(组长管不着),验多组登记的「每一组都要管得住」
+	memberUID      string
+	strangerUID    string
 
 	ungrouped    string // 未归组项目
 	inPrivate    string // 私有组内项目
@@ -131,6 +132,12 @@ func setupGuard(t *testing.T) *guardEnv {
 	if err != nil {
 		t.Fatalf("create private group: %v", err)
 	}
+	privOther, err := gs.Create(ctx, group.CreateInput{
+		Name: "别人的私有组", OwnerID: strangerID, Visibility: access.VisibilityPrivate,
+	})
+	if err != nil {
+		t.Fatalf("create other private group: %v", err)
+	}
 
 	v := vault.New(db, testMasterKey())
 	credID := seedGuardCredential(t, v, "guard cred")
@@ -158,18 +165,28 @@ func setupGuard(t *testing.T) *guardEnv {
 	if err != nil {
 		t.Fatalf("seed ssh credential: %v", err)
 	}
-	mkSrv := func(name, groupID string) string {
+	mkSrv := func(name string, groupIDs ...string) string {
 		t.Helper()
 		id := uuid.NewString()
 		if _, err := db.Exec(
-			`INSERT INTO servers (id, name, host, port, user, credential_id, group_id, created_at, updated_at)
-			 VALUES (?, ?, '10.0.0.1', 22, 'deploy', ?, ?, ?, ?)`,
-			id, name, srvCredID.ID, groupID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
+			`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
+			 VALUES (?, ?, '10.0.0.1', 22, 'deploy', ?, ?, ?)`,
+			id, name, srvCredID.ID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
 			t.Fatalf("seed server %s: %v", name, err)
+		}
+		for _, gid := range groupIDs {
+			if gid == "" {
+				continue
+			}
+			if _, err := db.Exec(
+				`INSERT INTO server_groups (server_id, group_id, created_at) VALUES (?, ?, ?)`,
+				id, gid, "2026-01-01T00:00:00Z"); err != nil {
+				t.Fatalf("attach server %s: %v", name, err)
+			}
 		}
 		return id
 	}
-	srvUngrouped := mkSrv("free-srv", access.Ungrouped)
+	srvUngrouped := mkSrv("free-srv")
 	srvInPrivate := mkSrv("secret-srv", priv.ID)
 	srvInPublic := mkSrv("open-srv", pub.ID)
 
@@ -189,7 +206,7 @@ func setupGuard(t *testing.T) *guardEnv {
 	t.Cleanup(srv.Close)
 
 	env := &guardEnv{
-		srv: srv, db: db, gs: gs, privateID: priv.ID, publicID: pub.ID,
+		srv: srv, db: db, gs: gs, privateID: priv.ID, publicID: pub.ID, otherPrivateID: privOther.ID,
 		coord: approvalCoord, astore: approvalStore,
 		memberUID: memberID, strangerUID: strangerID,
 		ungrouped: ungrouped, inPrivate: inPrivate, inPublic: inPublic, runInPriv: runID,

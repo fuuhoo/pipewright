@@ -81,8 +81,8 @@ func setupPointGuard(t *testing.T) *pointEnv {
 	}
 	id := uuid.NewString()
 	if _, err := db.Exec(
-		`INSERT INTO servers (id, name, host, port, user, credential_id, group_id, created_at, updated_at)
-		 VALUES (?, 'point-srv', '10.0.0.1', 22, 'deploy', ?, '', ?, ?)`,
+		`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
+		 VALUES (?, 'point-srv', '10.0.0.1', 22, 'deploy', ?, ?, ?)`,
 		id, cred.ID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatalf("seed server: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/fuuhoo/pipewright/internal/access"
@@ -56,13 +57,24 @@ func addProject(t *testing.T, db *sql.DB, id, groupID string) {
 	}
 }
 
-func addServer(t *testing.T, db *sql.DB, id, groupID string) {
+// addServer 登记一台服务器并挂到给定分组(可多个;不传 = 未归组)。
+func addServer(t *testing.T, db *sql.DB, id string, groupIDs ...string) {
 	t.Helper()
 	if _, err := db.Exec(
-		`INSERT INTO servers (id, name, host, port, user, credential_id, group_id, created_at, updated_at)
-		 VALUES (?, ?, '10.0.0.1', 22, 'root', ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
-		id, "srv-"+id, addCred(t, db, "scred-"+id), groupID); err != nil {
+		`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
+		 VALUES (?, ?, '10.0.0.1', 22, 'root', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		id, "srv-"+id, addCred(t, db, "scred-"+id)); err != nil {
 		t.Fatalf("add server: %v", err)
+	}
+	for _, gid := range groupIDs {
+		if gid == "" {
+			continue
+		}
+		if _, err := db.Exec(
+			`INSERT INTO server_groups (server_id, group_id, created_at) VALUES (?, ?, '2026-01-01T00:00:00Z')`,
+			id, gid); err != nil {
+			t.Fatalf("attach server to group: %v", err)
+		}
 	}
 }
 
@@ -314,7 +326,7 @@ func TestListVisibleScopesByRole(t *testing.T) {
 
 // ---- access.Repository ------------------------------------------------------
 
-func TestGroupIDOfResolvesEveryKind(t *testing.T) {
+func TestGroupIDsOfResolvesEveryKind(t *testing.T) {
 	svc, db := newSvc(t)
 	ctx := context.Background()
 	owner := addUser(t, db, "dave2")
@@ -324,6 +336,7 @@ func TestGroupIDOfResolvesEveryKind(t *testing.T) {
 	}
 	addProject(t, db, "p-run", g.ID)
 	addServer(t, db, "s-run", g.ID)
+	addServer(t, db, "s-free")
 	addRun(t, db, "r-run", "p-run")
 	addProject(t, db, "p-free", "")
 
@@ -331,33 +344,50 @@ func TestGroupIDOfResolvesEveryKind(t *testing.T) {
 		name string
 		kind access.Kind
 		id   string
-		want string
+		want []string
 	}{
-		{"project in group", access.KindProject, "p-run", g.ID},
-		{"project ungrouped", access.KindProject, "p-free", access.Ungrouped},
-		{"server", access.KindServer, "s-run", g.ID},
+		{"project in group", access.KindProject, "p-run", []string{g.ID}},
+		{"project ungrouped", access.KindProject, "p-free", nil},
+		{"server in group", access.KindServer, "s-run", []string{g.ID}},
+		{"server ungrouped", access.KindServer, "s-free", nil},
 		// 运行没有自己的分组:归属经 run → project 两跳,和「谁能看这次运行」同义。
-		{"run inherits project", access.KindRun, "r-run", g.ID},
+		{"run inherits project", access.KindRun, "r-run", []string{g.ID}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := svc.GroupIDOf(ctx, tc.kind, tc.id)
+			got, err := svc.GroupIDsOf(ctx, tc.kind, tc.id)
 			if err != nil {
-				t.Fatalf("GroupIDOf: %v", err)
+				t.Fatalf("GroupIDsOf: %v", err)
 			}
-			if got != tc.want {
-				t.Fatalf("groupID = %q, want %q", got, tc.want)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("groupIDs = %v, want %v", got, tc.want)
 			}
 		})
 	}
 
+	// 一台服务器可同时属于多个组,归属集合按 ID 排序返回。
+	g2, err := svc.Create(ctx, CreateInput{Name: "repo2", OwnerID: owner})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	addServer(t, db, "s-multi", g2.ID, g.ID)
+	got, err := svc.GroupIDsOf(ctx, access.KindServer, "s-multi")
+	if err != nil {
+		t.Fatalf("GroupIDsOf: %v", err)
+	}
+	want := []string{g.ID, g2.ID}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("多组归属 = %v, want %v", got, want)
+	}
+
 	// 资源不存在 → ErrNotFound(映射 404),绝不能是 ErrForbidden(伪装成无权限)。
-	if _, err := svc.GroupIDOf(ctx, access.KindProject, "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.GroupIDsOf(ctx, access.KindProject, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
-	if _, err := svc.GroupIDOf(ctx, access.KindRun, "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.GroupIDsOf(ctx, access.KindRun, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
-	if _, err := svc.GroupIDOf(ctx, access.Kind("bogus"), "x"); err == nil {
+	if _, err := svc.GroupIDsOf(ctx, access.Kind("bogus"), "x"); err == nil {
 		t.Fatalf("未知 kind 应报错")
 	}
 }

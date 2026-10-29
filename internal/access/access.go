@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // 角色与可见性枚举(DB 存字串,与 users.role / resource_groups.visibility 对齐)。
@@ -207,9 +208,11 @@ func Decide(actor *Actor, g *Group, act Act) error {
 
 // Repository 是判定所需的读接口;实现体与分组领域服务一起落地(见 internal/group)。
 type Repository interface {
-	// GroupIDOf 返回资源所属分组 ID;未归组返回 Ungrouped("")。资源不存在返回 ErrForbidden 之外的
-	// 领域错误,由调用方映射 404。KindRun 由实现内部做 run → project 两跳。
-	GroupIDOf(ctx context.Context, kind Kind, id string) (string, error)
+	// GroupIDsOf 返回资源所属的分组 ID 集合。没有任何归属(未归组)返回空切片,
+	// 不是返回 [""] —— 空集合是「未归组」唯一的表示。目前只有服务器可归多个组,
+	// 其余资源至多一个。资源不存在返回 ErrForbidden 之外的领域错误,由调用方映射 404。
+	// KindRun 由实现内部做 run → project 两跳。
+	GroupIDsOf(ctx context.Context, kind Kind, id string) ([]string, error)
 	// GroupSnapshot 取分组可见性/组长/名册;groupID==Ungrouped 时返回 (nil, nil)。
 	GroupSnapshot(ctx context.Context, groupID string) (*Group, error)
 	// PublicAndJoinedGroupIDs 返回 actor 可见的**已存在**分组 ID:所有 public 组 +
@@ -252,23 +255,70 @@ func (s *Service) Can(ctx context.Context, actor *Actor, kind Kind, id string, a
 		}
 		return fmt.Errorf("%w:权限仓储未装配", ErrForbidden)
 	}
-	groupID, err := s.repo.GroupIDOf(ctx, kind, id)
+	groupIDs, err := s.repo.GroupIDsOf(ctx, kind, id)
 	if err != nil {
 		return err
+	}
+	// 未归组 = 空集合:与单分组时代完全同一条路(nil 快照按公开处理)。
+	if len(groupIDs) == 0 {
+		g, err := s.snapshotOrDangling(ctx, Ungrouped)
+		if err != nil {
+			return err
+		}
+		if err := Decide(actor, g, act); err != nil {
+			return fmt.Errorf("access: %s %s/%s: %w", act, kind, id, err)
+		}
+		return nil
+	}
+	// 一台资源可以同时属于多个分组(服务器的 server_groups)。两档动作的聚合方式不同:
+	//   - View/Operate 走**并集**:资源挂在 A、B 两组,对任一组有权限的人就该看得见/用得着;
+	//     取交集会让另一拨人从列表里凭空消失,与「分组切的是谁能碰」相悖。
+	//   - Manage 走**交集**:改名/删除/改组动的是整台资源,只要有一个所在组不归你管,
+	//     你替那拨人做的决定就越界了 —— 组长只能从自己管得住的组里退出去。
+	needAll := act == ActManage
+	var firstErr error
+	for _, groupID := range groupIDs {
+		g, err := s.snapshotOrDangling(ctx, groupID)
+		if err != nil {
+			return err
+		}
+		decideErr := Decide(actor, g, act)
+		if decideErr == nil {
+			if !needAll {
+				return nil
+			}
+			continue
+		}
+		if needAll {
+			return fmt.Errorf("access: %s %s/%s: %w", act, kind, id, decideErr)
+		}
+		if firstErr == nil {
+			firstErr = decideErr
+		}
+	}
+	if needAll {
+		return nil
+	}
+	return fmt.Errorf("access: %s %s/%s: %w", act, kind, id, firstErr)
+}
+
+// snapshotOrDangling 取分组快照;引用悬挂(组已被删)按最私有一档处理(fail closed),
+// 等管理员重新归组 —— 普通用户此时看到 403,而不是因为少了一行分组就全站放行。
+func (s *Service) snapshotOrDangling(ctx context.Context, groupID string) (*Group, error) {
+	if groupID == Ungrouped {
+		return nil, nil
 	}
 	g, err := s.repo.GroupSnapshot(ctx, groupID)
+	if errors.Is(err, ErrGroupNotFound) {
+		return &Group{ID: groupID, Visibility: VisibilityPrivate}, nil
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if g == nil && groupID != Ungrouped {
-		// 引用悬挂:资源指向已删的组。按最私有一档处理(fail closed),
-		// 等管理员重新归组;普通用户此时看到 403 而非全站放行。
-		g = &Group{ID: groupID, Visibility: VisibilityPrivate}
+	if g == nil {
+		return &Group{ID: groupID, Visibility: VisibilityPrivate}, nil
 	}
-	if err := Decide(actor, g, act); err != nil {
-		return fmt.Errorf("access: %s %s/%s: %w", act, kind, id, err)
-	}
-	return nil
+	return g, nil
 }
 
 // CanPoint 在 Can 之上再多要一个条件:角色必须**持有这个功能点**,而不只是那类资源的档位够。
@@ -429,4 +479,52 @@ func (f ListFilter) Clause(column string) (string, []any) {
 		args = append(args, id)
 	}
 	return column + " IN (" + string(placeholders) + ")", args
+}
+
+// MemberClause 把 ListFilter 编译成「成员表」形式的条件,供一台资源可归多个分组的场景
+// (目前是服务器的 server_groups)。与 Clause 的差别:「未归组」不再是列值 ” ,而是
+// 「成员表里没有这台资源的任何一行」。
+//
+// 参数:idColumn 是资源 id 列(如 "s.id"),table/refColumn/groupColumn 描述成员表
+// (如 "server_groups"/"server_id"/"group_id")。表名与列名来自代码常量,不接外部输入。
+func (f ListFilter) MemberClause(idColumn, table, refColumn, groupColumn string) (string, []any) {
+	if f.DenyAll {
+		return "1 = 0", nil
+	}
+	if f.Unrestricted {
+		return "", nil
+	}
+	groupIDs := make([]string, 0, len(f.GroupIDs))
+	withUngrouped := false
+	for _, id := range f.GroupIDs {
+		if id == Ungrouped {
+			withUngrouped = true
+			continue
+		}
+		groupIDs = append(groupIDs, id)
+	}
+	// 零值(空可见集)沿用 Clause 的口径:只剩未归组可见。
+	if len(groupIDs) == 0 && !withUngrouped {
+		withUngrouped = true
+	}
+
+	exists := "EXISTS (SELECT 1 FROM " + table + " m WHERE m." + refColumn + " = " + idColumn
+	var args []any
+	member := ""
+	if len(groupIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(groupIDs))
+		placeholders = placeholders[:len(placeholders)-1]
+		member = exists + " AND m." + groupColumn + " IN (" + placeholders + "))"
+		for _, id := range groupIDs {
+			args = append(args, id)
+		}
+	}
+	if !withUngrouped {
+		return member, args // len(groupIDs) > 0 已由上面的分支保证
+	}
+	ungroupedCond := "NOT EXISTS (SELECT 1 FROM " + table + " m WHERE m." + refColumn + " = " + idColumn + ")"
+	if member == "" {
+		return ungroupedCond, nil
+	}
+	return "(" + ungroupedCond + " OR " + member + ")", args
 }

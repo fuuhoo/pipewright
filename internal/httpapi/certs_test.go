@@ -170,18 +170,28 @@ func setupCertsAPI(t *testing.T, withPublisher bool) *certEnv {
 		sshCred.ID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatalf("seed dns provider: %v", err)
 	}
-	mkSrv := func(name, groupID string) string {
+	mkSrv := func(name string, groupIDs ...string) string {
 		t.Helper()
 		id := uuid.NewString()
 		if _, err := db.Exec(
-			`INSERT INTO servers (id, name, host, port, user, credential_id, group_id, created_at, updated_at)
-			 VALUES (?, ?, '10.0.0.7', 22, 'deploy', ?, ?, ?, ?)`,
-			id, name, sshCred.ID, groupID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
+			`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
+			 VALUES (?, ?, '10.0.0.7', 22, 'deploy', ?, ?, ?)`,
+			id, name, sshCred.ID, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"); err != nil {
 			t.Fatalf("seed server %s: %v", name, err)
+		}
+		for _, gid := range groupIDs {
+			if gid == "" {
+				continue
+			}
+			if _, err := db.Exec(
+				`INSERT INTO server_groups (server_id, group_id, created_at) VALUES (?, ?, ?)`,
+				id, gid, "2026-01-01T00:00:00Z"); err != nil {
+				t.Fatalf("attach server %s: %v", name, err)
+			}
 		}
 		return id
 	}
-	freeSrv := mkSrv("free-srv", access.Ungrouped)
+	freeSrv := mkSrv("free-srv")
 	secretSrv := mkSrv("secret-srv", priv.ID)
 
 	pub := &fakeCertPublisher{uploads: map[string]string{}}

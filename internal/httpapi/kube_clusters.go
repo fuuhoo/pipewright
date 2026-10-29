@@ -138,7 +138,12 @@ func makeCreateKubeClusterHandler(svc kube.Service, acc *access.Service, aud aud
 			return
 		}
 		groupID := strings.TrimSpace(req.GroupID)
-		if acc != nil && !requireServerPlacement(w, r, acc, groupID) {
+		// 集群仍只归一个组:空串 = 未归组,与服务器的「无归属」同一档(管理员专属)。
+		var placement []string
+		if groupID != "" {
+			placement = []string{groupID}
+		}
+		if acc != nil && !requireServerPlacement(w, r, acc, placement) {
 			return
 		}
 		c, err := svc.Create(r.Context(), kube.CreateInput{

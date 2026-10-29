@@ -105,19 +105,20 @@ func TestMigration0056To0058Defaults(t *testing.T) {
 		 VALUES ('s1', 'web-1', '10.0.0.1', 22, 'root', ?, ?, ?)`, credID, now, now); err != nil {
 		t.Fatalf("插入服务器失败: %v", err)
 	}
-	for _, q := range []struct {
-		label, sql string
-	}{
-		{"projects", `SELECT group_id FROM projects WHERE id='p1'`},
-		{"servers", `SELECT group_id FROM servers WHERE id='s1'`},
-	} {
-		var groupID string
-		if err := st.DB.QueryRowContext(ctx, q.sql).Scan(&groupID); err != nil {
-			t.Fatalf("%s 读回 group_id: %v", q.label, err)
-		}
-		if groupID != "" {
-			t.Fatalf("%s.group_id = %q, want '' (未归组=存量语义不变)", q.label, groupID)
-		}
+	// 项目仍是单值列;服务器自 0087 起拆到 server_groups,未归组 = 没有行。
+	var projectGroup string
+	if err := st.DB.QueryRowContext(ctx, `SELECT group_id FROM projects WHERE id='p1'`).Scan(&projectGroup); err != nil {
+		t.Fatalf("projects 读回 group_id: %v", err)
+	}
+	if projectGroup != "" {
+		t.Fatalf("projects.group_id = %q, want '' (未归组=存量语义不变)", projectGroup)
+	}
+	var serverGroups int
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM server_groups WHERE server_id='s1'`).Scan(&serverGroups); err != nil {
+		t.Fatalf("servers 读回归属: %v", err)
+	}
+	if serverGroups != 0 {
+		t.Fatalf("未归组服务器 = %d 行归属, want 0", serverGroups)
 	}
 
 	// 归组后能被按组的查询命中(索引存在即可,部分索引在 MySQL 是普通索引)。

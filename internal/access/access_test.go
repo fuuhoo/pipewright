@@ -128,14 +128,14 @@ func TestActorInScope(t *testing.T) {
 
 // fakeRepo 是可编程的归属解析后端。
 type fakeRepo struct {
-	groups   map[string]*Group // groupID → 快照
-	byRes    map[string]string // "kind/id" → groupID
+	groups   map[string]*Group   // groupID → 快照
+	byRes    map[string][]string // "kind/id" → 所属分组(空/缺失 = 未归组)
 	visible  []string
 	visErr   error
 	visCalls []string
 }
 
-func (f *fakeRepo) GroupIDOf(_ context.Context, kind Kind, id string) (string, error) {
+func (f *fakeRepo) GroupIDsOf(_ context.Context, kind Kind, id string) ([]string, error) {
 	return f.byRes[string(kind)+"/"+id], nil
 }
 
@@ -157,13 +157,13 @@ func TestServiceCan(t *testing.T) {
 	useSeededPresets(t)
 	repo := &fakeRepo{
 		groups: map[string]*Group{"g-priv": privateGroup()},
-		byRes: map[string]string{
-			"project/p1": "g-priv",
-			"project/p2": Ungrouped,
-			"project/p3": "g-deleted", // 引用悬挂
-			"run/r1":     "g-priv",    // run → project → group 由仓储内部完成
-			"server/s1":  Ungrouped,
-			"server/s2":  "g-priv",
+		byRes: map[string][]string{
+			"project/p1": {"g-priv"},
+			"project/p2": nil,
+			"project/p3": {"g-deleted"}, // 引用悬挂
+			"run/r1":     {"g-priv"},    // run → project → group 由仓储内部完成
+			"server/s1":  nil,
+			"server/s2":  {"g-priv"},
 		},
 	}
 	svc := NewService(repo)
@@ -229,11 +229,11 @@ func TestServiceCan_EndpointScope(t *testing.T) {
 			"g-priv": privateGroup(),
 			"g-pub":  publicGroup(),
 		},
-		byRes: map[string]string{
-			"project/p1": "g-priv", // 私有:owner/member
-			"project/p2": "g-pub",  // 公开:全员本来可看
-			"project/p3": Ungrouped,
-			"run/r1":     "g-pub",
+		byRes: map[string][]string{
+			"project/p1": {"g-priv"}, // 私有:owner/member
+			"project/p2": {"g-pub"},  // 公开:全员本来可看
+			"project/p3": nil,
+			"run/r1":     {"g-pub"},
 		},
 	}
 	svc := NewService(repo)
@@ -291,7 +291,7 @@ func TestServiceCan_EndpointScope(t *testing.T) {
 func TestForRun(t *testing.T) {
 	svc := NewService(&fakeRepo{
 		groups: map[string]*Group{"g-priv": privateGroup()},
-		byRes:  map[string]string{"run/r1": "g-priv"},
+		byRes:  map[string][]string{"run/r1": {"g-priv"}},
 	})
 	if err := svc.ForRun(context.Background(), user("carol"), "r1", ActView); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
@@ -438,9 +438,9 @@ func TestServiceCanPoint(t *testing.T) {
 	}
 	repo := &fakeRepo{
 		groups: map[string]*Group{"g-priv": privateGroup()},
-		byRes: map[string]string{
-			"server/s1": Ungrouped,
-			"server/s2": "g-priv",
+		byRes: map[string][]string{
+			"server/s1": nil,
+			"server/s2": {"g-priv"},
 		},
 	}
 	svc := NewService(repo)
@@ -495,7 +495,7 @@ func TestServiceCanPoint(t *testing.T) {
 // 存量角色的入口 —— user 与 ops 都有 server.exec / container.operate,developer 与 viewer 两个都没有。
 func TestServiceCanPoint_SeededPresets(t *testing.T) {
 	useSeededPresets(t)
-	svc := NewService(&fakeRepo{byRes: map[string]string{"server/s1": Ungrouped}})
+	svc := NewService(&fakeRepo{byRes: map[string][]string{"server/s1": nil}})
 	ctx := context.Background()
 
 	cases := []struct {
@@ -518,5 +518,116 @@ func TestServiceCanPoint_SeededPresets(t *testing.T) {
 		if !tc.want && !errors.Is(err, ErrRoleCeiling) {
 			t.Fatalf("%s 不持有 %s 却放行了:%v", tc.role, tc.point, err)
 		}
+	}
+}
+
+// TestServiceCan_MultiGroup 钉住多组归属的两条轴:
+//   - 看得见 / 改得动 = **任一**所在组放行即可(并集):机器同时挂在两拨人名下,
+//     不该因为另一拨人不在名册里就从这拨人眼前消失;
+//   - 管归属 = **每一个**所在组都得管得住(交集):把它甩出或接进任何一组的后果都要自己担。
+func TestServiceCan_MultiGroup(t *testing.T) {
+	useSeededPresets(t)
+	privOther := &Group{ID: "g-other", Visibility: VisibilityPrivate, OwnerID: "other-owner"}
+	repo := &fakeRepo{
+		groups: map[string]*Group{
+			"g-priv":  privateGroup(),
+			"g-pub":   publicGroup(),
+			"g-other": privOther,
+		},
+		byRes: map[string][]string{
+			"server/shared": {"g-priv", "g-pub"},
+			"server/double": {"g-priv", "g-other"},
+			"server/broken": {"g-deleted", "g-pub"}, // 一组引用悬挂 + 一组公开
+		},
+	}
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	cases := []struct {
+		name, id string
+		actor    *Actor
+		act      Act
+		wantErr  error
+	}{
+		{"并集:公开组那侧放行", "shared", user("carol"), ActOperate, nil},
+		{"并集:私有组成员那侧放行", "shared", user("g-member"), ActView, nil},
+		{"交集:只认得一个组不能管归属", "double", user("g-owner"), ActManage, ErrForbidden},
+		{"交集:两组都管得住才放行", "double", admin(), ActManage, nil},
+		// 引用悬挂只影响它自己那一组:另一组仍能放行(别把整台机器拖成 403)。
+		{"悬挂组不连坐", "broken", user("carol"), ActView, nil},
+		// 端点范围同样按并集:令牌限了其中一个组,就能碰这台机器(权限仍来自那一组)。
+		{"范围命中任一所属组", "shared", scopedUser("g-member", "g-priv"), ActView, nil},
+		{"范围一组都不含", "shared", scopedUser("carol", "g-other"), ActView, ErrForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.Can(ctx, tc.actor, KindServer, tc.id, tc.act)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("放行失败:%v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	// 悬挂引用 + 私有组:并集不得把悬挂那一组当公开而放行路人。
+	repo.byRes["server/broken-private"] = []string{"g-deleted", "g-priv"}
+	if err := svc.Can(ctx, user("carol"), KindServer, "broken-private", ActView); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden(悬挂组按最私有一档)", err)
+	}
+}
+
+// TestMemberClause 钉住多组归属的列表 SQL:未归组用 NOT EXISTS 表达,
+// 归组用 EXISTS + IN;两者 OR 起来才是「看得见的都列出来」。
+func TestMemberClause(t *testing.T) {
+	cases := []struct {
+		name    string
+		f       ListFilter
+		wantSQL string
+		wantArg []any
+	}{
+		{"admin 无附加条件", ListFilter{Unrestricted: true}, "", nil},
+		{"范围空交集全拒", ListFilter{DenyAll: true}, "1 = 0", nil},
+		{
+			"仅未归组",
+			ListFilter{GroupIDs: []string{Ungrouped}},
+			"NOT EXISTS (SELECT 1 FROM server_groups m WHERE m.server_id = s.id)",
+			nil,
+		},
+		{
+			"未归组 + 两个组",
+			ListFilter{GroupIDs: []string{Ungrouped, "a", "b"}},
+			"(NOT EXISTS (SELECT 1 FROM server_groups m WHERE m.server_id = s.id) OR " +
+				"EXISTS (SELECT 1 FROM server_groups m WHERE m.server_id = s.id AND m.group_id IN (?,?)))",
+			[]any{"a", "b"},
+		},
+		{
+			"仅分组(端点范围没有未归组)",
+			ListFilter{GroupIDs: []string{"a"}},
+			"EXISTS (SELECT 1 FROM server_groups m WHERE m.server_id = s.id AND m.group_id IN (?))",
+			[]any{"a"},
+		},
+		// 零值 = 白名单为空,退化成「只见未归组」而不是「全放行」。
+		{
+			"零值只见未归组",
+			ListFilter{},
+			"NOT EXISTS (SELECT 1 FROM server_groups m WHERE m.server_id = s.id)",
+			nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sql, args := tc.f.MemberClause("s.id", "server_groups", "server_id", "group_id")
+			if sql != tc.wantSQL {
+				t.Fatalf("sql = %q, want %q", sql, tc.wantSQL)
+			}
+			if !reflect.DeepEqual(args, tc.wantArg) && !(len(args) == 0 && len(tc.wantArg) == 0) {
+				t.Fatalf("args = %v, want %v", args, tc.wantArg)
+			}
+		})
 	}
 }

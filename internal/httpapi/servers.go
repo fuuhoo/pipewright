@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/fuuhoo/pipewright/internal/access"
@@ -24,14 +24,19 @@ type serverDTO struct {
 	User           string `json:"user"`
 	CredentialID   string `json:"credentialId"`
 	CredentialName string `json:"credentialName"`
-	// GroupID 是所属资源分组;"" = 未归组(全员可见可操作)。组名由前端按 /api/groups 映射。
-	GroupID   string `json:"groupId"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	// GroupIDs 是所属资源分组(可多个,升序);[] = 未归组(全员可见可操作)。
+	// 组名由前端按 /api/groups 映射。可见性取并集,归属级动作要求每个组都管得住。
+	GroupIDs  []string `json:"groupIds"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
 }
 
 // toServerDTO 把领域 Server 转为契约 DTO。
 func toServerDTO(s *target.Server) serverDTO {
+	groupIDs := s.GroupIDs
+	if groupIDs == nil {
+		groupIDs = []string{}
+	}
 	return serverDTO{
 		ID:             s.ID,
 		Name:           s.Name,
@@ -40,7 +45,7 @@ func toServerDTO(s *target.Server) serverDTO {
 		User:           s.User,
 		CredentialID:   s.CredentialID,
 		CredentialName: s.CredentialName,
-		GroupID:        s.GroupID,
+		GroupIDs:       groupIDs,
 		CreatedAt:      s.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:      s.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -128,10 +133,15 @@ func makeGetServerHandler(svc target.Service) http.HandlerFunc {
 // 与项目归组的差别:未归组的服务器对全员可操作(含主机终端),所以「登记一台不归属任何组
 // 的目标机」本身就是管理员级别的设置操作 —— 新建的资源还没有旧侧归属可依据,只能收在管理员。
 // update 到未归组不走这里:那时调用方已判过原组的 ActManage,与项目同一口径。
-// 放进某个组则两侧同项目:要求管得住那个组(ActManage)。
-func requireServerPlacement(w http.ResponseWriter, r *http.Request, acc *access.Service, groupID string) bool {
-	if groupID != access.Ungrouped {
-		return requireGroupPlacement(w, r, acc, groupID)
+// 放进某些组则两侧同项目:每个组都要 ActManage 放行。
+func requireServerPlacement(w http.ResponseWriter, r *http.Request, acc *access.Service, groupIDs []string) bool {
+	if len(groupIDs) > 0 {
+		for _, groupID := range groupIDs {
+			if !requireGroupPlacement(w, r, acc, groupID) {
+				return false
+			}
+		}
+		return true
 	}
 	actor, ok := accessActorFromRequest(r)
 	if !ok {
@@ -154,19 +164,19 @@ func makeCreateServerHandler(svc target.Service, acc *access.Service, aud audit.
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Name         string `json:"name"`
-			Host         string `json:"host"`
-			Port         int    `json:"port"`
-			User         string `json:"user"`
-			CredentialID string `json:"credentialId"`
-			GroupID      string `json:"groupId"`
+			Name         string   `json:"name"`
+			Host         string   `json:"host"`
+			Port         int      `json:"port"`
+			User         string   `json:"user"`
+			CredentialID string   `json:"credentialId"`
+			GroupIDs     []string `json:"groupIds"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
-		groupID := strings.TrimSpace(req.GroupID)
-		if acc != nil && !requireServerPlacement(w, r, acc, groupID) {
+		groupIDs := target.NormalizeGroupIDs(req.GroupIDs)
+		if acc != nil && !requireServerPlacement(w, r, acc, groupIDs) {
 			return
 		}
 		s, err := svc.Create(r.Context(), target.CreateInput{
@@ -175,7 +185,7 @@ func makeCreateServerHandler(svc target.Service, acc *access.Service, aud audit.
 			Port:         req.Port,
 			User:         req.User,
 			CredentialID: req.CredentialID,
-			GroupID:      groupID,
+			GroupIDs:     groupIDs,
 		})
 		if err != nil {
 			writeServerError(w, err)
@@ -186,7 +196,7 @@ func makeCreateServerHandler(svc target.Service, acc *access.Service, aud audit.
 			TargetType: audit.TargetServer,
 			TargetID:   s.ID,
 			// detail 只留机器坐标,绝不落凭据 ID 之外的敏感信息(明文由 vault 保证不外泄)。
-			Detail: map[string]any{"name": s.Name, "host": s.Host, "port": s.Port, "groupId": s.GroupID},
+			Detail: map[string]any{"name": s.Name, "host": s.Host, "port": s.Port, "groupIds": s.GroupIDs},
 			IP:     clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, toServerDTO(s))
@@ -205,19 +215,19 @@ func makeUpdateServerHandler(svc target.Service, acc *access.Service, aud audit.
 		id := chi.URLParam(r, "id")
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Name         *string `json:"name"`
-			Host         *string `json:"host"`
-			Port         *int    `json:"port"`
-			User         *string `json:"user"`
-			CredentialID *string `json:"credentialId"`
-			GroupID      *string `json:"groupId"`
+			Name         *string   `json:"name"`
+			Host         *string   `json:"host"`
+			Port         *int      `json:"port"`
+			User         *string   `json:"user"`
+			CredentialID *string   `json:"credentialId"`
+			GroupIDs     *[]string `json:"groupIds"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
-		var fromGroupID string
-		if req.GroupID != nil {
+		var fromGroupIDs []string
+		if req.GroupIDs != nil {
 			if acc == nil {
 				writeError(w, http.StatusServiceUnavailable, "internal", "权限服务未初始化")
 				return
@@ -230,12 +240,16 @@ func makeUpdateServerHandler(svc target.Service, acc *access.Service, aud audit.
 			if !requireResourceManage(w, r, acc, access.KindServer, id) {
 				return
 			}
-			newGroupID := strings.TrimSpace(*req.GroupID)
-			if !requireGroupPlacement(w, r, acc, newGroupID) {
-				return
+			groupIDs := target.NormalizeGroupIDs(*req.GroupIDs)
+			// 旧侧的 Manage 已在上一步判过;新侧逐组要求管得住。移出全部组不再另设管理员闸:
+			// 与项目移出分组同口径 —— 能把它甩出去的人本来就管得住原组。
+			for _, gid := range groupIDs {
+				if !requireGroupPlacement(w, r, acc, gid) {
+					return
+				}
 			}
-			fromGroupID = old.GroupID
-			req.GroupID = &newGroupID
+			fromGroupIDs = old.GroupIDs
+			req.GroupIDs = &groupIDs
 		}
 		s, err := svc.Update(r.Context(), id, target.UpdateInput{
 			Name:         req.Name,
@@ -243,7 +257,7 @@ func makeUpdateServerHandler(svc target.Service, acc *access.Service, aud audit.
 			Port:         req.Port,
 			User:         req.User,
 			CredentialID: req.CredentialID,
-			GroupID:      req.GroupID,
+			GroupIDs:     req.GroupIDs,
 		})
 		if err != nil {
 			writeServerError(w, err)
@@ -256,12 +270,12 @@ func makeUpdateServerHandler(svc target.Service, acc *access.Service, aud audit.
 			Detail:     map[string]any{"name": s.Name, "host": s.Host, "port": s.Port},
 			IP:         clientIP(r),
 		})
-		if req.GroupID != nil && fromGroupID != s.GroupID {
+		if req.GroupIDs != nil && !slices.Equal(fromGroupIDs, s.GroupIDs) {
 			recordAuditFromRequest(r, aud, ac, audit.Entry{
 				Action:     audit.ActionServerReassign,
 				TargetType: audit.TargetServer,
 				TargetID:   s.ID,
-				Detail:     map[string]any{"from": fromGroupID, "to": s.GroupID},
+				Detail:     map[string]any{"from": fromGroupIDs, "to": s.GroupIDs},
 				IP:         clientIP(r),
 			})
 		}

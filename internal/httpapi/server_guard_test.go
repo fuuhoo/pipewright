@@ -3,10 +3,11 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
-	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/google/uuid"
 )
 
 // server_guard_test.go —— 主机 / 容器端点的分组权限(P3)。
@@ -17,9 +18,9 @@ import (
 //  2. 终端(WS)虽是 GET,语义却是「在目标机上执行任意命令」,按 ActOperate 把关。
 
 type serverRow struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	GroupID string `json:"groupId"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	GroupIDs []string `json:"groupIds"`
 }
 
 func listServers(t *testing.T, env *guardEnv, c *http.Client) []serverRow {
@@ -38,10 +39,10 @@ func listServers(t *testing.T, env *guardEnv, c *http.Client) []serverRow {
 	return out.Items
 }
 
-func serverNamesOf(rows []serverRow) map[string]string {
-	out := map[string]string{} // name → groupId
+func serverNamesOf(rows []serverRow) map[string][]string {
+	out := map[string][]string{} // name → groupIds
 	for _, r := range rows {
-		out[r.Name] = r.GroupID
+		out[r.Name] = r.GroupIDs
 	}
 	return out
 }
@@ -51,17 +52,17 @@ func TestListServers_ScopedByGroup(t *testing.T) {
 
 	// 局外人:未归组 + 公开组两台,看不到他人私有组里的机器。
 	names := serverNamesOf(listServers(t, env, env.other))
-	if gid, ok := names["free-srv"]; !ok || gid != access.Ungrouped {
+	if gids, ok := names["free-srv"]; !ok || len(gids) != 0 {
 		t.Fatalf("局外人服务器列表 = %v, want 含未归组的 free-srv", names)
 	}
 	if _, ok := names["secret-srv"]; ok {
 		t.Fatalf("局外人看到了私有组服务器")
 	}
 
-	// 成员:多一台所在私有组内的机器,且带回 groupId 供前端标注归属。
+	// 成员:多一台所在私有组内的机器,且带回 groupIds 供前端标注归属。
 	names = serverNamesOf(listServers(t, env, env.member))
-	if gid, ok := names["secret-srv"]; !ok || gid != env.privateID {
-		t.Fatalf("成员列表 = %v, want 含 secret-srv(groupId=%s)", names, env.privateID)
+	if gids, ok := names["secret-srv"]; !ok || !slices.Equal(gids, []string{env.privateID}) {
+		t.Fatalf("成员列表 = %v, want 含 secret-srv(groupIds=[%s])", names, env.privateID)
 	}
 
 	if got := len(listServers(t, env, env.admin)); got != 3 {
@@ -144,13 +145,17 @@ func TestServerWrites_Matrix(t *testing.T) {
 // TestCreateServer_RequiresAdminOrGroupManage 断言登记闸门的两侧。
 func TestCreateServer_RequiresAdminOrGroupManage(t *testing.T) {
 	env := setupGuard(t)
-	body := func(groupID string) string {
+	body := func(groupIDs ...string) string {
+		encoded, err := json.Marshal(groupIDs)
+		if err != nil {
+			t.Fatalf("marshal groupIds: %v", err)
+		}
 		return `{"name":"new-box","host":"10.0.0.77","port":22,"user":"deploy","credentialId":"` +
-			env.serverCredID + `","groupId":"` + groupID + `"}`
+			env.serverCredID + `","groupIds":` + string(encoded) + `}`
 	}
 
 	// 普通用户登记「未归组」机器 = 向全员开放一台 SSH 目标 → 403。
-	if got := statusOf(t, env.other, http.MethodPost, env.srv.URL+"/api/servers", env.otherCS, body("")); got != http.StatusForbidden {
+	if got := statusOf(t, env.other, http.MethodPost, env.srv.URL+"/api/servers", env.otherCS, body()); got != http.StatusForbidden {
 		t.Fatalf("普通用户登记未归组服务器 = %d, want 403", got)
 	}
 	// 塞进与自己无关的私有组同样不行。
@@ -161,8 +166,17 @@ func TestCreateServer_RequiresAdminOrGroupManage(t *testing.T) {
 	if got := statusOf(t, env.owner, http.MethodPost, env.srv.URL+"/api/servers", env.ownerCS, body(env.privateID)); got != http.StatusCreated {
 		t.Fatalf("组长在私有组登记服务器 = %d, want 201", got)
 	}
+	// 多组登记必须每一组都管得住:组长能进自己的组,却进不了别人组 —— 整单拒绝。
+	if got := statusOf(t, env.owner, http.MethodPost, env.srv.URL+"/api/servers", env.ownerCS,
+		body(env.privateID, env.publicID)); got != http.StatusCreated {
+		t.Fatalf("组长登记到自己组+公开组 = %d, want 201", got)
+	}
+	if got := statusOf(t, env.owner, http.MethodPost, env.srv.URL+"/api/servers", env.ownerCS,
+		body(env.privateID, env.otherPrivateID)); got != http.StatusForbidden {
+		t.Fatalf("组长登记到含别人组的组合 = %d, want 403", got)
+	}
 	// 管理员登记未归组机器是正常设置操作。
-	if got := statusOf(t, env.admin, http.MethodPost, env.srv.URL+"/api/servers", env.adminCS, body("")); got != http.StatusCreated {
+	if got := statusOf(t, env.admin, http.MethodPost, env.srv.URL+"/api/servers", env.adminCS, body()); got != http.StatusCreated {
 		t.Fatalf("管理员登记未归组服务器 = %d, want 201", got)
 	}
 	// 指向不存在的分组 → 422,而不是静默入库成悬挂引用。
@@ -178,21 +192,21 @@ func TestReassignServer_RequiresManageOnBothSides(t *testing.T) {
 
 	// 成员能把机器藏进自己管不了的组吗?旧侧 Manage 先挡住。
 	if got := statusOf(t, env.member, http.MethodPut, prefix+env.srvInPrivate, env.memberCS,
-		`{"groupId":"`+env.publicID+`"}`); got != http.StatusForbidden {
+		`{"groupIds":["`+env.publicID+`"]}`); got != http.StatusForbidden {
 		t.Fatalf("成员把私有组服务器移到公开组 = %d, want 403", got)
 	}
 	// 组长可以把它甩出去(移出分组)。
 	if got := statusOf(t, env.owner, http.MethodPut, prefix+env.srvInPrivate, env.ownerCS,
-		`{"groupId":""}`); got != http.StatusOK {
+		`{"groupIds":[]}`); got != http.StatusOK {
 		t.Fatalf("组长把服务器移出私有组 = %d, want 200", got)
 	}
 	// 移出后未归组 = 全员可操作,而这次归属改动只有组长和管理员管得动。
 	if got := statusOf(t, env.member, http.MethodPut, prefix+env.srvUngrouped, env.memberCS,
-		`{"groupId":"`+env.privateID+`"}`); got != http.StatusForbidden {
+		`{"groupIds":["`+env.privateID+`"]}`); got != http.StatusForbidden {
 		t.Fatalf("成员把未归组服务器塞进私有组 = %d, want 403", got)
 	}
 	if got := statusOf(t, env.admin, http.MethodPut, prefix+env.srvUngrouped, env.adminCS,
-		`{"groupId":"`+env.privateID+`"}`); got != http.StatusOK {
+		`{"groupIds":["`+env.privateID+`"]}`); got != http.StatusOK {
 		t.Fatalf("管理员把未归组服务器移入私有组 = %d, want 200", got)
 	}
 	var n int
@@ -228,5 +242,75 @@ func TestServerTerminal_RequiresOperate(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUpgradeRequired {
 		t.Fatalf("局外人请求未归组服务器终端 = %d, want 426", resp.StatusCode)
+	}
+}
+
+// TestServerMultiGroup_HTTP 断言多组归属在契约上的两件事:
+//   - GET 回 groupIds 数组(空数组而不是 null,前端不必判空);
+//   - 可见性是并集、改归属是交集 —— 成员在私有组里能操作,但这一步「改组」要两组的 Manage。
+func TestServerMultiGroup_HTTP(t *testing.T) {
+	env := setupGuard(t)
+
+	// 直接把一台机器挂到「私有组 + 公开组」,省去再走一遍登记闸门。
+	srvID := uuid.NewString()
+	if _, err := env.db.Exec(
+		`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
+		 VALUES (?, 'shared-srv', '10.0.0.8', 22, 'deploy', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		srvID, env.serverCredID); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+	for _, gid := range []string{env.privateID, env.publicID} {
+		if _, err := env.db.Exec(
+			`INSERT INTO server_groups (server_id, group_id, created_at) VALUES (?, ?, '2026-01-01T00:00:00Z')`,
+			srvID, gid); err != nil {
+			t.Fatalf("attach group: %v", err)
+		}
+	}
+
+	// 成员看得见(私有组放行),并带回两组归属。
+	rows := listServers(t, env, env.member)
+	var got *serverRow
+	for i := range rows {
+		if rows[i].ID == srvID {
+			got = &rows[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("成员列表里应有多组服务器,得到 %v", rows)
+	}
+	wantGroups := []string{env.privateID, env.publicID}
+	slices.Sort(wantGroups)
+	if !slices.Equal(got.GroupIDs, wantGroups) {
+		t.Fatalf("groupIds = %v, want %v", got.GroupIDs, wantGroups)
+	}
+
+	// 成员可操作(并集),但改组要求两组都能管 —— 公开组只有管理员/组长管得着,成员不行。
+	prefix := env.srv.URL + "/api/servers/" + srvID
+	if code := statusOf(t, env.member, http.MethodPut, prefix, env.memberCS, `{"name":"renamed"}`); code != http.StatusOK {
+		t.Fatalf("成员改名 = %d, want 200", code)
+	}
+	if code := statusOf(t, env.member, http.MethodPut, prefix, env.memberCS,
+		`{"groupIds":["`+env.privateID+`"]}`); code != http.StatusForbidden {
+		t.Fatalf("成员改组(只认得一组) = %d, want 403", code)
+	}
+	// 组长管着两个组:可以把它收到只剩私有组。
+	if code := statusOf(t, env.owner, http.MethodPut, prefix, env.ownerCS,
+		`{"groupIds":["`+env.privateID+`"]}`); code != http.StatusOK {
+		t.Fatalf("组长改组 = %d, want 200", code)
+	}
+
+	// 未归组在 JSON 里是 [] 而不是 null。
+	freeID := env.srvUngrouped
+	var one serverRow
+	resp := doJSON(t, env.admin, http.MethodGet, env.srv.URL+"/api/servers/"+freeID, "", "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET server = %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&one); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if one.GroupIDs == nil || len(one.GroupIDs) != 0 {
+		t.Fatalf("未归组 groupIds = %v, want 空数组", one.GroupIDs)
 	}
 }

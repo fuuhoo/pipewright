@@ -211,7 +211,7 @@ func (s *Service) replaceMembers(ctx context.Context, groupID string, memberIDs 
 const groupCols = `g.id, g.name, g.description, g.visibility, g.owner_id,
 	COALESCE(u.username, ''), g.created_by, g.created_at, g.updated_at,
 	(SELECT COUNT(1) FROM projects pr WHERE pr.group_id = g.id),
-	(SELECT COUNT(1) FROM servers sv WHERE sv.group_id = g.id)`
+	(SELECT COUNT(1) FROM server_groups sg WHERE sg.group_id = g.id)`
 
 func scanGroup(row scanner) (*Group, error) {
 	var g Group
@@ -385,7 +385,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("group: count projects: %w", err)
 	}
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(1) FROM servers WHERE group_id = ?`, id).Scan(&servers); err != nil {
+		`SELECT COUNT(1) FROM server_groups WHERE group_id = ?`, id).Scan(&servers); err != nil {
 		return fmt.Errorf("group: count servers: %w", err)
 	}
 	if projects > 0 || servers > 0 {
@@ -453,38 +453,71 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID string) erro
 // compile-time 断言:本包就是 internal/access 的仓储实现体。
 var _ access.Repository = (*Service)(nil)
 
-// GroupIDOf 返回资源所属分组 ID(” = 未归组)。资源不存在返回 ErrNotFound(→ 404),
+// GroupIDsOf 返回资源所属分组集合(空集合 = 未归组)。资源不存在返回 ErrNotFound(→ 404),
 // 不能返回 access.ErrForbidden——否则「项目不存在」会被伪装成「无权限」。
 //
+// 服务器是唯一可归多个组的资源(server_groups,见 0087),其余资源至多一个归组。
 // KindRun 走 run → project 两跳:运行本身不持分组,它的权限完全随所属项目。
-func (s *Service) GroupIDOf(ctx context.Context, kind access.Kind, id string) (string, error) {
-	var q string
-	switch kind {
-	case access.KindProject:
-		q = `SELECT group_id FROM projects WHERE id = ?`
-	case access.KindServer:
-		q = `SELECT group_id FROM servers WHERE id = ?`
-	case access.KindKubeCluster:
-		q = `SELECT group_id FROM kube_clusters WHERE id = ?`
-	case access.KindRun:
-		// 运行没有自己的分组,归属来自所属项目;项目行已删(留存策略清掉了)时 group_id
-		// 是 NULL,按 fail closed 当作「资源不存在」,而不是退化成未归组让全员可读他人日志。
-		q = `SELECT p.group_id FROM pipeline_runs r LEFT JOIN projects p ON p.id = r.project_id WHERE r.id = ?`
-	default:
-		return "", fmt.Errorf("group: 未知资源类型 %q", kind)
+func (s *Service) GroupIDsOf(ctx context.Context, kind access.Kind, id string) ([]string, error) {
+	if kind != access.KindServer {
+		var q string
+		switch kind {
+		case access.KindProject:
+			q = `SELECT group_id FROM projects WHERE id = ?`
+		case access.KindKubeCluster:
+			q = `SELECT group_id FROM kube_clusters WHERE id = ?`
+		case access.KindRun:
+			// 运行没有自己的分组,归属来自所属项目;项目行已删(留存策略清掉了)时 group_id
+			// 是 NULL,按 fail closed 当作「资源不存在」,而不是退化成未归组让全员可读他人日志。
+			q = `SELECT p.group_id FROM pipeline_runs r LEFT JOIN projects p ON p.id = r.project_id WHERE r.id = ?`
+		default:
+			return nil, fmt.Errorf("group: 未知资源类型 %q", kind)
+		}
+		var groupID sql.NullString
+		err := s.db.QueryRowContext(ctx, q, id).Scan(&groupID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		if err == nil && !groupID.Valid {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("group: resolve group of %s/%s: %w", kind, id, err)
+		}
+		if groupID.String == "" {
+			return []string{}, nil
+		}
+		return []string{groupID.String}, nil
 	}
-	var groupID sql.NullString
-	err := s.db.QueryRowContext(ctx, q, id).Scan(&groupID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	if err == nil && !groupID.Valid {
-		return "", ErrNotFound
-	}
+
+	// 服务器:一条 LEFT JOIN 同时区分「机器不存在」(0 行)与「未归组」(1 行 NULL)。
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT sg.group_id FROM servers sv
+		 LEFT JOIN server_groups sg ON sg.server_id = sv.id
+		 WHERE sv.id = ?`, id)
 	if err != nil {
-		return "", fmt.Errorf("group: resolve group of %s/%s: %w", kind, id, err)
+		return nil, fmt.Errorf("group: resolve groups of server/%s: %w", id, err)
 	}
-	return groupID.String, nil
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	found := false
+	for rows.Next() {
+		found = true
+		var groupID sql.NullString
+		if err := rows.Scan(&groupID); err != nil {
+			return nil, fmt.Errorf("group: scan server group: %w", err)
+		}
+		if groupID.Valid && groupID.String != "" {
+			out = append(out, groupID.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("group: iterate server groups: %w", err)
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	return out, nil
 }
 
 // GroupSnapshot 取判定所需的最小快照。groupID 为空(未归组)返回 (nil, nil):

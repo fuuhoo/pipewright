@@ -72,13 +72,13 @@ func TestServiceCan_RoleCeiling(t *testing.T) {
 		groups: map[string]*Group{
 			"g-priv": {ID: "g-priv", Visibility: VisibilityPrivate, OwnerID: "viewer-owner", MemberIDs: []string{"viewer"}},
 		},
-		byRes: map[string]string{
-			"project/p1":          Ungrouped,
-			"server/s1":           Ungrouped,
-			"run/r1":              Ungrouped,
-			"project/p-priv":      "g-priv",
-			"server/s-priv":       "g-priv",
-			"kube_cluster/k-priv": "g-priv",
+		byRes: map[string][]string{
+			"project/p1":          nil,
+			"server/s1":           nil,
+			"run/r1":              nil,
+			"project/p-priv":      {"g-priv"},
+			"server/s-priv":       {"g-priv"},
+			"kube_cluster/k-priv": {"g-priv"},
 		},
 	}
 	svc := NewService(repo)

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -72,8 +73,9 @@ type Server struct {
 	CredentialID string
 	// CredentialName 是冗余只读展示名(join credentials),便于列表展示;非持久列。
 	CredentialName string
-	// GroupID 是所属资源分组(servers.group_id);'' = 未归组 = 全员可见可操作。
-	GroupID   string
+	// GroupIDs 是所属资源分组(server_groups,可多个,按 ID 升序);空 = 未归组 =
+	// 全员可见可操作。可见性取并集,归属级动作要求每个组都管得住(见 internal/access)。
+	GroupIDs  []string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -85,8 +87,8 @@ type CreateInput struct {
 	Port         int // <=0 时归一为 DefaultPort
 	User         string
 	CredentialID string
-	// GroupID 可空('' = 未归组)。能否放进这个组由 HTTP 层判定(access.ActManage)。
-	GroupID string
+	// GroupIDs 可空(空 = 未归组)。能否放进这些组由 HTTP 层判定(access.ActManage)。
+	GroupIDs []string
 }
 
 // UpdateInput 是更新服务器的入参;指针字段为 nil 表示不修改。
@@ -96,8 +98,8 @@ type UpdateInput struct {
 	Port         *int
 	User         *string
 	CredentialID *string
-	// GroupID 改归属;nil = 不动,指向 '' = 移出分组。两侧 Manage 由 HTTP 层把关。
-	GroupID *string
+	// GroupIDs 整体替换归属;nil = 不动,空切片 = 移出所有分组。两侧 Manage 由 HTTP 层把关。
+	GroupIDs *[]string
 }
 
 // ListFilter 是列表的分组可见性过滤。
@@ -302,27 +304,32 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Server, error) {
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
-	groupID := strings.TrimSpace(in.GroupID)
-	if groupID != "" {
-		ok, err := s.groupExists(ctx, groupID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, ErrGroupNotFound
-		}
+	groupIDs := NormalizeGroupIDs(in.GroupIDs)
+	if err := s.validateGroups(ctx, groupIDs); err != nil {
+		return nil, err
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, host, port, user, credential_id, group_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Name, in.Host, port, in.User, in.CredentialID, groupID, nowStr, nowStr,
-	)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, fmt.Errorf("target: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO servers (id, name, host, port, user, credential_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Name, in.Host, port, in.User, in.CredentialID, nowStr, nowStr,
+	); err != nil {
 		if isForeignKeyErr(err) {
 			return nil, ErrCredentialNotFound
 		}
 		return nil, fmt.Errorf("target: insert: %w", err)
+	}
+	if err := insertGroups(ctx, tx, id, groupIDs, nowStr); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("target: commit: %w", err)
 	}
 	return s.Get(ctx, id)
 }
@@ -334,12 +341,12 @@ func (s *service) List(ctx context.Context) ([]*Server, error) {
 
 func (s *service) ListScoped(ctx context.Context, f ListFilter) ([]*Server, error) {
 	query := `SELECT s.id, s.name, s.host, s.port, s.user, s.credential_id,
-		        COALESCE(c.name, ''), s.group_id, s.created_at, s.updated_at
+		        COALESCE(c.name, ''), s.created_at, s.updated_at
 		 FROM servers s
 		 LEFT JOIN credentials c ON c.id = s.credential_id`
 	var args []any
-	// 别名前缀必须是 s.:可见分组 ID 里有空串(未归组),裸列名 group_id 在 join 里会歧义。
-	if clause, clauseArgs := f.Visible.Clause("s.group_id"); clause != "" {
+	// 归属在 server_groups 里(可多个):「未归组」是没有成员行,而不是列值 ''。
+	if clause, clauseArgs := f.Visible.MemberClause("s.id", "server_groups", "server_id", "group_id"); clause != "" {
 		query += " WHERE " + clause
 		args = clauseArgs
 	}
@@ -362,26 +369,106 @@ func (s *service) ListScoped(ctx context.Context, f ListFilter) ([]*Server, erro
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("target: iterate: %w", err)
 	}
+	if err := s.attachGroups(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
-// groupExists 校验分组存在(servers.group_id 无外键,故在此挡悬挂引用)。
-func (s *service) groupExists(ctx context.Context, groupID string) (bool, error) {
-	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM resource_groups WHERE id = ?`, groupID).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+// validateGroups 校验每个分组 ID 都存在(server_groups 无外键,故在此挡悬挂引用)。
+func (s *service) validateGroups(ctx context.Context, groupIDs []string) error {
+	if len(groupIDs) == 0 {
+		return nil
 	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(groupIDs)), ",")
+	args := make([]any, 0, len(groupIDs))
+	for _, id := range groupIDs {
+		args = append(args, id)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM resource_groups WHERE id IN (`+placeholders+`)`, args...).Scan(&n); err != nil {
+		return fmt.Errorf("target: check groups: %w", err)
+	}
+	if n != len(groupIDs) {
+		return ErrGroupNotFound
+	}
+	return nil
+}
+
+// NormalizeGroupIDs 统一归属集合的形态:去空白、丢空项、去重并按 ID 升序。
+// 排序是给读路径一个确定顺序(前端标签、审计 detail 不会因为插入顺序不同而抖动)。
+// HTTP 层也用它,好让「能不能放进这些组」的判定与真正入库的集合完全一致。
+func NormalizeGroupIDs(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// insertGroups 写入一台机器的归属边(调用方负责事务)。
+func insertGroups(ctx context.Context, tx *sql.Tx, serverID string, groupIDs []string, now string) error {
+	for _, groupID := range groupIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO server_groups (server_id, group_id, created_at) VALUES (?, ?, ?)`,
+			serverID, groupID, now,
+		); err != nil {
+			return fmt.Errorf("target: insert group: %w", err)
+		}
+	}
+	return nil
+}
+
+// attachGroups 批量补齐 servers 的 GroupIDs(避免列表页每行一次查询)。
+func (s *service) attachGroups(ctx context.Context, servers []*Server) error {
+	if len(servers) == 0 {
+		return nil
+	}
+	ids := make([]any, 0, len(servers))
+	byID := make(map[string]*Server, len(servers))
+	for _, srv := range servers {
+		srv.GroupIDs = []string{}
+		ids = append(ids, srv.ID)
+		byID[srv.ID] = srv
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT server_id, group_id FROM server_groups WHERE server_id IN (`+placeholders+`)
+		 ORDER BY server_id, group_id`, ids...)
 	if err != nil {
-		return false, fmt.Errorf("target: check group: %w", err)
+		return fmt.Errorf("target: load groups: %w", err)
 	}
-	return true, nil
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var serverID, groupID string
+		if err := rows.Scan(&serverID, &groupID); err != nil {
+			return fmt.Errorf("target: scan group: %w", err)
+		}
+		if srv, ok := byID[serverID]; ok {
+			srv.GroupIDs = append(srv.GroupIDs, groupID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("target: iterate groups: %w", err)
+	}
+	return nil
 }
 
 func (s *service) Get(ctx context.Context, id string) (*Server, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT s.id, s.name, s.host, s.port, s.user, s.credential_id,
-		        COALESCE(c.name, ''), s.group_id, s.created_at, s.updated_at
+		        COALESCE(c.name, ''), s.created_at, s.updated_at
 		 FROM servers s
 		 LEFT JOIN credentials c ON c.id = s.credential_id
 		 WHERE s.id = ?`, id,
@@ -393,16 +480,19 @@ func (s *service) Get(ctx context.Context, id string) (*Server, error) {
 		}
 		return nil, err
 	}
+	if err := s.attachGroups(ctx, []*Server{srv}); err != nil {
+		return nil, err
+	}
 	return srv, nil
 }
 
 func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Server, error) {
 	// 先取当前行。
-	var name, host, user, credentialID, groupID string
+	var name, host, user, credentialID string
 	var port int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, host, port, user, credential_id, group_id FROM servers WHERE id = ?`, id,
-	).Scan(&name, &host, &port, &user, &credentialID, &groupID)
+		`SELECT name, host, port, user, credential_id FROM servers WHERE id = ?`, id,
+	).Scan(&name, &host, &port, &user, &credentialID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -441,42 +531,66 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Serve
 		}
 		credentialID = *in.CredentialID
 	}
-	if in.GroupID != nil {
-		// 指针非 nil 才动归属:显式空串 = 移出分组,与「不传」区分开。
-		groupID = strings.TrimSpace(*in.GroupID)
-		if groupID != "" {
-			ok, gerr := s.groupExists(ctx, groupID)
-			if gerr != nil {
-				return nil, gerr
-			}
-			if !ok {
-				return nil, ErrGroupNotFound
-			}
+	// 指针非 nil 才动归属:显式空切片 = 移出所有分组,与「不传」区分开。
+	var groupIDs []string
+	if in.GroupIDs != nil {
+		groupIDs = NormalizeGroupIDs(*in.GroupIDs)
+		if err := s.validateGroups(ctx, groupIDs); err != nil {
+			return nil, err
 		}
 	}
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name = ?, host = ?, port = ?, user = ?, credential_id = ?, group_id = ?, updated_at = ? WHERE id = ?`,
-		name, host, port, user, credentialID, groupID, nowStr, id,
-	)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, fmt.Errorf("target: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE servers SET name = ?, host = ?, port = ?, user = ?, credential_id = ?, updated_at = ? WHERE id = ?`,
+		name, host, port, user, credentialID, nowStr, id,
+	); err != nil {
 		if isForeignKeyErr(err) {
 			return nil, ErrCredentialNotFound
 		}
 		return nil, fmt.Errorf("target: update: %w", err)
 	}
+	if in.GroupIDs != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM server_groups WHERE server_id = ?`, id); err != nil {
+			return nil, fmt.Errorf("target: clear groups: %w", err)
+		}
+		if err := insertGroups(ctx, tx, id, groupIDs, nowStr); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("target: commit: %w", err)
+	}
 	return s.Get(ctx, id)
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM servers WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("target: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 归属边没有外键(见 0087),删除机器必须在同一事务里自己清掉。
+	if _, err := tx.ExecContext(ctx, `DELETE FROM server_groups WHERE server_id = ?`, id); err != nil {
+		return fmt.Errorf("target: delete groups: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM servers WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("target: delete: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("target: commit: %w", err)
 	}
 	return nil
 }
@@ -852,13 +966,13 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-// scanServer 把一行扫描为 Server(永不读任何密文/明文列)。
+// scanServer 把一行扫描为 Server(永不读任何密文/明文列);归属由 attachGroups 补齐。
 func scanServer(sc scanner) (*Server, error) {
 	var srv Server
 	var createdStr, updatedStr string
 	if err := sc.Scan(
 		&srv.ID, &srv.Name, &srv.Host, &srv.Port, &srv.User, &srv.CredentialID,
-		&srv.CredentialName, &srv.GroupID, &createdStr, &updatedStr,
+		&srv.CredentialName, &createdStr, &updatedStr,
 	); err != nil {
 		return nil, err
 	}
