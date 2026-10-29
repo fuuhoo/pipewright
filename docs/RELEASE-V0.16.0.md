@@ -123,3 +123,17 @@ git diff --name-only v0.15.0..v0.16.0 -- internal/store/migrations
 `ALTER TABLE … ADD COLUMN`（默认 1）+ 一条按建号描述回填的 `UPDATE`；0087 建 `server_groups`、
 回填、`DROP INDEX` + `ALTER TABLE servers DROP COLUMN group_id`。**0087 是本版唯一的破坏性一步**：
 旧的 `servers.group_id` 列被删除，降级回 v0.15.0 前请先备份（升级前备份同样适用）。
+
+## 发版实况（供下次对照）
+
+- 五条 run 同时起于 09:18Z：`ci`(tag, 3m10s) / `release`(4m20s) / `aliyun-image`(4m38s) /
+  **`caddy-image`(21m08s,还是最慢的一条)** 全部 success；`ci`(master push,4m04s) 红在 backend 的
+  `Run go test`,而**同一 commit 的 tag `ci` 与本地 `go test -count=1 ./...` 都绿** —— 按偶发红处理，
+  日志因 PAT 失效（401,与 v0.15.0 那次相同）拿不到，靠 tag run 与本地全量重跑取证。
+- 第 7 步硬证据：`draft=false`、`prerelease=false`、7 个资产（4 tar.gz + 2 windows zip + `checksums.txt`）；
+  ghcr `latest` 与 `0.16.0` 的两个子 manifest digest 相同（amd64 `0b7ca7de…` / arm64 `63bb4a25…`）；
+  镜像里的二进制 `--version` 自述 `0.16.0 (commit 579c3cd, …, linux/arm64)`；
+  ACR 四标签均列出 amd64 + arm64，`0.16.0` = `latest`（`1de897e4…` / `e216c764…`），
+  `0.16.0-docker` = `latest-docker`（`93f4f303…` / `40dacabb…`）。
+- 本机 `web/dist` 入口 hash：`index-BrtSu2VA.js` → `index-vIVXX2sk.js`；:8080 / :8081 两个实例确认服的是新包。
+
