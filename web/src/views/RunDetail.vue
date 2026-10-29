@@ -417,14 +417,19 @@ async function handleAbortDeploy(): Promise<void> {
 
 // ─── data loading ─────────────────────────────────────────────────────────────
 
-async function loadRun(): Promise<void> {
-  loadState.value = 'loading'
-  loadError.value = ''
+// silent=true:不翻到 loading 骨架(用于进行中 → 终态的换页:状态已由 SSE 落下,
+// 这里只补产物/时长/commit 等整份快照;翻骨架会把整页拆掉重建一遍,终态那一刻白闪)。
+async function loadRun(opts: { silent?: boolean } = {}): Promise<void> {
+  if (!opts.silent) {
+    loadState.value = 'loading'
+    loadError.value = ''
+  }
   try {
     run.value = await getRun(runId.value)
     loadState.value = 'idle'
     if (run.value.status === 'waiting_approval') void loadApprovals()
   } catch (err) {
+    if (opts.silent) return // 已有终态内容在手,补快照失败不把页面翻成错误页
     if (err instanceof HttpError) {
       // 分组权限:别人的私有组里的 run 明确回 403(不伪装 404),文案与其余页面一致。
       if (err.status === 403) {
@@ -479,7 +484,7 @@ function startSse(): void {
       // 经 SSE 只推了 status,需重新 GET 才能拿到 → 否则要手动刷新才出来。
       if (isTerminal(status)) {
         stopSse()
-        void loadRun()
+        void loadRun({ silent: true })
       }
     },
     onStep({ step }) {
@@ -488,7 +493,7 @@ function startSse(): void {
       run.value = { ...run.value, steps }
     },
     // onError is intentionally omitted — subscribeRunEvents falls back to polling
-  })
+  }, { logs: false })
   if (refreshTimer === null) {
     refreshTimer = setInterval(() => { void silentRefresh() }, 4000)
   }
@@ -660,7 +665,7 @@ function nodeClass(status: StepStatus): string {
           <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
         </svg>
         <p class="error-message">{{ loadError }}</p>
-        <button class="btn-secondary" @click="loadRun">↻ {{ t('runDetail.retry') }}</button>
+        <button class="btn-secondary" @click="loadRun()">↻ {{ t('runDetail.retry') }}</button>
       </div>
     </template>
 

@@ -583,9 +583,26 @@ export interface SseHandlers {
   onError?: (err: Event) => void
 }
 
+export interface SseOptions {
+  /**
+   * false → 服务端不回放日志(只收发 status/step)。详情页不消费 log 事件时传 false,
+   * 省掉整条历史日志的解析。
+   */
+  logs?: boolean
+  /**
+   * 只回放 seq 大于它的行。客户端已用 getRunLogs 播种过历史时传种子响应的 nextSeq,
+   * 避免把同一份日志再下一遍。
+   */
+  sinceSeq?: number
+}
+
 /** Returns a cleanup function; call it to unsubscribe. */
-export function subscribeRunEvents(runId: string, handlers: SseHandlers): () => void {
-  const url = `/api/runs/${runId}/events`
+export function subscribeRunEvents(runId: string, handlers: SseHandlers, opts: SseOptions = {}): () => void {
+  const qs = new URLSearchParams()
+  if (opts.logs === false) qs.set('logs', '0')
+  if (opts.sinceSeq && opts.sinceSeq > 0) qs.set('sinceSeq', String(opts.sinceSeq))
+  const query = qs.toString()
+  const url = `/api/runs/${runId}/events${query ? `?${query}` : ''}`
 
   // We try SSE first and fall back to polling if EventSource fails.
   let es: EventSource | null = null

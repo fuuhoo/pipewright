@@ -208,3 +208,82 @@ func TestSSEReplaysHistoryLogEvents(t *testing.T) {
 		t.Fatal("SSE log 事件含明文假 secret(脱敏失败)")
 	}
 }
+
+// readSse 读完一个(终态 run 会自收流的)SSE 响应,返回按行切好的完整内容。
+func readSse(t *testing.T, resp *http.Response) []string {
+	t.Helper()
+	var lines []string
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+	}
+	return lines
+}
+
+// countSseEvent 统计某个 event 名出现的次数。
+func countSseEvent(lines []string, name string) int {
+	n := 0
+	for _, l := range lines {
+		if l == "event: "+name {
+			n++
+		}
+	}
+	return n
+}
+
+// TestSSEReplayHonorsSinceSeqAndLogsOff 验证回放口径的两个省流量开关:
+//   - sinceSeq=N 只回放 seq>N 的行(客户端已 REST 播种时接尾巴,不重下一遍历史);
+//   - logs=0 完全不回放日志(详情页只要 status/step)。
+func TestSSEReplayHonorsSinceSeqAndLogsOff(t *testing.T) {
+	srv, client, csrf, projID, rsvc := setupLogsServer(t)
+	r, _ := rsvc.Create(context.Background(), projID, run.Trigger{Type: run.TriggerManual})
+	waitRunStatus(t, client, srv, csrf, r.ID, run.StatusFailed)
+
+	get := func(query string) []string {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/events"+query, nil)
+		req.Header.Set("X-CSRF-Token", csrf)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("SSE GET %q: %v", query, err)
+		}
+		defer resp.Body.Close()
+		return readSse(t, resp)
+	}
+
+	all := countSseEvent(get(""), "log")
+	if all == 0 {
+		t.Fatal("默认应回放全部历史日志")
+	}
+
+	tail := countSseEvent(get("?sinceSeq=2"), "log")
+	if tail != all-2 {
+		t.Fatalf("sinceSeq=2 应只回放剩余 %d 行, got %d", all-2, tail)
+	}
+
+	none := get("?logs=0")
+	if n := countSseEvent(none, "log"); n != 0 {
+		t.Fatalf("logs=0 不应回放日志, got %d", n)
+	}
+	if countSseEvent(none, "status") == 0 {
+		t.Fatal("logs=0 仍应推 status")
+	}
+}
+
+// TestSSERejectsInvalidSinceSeq 验证非法 sinceSeq 在建连阶段回 400(不能先写 200 再报错)。
+func TestSSERejectsInvalidSinceSeq(t *testing.T) {
+	srv, client, csrf, projID, rsvc := setupLogsServer(t)
+	r, _ := rsvc.Create(context.Background(), projID, run.Trigger{Type: run.TriggerManual})
+	waitRunStatus(t, client, srv, csrf, r.ID, run.StatusFailed)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/events?sinceSeq=abc", nil)
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("SSE GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法 sinceSeq 应 400, got %d", resp.StatusCode)
+	}
+}

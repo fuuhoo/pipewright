@@ -323,20 +323,39 @@ func makeRunEventsHandler(svc run.Service, sub runSubscriber) http.HandlerFunc {
 			return
 		}
 
+		// 回放口径(须在写 200 之前解析,非法参数才能回 400):
+		//   logs=0      不回放日志(详情页只要 status/step;日志由终端自己按需拉,见 RunTerminal)
+		//   sinceSeq=N  只回放 seq>N 的行(客户端已用 REST 播种到 N,接尾巴即可,别重下一遍历史)
+		logsOff := r.URL.Query().Get("logs") == "0"
+		sinceSeq := 0
+		if v := r.URL.Query().Get("sinceSeq"); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n < 0 {
+				cancel()
+				writeError(w, http.StatusBadRequest, "invalid_since_seq", "sinceSeq 必须为不小于 0 的整数")
+				return
+			}
+			sinceSeq = n
+		}
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
-		// 连接即回放(Story 3.6):先按 seq 升序补发该 run 全部历史 log 事件(已脱敏,从 DB 读
-		// 不全量驻留内存),让刷新者拿到完整日志,再转入实时。订阅已在快照前注册,故回放窗口内
-		// 新产生的行也会经实时通道补达(前端按 seq 去重)。
-		replaySeq := 0
-		if hist, herr := svc.GetLogs(r.Context(), id, 0); herr == nil {
-			for i := range hist {
-				writeSSE(w, flusher, string(run.EventLog), logPayload(id, hist[i]))
-				replaySeq = hist[i].Seq
+		// 连接即回放(Story 3.6):先按 seq 升序补发历史 log 事件(已脱敏,从 DB 读
+		// 不全量驻留内存),再转入实时。订阅已在快照前注册,故回放窗口内新产生的行也会经
+		// 实时通道补达(前端按 seq 去重)。默认全量回放(刷新者拿完整日志);客户端已播种时
+		// 传 sinceSeq 只接尾巴,不需要日志的订阅者传 logs=0 —— 否则同一条 1 万多行的构建日志
+		// 每次连接都要解析一遍,详情页两条订阅就是两遍(实测 5.4 万行 → 10.8 万个事件)。
+		replaySeq := sinceSeq
+		if !logsOff {
+			if hist, herr := svc.GetLogs(r.Context(), id, sinceSeq); herr == nil {
+				for i := range hist {
+					writeSSE(w, flusher, string(run.EventLog), logPayload(id, hist[i]))
+					replaySeq = hist[i].Seq
+				}
 			}
 		}
 
@@ -380,6 +399,9 @@ func makeRunEventsHandler(svc run.Service, sub runSubscriber) http.HandlerFunc {
 				case run.EventStep:
 					writeSSE(w, flusher, string(run.EventStep), stepPayload(ev.RunID, ev.Step))
 				case run.EventLog:
+					if logsOff {
+						continue
+					}
 					// 去重:回放已补发 seq<=replaySeq 的历史行(回放与订阅窗口可能重叠)。
 					if ev.Log.Seq <= replaySeq {
 						continue

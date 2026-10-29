@@ -121,14 +121,14 @@ async function bootstrap(): Promise<void> {
   loadError.value = ''
 
   if (props.live) {
-    // Live mode: SSE handles both history replay (on connect) and live tail.
-    // We don't pre-pull via REST to avoid double-fetching history — but if the
-    // SSE connection drops, subscribeRunEvents falls back to polling getRun,
-    // which does not carry logs; so we also seed once from getRunLogs to be
-    // robust to a missed replay, relying on seq de-dup to avoid duplicates.
+    // Live mode: REST seed once, then SSE only for the tail (sinceSeq = 种子游标)。
+    // 否则历史日志要下两遍(播种一遍 + SSE 建连回放一遍);播种失败时游标留 0,
+    // 退化成服务端全量回放,seq 去重兜住重叠。
+    let nextSeq = 0
     try {
       const initial = await getRunLogs(props.runId, 0)
       ingest(initial.lines)
+      nextSeq = initial.nextSeq
     } catch {
       // Non-fatal: SSE replay will still deliver history. Swallow silently.
     }
@@ -140,7 +140,7 @@ async function bootstrap(): Promise<void> {
       onLog(line) {
         ingest([line])
       },
-    })
+    }, { sinceSeq: nextSeq })
   } else {
     // Terminal mode: one-shot full historical replay, read-only.
     try {
