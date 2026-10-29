@@ -210,6 +210,15 @@ type serverMetricsDTO struct {
 	Disk        *diskMetric   `json:"disk"`
 	System      *systemMetric `json:"system"`
 	CollectedAt string        `json:"collectedAt"`
+	// LastAttemptAt 是后台最近一次尝试采集的时刻(成败都记),与 CollectedAt(最近一次成功)
+	// 是两个时间:后者说明数据多旧,前者说明最近一次去采是什么时候。
+	LastAttemptAt string `json:"lastAttemptAt"`
+	// LastError 非空 = 最近一次采集失败;此时指标仍是上一次成功的数据。
+	LastError string `json:"lastError"`
+	// Stale = 最近一次采集失败、屏上展示的是旧数据(reachable 仍为 true)。
+	Stale bool `json:"stale"`
+	// Collecting = 后台这一轮还没给出这台的结果(含从未采到过),界面画占位卡。
+	Collecting bool `json:"collecting"`
 }
 
 // collectServerMetrics 对单台服务器采集指标。永不返回 error:不可达/失败均落到
@@ -1016,6 +1025,10 @@ func humanMetricsError(err error) string {
 		return "无法连接服务器:端口未开放、主机不可达或超时"
 	case errors.Is(err, target.ErrInvalidCredential):
 		return "凭据不是可用的 SSH 私钥或口令"
+	case errors.Is(err, target.ErrCredentialNotFound):
+		return "未找到服务器绑定的 SSH 凭据,请在服务器设置里重新选择"
+	case errors.Is(err, target.ErrVaultUnconfigured):
+		return "保险库未配置,无法解密 SSH 凭据"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "采集超时"
 	default:
@@ -1026,8 +1039,9 @@ func humanMetricsError(err error) string {
 // --- HTTP handlers ---
 
 // makeServerMetricsHandler 返回 GET /api/servers/{id}/metrics(认证,只读)。
-// 服务器不存在/凭据不存在/保险库未配 → 标准状态码;连接/认证/采集失败 → 200 + reachable:false,不 500。
-func makeServerMetricsHandler(svc target.Service) http.HandlerFunc {
+// 正常装配下只读后台缓存,不因请求触发 SSH;cache 为 nil(后台采集关闭的调试装配)时回退就地采集。
+// 服务器不存在 → 404;连接/认证/采集失败 → 200 + reachable:false,不 500。
+func makeServerMetricsHandler(svc target.Service, cache *MetricsCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
@@ -1037,6 +1051,10 @@ func makeServerMetricsHandler(svc target.Service) http.HandlerFunc {
 		// 先确认服务器存在(404 在写任何 200 体之前)。
 		if _, err := svc.Get(r.Context(), id); err != nil {
 			writeServerError(w, err)
+			return
+		}
+		if cache != nil {
+			writeJSON(w, http.StatusOK, cache.Snapshot(id))
 			return
 		}
 		out, locErr := collectServerMetrics(r.Context(), svc, id)
@@ -1050,14 +1068,13 @@ func makeServerMetricsHandler(svc target.Service) http.HandlerFunc {
 }
 
 // makeAllServerMetricsHandler 返回 GET /api/servers/metrics(认证,只读;批量)。
-// 逐台并行采集(有界并发),各自独立:某台失败仅该台 reachable:false,不连累其它台、不 500。
 // 聚合范围 = actor 可见分组内的服务器(与容器总览同一口径)。
+// 正常装配下逐台读后台缓存(不拨号);cache 为 nil 时回退为按请求逐台采集(旧行为/调试用)。
 //
-// 两种响应形态,同一套采集:
-//   - 默认 JSON `{items:[…]}`:等全部采完一次性返回。Dashboard 只要一台数/汇总,逐台时序无意义。
-//   - `?stream=1` NDJSON(一行一台,采完即 flush):首屏不必等最慢那台 —— 可达机 0.2s 就出卡,
-//     死机拖到探针超时也只压住它自己那一行。
-func makeAllServerMetricsHandler(svc target.Service, acc *access.Service) http.HandlerFunc {
+// 两种响应形态,同一份数据:
+//   - 默认 JSON `{items:[…], collecting}`:一次返回。collecting = 后台有一轮在采。
+//   - `?stream=1` NDJSON(一行一台):保持给前端的逐台协议,读缓存时同样立即下发。
+func makeAllServerMetricsHandler(svc target.Service, cache *MetricsCache, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "服务器服务未初始化")
@@ -1077,21 +1094,40 @@ func makeAllServerMetricsHandler(svc target.Service, acc *access.Service) http.H
 		for i, srv := range servers {
 			ids[i] = srv.ID
 		}
-		events := runHostPool(r.Context(), ids, metricsConcurrency, func(ctx context.Context, id string) serverMetricsDTO {
-			// 批量逐台独立:定位类错误对某台亦只表现为该台 reachable:false(忽略 locErr)。
-			dto, _ := collectServerMetrics(ctx, svc, id)
-			return dto
-		})
 
-		if !wantsNDJSONStream(r) {
-			// 客户端中途断开 → 未采到的台补 reachable:false,别吐零值假数据。
-			items := drainHostStream(events, len(ids), func(i int) serverMetricsDTO {
-				return offlineDTO(ids[i], "采集未完成")
+		if cache == nil {
+			events := runHostPool(r.Context(), ids, metricsConcurrency, func(ctx context.Context, id string) serverMetricsDTO {
+				// 批量逐台独立:定位类错误对某台亦只表现为该台 reachable:false(忽略 locErr)。
+				dto, _ := collectServerMetrics(ctx, svc, id)
+				return dto
 			})
-			writeJSON(w, http.StatusOK, map[string]any{"items": items})
+			if !wantsNDJSONStream(r) {
+				// 客户端中途断开 → 未采到的台补 reachable:false,别吐零值假数据。
+				items := drainHostStream(events, len(ids), func(i int) serverMetricsDTO {
+					return offlineDTO(ids[i], "采集未完成")
+				})
+				writeJSON(w, http.StatusOK, map[string]any{"items": items})
+				return
+			}
+			writeNDJSONStream(r.Context(), w, events, len(ids))
 			return
 		}
-		writeNDJSONStream(r.Context(), w, events, len(ids))
+
+		items := make([]serverMetricsDTO, len(ids))
+		for i, id := range ids {
+			items[i] = cache.Snapshot(id)
+		}
+		if !wantsNDJSONStream(r) {
+			writeJSON(w, http.StatusOK, map[string]any{"items": items, "collecting": cache.Collecting()})
+			return
+		}
+		// 数据已在缓存里,逐行下发只是保持既有协议(前端按到达顺序就地替换卡片)。
+		events := make(chan streamFrame[serverMetricsDTO], len(items))
+		for i, item := range items {
+			events <- streamFrame[serverMetricsDTO]{idx: i, dto: item}
+		}
+		close(events)
+		writeNDJSONStream(r.Context(), w, events, len(items))
 	}
 }
 

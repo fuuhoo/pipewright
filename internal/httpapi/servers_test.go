@@ -46,6 +46,14 @@ func (d stubDialer) RunWithStdin(_ context.Context, _ string, _ target.SSHConfig
 // setupServerAPI 构造带 auth + vault + target 的测试 server。
 func setupServerAPI(t *testing.T, dialer target.SSHDialer) (*httptest.Server, *http.Client, string) {
 	t.Helper()
+	srv, client, csrf, _ := setupServerAPIWithSvc(t, dialer)
+	return srv, client, csrf
+}
+
+// setupServerAPIWithSvc 同上,额外返回 target 服务并接受追加的路由 Option
+// (指标缓存等需要与 handler 共享同一个实例时用)。
+func setupServerAPIWithSvc(t *testing.T, dialer target.SSHDialer, extra ...Option) (*httptest.Server, *http.Client, string, target.Service) {
+	t.Helper()
 	st := testStoreAuth(t)
 	svc := auth.NewService(st.DB, nil, nil)
 	if err := svc.Bootstrap("admin", "testpass"); err != nil {
@@ -53,12 +61,13 @@ func setupServerAPI(t *testing.T, dialer target.SSHDialer) (*httptest.Server, *h
 	}
 	v := vault.New(st.DB, testMasterKey())
 	tsvc := target.New(st.DB, v, dialer)
-	srv := httptest.NewServer(New(testWebFSAuth(), svc, WithVault(v), WithServers(tsvc)))
+	opts := append([]Option{WithVault(v), WithServers(tsvc)}, extra...)
+	srv := httptest.NewServer(New(testWebFSAuth(), svc, opts...))
 	t.Cleanup(srv.Close)
 
 	client := newTestClient(t)
 	csrf := loginWithClient(t, client, srv.URL)
-	return srv, client, csrf
+	return srv, client, csrf, tsvc
 }
 
 // newSSHCredAPI 经 API 建一条 ssh_key 凭据,返回 id。

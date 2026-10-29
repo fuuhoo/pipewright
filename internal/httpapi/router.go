@@ -116,18 +116,21 @@ type options struct {
 	anomalyInterval int // 后台定时检测间隔(秒);0=已关闭。供前端显示节奏。
 	anomalyCooldown int // 同条件告警去重冷却窗口(秒)。
 	metricsHistory  metrics.Service
-	oauth           oauth.Service
-	approvalCoord   *approval.Coordinator
-	approvalStore   *approval.Store
-	approvalSigner  *approval.Signer
-	promotionStore  *promotion.Store
-	environments    *deployenv.Service
-	doraMetrics     run.MetricsService
-	templates       library.TemplateService
-	varGroups       library.VarGroupService
-	customNodes     library.CustomNodeService
-	artifactStore   *artifactstore.Store
-	retention       *retention.Service
+	// serverMetricsCache 是状态页指标的后台快照缓存(默认 60s 采一轮,端点只读)。
+	// nil → 端点回退为按请求采集(未接后台采集的装配/调试)。
+	serverMetricsCache *MetricsCache
+	oauth              oauth.Service
+	approvalCoord      *approval.Coordinator
+	approvalStore      *approval.Store
+	approvalSigner     *approval.Signer
+	promotionStore     *promotion.Store
+	environments       *deployenv.Service
+	doraMetrics        run.MetricsService
+	templates          library.TemplateService
+	varGroups          library.VarGroupService
+	customNodes        library.CustomNodeService
+	artifactStore      *artifactstore.Store
+	retention          *retention.Service
 	// snapshots 是工作区目录快照仓储(运行详情「构建目录」面板数据源);nil → 端点 503。
 	// 快照跟着运行记录一起保留,没有独立窗口,所以这里不需要 TTL。
 	snapshots    *buildsnap.Store
@@ -514,6 +517,12 @@ func WithAnomalyConfig(intervalSec, cooldownSec int) Option {
 // 供异常检测页画 CPU/内存/磁盘随时间走势折线。不传则该端点返回 503。
 func WithMetricsHistory(s metrics.Service) Option {
 	return func(o *options) { o.metricsHistory = s }
+}
+
+// WithServerMetricsCache 注入状态页指标的后台快照缓存,/api/servers[/{id}]/metrics 只读它。
+// 不传(或传 nil)→ 端点回退为按请求采集:仅用于未接后台采集的装配与调试。
+func WithServerMetricsCache(c *MetricsCache) Option {
+	return func(o *options) { o.serverMetricsCache = c }
 }
 
 // WithOAuth 注入多 provider OAuth 凭据接入服务,挂载 /api/oauth/* 路由:
@@ -1028,8 +1037,8 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 采集命令纯静态 array、不接受任何用户输入(AC-SEC-02);某台不可达/某指标缺失 →
 		// reachable:false / 该指标 null,不 500。批量端点逐台并行有界、各自独立。
 		// chi 字面段优先于 {id},/servers/metrics 不会被 /servers/{id} 吞。
-		ar.Get("/servers/metrics", makeAllServerMetricsHandler(sv, o.access))
-		ar.Get("/servers/{id}/metrics", makeServerMetricsHandler(sv))
+		ar.Get("/servers/metrics", makeAllServerMetricsHandler(sv, o.serverMetricsCache, o.access))
+		ar.Get("/servers/{id}/metrics", makeServerMetricsHandler(sv, o.serverMetricsCache))
 		// 容器管理列表/聚合(Portainer 式总览)——经 SSH 跑 `docker ps -a --format {{json .}}`
 		// 采集容器清单。复用 sv(4-1 装配,无新服务)。GET 只读 → 过 auth、豁免 CSRF。命令纯静态
 		// array、不接受任何用户输入(AC-SEC-02);某台不可达/无运行时 → reachable:false / runtime:""
