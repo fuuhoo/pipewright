@@ -21,7 +21,7 @@ function dockerJob(config: Record<string, string>): PipelineJob {
 function host(id: string, name: string): Server {
   return {
     id, name, host: `10.0.0.${id.slice(-1)}`, port: 22, user: 'deploy',
-    credentialId: 'c-1', credentialName: 'k', groupId: '', createdAt: '', updatedAt: '',
+    credentialId: 'c-1', credentialName: 'k', groupIds: [], createdAt: '', updatedAt: '',
   }
 }
 

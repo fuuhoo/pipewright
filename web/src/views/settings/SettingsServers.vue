@@ -16,6 +16,7 @@ import type {
 import { listCredentials, usableCredentials } from '../../api/credentials'
 import type { Credential } from '../../api/credentials'
 import { listGroups, type Group } from '../../api/groups'
+import { groupNames } from '../../lib/groupFilter'
 import { useSessionStore } from '../../stores/session'
 import { HttpError } from '../../api/http'
 import { useRouter } from 'vue-router'
@@ -61,14 +62,27 @@ const groupById = computed<Record<string, Group>>(() => {
 const manageableGroups = computed(() => groups.value.filter((g) => g.canManage))
 const isAdminUser = computed(() => sessionStore.user?.role === 'admin')
 
-function groupName(id: string): string {
-  return id ? (groupById.value[id]?.name ?? t('groups.groupMissing')) : t('groups.ungrouped')
+const groupLabels = computed(() => ({
+  all: t('groups.filterAll'),
+  ungrouped: t('groups.ungrouped'),
+  missing: t('groups.groupMissing'),
+  public: t('groups.visibilityPublic'),
+  private: t('groups.visibilityPrivate'),
+}))
+
+/** 这台主机所在分组的展示名;未归组给单一项「未归组」。 */
+function serverGroupNames(s: Server): string[] {
+  return groupNames(s.groupIds, groups.value, groupLabels.value)
 }
 
-/** 能否改这台主机的归属:未归组的主机只有管理员能动,组内的看对该组的 canManage。 */
+/**
+ * 能否改这台主机的归属:改的是**每一个**所在组的归属旁路,所以每一组都要管得住。
+ * 未归组(没有组)的主机只有管理员能动;管理员另外总能修(含引用悬挂的组)。
+ */
 function canChangeGroup(s: Server): boolean {
-  if (!s.groupId) return isAdminUser.value
-  return groupById.value[s.groupId]?.canManage === true
+  if (isAdminUser.value) return true
+  if (s.groupIds.length === 0) return false
+  return s.groupIds.every((id) => groupById.value[id]?.canManage === true)
 }
 
 /** 谁能登记新主机:管理员(可登记为未归组)或至少管着一个组(必须归入自己的组)。 */
@@ -95,7 +109,7 @@ const form = ref({
   port: 22,
   user: '',
   credentialId: '',
-  groupId: '',
+  groupIds: [] as string[],
 })
 
 const formErrors = ref({
@@ -104,7 +118,7 @@ const formErrors = ref({
   port: '',
   user: '',
   credentialId: '',
-  groupId: '',
+  groupIds: '',
 })
 
 const formBanner = ref('')
@@ -223,8 +237,8 @@ function openAddModal(): void {
     port: 22,
     user: '',
     credentialId: sshCredentials.value[0]?.id ?? '',
-    // 非管理员登记的主机必须归入自己管得动的组(未归组 = 管理员专属),所以默认落在首个候选组。
-    groupId: isAdminUser.value ? '' : (manageableGroups.value[0]?.id ?? ''),
+    // 非管理员登记的主机必须归入自己管得动的组(未归组 = 管理员专属),所以默认勾上首个候选组。
+    groupIds: isAdminUser.value ? [] : (manageableGroups.value[0] ? [manageableGroups.value[0].id] : []),
   }
   clearFormErrors()
   formBanner.value = ''
@@ -240,7 +254,7 @@ function openEditModal(s: Server): void {
     port: s.port,
     user: s.user,
     credentialId: s.credentialId,
-    groupId: s.groupId,
+    groupIds: [...s.groupIds],
   }
   clearFormErrors()
   formBanner.value = ''
@@ -255,7 +269,7 @@ function closeModal(): void {
 // ─── form validation ─────────────────────────────────────────────────────────
 
 function clearFormErrors(): void {
-  formErrors.value = { name: '', host: '', port: '', user: '', credentialId: '', groupId: '' }
+  formErrors.value = { name: '', host: '', port: '', user: '', credentialId: '', groupIds: '' }
 }
 
 /** 正在编辑的主机(归属候选要能显示它当前所在、即使我已管不动的组)。 */
@@ -263,17 +277,37 @@ const editingServer = computed(() =>
   editingId.value ? (servers.value.find((s) => s.id === editingId.value) ?? null) : null,
 )
 
-/** 弹窗里的归属候选:我有 Manage 权的组;当前所在组即使管不动也要能显示出来。 */
+/**
+ * 弹窗里的候选分组:我管得着的组 + 当前所在但管不着的组。
+ * 后者必须显示(否则看不出它现在在哪),且勾选状态不可改。
+ */
 const groupOptions = computed<Group[]>(() => {
-  const cur = editingServer.value?.groupId
-  if (!cur) return manageableGroups.value
-  const g = groupById.value[cur]
-  if (!g || g.canManage) return manageableGroups.value
-  return [g, ...manageableGroups.value]
+  const cur = editingServer.value?.groupIds ?? []
+  const seen = new Set<string>()
+  const out: Group[] = []
+  for (const id of cur) {
+    const g = groupById.value[id]
+    if (g && !g.canManage && !seen.has(g.id)) {
+      seen.add(g.id)
+      out.push(g)
+    }
+  }
+  for (const g of manageableGroups.value) {
+    if (!seen.has(g.id)) {
+      seen.add(g.id)
+      out.push(g)
+    }
+  }
+  return out
 })
 
-/** 「未归组」选项何时可选:新建只有管理员(登记未归组主机=对全员开放操作权);编辑时看对该主机的 Manage 权。 */
-const ungroupedSelectable = computed(() =>
+/** 当前所在、但分组已被删除(列表里取不到快照)的 ID:显示一行「分组已失效」。 */
+const missingGroupIDs = computed(() =>
+  (editingServer.value?.groupIds ?? []).filter((id) => !groupById.value[id]),
+)
+
+/** 清空勾选 = 未归组。新建时只有管理员能这么做(对全员开放操作权)。 */
+const ungroupedAllowed = computed(() =>
   modalMode.value === 'add' ? isAdminUser.value : groupFieldEditable.value,
 )
 
@@ -305,9 +339,9 @@ function validateForm(): boolean {
     formErrors.value.credentialId = t('settingsServers.errCredentialRequired')
     ok = false
   }
-  if (modalMode.value === 'add' && !isAdminUser.value && !form.value.groupId) {
+  if (modalMode.value === 'add' && !isAdminUser.value && form.value.groupIds.length === 0) {
     // 后端同样会拒:非管理员登记的未归组主机等于对全员开放操作权。
-    formErrors.value.groupId = t('settingsServers.errGroupRequired')
+    formErrors.value.groupIds = t('settingsServers.errGroupRequired')
     ok = false
   }
   return ok
@@ -327,7 +361,7 @@ async function handleFormSubmit(): Promise<void> {
         port: form.value.port,
         user: form.value.user.trim(),
         credentialId: form.value.credentialId,
-        groupId: form.value.groupId,
+        groupIds: [...form.value.groupIds],
       }
       const created = await createServer(payload)
       servers.value = [created, ...servers.value]
@@ -339,15 +373,19 @@ async function handleFormSubmit(): Promise<void> {
         user: form.value.user.trim(),
         credentialId: form.value.credentialId,
       }
-      // 只在归属真的变了才带上:PUT 用指针区分「不改」,把 groupId:'' 原样发回去等于
-      // 试图把主机挪到未归组,组长会吃到 403。
+      // 只在归属真的变了才带上:PUT 用指针区分「不改」,把全空数组原样发回去等于
+      // 试图把主机移出所有分组,组长会吃到 403。
       const origin = editingServer.value
-      if (origin && form.value.groupId !== origin.groupId) payload.groupId = form.value.groupId
+      const sortedNext = [...form.value.groupIds].sort()
+      const sortedPrev = [...(origin?.groupIds ?? [])].sort()
+      if (origin && sortedNext.join(',') !== sortedPrev.join(',')) payload.groupIds = form.value.groupIds
       const updated = await updateServer(editingId.value, payload)
       servers.value = servers.value.map((s) => (s.id === updated.id ? updated : s))
       delete testResults.value[updated.id]
-      // 挪出我的可见范围后列表要按新范围重取(它可能不再对我可见)。
-      if (payload.groupId !== undefined && !groupById.value[payload.groupId]?.canManage) await loadServers()
+      // 归入自己不起作用的组后,这台机器可能不再对我可见:按新范围重取列表。
+      if (payload.groupIds !== undefined && payload.groupIds.some((id) => !groupById.value[id]?.canManage)) {
+        await loadServers()
+      }
     }
     modalOpen.value = false
   } catch (err) {
@@ -488,7 +526,12 @@ async function handleTest(s: Server): Promise<void> {
             <div class="server-addr">
               <span class="mono">{{ s.user }}@{{ s.host }}:{{ s.port }}</span>
               <span class="cred-tag">🔑 {{ credentialLabel(s.credentialId) }}</span>
-              <span class="group-tag" :title="t('groups.fieldGroupHint')">{{ groupName(s.groupId) }}</span>
+              <span
+                v-for="(gm, gi) in serverGroupNames(s)"
+                :key="gi"
+                class="group-tag"
+                :title="t('groups.fieldGroupHint')"
+              >{{ gm }}</span>
             </div>
             <!-- test result -->
             <div
@@ -569,24 +612,39 @@ async function handleTest(s: Server): Promise<void> {
             <span v-if="formErrors.credentialId" class="field-error">{{ formErrors.credentialId }}</span>
           </label>
 
-          <!-- 分组:决定谁能看/谁能操作这台主机(含终端与服务运维) -->
-          <label class="field">
+          <!-- 分组:决定谁能看/谁能操作这台主机(含终端与服务运维)。可多选,权限取并集。 -->
+          <div class="field">
             <span class="field-label">
               {{ t('groups.fieldGroup') }}
-              <span class="field-hint-inline">{{ t('groups.fieldGroupHint') }}</span>
+              <span class="field-hint-inline">{{ t('groups.fieldGroupsHint') }}</span>
             </span>
-            <select v-model="form.groupId" class="field-input" :disabled="formSubmitting || !groupFieldEditable">
-              <option v-if="ungroupedSelectable" value="">{{ t('groups.ungrouped') }}</option>
-              <option v-for="g in groupOptions" :key="g.id" :value="g.id">
-                {{ g.name }} · {{ g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate') }}
-              </option>
-            </select>
-            <span v-if="formErrors.groupId" class="field-error">{{ formErrors.groupId }}</span>
+            <div class="group-picker" :class="{ 'group-picker--locked': formSubmitting || !groupFieldEditable }">
+              <label v-for="g in groupOptions" :key="g.id" class="group-picker__item">
+                <input
+                  v-model="form.groupIds"
+                  type="checkbox"
+                  :value="g.id"
+                  :disabled="formSubmitting || !groupFieldEditable || !g.canManage"
+                />
+                <span class="group-picker__name">{{ g.name }}</span>
+                <span class="group-picker__vis">{{
+                  g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate')
+                }}</span>
+                <span v-if="!g.canManage" class="group-picker__note">{{ t('groups.multiGroupLocked') }}</span>
+              </label>
+              <label v-for="id in missingGroupIDs" :key="id" class="group-picker__item">
+                <input type="checkbox" checked disabled />
+                <span class="group-picker__name">{{ t('groups.groupMissing') }}</span>
+                <span class="group-picker__note">{{ t('groups.multiGroupLocked') }}</span>
+              </label>
+              <p v-if="ungroupedAllowed" class="group-picker__hint">{{ t('groups.multiGroupUngroupedHint') }}</p>
+            </div>
+            <span v-if="formErrors.groupIds" class="field-error">{{ formErrors.groupIds }}</span>
             <span v-else-if="groupFieldEditable && !groupOptions.length" class="field-hint">
               {{ t('groups.noGroupsHint') }}
             </span>
             <span v-else-if="!groupFieldEditable" class="field-hint">{{ t('groups.lockedHint') }}</span>
-          </label>
+          </div>
 
           <div class="modal-actions">
             <button type="button" class="btn-ghost" :disabled="formSubmitting" @click="closeModal">{{ t('settingsServers.cancel') }}</button>
@@ -1009,5 +1067,52 @@ async function handleTest(s: Server): Promise<void> {
 .field-error {
   font-size: var(--text-label);
   color: var(--color-danger, #d4503e);
+}
+.group-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg, var(--color-surface));
+  max-height: 220px;
+  overflow-y: auto;
+}
+.group-picker--locked {
+  opacity: 0.75;
+}
+.group-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-body);
+  cursor: pointer;
+}
+.group-picker__item:hover {
+  background: color-mix(in oklch, var(--color-text) 5%, transparent);
+}
+.group-picker__item input:disabled {
+  cursor: not-allowed;
+}
+.group-picker__name {
+  color: var(--color-text);
+}
+.group-picker__vis {
+  font-size: var(--text-label);
+  color: var(--color-faint);
+}
+.group-picker__note {
+  margin-left: auto;
+  font-size: var(--text-label);
+  color: var(--color-faint);
+}
+.group-picker__hint {
+  margin: 4px 6px 2px;
+  font-size: var(--text-label);
+  color: var(--color-faint);
+  line-height: 1.45;
 }
 </style>

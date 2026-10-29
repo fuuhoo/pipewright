@@ -85,13 +85,13 @@ const groupLabels = computed(() => ({
 }))
 const GROUP_OPTIONS = computed(() => groupOptions(permGroups.value, groupLabels.value))
 
-function hostGroupId(serverId: string): string {
-  return serverById.value.get(serverId)?.groupId ?? ''
+function hostGroupIds(serverId: string): string[] {
+  return serverById.value.get(serverId)?.groupIds ?? []
 }
 /** 卡头那枚组标签;名单没到位时返回空串(卡片据此不渲染),此时「未归组」和「组已失效」都无从判断。 */
 function hostGroupTag(serverId: string): string {
   if (!groupsLoaded.value) return ''
-  return groupLabel(hostGroupId(serverId), permGroups.value, groupLabels.value)
+  return groupLabel(hostGroupIds(serverId), permGroups.value, groupLabels.value)
 }
 
 const POLL_MS = 12_000
@@ -106,7 +106,7 @@ const serverScope = ref<ServerScope>(SERVER_ALL)
 const orderedGroups = computed(() => reachableFirst(groups.value))
 /** 分组先收窄,后面「只看这台 / 仅看可用的」都只在这一档里解析(两个筛选叠起来才是直觉)。 */
 const groupScopedServers = computed(() =>
-  orderedGroups.value.filter((g) => matchesGroup(hostGroupId(g.serverId), groupFilter.value)),
+  orderedGroups.value.filter((g) => matchesGroup(hostGroupIds(g.serverId), groupFilter.value)),
 )
 /** 每轮聚合都换一批新对象;选中的机器掉了就自动回落「全部」(按钮高亮与内容始终一致)。 */
 const scope = computed(() => resolveServerScope(serverScope.value, groupScopedServers.value))
@@ -122,7 +122,7 @@ const filteredToEmpty = computed(() => groups.value.length > 0 && groupScopedSer
 const registeredCount = computed(() => {
   if (groupFilter.value === GROUP_ALL) return Math.max(serverById.value.size, orderedGroups.value.length)
   let n = 0
-  for (const s of serverById.value.values()) if (matchesGroup(s.groupId, groupFilter.value)) n++
+  for (const s of serverById.value.values()) if (matchesGroup(s.groupIds, groupFilter.value)) n++
   return Math.max(n, groupScopedServers.value.length)
 })
 

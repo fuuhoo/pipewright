@@ -412,6 +412,9 @@ const cpuUsage = computed(() => cpuUsagePercent(props.metrics.cpu))
 }
 
 .metrics-card__foot {
+  /* 卡片被底板高度或同排更高的兄弟撑开时,采集行沉到底部:空白留在指标与页脚之间,
+     不会在页脚下面挂一截空壳。 */
+  margin-top: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;

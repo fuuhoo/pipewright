@@ -28,10 +28,11 @@ export interface Server {
   /** Redundant display name joined from credentials, for the list UI. */
   credentialName: string
   /**
-   * 所属资源分组(v6.2 分组权限)。'' = 未归组 —— 未归组的机器对全员可操作
+   * 所属资源分组(v6.2 分组权限,可多个)。空数组 = 未归组 —— 未归组的机器对全员可操作
    * (含主机终端),所以「登记一台未归组服务器」本身是管理员动作。
+   * 可见/可操作取并集(命中任一所在组即可);改归属要求每个所在组都管得住。
    */
-  groupId: string
+  groupIds: string[]
   createdAt: string
   updatedAt: string
 }
@@ -42,8 +43,8 @@ export interface CreateServerInput {
   port: number
   user: string
   credentialId: string
-  /** Omitted or '' = 未归组(仅管理员)。 */
-  groupId?: string
+  /** 空或缺省 = 未归组(仅管理员)。 */
+  groupIds?: string[]
 }
 
 export interface UpdateServerInput {
@@ -52,8 +53,8 @@ export interface UpdateServerInput {
   port?: number
   user?: string
   credentialId?: string
-  /** 归组/改组;传 '' 表示移出分组。需要对该组(含原组)有 Manage 权。 */
-  groupId?: string
+  /** 归组/改组;传 [] 表示移出全部分组。原组与目标组都需要 Manage 权。 */
+  groupIds?: string[]
 }
 
 export interface ServerTestResult {

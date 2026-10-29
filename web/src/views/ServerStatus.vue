@@ -20,6 +20,7 @@ import { listGroups, type Group } from '../api/groups'
 import { GROUP_ALL, groupLabel, groupOptions, matchesGroup } from '../lib/groupFilter'
 import { HttpError } from '../api/http'
 import ServerMetricsCard from '../components/ops/ServerMetricsCard.vue'
+import MetricsCardSkeleton from '../components/ops/MetricsCardSkeleton.vue'
 import ServerMetricsTable from '../components/ops/ServerMetricsTable.vue'
 import RemoteWorkspaceModal from '../components/ops/RemoteWorkspaceModal.vue'
 import AppButton from '../components/ui/AppButton.vue'
@@ -64,7 +65,7 @@ function isPlaceholder(m: ServerMetrics): boolean {
 }
 
 // ─── 分组筛选(数据轴)─────────────────────────────────────────────────────────
-// 服务器自己带 groupId(登记时定的),组名来自 GET /api/groups(后端已按可见范围收敛)。
+// 服务器自己带 groupIds(登记时定的,可多个),组名来自 GET /api/groups(后端已按可见范围收敛)。
 // 筛选只切展示口径,不改权限:能列出来的本来就是有权看的。
 const groups = ref<Group[]>([])
 const groupFilter = ref<string>(GROUP_ALL)
@@ -80,11 +81,11 @@ const groupLabels = computed(() => ({
 }))
 const GROUP_OPTIONS = computed(() => groupOptions(groups.value, groupLabels.value))
 
-function groupIdOf(serverId: string): string {
-  return serverById.value.get(serverId)?.groupId ?? ''
+function groupIdsOf(serverId: string): string[] {
+  return serverById.value.get(serverId)?.groupIds ?? []
 }
 function groupNameOf(serverId: string): string {
-  return groupLabel(groupIdOf(serverId), groups.value, groupLabels.value)
+  return groupLabel(groupIdsOf(serverId), groups.value, groupLabels.value)
 }
 /**
  * 卡/行上那枚组标签。名单没到位时返回空串(组件据此不渲染),因为此时"未归组"和
@@ -96,7 +97,7 @@ function groupTagOf(serverId: string): string {
 
 /** 屏上这一档的机器(卡片与列表都吃它,所以两种视图口径一致)。 */
 const shownMetrics = computed(() =>
-  metrics.value.filter((m) => matchesGroup(groupIdOf(m.serverId), groupFilter.value)),
+  metrics.value.filter((m) => matchesGroup(groupIdsOf(m.serverId), groupFilter.value)),
 )
 /** 筛完一台不剩:与「压根没登记服务器」是两回事,空态要说清是被筛掉了。 */
 const filteredToEmpty = computed(() => metrics.value.length > 0 && shownMetrics.value.length === 0)
@@ -106,7 +107,7 @@ const reachableCount = computed(() => shownMetrics.value.filter((m) => m.reachab
 const totalCount = computed(() => {
   if (groupFilter.value === GROUP_ALL) return Math.max(serverById.value.size, metrics.value.length)
   let n = 0
-  for (const s of serverById.value.values()) if (matchesGroup(s.groupId, groupFilter.value)) n++
+  for (const s of serverById.value.values()) if (matchesGroup(s.groupIds, groupFilter.value)) n++
   return Math.max(n, shownMetrics.value.length)
 })
 
@@ -426,9 +427,9 @@ onUnmounted(() => {
       </template>
       <template v-else>
         <div v-for="n in 3" :key="n" class="skeleton-card">
-          <SkeletonBlock :height="20" width="50%" />
-          <SkeletonBlock :height="14" width="80%" />
-          <SkeletonBlock :height="14" width="80%" />
+          <SkeletonBlock :height="21" width="50%" />
+          <MetricsCardSkeleton />
+          <SkeletonBlock :height="20" width="28%" />
         </div>
       </template>
     </div>
@@ -482,11 +483,7 @@ onUnmounted(() => {
               {{ t('opsServer.metrics.collecting') }}
             </span>
           </header>
-          <div class="placeholder-body">
-            <SkeletonBlock :height="16" width="70%" />
-            <SkeletonBlock :height="12" width="90%" />
-            <SkeletonBlock :height="12" width="55%" />
-          </div>
+          <MetricsCardSkeleton />
           <p class="placeholder-hint">{{ t('opsServer.metrics.collectingHint') }}</p>
         </article>
         <ServerMetricsCard
@@ -632,7 +629,15 @@ onUnmounted(() => {
   gap: 16px;
 }
 
-/* 占位卡:与真卡同尺寸,数据一到就原地换成内容(网格不跳)。 */
+/* 只有「还没数据」的骨架卡和采集占位卡需要预留底板高度(数据到达时就地换卡,网格不跳行);
+   真卡(含不可达的短卡)一律按内容长 —— 同一行的卡片本来就由 grid 拉伸对齐,不可达卡不该被
+   撑成 600px 空壳。取「含交换分区」的完整卡实测高度(~606px)取整到 600。 */
+.skeleton-card,
+.metrics-card--placeholder {
+  min-height: 600px;
+}
+
+/* 占位卡:版式与真卡一致(行高对齐,见 MetricsCardSkeleton),数据一到就地换成真卡,网格不跳。 */
 .metrics-card--placeholder {
   display: flex;
   flex-direction: column;
@@ -698,11 +703,6 @@ onUnmounted(() => {
   border-radius: var(--rounded-full);
   background: var(--color-dim);
 }
-.placeholder-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
 .placeholder-hint {
   margin: 0;
   font-size: var(--text-label);
@@ -712,8 +712,8 @@ onUnmounted(() => {
 .skeleton-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 18px;
+  gap: 14px;
+  padding: 18px 18px 14px;
   border: 1px solid var(--color-line);
   border-radius: var(--rounded-lg);
   background: var(--color-surface);

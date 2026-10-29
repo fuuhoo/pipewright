@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Group } from '../api/groups'
-import { GROUP_ALL, GROUP_NONE, filterByGroup, groupLabel, groupOptions, matchesGroup } from './groupFilter'
+import {
+  GROUP_ALL,
+  GROUP_NONE,
+  filterByGroup,
+  groupIdsOf,
+  groupLabel,
+  groupNames,
+  groupOptions,
+  matchesGroup,
+} from './groupFilter'
 
 function group(id: string, name: string, over: Partial<Group> = {}): Group {
   return {
@@ -88,5 +97,40 @@ describe('groupLabel', () => {
   it('组认得就报组名,认不得说「分组已失效」而不是静默归到未归组', () => {
     expect(groupLabel('g-pay', groups, LABELS)).toBe('支付')
     expect(groupLabel('g-gone', groups, LABELS)).toBe('分组已失效')
+  })
+})
+
+describe('多组归属(0087:服务器可属于多个分组)', () => {
+  it('groupIdsOf 同时认新字段与旧单值字段,空数组/未归组都归到 []', () => {
+    expect(groupIdsOf({ groupIds: ['g-a', 'g-b'] })).toEqual(['g-a', 'g-b'])
+    expect(groupIdsOf({ groupId: 'g-a' })).toEqual(['g-a'])
+    expect(groupIdsOf({ groupIds: [] })).toEqual([])
+    expect(groupIdsOf({})).toEqual([])
+  })
+
+  it('筛选取并集:机器在任一选中组里就出现;未归组只留一个组都没有的行', () => {
+    const multi = [
+      { id: 'm-1', groupIds: ['g-pay', 'g-core'] },
+      { id: 'm-2', groupIds: ['g-core'] },
+      { id: 'm-3', groupIds: [] },
+    ]
+    expect(filterByGroup(multi, 'g-pay').map((r) => r.id)).toEqual(['m-1'])
+    expect(filterByGroup(multi, 'g-core').map((r) => r.id)).toEqual(['m-1', 'm-2'])
+    expect(filterByGroup(multi, GROUP_NONE).map((r) => r.id)).toEqual(['m-3'])
+    expect(matchesGroup([], GROUP_NONE)).toBe(true)
+    expect(matchesGroup(['g-a'], GROUP_NONE)).toBe(false)
+    expect(matchesGroup(['g-a', 'g-b'], 'g-b')).toBe(true)
+  })
+
+  it('groupLabel 多组按「、」串;groupNames 逐项给标签文案', () => {
+    const groups = [group('g-pay', '支付'), group('g-core', '核心')]
+    expect(groupLabel(['g-pay', 'g-core'], groups, LABELS)).toBe('支付、核心')
+    expect(groupLabel(['g-pay', 'g-gone'], groups, LABELS)).toBe('支付、分组已失效')
+    expect(groupNames(['g-core', 'g-pay'], groups, LABELS)).toEqual(['核心', '支付'])
+    expect(groupNames([], groups, LABELS)).toEqual(['未归组'])
+  })
+
+  it('groupNames 对未归组给单一项,与标签渲染同一口径', () => {
+    expect(groupNames(undefined, [], LABELS)).toEqual(['未归组'])
   })
 })
