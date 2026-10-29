@@ -27,6 +27,8 @@ const (
 	auditActionProxyCaddyRemove = "proxy.caddy.remove"
 	// 反代环境(pipewright-caddy 容器)显式部署审计。detail 仅 serverId,无敏感信息。
 	auditActionProxyCaddyPrepare = "proxy.caddy.prepare"
+	// 重新下发反代配置审计(把库里路由整体重推一遍)。detail 仅 serverId,无敏感信息。
+	auditActionProxyCaddyReapply = "proxy.caddy.reapply"
 	// 反代镜像(Caddy)全局配置变更审计。detail 仅镜像引用,无敏感信息。
 	auditActionProxyCaddyImage = "proxy.caddy.image_update"
 	auditTargetProxyCaddy      = "proxy_caddy"
@@ -618,6 +620,44 @@ func makeProxyCaddyPrepareHandler(svc proxy.Service, rec audit.Recorder) http.Ha
 			TargetType: auditTargetProxyCaddy,
 			TargetID:   serverID,
 			Detail:     map[string]any{"serverId": serverID},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, proxyCaddyStatusDTO{
+			ServerID:   st.ServerID,
+			Installed:  st.Installed,
+			Running:    st.Running,
+			Image:      st.Image,
+			Ports:      st.Ports,
+			RouteCount: st.RouteCount,
+		})
+	}
+}
+
+// makeReapplyProxyCaddyHandler 返回 POST /api/proxy/caddy/reapply?serverId=<id>(认证 + CSRF + 审计)
+// → CaddyStatus DTO。把库里该主机所有 enabled 路由整体重推一遍(ensure → 接回上游 → reload),
+// 用于远端容器被删/重建、配置丢失后的恢复。serverId 为空 → 400。
+func makeReapplyProxyCaddyHandler(svc proxy.Service, rec audit.Recorder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "反代服务未初始化")
+			return
+		}
+		serverID := strings.TrimSpace(r.URL.Query().Get("serverId"))
+		if serverID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_route", "请选择目标主机")
+			return
+		}
+		st, err := svc.Reapply(r.Context(), serverID)
+		if err != nil {
+			writeProxyError(w, err)
+			return
+		}
+		recordAudit(r.Context(), rec, audit.Entry{
+			Actor:      auditActor,
+			Action:     auditActionProxyCaddyReapply,
+			TargetType: auditTargetProxyCaddy,
+			TargetID:   serverID,
+			Detail:     map[string]any{"serverId": serverID, "routeCount": st.RouteCount},
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusOK, proxyCaddyStatusDTO{

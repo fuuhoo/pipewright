@@ -77,6 +77,12 @@ export default {
     deploying: 'Deploying…',
     deployed: 'Reverse-proxy environment deployed',
     deployFail: 'Deployment failed',
+    reapply: 'Re-apply config',
+    reapplying: 'Applying…',
+    reapplied: 'Config re-applied',
+    reapplyFail: 'Re-apply failed',
+    reapplyHint:
+      'Re-push every route from the database to the remote Caddy — use it after the container was deleted/recreated or the config drifted from the database.',
     remove: 'Remove environment',
     removing: 'Removing…',
     consentTitle: 'Deploy the reverse-proxy environment on this host?',
@@ -94,8 +100,9 @@ export default {
   },
   // Subdomain allocation
   sub: {
-    cta: 'Allocate a subdomain',
-    title: 'Allocate a subdomain',
+    sourceLabel: 'Domain source',
+    modeManual: 'Enter domain',
+    modeAuto: 'Auto subdomain',
     lede: 'Pick a DNS provider, then a domain from its account, and we auto-mint an app-xxxx subdomain under it, write the A record, and bind the route — no manual DNS.',
     providerLabel: 'DNS provider',
     providerPick: 'Pick a DNS provider…',
@@ -106,17 +113,13 @@ export default {
     zoneRetry: 'Retry',
     noProvider: 'No DNS providers configured yet.',
     manageProviders: 'Configure DNS providers →',
-    upstreamLabel: 'Upstream container',
-    portLabel: 'Upstream port',
     allocate: 'Allocate subdomain',
     allocating: 'Allocating…',
     allocated: 'Subdomain allocated',
     allocateFail: 'Allocation failed',
     successTitle: 'Subdomain ready 🎉',
     successLede: 'The subdomain is created and its A record written; the certificate is being issued automatically.',
-    visit: 'Visit',
     done: 'Done',
-    cancel: 'Cancel',
   },
   // R2: advanced settings (aliases / access control / hardening / redirects)
   adv: {

@@ -16,6 +16,7 @@
 */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RouterLink } from 'vue-router'
 import { NIcon } from 'naive-ui'
 import {
   Lock,
@@ -28,25 +29,33 @@ import {
   World,
   Server,
   CircleX,
+  Wand,
 } from '@vicons/tabler'
 import {
   listProxyRoutes,
   createProxyRoute,
+  allocateSubdomain,
   setProxyRouteEnabled,
   refreshProxyRoute,
   deleteProxyRoute,
   getCaddyStatus,
   prepareCaddyEnv,
+  reapplyCaddyEnv,
   removeCaddyEnv,
   type ProxyRoute,
   type CaddyStatus,
 } from '../../api/reverseProxy'
+import {
+  listDnsProviders,
+  listProviderZones,
+  canAttachToRoute,
+  type DnsProvider,
+} from '../../api/dnsProviders'
 import type { ContainerInfo } from '../../api/containers'
 import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import RouteAdvancedSettings from './RouteAdvancedSettings.vue'
-import InstantSubdomain from './InstantSubdomain.vue'
 
 const props = defineProps<{
   /** Target host this panel binds domains on. */
@@ -101,6 +110,7 @@ onMounted(loadRoutes)
 const caddy = ref<CaddyStatus | null>(null)
 const caddyRemoving = ref(false)
 const caddyDeploying = ref(false)
+const caddyReapplying = ref(false)
 
 async function loadCaddyStatus(): Promise<void> {
   try {
@@ -183,6 +193,31 @@ async function removeEnv(): Promise<void> {
   }
 }
 
+/**
+ * 重新下发配置:把库里的路由整体重推给远端 Caddy(ensure + 接回上游 + reload)。
+ * 远端容器被删/重建、配置与库不一致时的恢复动作 —— 库里是真相源,但后端没有后台对账。
+ */
+async function reapplyEnv(): Promise<void> {
+  if (caddyReapplying.value) return
+  caddyReapplying.value = true
+  try {
+    caddy.value = await reapplyCaddyEnv(props.serverId)
+    toast.success(t('reverseProxy.caddy.reapplied'))
+    await loadRoutes()
+  } catch (err) {
+    toast.error(t('reverseProxy.caddy.reapplyFail'), {
+      detail:
+        err instanceof HttpError
+          ? (err.apiError?.message ?? t('reverseProxy.errReq', { status: err.status }))
+          : t('reverseProxy.errNetwork'),
+    })
+    // 失败后回读真实状态,避免卡片停在过时态。
+    await loadCaddyStatus()
+  } finally {
+    caddyReapplying.value = false
+  }
+}
+
 // ─── 绑定表单 ───────────────────────────────────────────────────────────────────
 const domain = ref('')
 // 上游可以是「运行中的容器」(按名走共享网络转发)或「自定义地址」(host:port 直转)。
@@ -191,6 +226,11 @@ const upstreamContainer = ref('')
 const upstreamAddress = ref('')
 const upstreamPort = ref('')
 const submitting = ref(false)
+
+// 域名来源:自填 FQDN,或一键分配(DNS 提供商托管域 → 后端铸造 app-xxxx + 写 A 记录 + DNS-01)。
+// 两种来源共用同一套上游/端口与「启用」提交,不再另开一个流程重复一遍。
+const domainMode = ref<'manual' | 'auto'>('manual')
+const lastAllocated = ref<ProxyRoute | null>(null)
 
 // 该主机正在运行的容器(供上游选择器);无运行容器则降级为手填。
 const runningContainers = computed(() =>
@@ -253,10 +293,87 @@ const upstreamValid = computed(() =>
     : upstreamContainer.value.trim().length > 0,
 )
 
+// ─── 自动子域名:DNS 提供商 + 托管域名 ─────────────────────────────────────────────
+const providers = ref<DnsProvider[]>([])
+const providersLoaded = ref(false)
+const providersLoading = ref(false)
+const hasProviders = computed(() => providers.value.length > 0)
+
+const providerId = ref('')
+const zones = ref<string[]>([])
+const zone = ref('')
+type ZonesState = 'idle' | 'loading' | 'error' | 'empty'
+const zonesState = ref<ZonesState>('idle')
+const zonesError = ref('')
+// 用户可能连着换提供商,只认最后一次请求的结果。
+let zonesSeq = 0
+
+async function loadProviders(): Promise<void> {
+  if (providersLoaded.value || providersLoading.value) return
+  providersLoading.value = true
+  try {
+    // 一键分配会同时建路由,故同样只列能挂路由的类型(百度在 Caddy 侧没有可信插件)。
+    providers.value = (await listDnsProviders()).filter((p) => canAttachToRoute(p.type))
+    // 只有一个可用提供商时直接选中,少一次点击(zone 由 watch 自动拉取)。
+    if (providers.value.length === 1) providerId.value = providers.value[0].id
+  } catch {
+    providers.value = []
+  } finally {
+    providersLoading.value = false
+    providersLoaded.value = true
+  }
+}
+
+async function loadZones(): Promise<void> {
+  const seq = ++zonesSeq
+  zone.value = ''
+  zones.value = []
+  zonesError.value = ''
+  if (!providerId.value) {
+    zonesState.value = 'idle'
+    return
+  }
+  zonesState.value = 'loading'
+  try {
+    const list = await listProviderZones(providerId.value)
+    if (seq !== zonesSeq) return
+    zones.value = list
+    zonesState.value = list.length === 0 ? 'empty' : 'idle'
+    if (list.length === 1) zone.value = list[0]
+  } catch (err) {
+    if (seq !== zonesSeq) return
+    zonesState.value = 'error'
+    zonesError.value =
+      err instanceof HttpError
+        ? (err.apiError?.message ?? t('reverseProxy.errReq', { status: err.status }))
+        : t('reverseProxy.errNetwork')
+  }
+}
+
+// 切到自动分配才拉提供商:手动绑定的用户不该为此多一次请求。
+watch(domainMode, (m) => {
+  if (m === 'auto') void loadProviders()
+  else lastAllocated.value = null
+})
+
+watch(providerId, loadZones)
+
+// 域名是否就绪:自动模式看「提供商 + 托管域」,手动模式沿用 FQDN 校验与本地查重。
+const domainReady = computed(() =>
+  domainMode.value === 'auto'
+    ? providerId.value.length > 0 && zone.value.length > 0
+    : domainValid.value && !domainDuplicate.value,
+)
+
 /** 内联提示:域名格式 / 重复 / 地址 / 端口。空串 = 无错。 */
 const formHint = computed(() => {
-  if (normalizedDomain.value && !domainValid.value) return t('reverseProxy.hintInvalidDomain')
-  if (domainDuplicate.value) return t('reverseProxy.hintDuplicate')
+  if (
+    domainMode.value === 'manual' &&
+    normalizedDomain.value &&
+    !domainValid.value
+  )
+    return t('reverseProxy.hintInvalidDomain')
+  if (domainMode.value === 'manual' && domainDuplicate.value) return t('reverseProxy.hintDuplicate')
   if (upstreamKind.value === 'address' && normalizedAddress.value && !addressValid.value)
     return t('reverseProxy.hintInvalidAddress')
   if (upstreamPort.value.trim() && !portValid.value) return t('reverseProxy.hintInvalidPort')
@@ -264,12 +381,7 @@ const formHint = computed(() => {
 })
 
 const canSubmit = computed(
-  () =>
-    domainValid.value &&
-    !domainDuplicate.value &&
-    upstreamValid.value &&
-    portValid.value &&
-    !submitting.value,
+  () => domainReady.value && upstreamValid.value && portValid.value && !submitting.value,
 )
 
 async function submit(): Promise<void> {
@@ -282,24 +394,39 @@ async function submit(): Promise<void> {
   }
   submitting.value = true
   try {
-    const route = await createProxyRoute({
-      serverId: props.serverId,
-      domain: normalizedDomain.value,
-      upstreamContainer: upstreamTarget.value,
-      upstreamPort: portNum.value,
-      config: { upstreamKind: upstreamKind.value },
-    })
+    const route =
+      domainMode.value === 'auto'
+        ? await allocateSubdomain({
+            providerId: providerId.value,
+            zone: zone.value,
+            serverId: props.serverId,
+            upstreamKind: upstreamKind.value,
+            upstreamContainer: upstreamTarget.value,
+            upstreamPort: portNum.value,
+          })
+        : await createProxyRoute({
+            serverId: props.serverId,
+            domain: normalizedDomain.value,
+            upstreamContainer: upstreamTarget.value,
+            upstreamPort: portNum.value,
+            config: { upstreamKind: upstreamKind.value },
+          })
     // 新路由置顶,即时可见证书申请中状态。
     routes.value = [route, ...routes.value.filter((r) => r.id !== route.id)]
-    toast.success(t('reverseProxy.bound'), { detail: route.domain })
-    domain.value = ''
+    if (domainMode.value === 'auto') {
+      lastAllocated.value = route
+      toast.success(t('reverseProxy.sub.allocated'), { detail: route.domain })
+    } else {
+      toast.success(t('reverseProxy.bound'), { detail: route.domain })
+      domain.value = ''
+    }
     upstreamContainer.value = ''
     upstreamAddress.value = ''
     upstreamPort.value = ''
-    // 绑定可能刚拉起了反代环境 —— 刷新状态卡。
+    // 绑定/分配可能刚拉起了反代环境 —— 刷新状态卡。
     void loadCaddyStatus()
   } catch (err) {
-    toast.error(t('reverseProxy.bindFail'), {
+    toast.error(domainMode.value === 'auto' ? t('reverseProxy.sub.allocateFail') : t('reverseProxy.bindFail'), {
       detail:
         err instanceof HttpError
           ? (err.apiError?.message ?? t('reverseProxy.errReq', { status: err.status }))
@@ -308,13 +435,6 @@ async function submit(): Promise<void> {
   } finally {
     submitting.value = false
   }
-}
-
-// R3:一键分配子域名成功 → 把新路由置顶插入列表(与手动绑定一致)。
-function onSubdomainAllocated(route: ProxyRoute): void {
-  routes.value = [route, ...routes.value.filter((r) => r.id !== route.id)]
-  // 分配子域名同样可能首次拉起反代环境 —— 同步状态卡。
-  void loadCaddyStatus()
 }
 
 // ─── 每条路由的操作:启停 / 刷新(重试)/ 删除 ──────────────────────────────────────
@@ -457,11 +577,6 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
         <span>{{ t('reverseProxy.lede') }}</span>
       </div>
       <div class="rp__head-right">
-        <InstantSubdomain
-          :server-id="serverId"
-          :containers="containers"
-          @allocated="onSubdomainAllocated"
-        />
         <div class="rp__ip" :title="t('reverseProxy.hostIpTitle')">
           <span class="rp__ip-label">{{ t('reverseProxy.hostAddress') }}</span>
           <span class="rp__ip-val mono">{{ host }}</span>
@@ -519,8 +634,18 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
       </div>
       <button
         v-if="caddy.installed"
+        class="caddy__reapply"
+        :disabled="caddyReapplying || caddyRemoving"
+        :title="t('reverseProxy.caddy.reapplyHint')"
+        @click="reapplyEnv"
+      >
+        <NIcon :size="14"><Refresh /></NIcon>
+        {{ caddyReapplying ? t('reverseProxy.caddy.reapplying') : t('reverseProxy.caddy.reapply') }}
+      </button>
+      <button
+        v-if="caddy.installed"
         class="caddy__remove"
-        :disabled="caddyRemoving"
+        :disabled="caddyRemoving || caddyReapplying"
         @click="removeEnv"
       >
         <NIcon :size="14"><CircleX /></NIcon>
@@ -540,8 +665,31 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
     <!-- 绑定表单 -->
     <form class="rp__form" @submit.prevent="submit">
       <div class="rp__field rp__field--grow">
-        <label class="rp__label">{{ t('reverseProxy.domainLabel') }}</label>
+        <div class="rp__label-row">
+          <label class="rp__label">{{ t('reverseProxy.domainLabel') }}</label>
+          <div class="rp__seg" role="group" :aria-label="t('reverseProxy.sub.sourceLabel')">
+            <button
+              type="button"
+              class="rp__seg-btn"
+              :class="{ 'rp__seg-btn--on': domainMode === 'manual' }"
+              :aria-pressed="domainMode === 'manual'"
+              @click="domainMode = 'manual'"
+            >
+              {{ t('reverseProxy.sub.modeManual') }}
+            </button>
+            <button
+              type="button"
+              class="rp__seg-btn"
+              :class="{ 'rp__seg-btn--on': domainMode === 'auto' }"
+              :aria-pressed="domainMode === 'auto'"
+              @click="domainMode = 'auto'"
+            >
+              {{ t('reverseProxy.sub.modeAuto') }}
+            </button>
+          </div>
+        </div>
         <input
+          v-if="domainMode === 'manual'"
           v-model="domain"
           class="rp__in mono"
           :class="{ 'rp__in--bad': normalizedDomain.length > 0 && (!domainValid || domainDuplicate) }"
@@ -549,6 +697,45 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
           autocomplete="off"
           spellcheck="false"
         />
+
+        <!-- 自动分配:选提供商 → 选它账号里托管的根域,域名由后端铸造 -->
+        <template v-else>
+          <div v-if="providersLoaded && !hasProviders" class="rp__noprov">
+            <span>{{ t('reverseProxy.sub.noProvider') }}</span>
+            <RouterLink to="/settings/dns-providers" class="rp__noprov-link">
+              {{ t('reverseProxy.sub.manageProviders') }}
+            </RouterLink>
+          </div>
+          <template v-else>
+            <div class="rp__auto-row">
+              <select v-model="providerId" class="rp__in" :aria-label="t('reverseProxy.sub.providerLabel')">
+                <option value="">{{ t('reverseProxy.sub.providerPick') }}</option>
+                <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
+              </select>
+              <select
+                v-model="zone"
+                class="rp__in mono"
+                :aria-label="t('reverseProxy.sub.zoneLabel')"
+                :disabled="!providerId || zonesState === 'loading' || zones.length === 0"
+              >
+                <option value="">{{ t('reverseProxy.sub.zonePick') }}</option>
+                <option v-for="z in zones" :key="z" :value="z">{{ z }}</option>
+              </select>
+            </div>
+            <span v-if="zonesState === 'loading'" class="rp__hint">
+              {{ t('reverseProxy.sub.zoneLoading') }}
+            </span>
+            <span v-else-if="zonesState === 'empty'" class="rp__hint">
+              {{ t('reverseProxy.sub.zoneEmpty') }}
+            </span>
+            <span v-else-if="zonesState === 'error'" class="rp__hint rp__hint--err">
+              {{ zonesError }}
+              <button type="button" class="rp__retry" @click="loadZones">
+                ↻ {{ t('reverseProxy.sub.zoneRetry') }}
+              </button>
+            </span>
+          </template>
+        </template>
       </div>
       <div class="rp__field rp__field--grow">
         <div class="rp__label-row">
@@ -615,14 +802,48 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
         />
       </div>
       <button type="submit" class="rp__submit" :disabled="!canSubmit">
-        <NIcon :size="15"><Lock /></NIcon>
-        {{ submitting ? t('reverseProxy.binding') : t('reverseProxy.enable') }}
+        <NIcon :size="15">
+          <Wand v-if="domainMode === 'auto'" />
+          <Lock v-else />
+        </NIcon>
+        {{
+          submitting
+            ? domainMode === 'auto'
+              ? t('reverseProxy.sub.allocating')
+              : t('reverseProxy.binding')
+            : domainMode === 'auto'
+              ? t('reverseProxy.sub.allocate')
+              : t('reverseProxy.enable')
+        }}
       </button>
     </form>
+    <p v-if="domainMode === 'auto'" class="rp__modehint">
+      {{ t('reverseProxy.sub.lede') }}
+    </p>
     <p class="rp__modehint">
       {{ upstreamKind === 'address' ? t('reverseProxy.addressHint') : t('reverseProxy.upstreamKindHint') }}
     </p>
     <p v-if="formHint" class="rp__formhint">{{ formHint }}</p>
+
+    <!-- 分配成功:保留原来弹窗里的庆祝信息,但不再打断表单 -->
+    <div v-if="lastAllocated" class="rp__alloc" role="status">
+      <div class="rp__alloc-body">
+        <p class="rp__alloc-title">{{ t('reverseProxy.sub.successTitle') }}</p>
+        <a
+          class="rp__alloc-domain mono"
+          :href="`https://${lastAllocated.domain}`"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {{ lastAllocated.domain }}
+          <NIcon :size="12"><ExternalLink /></NIcon>
+        </a>
+        <p class="rp__alloc-lede">{{ t('reverseProxy.sub.successLede') }}</p>
+      </div>
+      <button type="button" class="rp__alloc-done" @click="lastAllocated = null">
+        {{ t('reverseProxy.sub.done') }}
+      </button>
+    </div>
 
     <!-- 路由列表 -->
     <p v-if="listState === 'error'" class="rp__msg rp__msg--err">⚠ {{ listError }}</p>
@@ -864,6 +1085,7 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
   color: var(--color-dim);
   line-height: 1.6;
 }
+.caddy__reapply,
 .caddy__remove {
   display: inline-flex;
   align-items: center;
@@ -883,11 +1105,17 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
     border-color var(--duration-fast, 150ms) var(--ease-out-expo, ease),
     background var(--duration-fast, 150ms) var(--ease-out-expo, ease);
 }
+.caddy__reapply:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
 .caddy__remove:hover:not(:disabled) {
   color: var(--color-red);
   border-color: var(--color-red-line);
   background: var(--color-red-soft);
 }
+.caddy__reapply:disabled,
 .caddy__remove:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -1029,6 +1257,116 @@ function statusLabel(s: ProxyRoute['certStatus']): string {
   margin: 9px 0 0;
   font-size: var(--text-micro);
   color: var(--color-red);
+}
+
+/* 自动子域名:提供商 + 托管域并排;窄栏时各自独占一行,域名不至于被截成残句 */
+.rp__auto-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.rp__auto-row > .rp__in {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.rp__hint {
+  font-size: var(--text-micro);
+  color: var(--color-faint);
+  line-height: 1.5;
+}
+.rp__hint--err {
+  color: var(--color-red);
+}
+.rp__retry {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 6px;
+  font-family: inherit;
+  font-size: var(--text-micro);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.rp__noprov {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--rounded-md);
+  font-size: var(--text-micro);
+  color: var(--color-faint);
+}
+.rp__noprov-link {
+  font-weight: 600;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.rp__noprov-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 分配成功提示条 */
+.rp__alloc {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-green-line);
+  border-radius: var(--rounded-md);
+  background: var(--color-green-soft);
+}
+.rp__alloc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.rp__alloc-title {
+  font-size: var(--text-label);
+  font-weight: 700;
+  color: var(--color-green);
+}
+.rp__alloc-domain {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--color-green);
+  text-decoration: none;
+  word-break: break-all;
+}
+.rp__alloc-domain:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rp__alloc-lede {
+  font-size: var(--text-micro);
+  color: var(--color-dim);
+  line-height: 1.5;
+}
+.rp__alloc-done {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--color-green-line);
+  border-radius: var(--rounded-md);
+  background: transparent;
+  color: var(--color-green);
+  font-family: var(--font-sans);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+.rp__alloc-done:hover {
+  background: var(--color-card);
 }
 
 /* 列表通用消息 / 空态 */

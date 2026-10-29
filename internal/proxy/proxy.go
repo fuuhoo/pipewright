@@ -300,6 +300,10 @@ type Service interface {
 	// PrepareCaddy 显式部署反代环境(ensureCaddy)而无需先绑域名,返回部署后的 CaddyStatus。
 	// 空 serverID → ErrEmptyServerID;80/443 冲突等人话错误由 ensureCaddy 透出。
 	PrepareCaddy(ctx context.Context, serverID string) (*CaddyStatus, error)
+	// Reapply 把库里该主机所有 enabled 路由重新下发一遍(对齐远端),返回下发后的 CaddyStatus。
+	// ensureCaddy → 拉起容器 → 逐个接回上游容器 → apply(reload)。用于远端容器被删/重建、
+	// 配置丢失后的恢复;幂等,不改库。空 serverID → ErrEmptyServerID。
+	Reapply(ctx context.Context, serverID string) (*CaddyStatus, error)
 	// RemoveCaddy 停止并删除某主机上的反代容器(pipewright-caddy);保留命名卷(避免重签触发 LE 限速)。
 	// 幂等:容器已不存在也成功。
 	RemoveCaddy(ctx context.Context, serverID string) error
@@ -683,6 +687,66 @@ func (s *service) PrepareCaddy(ctx context.Context, serverID string) (*CaddyStat
 		return nil, err
 	}
 	return s.CaddyStatus(ctx, serverID)
+}
+
+// Reapply 把库里该主机所有 enabled 路由重新下发一遍(对齐远端):
+// ensureCaddy(容器缺失 / 缺 TCP 端口 / 配置目录没落卷 → 重建)→ 拉起容器 → 逐个接回上游容器
+// → apply(reload)。用于远端容器被删/重建、配置丢失后的手动恢复;幂等且不改库。
+func (s *service) Reapply(ctx context.Context, serverID string) (*CaddyStatus, error) {
+	serverID = strings.TrimSpace(serverID)
+	if serverID == "" {
+		return nil, ErrEmptyServerID
+	}
+	if err := ensureCaddy(ctx, s.tg, serverID, s.effectiveCaddyImage(ctx), s.tcpPortsForServer(ctx, serverID)); err != nil {
+		return nil, err
+	}
+	// ensureCaddy 只管「容器在、端口齐、配置有卷」,不管运行态:被用户 stop 过的容器要拉起来,
+	// 否则后面的 docker cp/exec 全落空。容器已在跑时 docker start 是幂等空操作。
+	if res, err := s.tg.Exec(ctx, serverID, []string{"docker", "start", caddyContainer}); err != nil {
+		return nil, mapExecErr(err)
+	} else if res.ExitCode != 0 {
+		return nil, newOrchestrationErr(ErrCaddyStart, firstNonEmpty(res.Stderr, res.Stdout))
+	}
+	routes, err := s.store.listEnabledForServer(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range upstreamContainers(routes) {
+		if err := connectUpstream(ctx, s.tg, serverID, c); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.apply(ctx, serverID); err != nil {
+		return nil, err
+	}
+	return s.CaddyStatus(ctx, serverID)
+}
+
+// upstreamContainers 收集这批路由引用到的全部上游容器名(主上游 / 路径规则 / 额外上游 / TCP 透传),
+// 去重保序;address 类主上游不是容器,跳过。
+func upstreamContainers(routes []Route) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	for _, r := range routes {
+		add(upstreamForConnect(r.Config.UpstreamKind, r.UpstreamContainer))
+		for _, pr := range r.Config.PathRules {
+			add(pr.UpstreamContainer)
+		}
+		for _, u := range r.Config.Upstreams {
+			add(u.Container)
+		}
+		if tc := r.Config.TCPPassthrough; tc != nil {
+			add(tc.UpstreamContainer)
+		}
+	}
+	return out
 }
 
 // upstreamForConnect 返回需接入共享网络的容器名:container 上游返回容器名;address 上游返回 ""

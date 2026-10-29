@@ -1033,7 +1033,6 @@ onMounted(() => {
   color: var(--color-dim);
 }
 .rt-field--grow { flex: 1 1 320px; }
-.rt-input--wide { width: 100%; }
 .rt-input {
   width: 120px;
   padding: 7px 10px;
@@ -1042,6 +1041,14 @@ onMounted(() => {
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 0.9rem;
+}
+/* 排在 .rt-input 之后:同特异度下必须后出现,才能覆盖固定的 120px 宽度。
+   镜像地址较长,单列大输入框(更宽 + 更高)。 */
+.rt-input--wide {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  font-size: 0.95rem;
 }
 .rt-input:focus { outline: 2px solid var(--color-primary); outline-offset: -1px; }
 .rt-input:disabled { opacity: 0.6; }

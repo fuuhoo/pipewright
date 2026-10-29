@@ -332,6 +332,36 @@ func TestAllocateSubdomainHappyPath(t *testing.T) {
 	}
 }
 
+// 一键分配的上游与「新增域名」同义:address 类型时 UpstreamContainer 存的是 HOST,
+// 必须原样透传给路由创建器(由 proxy 决定直连而不接 docker 网络)。
+func TestAllocateSubdomainPassesAddressUpstreamKind(t *testing.T) {
+	ctx := context.Background()
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(r.URL.Path, "/zones") && !strings.Contains(r.URL.Path, "dns_records"):
+			return jsonResp(200, `{"success":true,"result":[{"id":"z1","name":"example.com"}]}`), nil
+		case r.Method == http.MethodGet:
+			return jsonResp(200, `{"success":true,"result":[]}`), nil
+		default:
+			return jsonResp(200, `{"success":true,"result":{"id":"rec1"}}`), nil
+		}
+	})
+	rc := &stubRouteCreator{nextRouteID: "route-addr"}
+	svc := newTestService(t, stubVault{tokens: map[string]string{"cred-1": "cf-token"}}, rc, dialDNS(rt))
+	p, _ := svc.Create(ctx, CreateInput{Type: "cloudflare", Name: "CF", CredentialID: "cred-1"})
+
+	if _, err := svc.AllocateSubdomain(ctx, AllocateInput{
+		ProviderID: p.ID, Zone: "example.com",
+		ServerID: "srv-1", UpstreamKind: "address", UpstreamContainer: "10.0.0.9", UpstreamPort: 3000,
+		HostIP: "203.0.113.5",
+	}); err != nil {
+		t.Fatalf("AllocateSubdomain(address): %v", err)
+	}
+	if len(rc.calls) != 1 || rc.calls[0].UpstreamKind != "address" || rc.calls[0].UpstreamContainer != "10.0.0.9" {
+		t.Fatalf("应把 address 上游原样透传, got %+v", rc.calls)
+	}
+}
+
 func TestAllocateSubdomainCollisionRetries(t *testing.T) {
 	ctx := context.Background()
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {

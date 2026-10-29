@@ -81,6 +81,12 @@ export default {
     deploying: '部署中…',
     deployed: '反代环境已部署',
     deployFail: '部署失败',
+    // 重新下发:把库里的路由整体重推给远端 Caddy
+    reapply: '重新下发配置',
+    reapplying: '下发中…',
+    reapplied: '已重新下发配置',
+    reapplyFail: '重新下发失败',
+    reapplyHint: '把库里的路由整体重推给远端 Caddy —— 容器被删/重建或配置与库不一致时用。',
     // 移除按钮
     remove: '移除反代环境',
     removing: '移除中…',
@@ -99,10 +105,11 @@ export default {
     removed: '反代环境已移除',
     removeFail: '移除失败',
   },
-  // R3:一键分配子域名(零 DNS · E3.3/E3.4)
+  // R3:自动分配子域名(零 DNS · E3.3/E3.4)
   sub: {
-    cta: '一键分配子域名',
-    title: '一键分配子域名',
+    sourceLabel: '域名来源',
+    modeManual: '自填域名',
+    modeAuto: '自动子域名',
     lede: '先选 DNS 提供商,再选它账号里托管的域名,自动在该域下生成 app-xxxx 子域、写好 A 记录并绑定路由 —— 无需手动改 DNS。',
     providerLabel: 'DNS 提供商',
     providerPick: '选择一个 DNS 提供商…',
@@ -113,17 +120,13 @@ export default {
     zoneRetry: '重试',
     noProvider: '尚未配置 DNS 提供商。',
     manageProviders: '去配置 DNS 提供商 →',
-    upstreamLabel: '上游容器',
-    portLabel: '上游端口',
     allocate: '分配子域名',
     allocating: '正在分配…',
     allocated: '子域名已分配',
     allocateFail: '分配失败',
     successTitle: '子域名已就绪 🎉',
     successLede: '已创建子域名并写入 A 记录,证书正在自动签发。',
-    visit: '访问',
     done: '完成',
-    cancel: '取消',
   },
   // R2:高级设置(别名 / 访问控制 / 加固 / 重定向)
   adv: {

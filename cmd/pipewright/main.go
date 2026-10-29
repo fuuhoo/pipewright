@@ -1109,6 +1109,7 @@ func (c *proxyRouteCreator) CreateDNS01Route(ctx context.Context, in dnsprovider
 		Domain:            in.Domain,
 		UpstreamContainer: in.UpstreamContainer,
 		UpstreamPort:      in.UpstreamPort,
+		UpstreamKind:      in.UpstreamKind,
 		DNSProviderID:     in.DNSProviderID,
 	})
 	if err != nil {

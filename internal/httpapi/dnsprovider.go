@@ -250,7 +250,9 @@ type subdomainDeps struct {
 }
 
 // makeAllocateSubdomainHandler 返回 POST /api/proxy/subdomains(认证 + CSRF)→ Route DTO(201)。
-// body: { providerId, zone, serverId, upstreamContainer, upstreamPort }。
+// body: { providerId, zone, serverId, upstreamKind, upstreamContainer, upstreamPort }。
+// upstreamKind 与「新增域名」表单同义:""/"container"(默认)时 upstreamContainer 为容器名;
+// "address" 时它是 HOST(IP / FQDN / host.docker.internal),由 proxy 侧校验。
 // zone 由前端从 GET /api/dns/providers/{id}/zones 的账号域名清单里选 —— 随机子域名前缀本身
 // 推不出所属根域,只能由调用方显式给定。
 // 流程:解析宿主机公网 IP(据 server.Host,非用户自由文本)→ AllocateSubdomain(建 A 记录 + 建 DNS-01
@@ -266,6 +268,7 @@ func makeAllocateSubdomainHandler(deps subdomainDeps, rec audit.Recorder) http.H
 			ProviderID        string `json:"providerId"`
 			Zone              string `json:"zone"`
 			ServerID          string `json:"serverId"`
+			UpstreamKind      string `json:"upstreamKind"`
 			UpstreamContainer string `json:"upstreamContainer"`
 			UpstreamPort      int    `json:"upstreamPort"`
 		}
@@ -292,6 +295,7 @@ func makeAllocateSubdomainHandler(deps subdomainDeps, rec audit.Recorder) http.H
 			ServerID:          in.ServerID,
 			UpstreamContainer: in.UpstreamContainer,
 			UpstreamPort:      in.UpstreamPort,
+			UpstreamKind:      in.UpstreamKind,
 			HostIP:            hostIP,
 		})
 		if err != nil {

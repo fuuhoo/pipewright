@@ -77,6 +77,12 @@ export default {
     deploying: 'Desplegando…',
     deployed: 'Entorno de proxy inverso desplegado',
     deployFail: 'Error al desplegar',
+    reapply: 'Reaplicar configuración',
+    reapplying: 'Aplicando…',
+    reapplied: 'Configuración reaplicada',
+    reapplyFail: 'Error al reaplicar',
+    reapplyHint:
+      'Reenvía todas las rutas de la base de datos al Caddy remoto: úsalo si el contenedor se eliminó / recreó o si la configuración difiere de la base de datos.',
     remove: 'Eliminar entorno',
     removing: 'Eliminando…',
     consentTitle: '¿Desplegar el entorno de proxy inverso en este host?',
@@ -94,8 +100,9 @@ export default {
   },
   // R3: asignar un subdominio con un clic (sin DNS · E3.3/E3.4)
   sub: {
-    cta: 'Asignar un subdominio',
-    title: 'Asignar un subdominio',
+    sourceLabel: 'Origen del dominio',
+    modeManual: 'Escribir dominio',
+    modeAuto: 'Subdominio automático',
     lede: 'Elige un proveedor DNS y después un dominio de su cuenta: generamos automáticamente un subdominio app-xxxx bajo ese dominio, escribimos el registro A y vinculamos la ruta, sin DNS manual.',
     providerLabel: 'Proveedor DNS',
     providerPick: 'Elige un proveedor DNS…',
@@ -106,17 +113,13 @@ export default {
     zoneRetry: 'Reintentar',
     noProvider: 'Aún no hay proveedores DNS configurados.',
     manageProviders: 'Configurar proveedores DNS →',
-    upstreamLabel: 'Contenedor de upstream',
-    portLabel: 'Puerto de upstream',
     allocate: 'Asignar subdominio',
     allocating: 'Asignando…',
     allocated: 'Subdominio asignado',
     allocateFail: 'Error al asignar',
     successTitle: 'Subdominio listo 🎉',
     successLede: 'El subdominio está creado y su registro A escrito; el certificado se emite automáticamente.',
-    visit: 'Visitar',
     done: 'Hecho',
-    cancel: 'Cancelar',
   },
   // R2: ajustes avanzados (alias / control de acceso / refuerzo / redirecciones)
   adv: {

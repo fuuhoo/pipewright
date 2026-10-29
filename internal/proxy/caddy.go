@@ -29,6 +29,10 @@ const (
 	caddyDataVol = "pipewright_caddy_data"
 	// caddyConfigVol 是 Caddy 自动持久化配置卷。
 	caddyConfigVol = "pipewright_caddy_config"
+	// caddyEtcVol 持久化容器内 /etc/caddy(即下发的 Caddyfile)。容器被删/重建(升级镜像、
+	// docker prune)后配置跟着卷回来,不必等下一次路由变更才补推。首次建卷时 docker 用镜像内
+	// 的默认 Caddyfile 初始化。
+	caddyEtcVol = "pipewright_caddy_etc"
 	// caddyfilePath 是容器内 Caddyfile 路径。
 	caddyfilePath = "/etc/caddy/Caddyfile"
 	// caddyfileTmpPath 是 apply 时在目标主机上的临时落盘路径(再 docker cp 进容器)。
@@ -293,8 +297,8 @@ func ensureCaddy(ctx context.Context, tg target.Service, serverID, image string,
 		}
 	}
 
-	// 2) Caddy 容器存在:校验是否已发布全部 TCP 监听端口。已覆盖 → 幂等返回;缺端口 → 保留既有
-	//    端口映射(如自定义 18080/18443)并补上缺失的 TCP 端口后重建容器。
+	// 2) Caddy 容器存在:校验是否已发布全部 TCP 监听端口、且配置目录已挂卷。都满足 → 幂等返回;
+	//    否则保留既有端口映射(如自定义 18080/18443)并补上缺失的 TCP 端口后重建容器。
 	insp, err := tg.Exec(ctx, serverID, []string{"docker", "inspect", caddyContainer})
 	if err != nil {
 		return mapExecErr(err)
@@ -304,10 +308,15 @@ func ensureCaddy(ctx context.Context, tg target.Service, serverID, image string,
 		if perr != nil {
 			return perr
 		}
-		if caddyPortsCover(cur, tcpPorts) {
+		persisted, merr := inspectCaddyConfigMount(ctx, tg, serverID)
+		if merr != nil {
+			return merr
+		}
+		if caddyPortsCover(cur, tcpPorts) && persisted {
 			return nil
 		}
-		// 重建:rm -f 释放端口 → 用「既有映射 ∪ TCP 端口」重起。
+		// 重建:rm -f 释放端口 → 用「既有映射 ∪ TCP 端口」重起。缺配置卷的老容器在这里一次性迁到卷上,
+		// 随后 apply 会把库里的 Caddyfile 重新落下(不依赖容器可写层)。
 		if rmRes, rmErr := tg.Exec(ctx, serverID, []string{"docker", "rm", "-f", caddyContainer}); rmErr != nil {
 			return mapExecErr(rmErr)
 		} else if rmRes.ExitCode != 0 {
@@ -350,6 +359,7 @@ func runCaddyContainer(ctx context.Context, tg target.Service, serverID, image s
 	runCmd = append(runCmd,
 		"-v", caddyDataVol+":/data",
 		"-v", caddyConfigVol+":/config",
+		"-v", caddyEtcVol+":/etc/caddy",
 		image,
 		"caddy", "run", "--config", caddyfilePath, "--adapter", "caddyfile",
 	)
@@ -430,6 +440,25 @@ func inspectCaddyPortMap(ctx context.Context, tg target.Service, serverID string
 		}
 	}
 	return m, nil
+}
+
+// inspectCaddyConfigMount 报告既有容器的配置目录 /etc/caddy 是否已挂到卷。
+// 老版本容器只把 Caddyfile 放在可写层(容器一删就丢),false 时 ensureCaddy 重建一次容器切到卷上。
+func inspectCaddyConfigMount(ctx context.Context, tg target.Service, serverID string) (bool, error) {
+	res, err := tg.Exec(ctx, serverID, []string{
+		"docker", "inspect", caddyContainer,
+		"--format", "{{range .Mounts}}{{.Destination}}={{.Type}} {{end}}",
+	})
+	if err != nil {
+		return false, mapExecErr(err)
+	}
+	// 输出形如 "/data=volume /config=volume /etc/caddy=volume "。
+	for _, tok := range strings.Fields(res.Stdout) {
+		if tok == "/etc/caddy=volume" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // caddyPortsCover 报告既有端口映射是否已覆盖全部所需 TCP 端口。

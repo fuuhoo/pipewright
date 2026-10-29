@@ -28,11 +28,14 @@ type RouteCreator interface {
 
 // CreateDNS01RouteInput 是创建 DNS-01 反代路由的入参(冻结契约,proxy 适配器消费)。
 type CreateDNS01RouteInput struct {
-	ServerID          string
-	Domain            string
+	ServerID string
+	Domain   string
+	// UpstreamContainer:container → 容器名;address → HOST(IP / FQDN / host.docker.internal)。
 	UpstreamContainer string
 	UpstreamPort      int
-	DNSProviderID     string
+	// UpstreamKind ∈ ""(容器)/ "address";透传给 proxy.CreateInput.UpstreamKind。
+	UpstreamKind  string
+	DNSProviderID string
 }
 
 // dialFactory 据提供商类型 + token 造一个 DNSClient(注入便于单测;生产用 prodDialFactory)。
@@ -333,6 +336,7 @@ func (s *service) AllocateSubdomain(ctx context.Context, in AllocateInput) (*Rou
 			Domain:            domain,
 			UpstreamContainer: in.UpstreamContainer,
 			UpstreamPort:      in.UpstreamPort,
+			UpstreamKind:      in.UpstreamKind,
 			DNSProviderID:     p.ID,
 		})
 		if rerr != nil {
@@ -401,6 +405,7 @@ func (s *service) AllocateFQDN(ctx context.Context, in AllocateInput) (*RouteRef
 		Domain:            domain,
 		UpstreamContainer: in.UpstreamContainer,
 		UpstreamPort:      in.UpstreamPort,
+		UpstreamKind:      in.UpstreamKind,
 		DNSProviderID:     p.ID,
 	})
 	if rerr != nil {

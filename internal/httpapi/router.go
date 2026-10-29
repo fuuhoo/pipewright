@@ -1154,6 +1154,9 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/proxy/caddy", makeProxyCaddyStatusHandler(px))
 		// POST 显式部署反代环境(ensureCaddy,无需先绑域名;写方法,过 auth + CSRF + 审计)。
 		ar.Post("/proxy/caddy", makeProxyCaddyPrepareHandler(px, aud))
+		// POST 重新下发:把库里该主机所有 enabled 路由整体重推一遍(容器被删/重建、配置丢失后恢复)。
+		// 比 /proxy/caddy 多一段,不会被吞。写方法,过 auth + CSRF + 审计。
+		ar.Post("/proxy/caddy/reapply", makeReapplyProxyCaddyHandler(px, aud))
 		ar.Delete("/proxy/caddy", makeRemoveProxyCaddyHandler(px, aud))
 		// 反代镜像(Caddy)全局配置:目标主机连不上 ghcr.io 时换一个可达镜像。
 		// GET 只读(auth);PUT 写方法(auth + CSRF + 审计)。字面段 /proxy/settings 不与既有段冲突。

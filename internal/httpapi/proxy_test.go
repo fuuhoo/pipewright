@@ -31,6 +31,10 @@ type stubProxyService struct {
 	prepareStatus *proxy.CaddyStatus
 	prepareErr    error
 
+	reapplyID     string
+	reapplyStatus *proxy.CaddyStatus
+	reapplyErr    error
+
 	caddyImage    proxy.CaddyImageSetting
 	caddyImageErr error
 	setImageIn    string
@@ -91,6 +95,17 @@ func (s *stubProxyService) PrepareCaddy(_ context.Context, serverID string) (*pr
 	}
 	if s.prepareStatus != nil {
 		return s.prepareStatus, nil
+	}
+	return &proxy.CaddyStatus{ServerID: serverID}, nil
+}
+
+func (s *stubProxyService) Reapply(_ context.Context, serverID string) (*proxy.CaddyStatus, error) {
+	s.reapplyID = serverID
+	if s.reapplyErr != nil {
+		return nil, s.reapplyErr
+	}
+	if s.reapplyStatus != nil {
+		return s.reapplyStatus, nil
 	}
 	return &proxy.CaddyStatus{ServerID: serverID}, nil
 }
@@ -354,6 +369,63 @@ func TestProxyCaddyPrepare_EmptyServerID400(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestProxyCaddyReapply_DTO 验证 POST /api/proxy/caddy/reapply 调用 Reapply、返回 CaddyStatus DTO。
+func TestProxyCaddyReapply_DTO(t *testing.T) {
+	px := &stubProxyService{
+		reapplyStatus: &proxy.CaddyStatus{
+			ServerID: "srv-1", Installed: true, Running: true,
+			Image: "ghcr.io/x/pipewright-caddy:latest", Ports: "80,443", RouteCount: 3,
+		},
+	}
+	srv, client, csrf := setupProxyServer(t, px)
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/proxy/caddy/reapply?serverId=srv-1", csrf, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200 (%s)", resp.StatusCode, raw)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	var dto proxyCaddyStatusDTO
+	if err := json.Unmarshal(raw, &dto); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, raw)
+	}
+	if dto.ServerID != "srv-1" || !dto.Installed || !dto.Running || dto.RouteCount != 3 {
+		t.Fatalf("DTO 字段不符: %+v", dto)
+	}
+	if px.reapplyID != "srv-1" {
+		t.Fatalf("Reapply 应收到 serverId=srv-1, got %q", px.reapplyID)
+	}
+}
+
+// TestProxyCaddyReapply_EmptyServerID400 验证 serverId 为空 → 400,且不触领域层。
+func TestProxyCaddyReapply_EmptyServerID400(t *testing.T) {
+	px := &stubProxyService{}
+	srv, client, csrf := setupProxyServer(t, px)
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/proxy/caddy/reapply", csrf, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if px.reapplyID != "" {
+		t.Fatalf("serverId 为空不应调用 Reapply, got %q", px.reapplyID)
+	}
+}
+
+// TestProxyCaddyReapply_ApplyFailed502 验证领域层下发失败 → 502 apply_failed。
+func TestProxyCaddyReapply_ApplyFailed502(t *testing.T) {
+	px := &stubProxyService{reapplyErr: proxy.ErrApply}
+	srv, client, csrf := setupProxyServer(t, px)
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/proxy/caddy/reapply?serverId=srv-1", csrf, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "apply_failed") {
+		t.Fatalf("错误码应为 apply_failed, got %s", raw)
 	}
 }
 

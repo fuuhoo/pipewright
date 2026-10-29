@@ -207,10 +207,14 @@ type Service interface {
 
 // AllocateInput 是瞬时子域名分配的入参。
 type AllocateInput struct {
-	ProviderID        string
-	ServerID          string
+	ProviderID string
+	ServerID   string
+	// UpstreamContainer 是主上游目标:UpstreamKind=container 时为容器名,address 时为 HOST
+	// (IP / FQDN / host.docker.internal)。
 	UpstreamContainer string
 	UpstreamPort      int
+	// UpstreamKind 是主上游类型:""/"container"(默认)或 "address"。与「新增域名」表单同一套语义。
+	UpstreamKind string
 	// HostIP 是宿主机公网 IP(由调用方/上层据 server 解析得出,非用户自由文本)。写入 A 记录指向它。
 	HostIP string
 	// Subdomain 是 AllocateFQDN 用的**指定** FQDN(如 pr-12-abcd.preview.example.com);

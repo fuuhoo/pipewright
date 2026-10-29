@@ -77,6 +77,12 @@ export default {
     deploying: 'デプロイ中…',
     deployed: 'リバースプロキシ環境をデプロイしました',
     deployFail: 'デプロイに失敗しました',
+    reapply: '設定を再配信',
+    reapplying: '配信中…',
+    reapplied: '設定を再配信しました',
+    reapplyFail: '再配信に失敗しました',
+    reapplyHint:
+      'データベース上のルートをすべてリモートの Caddy に再送します —— コンテナが削除 / 再作成された場合や、設定がデータベースとずれている場合に使用します。',
     remove: '環境を削除',
     removing: '削除中…',
     consentTitle: 'このホストにリバースプロキシ環境をデプロイしますか?',
@@ -94,8 +100,9 @@ export default {
   },
   // サブドメインの割り当て
   sub: {
-    cta: 'サブドメインを割り当て',
-    title: 'サブドメインを割り当て',
+    sourceLabel: 'ドメインの指定方法',
+    modeManual: '自分で入力',
+    modeAuto: '自動サブドメイン',
     lede: 'DNS プロバイダーを選び、続いてそのアカウントで管理されているドメインを選ぶと、その配下に app-xxxx サブドメインを自動生成し、A レコードを書き込み、ルートを紐付けます — 手動の DNS 操作は不要です。',
     providerLabel: 'DNS プロバイダー',
     providerPick: 'DNS プロバイダーを選択…',
@@ -106,17 +113,13 @@ export default {
     zoneRetry: '再試行',
     noProvider: 'DNS プロバイダーが未設定です。',
     manageProviders: 'DNS プロバイダーを設定 →',
-    upstreamLabel: '上流コンテナ',
-    portLabel: '上流ポート',
     allocate: 'サブドメインを割り当て',
     allocating: '割り当て中…',
     allocated: 'サブドメインを割り当てました',
     allocateFail: '割り当てに失敗しました',
     successTitle: 'サブドメインの準備ができました 🎉',
     successLede: 'サブドメインを作成し A レコードを書き込みました。証明書は自動で発行中です。',
-    visit: 'アクセス',
     done: '完了',
-    cancel: 'キャンセル',
   },
   // R2:詳細設定(エイリアス / アクセス制御 / 強化 / リダイレクト)
   adv: {

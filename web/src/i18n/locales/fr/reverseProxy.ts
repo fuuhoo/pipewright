@@ -77,6 +77,12 @@ export default {
     deploying: 'Déploiement…',
     deployed: 'Environnement de proxy inverse déployé',
     deployFail: 'Échec du déploiement',
+    reapply: 'Réappliquer la config',
+    reapplying: 'Application…',
+    reapplied: 'Configuration réappliquée',
+    reapplyFail: 'Échec de la réapplication',
+    reapplyHint:
+      'Renvoie toutes les routes de la base de données vers le Caddy distant — à utiliser après la suppression / recréation du conteneur ou si la configuration a divergé de la base.',
     remove: 'Supprimer l\'environnement',
     removing: 'Suppression…',
     consentTitle: 'Déployer l\'environnement de proxy inverse sur cet hôte ?',
@@ -94,8 +100,9 @@ export default {
   },
   // R3 : attribution de sous-domaine en un clic (zéro DNS)
   sub: {
-    cta: 'Attribuer un sous-domaine',
-    title: 'Attribuer un sous-domaine',
+    sourceLabel: 'Source du domaine',
+    modeManual: 'Saisir un domaine',
+    modeAuto: 'Sous-domaine auto',
     lede: 'Choisissez un fournisseur DNS puis un domaine hébergé par ce compte : nous générons automatiquement un sous-domaine app-xxxx sous ce domaine, écrivons l’enregistrement A et rattachons la route — sans DNS manuel.',
     providerLabel: 'Fournisseur DNS',
     providerPick: 'Choisissez un fournisseur DNS…',
@@ -106,17 +113,13 @@ export default {
     zoneRetry: 'Réessayer',
     noProvider: 'Aucun fournisseur DNS configuré pour l’instant.',
     manageProviders: 'Configurer les fournisseurs DNS →',
-    upstreamLabel: 'Conteneur upstream',
-    portLabel: 'Port upstream',
     allocate: 'Attribuer le sous-domaine',
     allocating: 'Attribution…',
     allocated: 'Sous-domaine attribué',
     allocateFail: 'Échec de l’attribution',
     successTitle: 'Sous-domaine prêt 🎉',
     successLede: 'Le sous-domaine est créé et son enregistrement A écrit ; le certificat est émis automatiquement.',
-    visit: 'Visiter',
     done: 'Terminé',
-    cancel: 'Annuler',
   },
   // R2 : paramètres avancés (alias / contrôle d’accès / durcissement / redirections)
   adv: {

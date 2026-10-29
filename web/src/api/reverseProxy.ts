@@ -305,6 +305,24 @@ export async function prepareCaddyEnv(serverId: string): Promise<CaddyStatus> {
 }
 
 /**
+ * Re-push every enabled route of this host to its Caddy container (reconcile):
+ * ensures the container exists (recreating a stale one that has no config
+ * volume), starts it, reconnects upstream containers, then validates + reloads
+ * the Caddyfile rendered from the DB. Idempotent; the DB is untouched.
+ *
+ * Use it when the remote container was deleted/recreated or the config looks
+ * out of sync — the control plane has no background reconciler.
+ *
+ * POST /api/proxy/caddy/reapply?serverId=<id> → CaddyStatus   (needs CSRF)
+ */
+export async function reapplyCaddyEnv(serverId: string): Promise<CaddyStatus> {
+  return http.post<CaddyStatus>(
+    `/api/proxy/caddy/reapply?serverId=${encodeURIComponent(serverId)}`,
+    {},
+  )
+}
+
+/**
  * Remove the reverse-proxy environment on a host (R4 · reversibility): stops and
  * deletes the `pipewright-caddy` container. The certificate volume is kept, so
  * re-enabling a domain restores HTTPS without re-issuing from scratch. Bound
@@ -339,9 +357,18 @@ export interface AllocateSubdomainInput {
   zone: string
   /** Target host the new route binds on (and the A record points to). */
   serverId: string
-  /** Upstream container the route reverse-proxies to. */
+  /**
+   * Which kind of upstream the route points at: a running container on the target
+   * host, or an arbitrary `host:port`. Same meaning as `createProxyRoute`'s
+   * `config.upstreamKind`.
+   */
+  upstreamKind: 'container' | 'address'
+  /**
+   * Upstream container name when `upstreamKind` is `'container'`, or the host
+   * (IP / FQDN / `host.docker.internal`) when it is `'address'`.
+   */
   upstreamContainer: string
-  /** Upstream port inside the container. */
+  /** Upstream port (inside the container / on the host). */
   upstreamPort: number
 }
 
