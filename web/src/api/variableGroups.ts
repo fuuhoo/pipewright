@@ -13,6 +13,10 @@
  * Secret variables are stored as credentialId references only — the server never returns
  * plaintext, only a server-computed maskedValue. On save, secret items send
  * {key, secret:true, credentialId}; the plaintext value is dropped server-side.
+ *
+ * Group ownership (0088): a variable group may belong to several resource groups, same
+ * semantics as servers. Listing is narrowed server-side to the caller's visible groups;
+ * changing `groupIds` requires managing every group it belongs to.
  */
 
 import { http } from './http'
@@ -23,6 +27,8 @@ export interface VariableGroup {
   name: string
   description: string
   vars: BuildVar[]
+  /** 所属资源分组(升序);[] = 未归组(全员可见可改)。 */
+  groupIds: string[]
   createdAt: string
   updatedAt: string
 }
@@ -40,6 +46,8 @@ export interface SaveVariableGroupInput {
   name: string
   description?: string
   vars: VariableGroupVarInput[]
+  /** 省略 = 不改归属(PUT);[] = 移出所有分组。 */
+  groupIds?: string[]
 }
 
 interface ListVariableGroupsResponse {

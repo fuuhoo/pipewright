@@ -40,6 +40,7 @@ function group(over: Partial<Group> = {}): Group {
     members: [member('u2', 'alice')],
     projectCount: 0,
     serverCount: 0,
+    variableGroupCount: 0,
     canManage: true,
     createdAt: '2026-10-01T00:00:00Z',
     updatedAt: '2026-10-01T00:00:00Z',

@@ -13,10 +13,10 @@
 // 自 0063 起点的是迁移里的种子(见 roles_drift_test.go 的 TestSeededPresetCeilings)。
 //
 // 点分两类:
-//   - 资源点:Kind 取四类资源之一,Act 取 view / operate。它声明「要看得到 / 按得动这个,
-//     角色对该类资源至少要哪一档」,派生 Ceiling 只看它。
+//   - 资源点:Kind 取 ResourceKinds() 之一,Act 取 view / operate。它声明「要看得到 / 按得动
+//     这个,角色对该类资源至少要哪一档」,派生 Ceiling 只看它。
 //   - 平台点(Kind == Platform):平台设置类入口(全局凭据 / 审计 / 通知 / AI 等一组),
-//     不吃四类上限,由设置位这条线兜。
+//     不吃资源上限,由设置位这条线兜。
 //
 // Act 刻意不到 manage:manage 判的是「谁拥有这份数据」(改归属、删资源),归分组那条数据轴管。
 // 让功能点能封住 manage,就等于让改菜单顺带夺走组长的既有管理权 —— 组长哪怕角色是只读,
@@ -40,7 +40,7 @@ type Perm struct {
 }
 
 // Platform 是「平台设置类」点的类别标记。它不在 ResourceKinds() 里,因此永远不会成为
-// Can 的入参 —— 资源归属判定仍然只对四类真实资源发生。
+// Can 的入参 —— 资源归属判定仍然只对真实资源发生。
 const Platform = Kind("platform")
 
 // PermSettingsAccess 是进得了设置那一组的总闸(全局凭据 / 保险库 / 审计 / 通知 / AI / DNS /

@@ -191,11 +191,13 @@ func TestSeededPresetCeilings(t *testing.T) {
 	useSeededPresets(t)
 
 	want := map[string]map[Kind]Act{
-		// 普通用户:四类资源都能动(与引入档位表之前的行为逐字一致)。
-		"user":      {KindProject: ActOperate, KindRun: ActOperate, KindServer: ActOperate, KindKubeCluster: ActOperate},
-		"developer": {KindProject: ActOperate, KindRun: ActOperate, KindServer: ActView, KindKubeCluster: ActView},
-		"ops":       {KindProject: ActView, KindRun: ActOperate, KindServer: ActOperate, KindKubeCluster: ActOperate},
-		"viewer":    {KindProject: ActView, KindRun: ActView, KindServer: ActView, KindKubeCluster: ActView},
+		// 普通用户:各类资源都能动(与引入档位表之前的行为逐字一致)。
+		// 变量组没有独立的点:它与项目共用「改得了编排」那条上限(见 roles.go 的 Ceiling),
+		// 所以这两类在每一档上都同值。
+		"user":      {KindProject: ActOperate, KindRun: ActOperate, KindServer: ActOperate, KindKubeCluster: ActOperate, KindVarGroup: ActOperate},
+		"developer": {KindProject: ActOperate, KindRun: ActOperate, KindServer: ActView, KindKubeCluster: ActView, KindVarGroup: ActOperate},
+		"ops":       {KindProject: ActView, KindRun: ActOperate, KindServer: ActOperate, KindKubeCluster: ActOperate, KindVarGroup: ActView},
+		"viewer":    {KindProject: ActView, KindRun: ActView, KindServer: ActView, KindKubeCluster: ActView, KindVarGroup: ActView},
 	}
 	for role, row := range want {
 		if !ValidRole(role) {

@@ -14,6 +14,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/group"
+	"github.com/fuuhoo/pipewright/internal/library"
 	"github.com/fuuhoo/pipewright/internal/mask"
 	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/fuuhoo/pipewright/internal/projectcopy"
@@ -83,6 +84,12 @@ type guardEnv struct {
 	srvUngrouped string // 未归组服务器
 	srvInPrivate string // 私有组内服务器
 	srvInPublic  string // 公开组内服务器
+
+	// 变量组三态:0088 起与服务器同一套归属判定。
+	vgs         library.VarGroupService
+	vgUngrouped string
+	vgInPrivate string
+	vgInPublic  string
 }
 
 func setupGuard(t *testing.T) *guardEnv {
@@ -190,6 +197,21 @@ func setupGuard(t *testing.T) *guardEnv {
 	srvInPrivate := mkSrv("secret-srv", priv.ID)
 	srvInPublic := mkSrv("open-srv", pub.ID)
 
+	// 变量组走领域服务落库(secret 掩码要保险库),三态各一份。
+	vgs := library.NewVarGroupService(db, v)
+	mkVG := func(name string, groupIDs ...string) string {
+		t.Helper()
+		ids := groupIDs
+		g, err := vgs.Create(ctx, library.VarGroupInput{Name: name, GroupIDs: &ids})
+		if err != nil {
+			t.Fatalf("seed variable group %s: %v", name, err)
+		}
+		return g.ID
+	}
+	vgUngrouped := mkVG("free-vg")
+	vgInPrivate := mkVG("secret-vg", priv.ID)
+	vgInPublic := mkVG("open-vg", pub.ID)
+
 	approvalCoord, approvalStore := approval.New(), approval.NewStore(db)
 	srv := httptest.NewServer(New(testWebFSAuth(), authSvc,
 		WithVault(v),
@@ -202,6 +224,7 @@ func setupGuard(t *testing.T) *guardEnv {
 		WithProjectCopy(projectcopy.New(db)),
 		WithApprovals(approvalCoord, approvalStore),
 		WithServers(target.New(db, v, stubDialer{res: &target.ExecResult{Stdout: "ok"}})),
+		WithVariableGroups(vgs),
 	))
 	t.Cleanup(srv.Close)
 
@@ -211,6 +234,8 @@ func setupGuard(t *testing.T) *guardEnv {
 		memberUID: memberID, strangerUID: strangerID,
 		ungrouped: ungrouped, inPrivate: inPrivate, inPublic: inPublic, runInPriv: runID,
 		serverCredID: srvCredID.ID, srvUngrouped: srvUngrouped, srvInPrivate: srvInPrivate, srvInPublic: srvInPublic,
+		vgs:         vgs,
+		vgUngrouped: vgUngrouped, vgInPrivate: vgInPrivate, vgInPublic: vgInPublic,
 	}
 	env.admin = newTestClient(t)
 	env.adminCS = loginAs(t, env.admin, srv.URL, "admin", "testpass")
@@ -275,6 +300,9 @@ func TestResolveGuardTarget(t *testing.T) {
 		{"/api/servers", false, "", ""},
 		{"/api/servers/metrics", false, "", ""},
 		{"/api/servers/containers", false, "", ""},
+		// 变量组自 0088 起可归分组:单条按 KindVarGroup 判,列表由 handler 按可见范围收敛。
+		{"/api/variable-groups/vg1", true, access.KindVarGroup, "vg1"},
+		{"/api/variable-groups", false, "", ""},
 		// 不归分组权限管的路径。
 		{"/api/credentials", false, "", ""},
 		{"/api/groups/g1", false, "", ""},
@@ -429,6 +457,168 @@ func TestListRuns_ScopedByGroup(t *testing.T) {
 	}
 	if got := total(env.admin); got != 1 {
 		t.Fatalf("管理员看到 %d 次运行, want 1", got)
+	}
+}
+
+// ---- 变量组(0088):与服务器同构的归属 ---------------------------------------
+
+type vgRow struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	GroupIDs []string `json:"groupIds"`
+}
+
+func listVarGroups(t *testing.T, env *guardEnv, c *http.Client) []vgRow {
+	t.Helper()
+	resp := doJSON(t, c, http.MethodGet, env.srv.URL+"/api/variable-groups", "", "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/variable-groups = %d", resp.StatusCode)
+	}
+	var out struct {
+		VariableGroups []vgRow `json:"variableGroups"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode variable groups: %v", err)
+	}
+	return out.VariableGroups
+}
+
+func vgNames(rows []vgRow) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range rows {
+		out[r.Name] = true
+	}
+	return out
+}
+
+// TestVariableGroups_ScopedByGroup 验列表收敛、单条 403/404、groupIds 回显,
+// 以及「改归属要求旧侧每一组都管得住」。
+func TestVariableGroups_ScopedByGroup(t *testing.T) {
+	env := setupGuard(t)
+	prefix := env.srv.URL + "/api/variable-groups/"
+
+	names := vgNames(listVarGroups(t, env, env.other))
+	if !names["free-vg"] || !names["open-vg"] {
+		t.Fatalf("局外人变量组列表 = %v, want 含 free-vg / open-vg", names)
+	}
+	if names["secret-vg"] {
+		t.Fatalf("局外人不该看到 secret-vg")
+	}
+	if names = vgNames(listVarGroups(t, env, env.member)); !names["secret-vg"] {
+		t.Fatalf("成员列表 = %v, want 含 secret-vg", names)
+	}
+	if got := len(listVarGroups(t, env, env.admin)); got != 3 {
+		t.Fatalf("管理员看到 %d 份变量组, want 3", got)
+	}
+	for _, r := range listVarGroups(t, env, env.member) {
+		if r.Name == "secret-vg" && (len(r.GroupIDs) != 1 || r.GroupIDs[0] != env.privateID) {
+			t.Fatalf("secret-vg groupIds = %v, want [%s]", r.GroupIDs, env.privateID)
+		}
+	}
+
+	// 单条:局外人读私有组 403,不存在 404(不能伪装成 403)。
+	if got := statusOf(t, env.other, http.MethodGet, prefix+env.vgInPrivate, "", ""); got != http.StatusForbidden {
+		t.Fatalf("局外人读私有组变量组 = %d, want 403", got)
+	}
+	if got := statusOf(t, env.other, http.MethodGet, prefix+"no-such-vg", "", ""); got != http.StatusNotFound {
+		t.Fatalf("读不存在的变量组 = %d, want 404", got)
+	}
+
+	// 只改名称/变量(不带 groupIds)不算改归属:成员有权操作,归属原样保留。
+	if got := statusOf(t, env.member, http.MethodPut, prefix+env.vgInPrivate, env.memberCS,
+		`{"name":"renamed-vg"}`); got != http.StatusOK {
+		t.Fatalf("成员改名 = %d, want 200", got)
+	}
+	after, err := env.vgs.Get(context.Background(), env.vgInPrivate)
+	if err != nil {
+		t.Fatalf("Get after rename: %v", err)
+	}
+	if len(after.GroupIDs) != 1 || after.GroupIDs[0] != env.privateID {
+		t.Fatalf("改名不该动归属,groupIds = %v", after.GroupIDs)
+	}
+
+	// 改归属:成员连旧侧的 Manage 都过不去;局外人对未归组也管不着(未归组只有管理员能定归属)。
+	if got := statusOf(t, env.member, http.MethodPut, prefix+env.vgInPrivate, env.memberCS,
+		`{"name":"renamed-vg","groupIds":["`+env.publicID+`"]}`); got != http.StatusForbidden {
+		t.Fatalf("成员改私有组变量组归属 = %d, want 403", got)
+	}
+	if got := statusOf(t, env.other, http.MethodPut, prefix+env.vgUngrouped, env.otherCS,
+		`{"name":"free-vg","groupIds":["`+env.publicID+`"]}`); got != http.StatusForbidden {
+		t.Fatalf("局外人给未归组变量组归组 = %d, want 403", got)
+	}
+	// 组长(私有组的 owner)管得动,并可移进自己管的公开组。
+	if got := statusOf(t, env.owner, http.MethodPut, prefix+env.vgInPrivate, env.ownerCS,
+		`{"name":"renamed-vg","groupIds":["`+env.publicID+`"]}`); got != http.StatusOK {
+		t.Fatalf("组长改组 = %d, want 200", got)
+	}
+	moved, err := env.vgs.Get(context.Background(), env.vgInPrivate)
+	if err != nil {
+		t.Fatalf("Get after move: %v", err)
+	}
+	if len(moved.GroupIDs) != 1 || moved.GroupIDs[0] != env.publicID {
+		t.Fatalf("after move groupIds = %v, want [%s]", moved.GroupIDs, env.publicID)
+	}
+	// 移进自己管不着的私有组:新侧 Manage 挡住。
+	if got := statusOf(t, env.owner, http.MethodPut, prefix+env.vgInPrivate, env.ownerCS,
+		`{"name":"renamed-vg","groupIds":["`+env.otherPrivateID+`"]}`); got != http.StatusForbidden {
+		t.Fatalf("移进别人的私有组 = %d, want 403", got)
+	}
+}
+
+// TestVariableGroups_CreateAndDelete 验建组时的逐组 placement、悬挂引用 422,
+// 以及删除沿用「删资源的 Operate 一刀、未归组不收紧」的存量口径。
+func TestVariableGroups_CreateAndDelete(t *testing.T) {
+	env := setupGuard(t)
+	base := env.srv.URL + "/api/variable-groups"
+
+	// 成员能把变量组建到公开组吗?公开组也要求组长/管理员才谈得上「把它归进来」。
+	if got := statusOf(t, env.member, http.MethodPost, base, env.memberCS,
+		`{"name":"member-new","groupIds":["`+env.publicID+`"]}`); got != http.StatusForbidden {
+		t.Fatalf("成员把新变量组归进公开组 = %d, want 403", got)
+	}
+	// 不归组不受额外限制(建包本身仍要 library.edit)。
+	if got := statusOf(t, env.member, http.MethodPost, base, env.memberCS, `{"name":"member-free"}`); got != http.StatusCreated {
+		t.Fatalf("成员建未归组变量组 = %d, want 201", got)
+	}
+	// 悬挂引用是入参错误 422,不是越权 403。
+	if got := statusOf(t, env.admin, http.MethodPost, base, env.adminCS,
+		`{"name":"ghost","groupIds":["no-such-group"]}`); got != http.StatusUnprocessableEntity {
+		t.Fatalf("挂到不存在的组 = %d, want 422", got)
+	}
+
+	resp := doJSON(t, env.admin, http.MethodPost, base, env.adminCS,
+		`{"name":"multi-new","groupIds":["`+env.otherPrivateID+`","`+env.publicID+`"]}`)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("管理员多组建组 = %d, want 201", resp.StatusCode)
+	}
+	var created vgRow
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+	if len(created.GroupIDs) != 2 {
+		t.Fatalf("created groupIds = %v, want 2 组", created.GroupIDs)
+	}
+
+	// 删除:局外人删私有组变量组 403;成员删私有组那份可以(成员有 Operate,删除不等同改归属)。
+	if got := statusOf(t, env.other, http.MethodDelete, base+"/"+env.vgInPrivate, env.otherCS, ""); got != http.StatusForbidden {
+		t.Fatalf("局外人删私有组变量组 = %d, want 403", got)
+	}
+	if got := statusOf(t, env.member, http.MethodDelete, base+"/"+env.vgInPrivate, env.memberCS, ""); got != http.StatusNoContent {
+		t.Fatalf("成员删私有组变量组 = %d, want 204", got)
+	}
+	// 未归组维持存量口径:有 library.edit 就能删,不要求管理员。
+	if got := statusOf(t, env.member, http.MethodDelete, base+"/"+env.vgUngrouped, env.memberCS, ""); got != http.StatusNoContent {
+		t.Fatalf("成员删未归组变量组 = %d, want 204", got)
+	}
+	// 删除留下审计。
+	var n int
+	if err := env.db.QueryRow(`SELECT COUNT(1) FROM audit_log WHERE action = ?`, audit.ActionVarGroupDelete).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n == 0 {
+		t.Fatalf("删变量组未留审计")
 	}
 }
 

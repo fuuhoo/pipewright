@@ -13,6 +13,7 @@
 // 删组刻意要求「先把组内资源移出」(ErrGroupNotEmpty):projects/servers.group_id 没有
 // 外键约束(见 0056 注释),静默删组会留下一堆指向不存在分组的行,而 access.Service
 // 对这种悬挂引用按最私有一档处理(fail closed)——那时普通用户连自己的项目都打不开。
+// 服务器(server_groups)与变量组(variable_group_groups)是同一口径:先移出再删组。
 package group
 
 import (
@@ -60,10 +61,11 @@ type Group struct {
 	UpdatedAt time.Time
 
 	MemberIDs []string
-	// ProjectCount / ServerCount 只给管理页展示「组内有多少东西」;
+	// ProjectCount / ServerCount / VarGroupCount 只给管理页展示「组内有多少东西」;
 	// 删组前的挡门检查另有 Delete 里的实查,这里不参与判定。
-	ProjectCount int
-	ServerCount  int
+	ProjectCount  int
+	ServerCount   int
+	VarGroupCount int
 }
 
 // Snapshot 转成 access.Group,供 access.Decide 直接判定(不碰数据库)。
@@ -211,13 +213,14 @@ func (s *Service) replaceMembers(ctx context.Context, groupID string, memberIDs 
 const groupCols = `g.id, g.name, g.description, g.visibility, g.owner_id,
 	COALESCE(u.username, ''), g.created_by, g.created_at, g.updated_at,
 	(SELECT COUNT(1) FROM projects pr WHERE pr.group_id = g.id),
-	(SELECT COUNT(1) FROM server_groups sg WHERE sg.group_id = g.id)`
+	(SELECT COUNT(1) FROM server_groups sg WHERE sg.group_id = g.id),
+	(SELECT COUNT(1) FROM variable_group_groups vgg WHERE vgg.group_id = g.id)`
 
 func scanGroup(row scanner) (*Group, error) {
 	var g Group
 	var createdStr, updatedStr, ownerName string
 	if err := row.Scan(&g.ID, &g.Name, &g.Description, &g.Visibility, &g.OwnerID,
-		&ownerName, &g.CreatedBy, &createdStr, &updatedStr, &g.ProjectCount, &g.ServerCount); err != nil {
+		&ownerName, &g.CreatedBy, &createdStr, &updatedStr, &g.ProjectCount, &g.ServerCount, &g.VarGroupCount); err != nil {
 		return nil, err
 	}
 	g.OwnerName = ownerName
@@ -377,9 +380,9 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (*Group
 	return s.Get(ctx, id)
 }
 
-// Delete 删组。组内仍有项目 / 服务器时返回 ErrGroupNotEmpty(见包头注释)。
+// Delete 删组。组内仍有项目 / 服务器 / 变量组时返回 ErrGroupNotEmpty(见包头注释)。
 func (s *Service) Delete(ctx context.Context, id string) error {
-	var projects, servers int
+	var projects, servers, varGroups int
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM projects WHERE group_id = ?`, id).Scan(&projects); err != nil {
 		return fmt.Errorf("group: count projects: %w", err)
@@ -388,8 +391,13 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		`SELECT COUNT(1) FROM server_groups WHERE group_id = ?`, id).Scan(&servers); err != nil {
 		return fmt.Errorf("group: count servers: %w", err)
 	}
-	if projects > 0 || servers > 0 {
-		return fmt.Errorf("%w:%d 个项目 / %d 台服务器仍在组内", ErrGroupNotEmpty, projects, servers)
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM variable_group_groups WHERE group_id = ?`, id).Scan(&varGroups); err != nil {
+		return fmt.Errorf("group: count variable groups: %w", err)
+	}
+	if projects > 0 || servers > 0 || varGroups > 0 {
+		return fmt.Errorf("%w:%d 个项目 / %d 台服务器 / %d 个变量组仍在组内",
+			ErrGroupNotEmpty, projects, servers, varGroups)
 	}
 	if _, err := s.db.ExecContext(ctx,
 		`DELETE FROM resource_group_members WHERE group_id = ?`, id); err != nil {
@@ -456,47 +464,56 @@ var _ access.Repository = (*Service)(nil)
 // GroupIDsOf 返回资源所属分组集合(空集合 = 未归组)。资源不存在返回 ErrNotFound(→ 404),
 // 不能返回 access.ErrForbidden——否则「项目不存在」会被伪装成「无权限」。
 //
-// 服务器是唯一可归多个组的资源(server_groups,见 0087),其余资源至多一个归组。
+// 服务器与变量组可归多个组(server_groups / variable_group_groups),其余资源至多一个归组。
 // KindRun 走 run → project 两跳:运行本身不持分组,它的权限完全随所属项目。
 func (s *Service) GroupIDsOf(ctx context.Context, kind access.Kind, id string) ([]string, error) {
-	if kind != access.KindServer {
-		var q string
-		switch kind {
-		case access.KindProject:
-			q = `SELECT group_id FROM projects WHERE id = ?`
-		case access.KindKubeCluster:
-			q = `SELECT group_id FROM kube_clusters WHERE id = ?`
-		case access.KindRun:
-			// 运行没有自己的分组,归属来自所属项目;项目行已删(留存策略清掉了)时 group_id
-			// 是 NULL,按 fail closed 当作「资源不存在」,而不是退化成未归组让全员可读他人日志。
-			q = `SELECT p.group_id FROM pipeline_runs r LEFT JOIN projects p ON p.id = r.project_id WHERE r.id = ?`
-		default:
-			return nil, fmt.Errorf("group: 未知资源类型 %q", kind)
-		}
-		var groupID sql.NullString
-		err := s.db.QueryRowContext(ctx, q, id).Scan(&groupID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		if err == nil && !groupID.Valid {
-			return nil, ErrNotFound
-		}
-		if err != nil {
-			return nil, fmt.Errorf("group: resolve group of %s/%s: %w", kind, id, err)
-		}
-		if groupID.String == "" {
-			return []string{}, nil
-		}
-		return []string{groupID.String}, nil
+	switch kind {
+	case access.KindProject:
+		return s.columnGroupID(ctx, kind, id, `SELECT group_id FROM projects WHERE id = ?`)
+	case access.KindKubeCluster:
+		return s.columnGroupID(ctx, kind, id, `SELECT group_id FROM kube_clusters WHERE id = ?`)
+	case access.KindRun:
+		// 运行没有自己的分组,归属来自所属项目;项目行已删(留存策略清掉了)时 group_id
+		// 是 NULL,按 fail closed 当作「资源不存在」,而不是退化成未归组让全员可读他人日志。
+		return s.columnGroupID(ctx, kind, id,
+			`SELECT p.group_id FROM pipeline_runs r LEFT JOIN projects p ON p.id = r.project_id WHERE r.id = ?`)
+	case access.KindServer:
+		return s.memberGroupIDs(ctx, kind, id, "servers", "server_groups", "server_id")
+	case access.KindVarGroup:
+		return s.memberGroupIDs(ctx, kind, id, "variable_groups", "variable_group_groups", "variable_group_id")
+	default:
+		return nil, fmt.Errorf("group: 未知资源类型 %q", kind)
 	}
+}
 
-	// 服务器:一条 LEFT JOIN 同时区分「机器不存在」(0 行)与「未归组」(1 行 NULL)。
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT sg.group_id FROM servers sv
-		 LEFT JOIN server_groups sg ON sg.server_id = sv.id
-		 WHERE sv.id = ?`, id)
+// columnGroupID 解析单列归属(group_id 列,空串 = 未归组)。
+func (s *Service) columnGroupID(ctx context.Context, kind access.Kind, id, query string) ([]string, error) {
+	var groupID sql.NullString
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&groupID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err == nil && !groupID.Valid {
+		return nil, ErrNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("group: resolve groups of server/%s: %w", id, err)
+		return nil, fmt.Errorf("group: resolve group of %s/%s: %w", kind, id, err)
+	}
+	if groupID.String == "" {
+		return []string{}, nil
+	}
+	return []string{groupID.String}, nil
+}
+
+// memberGroupIDs 解析成员表形式的归属(资源可归多个组)。parentTable / memberTable / refColumn
+// 都是代码常量,不接外部输入。一条 LEFT JOIN 同时区分「资源不存在」(0 行)与「未归组」(1 行 NULL)。
+func (s *Service) memberGroupIDs(ctx context.Context, kind access.Kind, id, parentTable, memberTable, refColumn string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.group_id FROM `+parentTable+` r
+		 LEFT JOIN `+memberTable+` m ON m.`+refColumn+` = r.id
+		 WHERE r.id = ?`, id)
+	if err != nil {
+		return nil, fmt.Errorf("group: resolve groups of %s/%s: %w", kind, id, err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := []string{}
@@ -505,14 +522,14 @@ func (s *Service) GroupIDsOf(ctx context.Context, kind access.Kind, id string) (
 		found = true
 		var groupID sql.NullString
 		if err := rows.Scan(&groupID); err != nil {
-			return nil, fmt.Errorf("group: scan server group: %w", err)
+			return nil, fmt.Errorf("group: scan %s group: %w", kind, err)
 		}
 		if groupID.Valid && groupID.String != "" {
 			out = append(out, groupID.String)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("group: iterate server groups: %w", err)
+		return nil, fmt.Errorf("group: iterate %s groups: %w", kind, err)
 	}
 	if !found {
 		return nil, ErrNotFound

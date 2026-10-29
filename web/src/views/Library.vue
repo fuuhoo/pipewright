@@ -32,7 +32,10 @@ import {
   deleteVariableGroup,
   type VariableGroup,
   type VariableGroupVarInput,
+  type SaveVariableGroupInput,
 } from '../api/variableGroups'
+import { listGroups, type Group } from '../api/groups'
+import { groupNames } from '../lib/groupFilter'
 import { listCredentials, usableCredentials, type Credential } from '../api/credentials'
 import {
   listCustomNodes,
@@ -53,9 +56,10 @@ const router = useRouter()
 const tab = ref<Tab>(route.query.tab === 'customNodes' ? 'customNodes' : route.query.tab === 'variableGroups' ? 'variableGroups' : 'templates')
 
 const session = useSessionStore()
-// 三类资产都不归组,所以「能不能改」只看角色有没有 library.edit:后端在同一把尺上拦写请求
-// (internal/httpapi/access_guard.go 的 requireLibraryPerm),这里只是把按不动的按钮收起来。
+// 三类资产的函数轴都看 library.edit;变量组自 0088 起还多一道数据轴(分组归属),由后端
+// 按 access.KindVarGroup 判。这里只负责把按不动的按钮收起来。
 const canEdit = computed(() => session.canPerm('library.edit'))
+const isAdminUser = computed(() => session.user?.role === 'admin')
 
 // ─── templates ────────────────────────────────────────────────────────────────
 const tplState = ref<LoadState>('idle')
@@ -174,8 +178,12 @@ async function loadVariableGroups(): Promise<void> {
   vgState.value = 'loading'
   vgError.value = ''
   try {
-    const [groups, creds] = await Promise.all([listVariableGroups(), loadCredentialsSafe()])
-    variableGroups.value = groups
+    const [list, creds] = await Promise.all([
+      listVariableGroups(),
+      loadCredentialsSafe(),
+      loadGroupsSafe(),
+    ])
+    variableGroups.value = list
     credentials.value = creds
     vgState.value = 'idle'
   } catch (err: unknown) {
@@ -183,6 +191,38 @@ async function loadVariableGroups(): Promise<void> {
     vgError.value = err instanceof HttpError
       ? err.apiError?.message ?? t('library.loadGroupsFailedStatus', { status: err.status })
       : t('library.loadGroupsFailed')
+  }
+}
+
+// ─── 分组(变量组归属)────────────────────────────────────────────────────────
+// 候选与「能不能改归属」都来自 GET /api/groups 的 canManage;可见范围已由后端收敛,
+// 列表里出现但管不着的组只会以「锁定」形态出现(比如自己只是私有组的成员)。
+const groups = ref<Group[]>([])
+const groupById = computed<Record<string, Group>>(() => {
+  const out: Record<string, Group> = {}
+  for (const g of groups.value) out[g.id] = g
+  return out
+})
+const manageableGroups = computed(() => groups.value.filter((g) => g.canManage))
+const groupLabels = computed(() => ({
+  all: t('groups.filterAll'),
+  ungrouped: t('groups.ungrouped'),
+  missing: t('groups.groupMissing'),
+  public: t('groups.visibilityPublic'),
+  private: t('groups.visibilityPrivate'),
+}))
+
+/** 卡片上的组名标签(未归组的卡不渲染标签,靠「没有标签」表达)。 */
+function vgGroupNames(g: VariableGroup): string[] {
+  return g.groupIds.length === 0 ? [] : groupNames(g.groupIds, groups.value, groupLabels.value)
+}
+
+/** 分组名单只用于展示与候选;取不到不阻断变量组本身。 */
+async function loadGroupsSafe(): Promise<void> {
+  try {
+    groups.value = await listGroups()
+  } catch {
+    groups.value = []
   }
 }
 
@@ -211,8 +251,14 @@ const editingId = ref<string | null>(null)
 const editorName = ref('')
 const editorDescription = ref('')
 const editorVars = ref<EditorVar[]>([])
+const editorGroupIds = ref<string[]>([])
 const editorBanner = ref('')
 const editorSaving = ref(false)
+
+/** 正在编辑的那份(取自列表快照:分组候选与归属判定都按它算)。 */
+const editingGroup = computed(
+  () => (editingId.value ? variableGroups.value.find((g) => g.id === editingId.value) ?? null : null),
+)
 
 function openCreateGroup(): void {
   editorMode.value = 'create'
@@ -220,6 +266,7 @@ function openCreateGroup(): void {
   editorName.value = ''
   editorDescription.value = ''
   editorVars.value = [{ key: '', secret: false, value: '', credentialId: '', maskedValue: '' }]
+  editorGroupIds.value = []
   editorBanner.value = ''
   editorOpen.value = true
 }
@@ -240,9 +287,45 @@ function openEditGroup(g: VariableGroup): void {
   if (editorVars.value.length === 0) {
     editorVars.value = [{ key: '', secret: false, value: '', credentialId: '', maskedValue: '' }]
   }
+  editorGroupIds.value = [...g.groupIds]
   editorBanner.value = ''
   editorOpen.value = true
 }
+
+/** 能改归属吗:改的是「每一个所在组」的旁路,所以每一组都要管得住;未归组只有管理员能动。 */
+const groupFieldEditable = computed(() => {
+  if (editorMode.value === 'create') return true
+  const cur = editingGroup.value
+  if (!cur) return false
+  if (isAdminUser.value) return true
+  if (cur.groupIds.length === 0) return false
+  return cur.groupIds.every((id) => groupById.value[id]?.canManage === true)
+})
+
+/** 候选:我管得着的组 + 当前所在但管不着的组(必须显示,否则看不出它现在在哪)。 */
+const editorGroupOptions = computed<Group[]>(() => {
+  const seen = new Set<string>()
+  const out: Group[] = []
+  for (const id of editorGroupIds.value) {
+    const g = groupById.value[id]
+    if (g && !g.canManage && !seen.has(g.id)) {
+      seen.add(g.id)
+      out.push(g)
+    }
+  }
+  for (const g of manageableGroups.value) {
+    if (!seen.has(g.id)) {
+      seen.add(g.id)
+      out.push(g)
+    }
+  }
+  return out
+})
+
+/** 当前所在、但分组已被删除(名单里取不到快照)的 ID:显示一行「分组已失效」。 */
+const editorMissingGroupIDs = computed(() =>
+  editorGroupIds.value.filter((id) => !groupById.value[id]),
+)
 
 function addEditorVar(): void {
   editorVars.value.push({ key: '', secret: false, value: '', credentialId: '', maskedValue: '' })
@@ -282,11 +365,17 @@ async function saveGroup(): Promise<void> {
 
   editorSaving.value = true
   try {
-    const payload = { name, description: editorDescription.value.trim(), vars }
+    const payload: SaveVariableGroupInput = { name, description: editorDescription.value.trim(), vars }
     if (editorMode.value === 'create') {
+      payload.groupIds = [...editorGroupIds.value]
       await createVariableGroup(payload)
       message.success(t('library.createdGroup', { name }))
     } else if (editingId.value) {
+      // 只在归属真的变了才带上:后端用「字段缺省」区分「不改」,原样回传等于一次归组改写,
+      // 而改写要管得住原组 —— 只能改名的成员会因此平白吃 403。
+      const prev = [...(editingGroup.value?.groupIds ?? [])].sort()
+      const next = [...editorGroupIds.value].sort()
+      if (prev.join(',') !== next.join(',')) payload.groupIds = [...editorGroupIds.value]
       await updateVariableGroup(editingId.value, payload)
       message.success(t('library.updatedGroup', { name }))
     }
@@ -602,6 +691,9 @@ onMounted(() => {
             <h3 class="vg-name">{{ g.name }}</h3>
             <span class="vg-count-pill">{{ t('library.varCount', { n: g.vars.length }) }}</span>
           </div>
+          <div v-if="g.groupIds.length" class="vg-groups">
+            <span v-for="(name, i) in vgGroupNames(g)" :key="i" class="vg-group-tag">{{ name }}</span>
+          </div>
           <p class="vg-desc">{{ g.description || t('library.noDescription') }}</p>
           <ul class="vg-var-list" role="list">
             <li v-for="v in g.vars.slice(0, 5)" :key="v.id" class="vg-var">
@@ -780,6 +872,39 @@ onMounted(() => {
             :placeholder="t('library.groupDescPlaceholder')"
             autocomplete="off"
           />
+        </div>
+
+        <!-- 分组归属:决定谁能看见 / 谁能改这一份。可多选,权限取并集;改归属要求管得住每一组。 -->
+        <div class="field">
+          <span class="field-label">
+            {{ t('groups.fieldGroup') }}
+            <span class="field-hint-inline">{{ t('groups.fieldGroupsHint') }}</span>
+          </span>
+          <div class="group-picker" :class="{ 'group-picker--locked': editorSaving || !groupFieldEditable }">
+            <label v-for="g in editorGroupOptions" :key="g.id" class="group-picker__item">
+              <input
+                v-model="editorGroupIds"
+                type="checkbox"
+                :value="g.id"
+                :disabled="editorSaving || !groupFieldEditable || !g.canManage"
+              />
+              <span class="group-picker__name">{{ g.name }}</span>
+              <span class="group-picker__vis">{{
+                g.visibility === 'public' ? t('groups.visibilityPublic') : t('groups.visibilityPrivate')
+              }}</span>
+              <span v-if="!g.canManage" class="group-picker__note">{{ t('groups.multiGroupLocked') }}</span>
+            </label>
+            <label v-for="id in editorMissingGroupIDs" :key="id" class="group-picker__item">
+              <input type="checkbox" checked disabled />
+              <span class="group-picker__name">{{ t('groups.groupMissing') }}</span>
+              <span class="group-picker__note">{{ t('groups.multiGroupLocked') }}</span>
+            </label>
+            <p v-if="groupFieldEditable" class="group-picker__hint">{{ t('groups.multiGroupUngroupedHint') }}</p>
+          </div>
+          <span v-if="groupFieldEditable && !editorGroupOptions.length && !editorMissingGroupIDs.length" class="field-hint">
+            {{ t('groups.noGroupsHint') }}
+          </span>
+          <span v-else-if="!groupFieldEditable" class="field-hint">{{ t('groups.lockedHint') }}</span>
         </div>
 
         <div class="field">
@@ -1070,6 +1195,22 @@ onMounted(() => {
   color: var(--color-dim);
   line-height: 1.45;
   min-height: 1.2em;
+}
+
+/* 变量组卡片上的归属标签:多组并排,和服务器页的说法保持一致 */
+.vg-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.vg-group-tag {
+  font-size: 0.72rem;
+  font-weight: 560;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  color: var(--color-dim);
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
 }
 
 /* Custom-node config preview — mirrors the variable-group var list */
@@ -1416,6 +1557,48 @@ onMounted(() => {
   transition: border-color var(--duration-fast, 150ms);
 }
 .input:focus { outline: none; border-color: var(--color-primary); }
+.field-hint-inline { font-weight: 400; color: var(--color-faint); }
+.field-hint {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--color-faint);
+  line-height: 1.45;
+}
+
+/* 分组多选:与设置页的归组弹窗同一形态 */
+.group-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-inset);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.group-picker--locked { opacity: 0.75; }
+.group-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.group-picker__item:hover { background: color-mix(in oklch, var(--color-text) 5%, transparent); }
+.group-picker__item input:disabled { cursor: not-allowed; }
+.group-picker__name { color: var(--color-text); }
+.group-picker__vis { font-size: 0.78rem; color: var(--color-faint); }
+.group-picker__note { margin-left: auto; font-size: 0.78rem; color: var(--color-faint); }
+.group-picker__hint {
+  margin: 4px 6px 2px;
+  font-size: 0.78rem;
+  color: var(--color-faint);
+  line-height: 1.45;
+}
 
 .var-rows { display: flex; flex-direction: column; gap: 0.5rem; }
 .var-row { display: flex; align-items: center; gap: 0.5rem; }

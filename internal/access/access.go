@@ -53,6 +53,10 @@ const (
 	KindKubeCluster Kind = "kube_cluster"
 	// KindRun 的运行本身没有分组;归属经 run → project → group 解析。
 	KindRun Kind = "run"
+	// KindVarGroup 是复用库的变量组。它没有自己的功能点:库的 view/edit 点声明在
+	// KindProject 上(见 perms.go),所以功能轴上限直接沿用项目那一档;本类别只负责
+	// 数据轴 —— 变量组可归多个分组(variable_group_groups),归属判定与服务器同构。
+	KindVarGroup Kind = "variable_group"
 )
 
 // Act 是动作档位;数值越大权限越重。
@@ -209,7 +213,7 @@ func Decide(actor *Actor, g *Group, act Act) error {
 // Repository 是判定所需的读接口;实现体与分组领域服务一起落地(见 internal/group)。
 type Repository interface {
 	// GroupIDsOf 返回资源所属的分组 ID 集合。没有任何归属(未归组)返回空切片,
-	// 不是返回 [""] —— 空集合是「未归组」唯一的表示。目前只有服务器可归多个组,
+	// 不是返回 [""] —— 空集合是「未归组」唯一的表示。服务器与变量组可归多个组,
 	// 其余资源至多一个。资源不存在返回 ErrForbidden 之外的领域错误,由调用方映射 404。
 	// KindRun 由实现内部做 run → project 两跳。
 	GroupIDsOf(ctx context.Context, kind Kind, id string) ([]string, error)
@@ -270,7 +274,8 @@ func (s *Service) Can(ctx context.Context, actor *Actor, kind Kind, id string, a
 		}
 		return nil
 	}
-	// 一台资源可以同时属于多个分组(服务器的 server_groups)。两档动作的聚合方式不同:
+	// 一台资源可以同时属于多个分组(服务器的 server_groups、变量组的 variable_group_groups)。
+	// 两档动作的聚合方式不同:
 	//   - View/Operate 走**并集**:资源挂在 A、B 两组,对任一组有权限的人就该看得见/用得着;
 	//     取交集会让另一拨人从列表里凭空消失,与「分组切的是谁能碰」相悖。
 	//   - Manage 走**交集**:改名/删除/改组动的是整台资源,只要有一个所在组不归你管,
@@ -482,7 +487,7 @@ func (f ListFilter) Clause(column string) (string, []any) {
 }
 
 // MemberClause 把 ListFilter 编译成「成员表」形式的条件,供一台资源可归多个分组的场景
-// (目前是服务器的 server_groups)。与 Clause 的差别:「未归组」不再是列值 ” ,而是
+// (目前是服务器的 server_groups 与变量组的 variable_group_groups)。与 Clause 的差别:「未归组」不再是列值 ” ,而是
 // 「成员表里没有这台资源的任何一行」。
 //
 // 参数:idColumn 是资源 id 列(如 "s.id"),table/refColumn/groupColumn 描述成员表

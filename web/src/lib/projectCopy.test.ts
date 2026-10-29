@@ -51,6 +51,7 @@ function group(id: string, name: string, over: Partial<Group> = {}): Group {
     members: [],
     projectCount: 0,
     serverCount: 0,
+    variableGroupCount: 0,
     canManage: false,
     createdAt: '',
     updatedAt: '',

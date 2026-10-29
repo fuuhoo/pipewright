@@ -39,6 +39,8 @@ export interface Group {
   members: GroupMember[]
   projectCount: number
   serverCount: number
+  /** 组内变量组数量(变量组自 0088 起可归组,同样会挡住删组)。 */
+  variableGroupCount: number
   /** 当前用户能否管理该组(改名册 / 改可见性 / 把资源归进来)。 */
   canManage: boolean
   createdAt: string

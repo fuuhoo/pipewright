@@ -41,6 +41,8 @@ type groupDTO struct {
 	Members      []groupMemberDTO `json:"members"`
 	ProjectCount int              `json:"projectCount"`
 	ServerCount  int              `json:"serverCount"`
+	// VariableGroupCount 让管理页看得见组内的变量组 —— 它同样会挡住删组。
+	VariableGroupCount int `json:"variableGroupCount"`
 	// CanManage 是「当前请求者能否管这个组(改名册/改可见性/把资源归进来)」。
 	// 由 access.Decide 算出而不是让前端重推一遍:判定只有一处真相,UI 只读结论。
 	CanManage bool   `json:"canManage"`
@@ -60,17 +62,18 @@ func toGroupDTO(g *group.Group, userNames map[string]string) groupDTO {
 		members = append(members, groupMemberDTO{ID: id, Username: name})
 	}
 	return groupDTO{
-		ID:           g.ID,
-		Name:         g.Name,
-		Description:  g.Description,
-		Visibility:   g.Visibility,
-		OwnerID:      g.OwnerID,
-		OwnerName:    g.OwnerName,
-		Members:      members,
-		ProjectCount: g.ProjectCount,
-		ServerCount:  g.ServerCount,
-		CreatedAt:    g.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:    g.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:                 g.ID,
+		Name:               g.Name,
+		Description:        g.Description,
+		Visibility:         g.Visibility,
+		OwnerID:            g.OwnerID,
+		OwnerName:          g.OwnerName,
+		Members:            members,
+		ProjectCount:       g.ProjectCount,
+		ServerCount:        g.ServerCount,
+		VariableGroupCount: g.VarGroupCount,
+		CreatedAt:          g.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:          g.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -90,7 +93,7 @@ func writeGroupError(w http.ResponseWriter, err error) {
 	case errors.Is(err, group.ErrUserNotFound):
 		writeError(w, http.StatusBadRequest, "group_user_not_found", "组长或成员不是有效用户")
 	case errors.Is(err, group.ErrGroupNotEmpty):
-		writeError(w, http.StatusConflict, "group_not_empty", "组内仍有项目或服务器,请先移出")
+		writeError(w, http.StatusConflict, "group_not_empty", "组内仍有项目、服务器或变量组,请先移出")
 	case errors.Is(err, access.ErrUnauthenticated):
 		writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 	case errors.Is(err, access.ErrForbidden):

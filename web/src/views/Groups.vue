@@ -280,7 +280,13 @@ function isMine(g: Group): boolean {
           </td>
           <td>
             <div class="cell-dim cell-nowrap">
-              {{ t('groups.resourceCounts', { projects: g.projectCount, servers: g.serverCount }) }}
+              {{
+                t('groups.resourceCounts', {
+                  projects: g.projectCount,
+                  servers: g.serverCount,
+                  varGroups: g.variableGroupCount,
+                })
+              }}
             </div>
           </td>
           <td>

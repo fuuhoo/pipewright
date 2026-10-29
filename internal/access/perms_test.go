@@ -59,11 +59,11 @@ func TestRolePermsReferenceKnownPoints(t *testing.T) {
 // 派生校验;这里再留一份手抄名单的话,就有两处权威可以互相漂移了。
 func TestCeilingMatrixUnchanged(t *testing.T) {
 	want := map[string]map[Kind]Act{
-		RoleAdmin: {KindProject: ActManage, KindRun: ActManage, KindServer: ActManage, KindKubeCluster: ActManage},
+		RoleAdmin: {KindProject: ActManage, KindRun: ActManage, KindServer: ActManage, KindKubeCluster: ActManage, KindVarGroup: ActManage},
 		// 空串是 0053 迁移前旧会话的取值,语义「按管理员」:否则升级当天旧会话被静默降成只读。
-		"":           {KindProject: ActManage, KindRun: ActManage, KindServer: ActManage, KindKubeCluster: ActManage},
-		"root":       {KindProject: ActView, KindRun: ActView, KindServer: ActView, KindKubeCluster: ActView},
-		"no-such-id": {KindProject: ActView, KindRun: ActView, KindServer: ActView, KindKubeCluster: ActView},
+		"":           {KindProject: ActManage, KindRun: ActManage, KindServer: ActManage, KindKubeCluster: ActManage, KindVarGroup: ActManage},
+		"root":       {KindProject: ActView, KindRun: ActView, KindServer: ActView, KindKubeCluster: ActView, KindVarGroup: ActView},
+		"no-such-id": {KindProject: ActView, KindRun: ActView, KindServer: ActView, KindKubeCluster: ActView, KindVarGroup: ActView},
 	}
 	for role, row := range want {
 		for _, kind := range ResourceKinds() {

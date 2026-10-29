@@ -78,6 +78,27 @@ func addServer(t *testing.T, db *sql.DB, id string, groupIDs ...string) {
 	}
 }
 
+// addVarGroup 登记一份变量组并挂到给定分组(可多个;不传 = 未归组)。
+func addVarGroup(t *testing.T, db *sql.DB, id string, groupIDs ...string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO variable_groups (id, name, description, vars_json, created_at, updated_at)
+		 VALUES (?, ?, '', '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		id, "vg-"+id); err != nil {
+		t.Fatalf("add variable group: %v", err)
+	}
+	for _, gid := range groupIDs {
+		if gid == "" {
+			continue
+		}
+		if _, err := db.Exec(
+			`INSERT INTO variable_group_groups (variable_group_id, group_id, created_at)
+			 VALUES (?, ?, '2026-01-01T00:00:00Z')`, id, gid); err != nil {
+			t.Fatalf("attach variable group to group: %v", err)
+		}
+	}
+}
+
 func addRun(t *testing.T, db *sql.DB, id, projectID string) {
 	t.Helper()
 	if _, err := db.Exec(
@@ -265,6 +286,34 @@ func TestDeleteRequiresEmptyGroup(t *testing.T) {
 	}
 }
 
+// TestVarGroupsBlockDelete 验变量组与项目/服务器同一口径:还在组里就删不了组,
+// 且管理页的组内计数要看得见它(否则屏上写着 0 个项目 0 台服务器却拒绝删除)。
+func TestVarGroupsBlockDelete(t *testing.T) {
+	svc, db := newSvc(t)
+	ctx := context.Background()
+	g, err := svc.Create(ctx, CreateInput{Name: "vg-occupied", OwnerID: addUser(t, db, "ivy")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	addVarGroup(t, db, "vg-stay", g.ID)
+	if err := svc.Delete(ctx, g.ID); !errors.Is(err, ErrGroupNotEmpty) {
+		t.Fatalf("err = %v, want ErrGroupNotEmpty", err)
+	}
+	got, err := svc.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.VarGroupCount != 1 {
+		t.Fatalf("VarGroupCount = %d, want 1", got.VarGroupCount)
+	}
+	if _, err := db.Exec(`DELETE FROM variable_group_groups WHERE variable_group_id = 'vg-stay'`); err != nil {
+		t.Fatalf("clean membership: %v", err)
+	}
+	if err := svc.Delete(ctx, g.ID); err != nil {
+		t.Fatalf("Delete after clearing: %v", err)
+	}
+}
+
 // ---- 可见性列表 -------------------------------------------------------------
 
 func TestListVisibleScopesByRole(t *testing.T) {
@@ -337,6 +386,8 @@ func TestGroupIDsOfResolvesEveryKind(t *testing.T) {
 	addProject(t, db, "p-run", g.ID)
 	addServer(t, db, "s-run", g.ID)
 	addServer(t, db, "s-free")
+	addVarGroup(t, db, "vg-run", g.ID)
+	addVarGroup(t, db, "vg-free")
 	addRun(t, db, "r-run", "p-run")
 	addProject(t, db, "p-free", "")
 
@@ -350,6 +401,8 @@ func TestGroupIDsOfResolvesEveryKind(t *testing.T) {
 		{"project ungrouped", access.KindProject, "p-free", nil},
 		{"server in group", access.KindServer, "s-run", []string{g.ID}},
 		{"server ungrouped", access.KindServer, "s-free", nil},
+		{"variable group in group", access.KindVarGroup, "vg-run", []string{g.ID}},
+		{"variable group ungrouped", access.KindVarGroup, "vg-free", nil},
 		// 运行没有自己的分组:归属经 run → project 两跳,和「谁能看这次运行」同义。
 		{"run inherits project", access.KindRun, "r-run", []string{g.ID}},
 	} {
@@ -379,12 +432,24 @@ func TestGroupIDsOfResolvesEveryKind(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("多组归属 = %v, want %v", got, want)
 	}
+	// 变量组与服务器同构:可同时挂多个组。
+	addVarGroup(t, db, "vg-multi", g2.ID, g.ID)
+	got, err = svc.GroupIDsOf(ctx, access.KindVarGroup, "vg-multi")
+	if err != nil {
+		t.Fatalf("GroupIDsOf vargroup: %v", err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("变量组多组归属 = %v, want %v", got, want)
+	}
 
 	// 资源不存在 → ErrNotFound(映射 404),绝不能是 ErrForbidden(伪装成无权限)。
 	if _, err := svc.GroupIDsOf(ctx, access.KindProject, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 	if _, err := svc.GroupIDsOf(ctx, access.KindRun, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.GroupIDsOf(ctx, access.KindVarGroup, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 	if _, err := svc.GroupIDsOf(ctx, access.Kind("bogus"), "x"); err == nil {

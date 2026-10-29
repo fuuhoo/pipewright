@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/storetest"
 	"github.com/fuuhoo/pipewright/internal/vault"
@@ -443,6 +445,106 @@ func TestVarGroupDuplicateName(t *testing.T) {
 	}
 	if _, err := svc.Create(ctx, VarGroupInput{Name: "dup"}); err != ErrVarGroupNameTaken {
 		t.Fatalf("err = %v, want ErrVarGroupNameTaken", err)
+	}
+}
+
+// seedVGroup 插入一个最小资源分组(variable_group_groups 无外键,校验只认这一行)。
+func seedVGroup(t *testing.T, db *sql.DB, name string) string {
+	t.Helper()
+	id := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO resource_groups (id, name, description, visibility, owner_id, created_by, created_at, updated_at)
+		 VALUES (?, ?, '', 'private', 'u', 'u', ?, ?)`, id, name, now, now); err != nil {
+		t.Fatalf("seed group %s: %v", name, err)
+	}
+	return id
+}
+
+// TestVarGroupGroupMembership 验变量组的多组归属(0088):建组带上、规范化去重排序、
+// 列表按可见分组收敛、PUT 省略 groupIds 不动归属、显式空数组才移出。
+func TestVarGroupGroupMembership(t *testing.T) {
+	db := testDB(t)
+	svc := NewVarGroupService(db, vault.New(db, testMasterKey()))
+	ctx := context.Background()
+	g1 := seedVGroup(t, db, "组一")
+	g2 := seedVGroup(t, db, "组二")
+
+	// 多组 + 空白 + 重复:入库应规范化成升序去重后的集合。
+	vg, err := svc.Create(ctx, VarGroupInput{Name: "multi", GroupIDs: &[]string{g2, "", " " + g1 + " ", g1}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := []string{g1, g2}
+	slices.Sort(want)
+	if !slices.Equal(vg.GroupIDs, want) {
+		t.Fatalf("GroupIDs = %v, want %v", vg.GroupIDs, want)
+	}
+	if _, err := svc.Create(ctx, VarGroupInput{Name: "only-two", GroupIDs: &[]string{g2}}); err != nil {
+		t.Fatalf("Create only-two: %v", err)
+	}
+	if _, err := svc.Create(ctx, VarGroupInput{Name: "free"}); err != nil {
+		t.Fatalf("Create free: %v", err)
+	}
+
+	// 可见范围 = {组一, 未归组}:多组那份(挂了组一)与未归组那份可见,只挂组二那份不可见。
+	got, err := svc.List(ctx, access.ListFilter{GroupIDs: []string{g1, access.Ungrouped}})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, g := range got {
+		names = append(names, g.Name)
+	}
+	if !slices.Equal(names, []string{"free", "multi"}) {
+		t.Fatalf("List names = %v, want [free multi]", names)
+	}
+
+	// 不带 groupIds 的 PUT 不动归属(调用方可能只会改名称/变量)。
+	renamed, err := svc.Update(ctx, vg.ID, VarGroupInput{Name: "multi2"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !slices.Equal(renamed.GroupIDs, want) {
+		t.Fatalf("Update without groupIds changed ownership: %v", renamed.GroupIDs)
+	}
+
+	// 显式空数组 = 移出所有分组。
+	cleared, err := svc.Update(ctx, vg.ID, VarGroupInput{Name: "multi2", GroupIDs: &[]string{}})
+	if err != nil {
+		t.Fatalf("Update clear: %v", err)
+	}
+	if len(cleared.GroupIDs) != 0 {
+		t.Fatalf("GroupIDs after clear = %v, want empty", cleared.GroupIDs)
+	}
+
+	// 悬挂引用在建/改两处都要挡住(成员表没有外键)。
+	if _, err := svc.Create(ctx, VarGroupInput{Name: "ghost", GroupIDs: &[]string{"no-such-group"}}); err != ErrGroupNotFound {
+		t.Fatalf("Create with ghost group err = %v, want ErrGroupNotFound", err)
+	}
+	if _, err := svc.Update(ctx, vg.ID, VarGroupInput{Name: "multi2", GroupIDs: &[]string{"no-such-group"}}); err != ErrGroupNotFound {
+		t.Fatalf("Update with ghost group err = %v, want ErrGroupNotFound", err)
+	}
+	// 失败的回滚不该动原有归属。
+	back, err := svc.Get(ctx, vg.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(back.GroupIDs) != 0 {
+		t.Fatalf("failed update mutated ownership: %v", back.GroupIDs)
+	}
+
+	// 删组连同归属边一起清掉。
+	if err := svc.Delete(ctx, vg.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM variable_group_groups WHERE variable_group_id = ?`, vg.ID).Scan(&n); err != nil {
+		t.Fatalf("count edges: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("delete left %d ownership edges", n)
 	}
 }
 

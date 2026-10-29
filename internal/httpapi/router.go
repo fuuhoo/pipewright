@@ -1276,11 +1276,13 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 变量组(FR-8-13 复用基座):命名、可复用的变量集合(key=value + secret 引用)。
 		// vg 为 nil → handler 返回 503。GET 过 auth;POST/PUT/DELETE 为写方法,过 auth + CSRF + 审计。
 		// secret 变量只存/回 credentialId + 掩码,绝无明文。
+		// 变量组可归多个资源分组(0088):列表按可见范围收敛,单条由 accessGuardMiddleware 判,
+		// 归组本身还要求 ActManage(见 handler)。
 		vg := o.varGroups
-		ar.Get("/variable-groups", makeListVarGroupsHandler(vg))
-		ar.Post("/variable-groups", makeCreateVarGroupHandler(vg, aud))
+		ar.Get("/variable-groups", makeListVarGroupsHandler(vg, o.access))
+		ar.Post("/variable-groups", makeCreateVarGroupHandler(vg, o.access, aud))
 		ar.Get("/variable-groups/{id}", makeGetVarGroupHandler(vg))
-		ar.Put("/variable-groups/{id}", makeUpdateVarGroupHandler(vg, aud))
+		ar.Put("/variable-groups/{id}", makeUpdateVarGroupHandler(vg, o.access, aud))
 		ar.Delete("/variable-groups/{id}", makeDeleteVarGroupHandler(vg, aud))
 
 		// 自定义节点(复用库 Tier 2):命名、可复用的「单节点」(nodeType + config 快照)。

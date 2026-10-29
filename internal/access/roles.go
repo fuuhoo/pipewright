@@ -64,6 +64,11 @@ func Ceiling(selector string, kind Kind) Act {
 	if !slices.Contains(ResourceKinds(), kind) {
 		return ActView
 	}
+	// 变量组没有自己的点:复用库的 view/edit 点声明在 KindProject 上(perms.go 的「改得了编排」
+	// 那条上限),变量组只是多了数据轴归属,功能轴不另立一档。
+	if kind == KindVarGroup {
+		kind = KindProject
+	}
 	if IsAdminRole(selector) {
 		return ActManage
 	}
@@ -100,7 +105,7 @@ type Capabilities struct {
 	// Settings 对应设置类入口(构建环境 / 配置资源 / 全局凭据 / 用户 / 审计)。
 	Settings bool `json:"settings"`
 	// Kinds 是每类资源的功能上限,值为 Act.String()("view" / "operate" / "manage")。
-	// 粒度粗(四类资源各一档),适合「按钮能不能点」;入口级的差异看 Perms。
+	// 粒度粗(每类资源各一档),适合「按钮能不能点」;入口级的差异看 Perms。
 	Kinds map[string]string `json:"kinds"`
 	// Perms 是该角色的功能点集(见 perms.go),前端据此决定左栏入口与路由落不落得进来。
 	// 与 Kinds 同源:两个都是 perms.go 那张表的投影,不存在「菜单亮着、请求被上限拦掉」的错位。
@@ -109,7 +114,7 @@ type Capabilities struct {
 
 // ResourceKinds 是被判定资源的类别,顺序固定(能力位序列化与测试都按它走)。
 func ResourceKinds() []Kind {
-	return []Kind{KindProject, KindRun, KindServer, KindKubeCluster}
+	return []Kind{KindProject, KindRun, KindServer, KindKubeCluster, KindVarGroup}
 }
 
 // CapabilitiesFor 从角色选择器算出的能力位(多角色取并集)。
