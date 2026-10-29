@@ -1,8 +1,8 @@
 // Package pipeline 是「流水线配置编辑器与编排画布」的领域层(UX-DR5 / 部分 FR-9 / Story 2.2)。
 //
 // 每个项目持有一份声明式流水线配置:结构化 spec(阶段 → 任务)+ 服务端渲染的只读 YAML
-// 文本。首次访问无配置时惰性生成默认种子(源阶段引用项目仓库 + 空的 构建/部署/通知
-// 三阶段),并以 INSERT ON CONFLICT(project_id) DO NOTHING + 回读权威行兜住并发首访竞态
+// 文本。首次访问无配置时惰性生成默认种子(绑了仓库的项目只有源阶段,构建/部署/通知
+// 都按需添加),并以 INSERT ON CONFLICT(project_id) DO NOTHING + 回读权威行兜住并发首访竞态
 // (仿 trigger.createDefault)。
 //
 // 保存(Save)做结构校验(阶段名非空、kind∈枚举、任务名非空、type 非空、stage/job id
@@ -413,9 +413,10 @@ func (s *service) load(ctx context.Context, projectID string) (*Config, error) {
 	return &Config{Spec: spec, YAML: specYAML, Status: status, UpdatedAt: updated}, nil
 }
 
-// createDefault 惰性生成项目默认流水线配置。绑了仓库:源阶段(1 个 git_source 任务引用
-// 项目仓库)+ 空的构建阶段;未绑仓库(纯发布项目):只有一个空的部署阶段 —— 没有源码可拉,
-// 现场也就不该出现一张拉不到东西的「Git 源」卡片。项目不存在 → ErrProjectNotFound。
+// createDefault 惰性生成项目默认流水线配置。绑了仓库:只有源阶段(1 个 git_source 任务
+// 引用项目仓库);未绑仓库(纯发布项目):只有一个空的部署阶段 —— 没有源码可拉,
+// 现场也就不该出现一张拉不到东西的「Git 源」卡片。构建阶段不再预置:只有部署、或不打包
+// 直接发布的项目不必先删一张空的「构建」列。项目不存在 → ErrProjectNotFound。
 // 并发首访同项目时 ON CONFLICT DO NOTHING + 回读权威行,防双方各持不同种子。
 func (s *service) createDefault(ctx context.Context, projectID string) (*Config, error) {
 	repoURL, branch, err := s.projectRepo(ctx, projectID)
@@ -531,9 +532,10 @@ func healLegacySourceJobNames(spec *Spec) bool {
 	return healed
 }
 
-// defaultSpec 构造默认种子:仅 源阶段(git_source 引用项目仓库)+ 空构建阶段。
-// 部署/通知等阶段不再预置——按需由用户「+添加阶段」动态加入,空阶段不写死、不冒充已配置
-// (空阶段既不展示为「已执行步骤」,也不在拓扑图里画出,见 dagrun 与 runDag)。
+// defaultSpec 构造默认种子:仅 源阶段(git_source 引用项目仓库)。
+// 构建/部署/通知等阶段一律不预置——按需由用户「+添加阶段」动态加入,空阶段不写死、不冒充
+// 已配置(空阶段既不展示为「已执行步骤」,也不在拓扑图里画出,见 dagrun 与 runDag)。
+// 构建不是必经环节:只部署的项目保存的就是一份没有 build 阶段的流水线。
 func defaultSpec(sourceSummary string) Spec {
 	return Spec{Stages: []Stage{
 		{
@@ -548,7 +550,6 @@ func defaultSpec(sourceSummary string) Spec {
 				Config:  map[string]any{},
 			}},
 		},
-		{ID: "stg_build", Name: "构建", Kind: KindBuild, Jobs: []Job{}},
 	}}
 }
 

@@ -250,6 +250,12 @@
 }
 
 /* ─── Add stage button ────────────────────────────────────────────────────── */
+.add-stage-wrap {
+  position: relative;
+  flex: none;
+  margin-top: 30px;
+}
+
 .add-stage-btn {
   width: 150px;
   flex: none;
@@ -261,7 +267,6 @@
   color: var(--color-faint);
   font-size: 0.82rem;
   cursor: pointer;
-  margin-top: 30px;
   background: none;
   font-family: var(--font-sans);
   transition: color var(--duration-fast), border-color var(--duration-fast);
@@ -275,6 +280,45 @@
 .add-stage-btn:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* 种类菜单:先选「构建/部署/通知/自定义」再落列(构建不是必经环节) */
+.add-stage-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-card);
+  box-shadow: 0 10px 26px rgb(0 0 0 / 18%);
+}
+
+.add-stage-menu__item {
+  border: none;
+  background: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.add-stage-menu__item:hover {
+  background: color-mix(in oklch, var(--color-text) 6%, transparent);
+  color: var(--color-primary);
+}
+
+.add-stage-menu__item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
 }
 
 /* ─── Job drawer ──────────────────────────────────────────────────────────── */

@@ -14,6 +14,7 @@ import JobTypePicker from './JobTypePicker.vue'
 import type { CustomNode } from '../../api/customNodes'
 import { jobTypeLabel, getJobTypeSpec, jobTemplatePrefill, droppedKeys } from './jobConfigSchema'
 import { hasAnyNeeds } from './stageDeps'
+import { moveStage } from './stageOrder'
 import { boxOf, countBy, edgePath, fanAnchor, type EdgeBox } from './dagEdges'
 import './pipeline.css'
 
@@ -134,6 +135,23 @@ function deleteJob(stageId: string, jobId: string): void {
     }
   })
   emit('update', next)
+}
+
+// ─── Stage reorder (横向前后拖动) ─────────────────────────────────────────────
+// 拖动表头握把,落到目标阶段列上;源阶段固定首位(见 moveStage)。
+
+const stageDragFrom = ref<number | null>(null)
+
+function onStageDragStart(index: number): void {
+  stageDragFrom.value = index
+}
+
+function onStageDrop(index: number): void {
+  const from = stageDragFrom.value
+  stageDragFrom.value = null
+  if (from === null) return
+  const next = moveStage(props.stages, from, index)
+  if (next) emit('update', next)
 }
 
 // ─── Type picker (add new job / change existing job's type) ───────────────────
@@ -276,25 +294,50 @@ function deleteStage(stageId: string): void {
   emit('update', next)
 }
 
-function addStage(): void {
-  const KIND_SEQ: StageKind[] = ['build', 'deploy', 'notify', 'custom']
-  const existing = props.stages.map((s) => s.kind)
-  const nextKind: StageKind = KIND_SEQ.find((k) => !existing.includes(k)) ?? 'custom'
+type AddableStageKind = 'build' | 'deploy' | 'notify' | 'custom'
+
+const addStageOpen = ref(false)
+
+/** 可新增的阶段种类(源阶段由项目仓库绑定决定,不在画布上手动添加)。 */
+const ADDABLE_KINDS: AddableStageKind[] = ['build', 'deploy', 'notify', 'custom']
+
+const STAGE_KIND_LABEL: Record<AddableStageKind, string> = {
+  build:  'pipelineCanvas.stageBuild',
+  deploy: 'pipelineCanvas.stageDeploy',
+  notify: 'pipelineCanvas.stageNotify',
+  custom: 'pipelineCanvas.stageCustom',
+}
+
+function stageKindLabel(kind: AddableStageKind): string {
+  return t(STAGE_KIND_LABEL[kind])
+}
+
+const addStageOptions = computed(() =>
+  ADDABLE_KINDS.map((kind) => ({ kind, label: stageKindLabel(kind) })),
+)
+
+/**
+ * 添加阶段:先选种类再落列。构建不再是默认预置项,只有部署的项目要能一次点到「部署」,
+ * 不能被自动塞进来的构建阶段逼着再删一次。
+ */
+function addStage(kind: AddableStageKind): void {
   const nextNum = props.stages.filter((s) => s.kind !== 'source').length + 1
-  const KIND_LABELS: Partial<Record<StageKind, string>> = {
-    build: t('pipelineCanvas.stageBuild'),
-    deploy: t('pipelineCanvas.stageDeploy'),
-    notify: t('pipelineCanvas.stageNotify'),
+  const sameKind = props.stages.filter((s) => s.kind === kind).length
+  let name: string
+  if (kind === 'custom') {
+    name = t('pipelineCanvas.stageCustomN', { n: nextNum })
+  } else {
+    const label = stageKindLabel(kind)
+    name = sameKind ? `${label} ${sameKind + 1}` : label
   }
   const newStage: PipelineStage = {
     id:   `stg_${uid()}`,
-    name: nextKind === 'custom'
-      ? t('pipelineCanvas.stageCustomN', { n: nextNum })
-      : (KIND_LABELS[nextKind] ?? t('pipelineCanvas.stageDefaultN', { n: nextNum })),
-    kind: nextKind,
+    name,
+    kind,
     jobs: [],
   }
   emit('update', [...props.stages, newStage])
+  addStageOpen.value = false
 }
 
 // ─── DAG edge overlay (Story 8-7) ─────────────────────────────────────────────
@@ -445,6 +488,8 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
             @add-job="(needs) => requestAddJob(stage.id, needs)"
             @delete-stage="deleteStage(stage.id)"
             @reorder-job="(p) => reorderJob(stage.id, p.from, p.to)"
+            @drag-stage-start="onStageDragStart"
+            @drop-stage="onStageDrop"
             :settings-active="selectedStageSettingsId === stage.id"
             @update-needs="(needs) => updateStage(stage.id, { needs })"
             @update-allow-failure="(v) => updateStage(stage.id, { allowFailure: v })"
@@ -453,12 +498,30 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
           />
         </template>
 
-        <!-- Add stage button (dashed) -->
-        <button
-          class="add-stage-btn"
-          :aria-label="t('pipelineCanvas.addStageAria')"
-          @click="addStage"
-        >{{ t('pipelineCanvas.addStage') }}</button>
+        <!-- Add stage button (dashed) + kind menu -->
+        <div class="add-stage-wrap">
+          <button
+            class="add-stage-btn"
+            :aria-label="t('pipelineCanvas.addStageAria')"
+            aria-haspopup="menu"
+            :aria-expanded="addStageOpen"
+            @click="addStageOpen = !addStageOpen"
+          >{{ t('pipelineCanvas.addStage') }}</button>
+          <div
+            v-if="addStageOpen"
+            class="add-stage-menu"
+            role="menu"
+            :aria-label="t('pipelineCanvas.addStageAria')"
+          >
+            <button
+              v-for="opt in addStageOptions"
+              :key="opt.kind"
+              class="add-stage-menu__item"
+              role="menuitem"
+              @click="addStage(opt.kind)"
+            >{{ opt.label }}</button>
+          </div>
+        </div>
       </div>
     </div>
 

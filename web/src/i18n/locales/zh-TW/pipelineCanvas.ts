@@ -9,11 +9,13 @@ export default {
   stageBuild: '建置',
   stageDeploy: '部署',
   stageNotify: '通知',
+  stageCustom: '自訂',
   stageCustomN: '自訂 {n}',
-  stageDefaultN: '階段 {n}',
 
   // ─── StageColumn ──────────────────────────────────────────────
   sourceLabel: '來源',
+  dragStageAria: '拖動階段 {name} 調整前後順序',
+  dragStageTitle: '拖動調整階段順序',
   editDepsAria: '編輯階段 {name} 的相依',
   editDepsTitle: '編輯相依（DAG）',
   deps: '相依',

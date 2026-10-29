@@ -35,6 +35,10 @@ const emit = defineEmits<{
   (e: 'add-job', needs?: string[]): void
   (e: 'delete-stage'): void
   (e: 'reorder-job', payload: { from: number; to: number }): void
+  /** 开始拖动本阶段(阶段级排序);index 为本列下标。 */
+  (e: 'drag-stage-start', index: number): void
+  /** 拖拽落在本列上;index 为目标列下标。 */
+  (e: 'drop-stage', index: number): void
   (e: 'update-needs', needs: string[]): void
   (e: 'update-allow-failure', value: boolean): void
   /** Update one job's intra-stage dependencies (横串竖并). */
@@ -259,13 +263,85 @@ function resetDrag(): void {
   dragFrom.value = null
   dragOver.value = null
 }
+
+// ─── Drag-to-reorder stages (横向前后拖动) ────────────────────────────────────
+// 只从表头的握把发起拖动:阶段列里还嵌着可拖的任务卡片,整列 draggable 会和它们抢拖拽源。
+// 源阶段没有握把(位置由项目仓库绑定决定),但可以作为落点 —— 落上去收口到源阶段之后。
+
+const STAGE_DRAG_MIME = 'application/x-pipewright-stage'
+const stageDragSource = ref(false)
+const stageDropTarget = ref(false)
+
+function onStageDragStart(e: DragEvent): void {
+  stageDragSource.value = true
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData(STAGE_DRAG_MIME, props.stage.id)
+  }
+  emit('drag-stage-start', props.stageIndex)
+}
+
+function onStageDragEnd(): void {
+  stageDragSource.value = false
+  stageDropTarget.value = false
+}
+
+/** 任务卡片的拖动不带这个 MIME,阶段列据此把自己排除在落点之外。 */
+function isStageDrag(e: DragEvent): boolean {
+  return e.dataTransfer?.types.includes(STAGE_DRAG_MIME) === true
+}
+
+function onStageDragEnter(e: DragEvent): void {
+  if (!isStageDrag(e) || stageDragSource.value) return
+  stageDropTarget.value = true
+}
+
+function onStageDragLeave(e: DragEvent): void {
+  const root = e.currentTarget as HTMLElement | null
+  const next = e.relatedTarget as Node | null
+  if (!root || !next || !root.contains(next)) stageDropTarget.value = false
+}
+
+function onStageDrop(e: DragEvent): void {
+  if (!isStageDrag(e)) return
+  stageDropTarget.value = false
+  emit('drop-stage', props.stageIndex)
+}
 </script>
 
 <template>
-  <div class="stage-col" :class="{ 'stage-col--dag': useDag }">
+  <div
+    class="stage-col"
+    :class="{
+      'stage-col--dag': useDag,
+      'stage-col--dragging': stageDragSource,
+      'stage-col--dragover': stageDropTarget,
+    }"
+    @dragenter.prevent="onStageDragEnter"
+    @dragover.prevent
+    @dragleave="onStageDragLeave"
+    @drop.prevent="onStageDrop"
+  >
     <!-- Stage header -->
     <div class="stage-header">
       <span class="stage-index" aria-hidden="true">{{ stageLabel(stageIndex) }}</span>
+      <span
+        v-if="stage.kind !== 'source'"
+        class="stage-drag-handle"
+        draggable="true"
+        role="button"
+        tabindex="0"
+        :aria-label="t('pipelineCanvas.dragStageAria', { name: stage.name })"
+        :title="t('pipelineCanvas.dragStageTitle')"
+        @dragstart="onStageDragStart"
+        @dragend="onStageDragEnd"
+      >
+        <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor" aria-hidden="true">
+          <circle cx="2" cy="2.5" r="1.2"/><circle cx="6" cy="2.5" r="1.2"/>
+          <circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/>
+          <circle cx="2" cy="11.5" r="1.2"/><circle cx="6" cy="11.5" r="1.2"/>
+        </svg>
+      </span>
       <span class="stage-name-text">{{ localizeName(stage.name) }}</span>
       <button
         v-if="stage.kind !== 'source'"
@@ -463,6 +539,44 @@ function resetDrag(): void {
 <style scoped>
 .stage-col {
   position: relative;
+}
+
+.stage-col--dragging {
+  opacity: 0.45;
+}
+
+/* 拖拽落点提示:虚线框画在列外沿,不挤动内部布局 */
+.stage-col--dragover {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: 6px;
+  border-radius: 12px;
+}
+
+.stage-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 22px;
+  flex: none;
+  color: var(--color-faint);
+  cursor: grab;
+  border-radius: var(--rounded-md);
+  user-select: none;
+}
+
+.stage-drag-handle:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.stage-drag-handle:active {
+  cursor: grabbing;
+}
+
+.stage-drag-handle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 /* DAG mode: let the column grow horizontally to fit the rank grid. */

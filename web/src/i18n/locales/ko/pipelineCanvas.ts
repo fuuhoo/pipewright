@@ -9,11 +9,13 @@ export default {
   stageBuild: '빌드',
   stageDeploy: '배포',
   stageNotify: '알림',
+  stageCustom: '사용자 정의',
   stageCustomN: '사용자 정의 {n}',
-  stageDefaultN: '스테이지 {n}',
 
   // ─── StageColumn ──────────────────────────────────────────────
   sourceLabel: '소스',
+  dragStageAria: '{name} 스테이지를 드래그하여 순서 변경',
+  dragStageTitle: '드래그하여 스테이지 순서 변경',
   editDepsAria: '스테이지 {name}의 종속성 편집',
   editDepsTitle: '종속성 편집(DAG)',
   deps: '종속성',

@@ -9,11 +9,13 @@ export default {
   stageBuild: 'Build',
   stageDeploy: 'Deployment',
   stageNotify: 'Benachrichtigung',
+  stageCustom: 'Benutzerdefiniert',
   stageCustomN: 'Benutzerdefiniert {n}',
-  stageDefaultN: 'Phase {n}',
 
   // ─── StageColumn ──────────────────────────────────────────────
   sourceLabel: 'Quelle',
+  dragStageAria: 'Phase {name} ziehen, um die Reihenfolge zu ändern',
+  dragStageTitle: 'Ziehen, um die Phasenreihenfolge zu ändern',
   editDepsAria: 'Abhängigkeiten der Phase {name} bearbeiten',
   editDepsTitle: 'Abhängigkeiten bearbeiten (DAG)',
   deps: 'Abh.',

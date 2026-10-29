@@ -9,11 +9,13 @@ export default {
   stageBuild: '构建',
   stageDeploy: '部署',
   stageNotify: '通知',
+  stageCustom: '自定义',
   stageCustomN: '自定义 {n}',
-  stageDefaultN: '阶段 {n}',
 
   // ─── StageColumn ──────────────────────────────────────────────
   sourceLabel: '源',
+  dragStageAria: '拖动阶段 {name} 调整前后顺序',
+  dragStageTitle: '拖动调整阶段顺序',
   editDepsAria: '编辑阶段 {name} 的依赖',
   editDepsTitle: '编辑依赖(DAG)',
   deps: '依赖',

@@ -56,16 +56,13 @@ func TestGetLazyDefaultShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	// 默认种子只预置 源 + 构建 两阶段;部署/通知等按需由用户「+添加阶段」动态加入,
-	// 不再写死空阶段(空阶段不冒充已配置)。
-	if len(cfg.Spec.Stages) != 2 {
-		t.Fatalf("默认应有 2 阶段(源+构建), got %d", len(cfg.Spec.Stages))
+	// 默认种子只预置源阶段;构建/部署/通知等按需由用户「+添加阶段」动态加入,
+	// 不再写死空阶段(构建也不是必经环节:只部署的项目可以没有 build 阶段)。
+	if len(cfg.Spec.Stages) != 1 {
+		t.Fatalf("默认应只有 1 阶段(源), got %d", len(cfg.Spec.Stages))
 	}
-	wantKinds := []string{KindSource, KindBuild}
-	for i, k := range wantKinds {
-		if cfg.Spec.Stages[i].Kind != k {
-			t.Fatalf("阶段 %d kind = %q, want %q", i, cfg.Spec.Stages[i].Kind, k)
-		}
+	if cfg.Spec.Stages[0].Kind != KindSource {
+		t.Fatalf("阶段 0 kind = %q, want %q", cfg.Spec.Stages[0].Kind, KindSource)
 	}
 	src := cfg.Spec.Stages[0]
 	if len(src.Jobs) != 1 {
@@ -76,11 +73,6 @@ func TestGetLazyDefaultShape(t *testing.T) {
 	}
 	if !strings.Contains(src.Jobs[0].Summary, "gitee.com/acme/shop.git") {
 		t.Fatalf("源任务 summary 应含仓库地址, got %q", src.Jobs[0].Summary)
-	}
-	for _, st := range cfg.Spec.Stages[1:] {
-		if len(st.Jobs) != 0 {
-			t.Fatalf("阶段 %q 应为空任务, got %d", st.Kind, len(st.Jobs))
-		}
 	}
 	if cfg.Status != "draft" {
 		t.Fatalf("status = %q, want draft", cfg.Status)

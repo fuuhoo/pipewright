@@ -9,11 +9,13 @@ export default {
   stageBuild: 'Build',
   stageDeploy: 'Déploiement',
   stageNotify: 'Notification',
+  stageCustom: 'Personnalisée',
   stageCustomN: 'Personnalisée {n}',
-  stageDefaultN: 'Étape {n}',
 
   // ─── StageColumn ──────────────────────────────────────────────
   sourceLabel: 'Source',
+  dragStageAria: 'Faire glisser l’étape {name} pour réordonner',
+  dragStageTitle: 'Faire glisser pour réordonner les étapes',
   editDepsAria: 'Modifier les dépendances de l’étape {name}',
   editDepsTitle: 'Modifier les dépendances (DAG)',
   deps: 'Dép.',

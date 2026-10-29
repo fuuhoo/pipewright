@@ -9,11 +9,13 @@ export default {
   stageBuild: 'ビルド',
   stageDeploy: 'デプロイ',
   stageNotify: '通知',
+  stageCustom: 'カスタム',
   stageCustomN: 'カスタム {n}',
-  stageDefaultN: 'ステージ {n}',
 
   // ─── StageColumn ──────────────────────────────────────────────
   sourceLabel: 'ソース',
+  dragStageAria: 'ステージ {name} をドラッグして順序を変更',
+  dragStageTitle: 'ドラッグしてステージの順序を変更',
   editDepsAria: 'ステージ {name} の依存関係を編集',
   editDepsTitle: '依存関係を編集（DAG）',
   deps: '依存',
