@@ -20,6 +20,12 @@ export default {
   permsMore: '{n} weitere',
   permsCollapse: 'Einklappen',
   userCount: '{n} Konten',
+  viewMembers: 'Konten anzeigen',
+  membersTitle: 'Konten mit {name}',
+  membersHint: 'Schreibgeschützte Liste. Wer welche Rolle hat, ändert man im Tab „Konten und Rollen“; hier steht nur, wer diese Rolle derzeit hat.',
+  membersOthers: 'Andere Konten',
+  membersCurrent: 'Konten mit dieser Rolle',
+  errMembers: 'Kontoliste konnte nicht geladen werden',
   builtinTag: 'Eingebaute Vorlage',
   builtinEditHint: 'Die eingebaute Admin-Rolle steht im Code: weder änderbar noch löschbar — bitte eine Kopie anlegen und dort anpassen.',
   deleteBlockedHint: '{n} Konten nutzen diese Rolle noch. Zuerst im Konto-Tab neu zuordnen.',
@@ -51,6 +57,9 @@ export default {
   clearAll: 'Alle aus',
   permsHint: 'Punkte wirken pro Einstieg: Unter derselben Kategorie „Server“ können Host-Status, Container, Zertifikate, Previews und Anomalieerkennung getrennt gewährt oder verweigert werden.',
   settingsOnly: 'Nur eingebaute Admin',
+  treeExpand: 'Aufklappen',
+  treeCollapse: 'Zuklappen',
+  treeGroupAll: 'Diese Gruppe ganz wählen / leeren',
   settingsBlocked: '„Zugang zu den Einstellungen“ bleibt der eingebauten Admin vorbehalten; eigene Rollen können ihn nicht bekommen.',
   effectHint: 'Nach dem Speichern wirkt die Änderung, sobald die Person die Seite neu lädt (die Fähigkeiten werden bei jedem Session-Lesevorgang neu berechnet). Neu anmelden muss sich nur, wer eine Konto-Rolle tauscht.',
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: 'Laufhistorie, Umgebungsansicht und DORA-Kennzahlen sind Aggregatseiten aus den Läufen.',
   kindServerHint: 'Host-Status, Container, Zertifikate, Preview-Umgebungen und Anomalieerkennung teilen sich diese Achse.',
   kindClusterHint: 'Cluster durchsehen sowie ausrollen / zurückrollen — der deploy_k8s-Zweig.',
-  kindPlatformHint: 'Globale Zugangsdaten, Vault, Audit, Benachrichtigungen, KI, DNS, Systeminfo und Server-/Cluster-Registrierung — dieser Block ist ganz-oder-gar-nicht, deshalb nur für die eingebaute Admin.',
+  kindPlatformHint: 'Globale Zugangsdaten, Vault, Audit, Benachrichtigungen, KI, DNS, Systeminfo und Server-/Cluster-Registrierung — der eingebauten Admin vorbehalten. „Gruppen anlegen“ ist die Ausnahme: dieser Punkt darf einer eigenen Rolle einzeln gegeben werden.',
 
   perm: {
     dashboard_view: 'Übersicht',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: 'Anomalie-Regeln und Alarme bearbeiten',
     cluster_view: 'K8s-Cluster und Workloads',
     cluster_operate: 'Auf Cluster ausrollen / zurückrollen',
+    group_create: 'Gruppen anlegen',
     settings_access: 'Zugang zu den Einstellungen (globale Zugangsdaten / Audit / Registrierung)',
   },
 }

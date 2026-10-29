@@ -60,6 +60,7 @@ export const PERM_LABEL_KEY: Record<PermId, string> = {
   'anomaly.edit': 'roleEditor.perm.anomaly_edit',
   'cluster.view': 'roleEditor.perm.cluster_view',
   'cluster.operate': 'roleEditor.perm.cluster_operate',
+  'group.create': 'roleEditor.perm.group_create',
   'settings.access': 'roleEditor.perm.settings_access',
 }
 
@@ -180,4 +181,38 @@ export function labelForRoleId(
     return key ? t(key) : role.name
   }
   return t((ROLE_LABEL_KEY as Record<string, string>)[normalizeRole(id)] ?? 'adminUsers.roleUser')
+}
+
+export interface InheritedPerms {
+  /** 点集并集,顺序跟随字典(`points`);字典里没有的历史点排在最后。 */
+  perms: PermId[]
+  /** 每个点由哪些角色给出(按 `roleIds` 的顺序),用户页要在叶子上标来源。 */
+  sources: Record<string, RoleId[]>
+}
+
+/**
+ * 一个账号挂多个角色时,能力取并集;这里算的就是并集,顺带记下「这个点是谁给的」。
+ * 不在名单里的角色(已被删 / 名单还没拉到)跳过 —— 它给不出任何点,页面上也不该凭空多一员。
+ */
+export function inheritedPerms(
+  roleIds: RoleId[],
+  rolesById: Record<string, Role>,
+  points: PermPoint[],
+): InheritedPerms {
+  const sources: Record<string, RoleId[]> = {}
+  for (const roleId of roleIds) {
+    const role = rolesById[roleId]
+    if (!role) continue
+    for (const id of role.perms) {
+      const list = (sources[id] ??= [])
+      if (!list.includes(roleId)) list.push(roleId)
+    }
+  }
+  const rank = new Map<PermId, number>(points.map((p, i) => [p.id, i]))
+  const perms = (Object.keys(sources) as PermId[]).sort((a, b) => {
+    const ra = rank.get(a) ?? Number.MAX_SAFE_INTEGER
+    const rb = rank.get(b) ?? Number.MAX_SAFE_INTEGER
+    return ra === rb ? a.localeCompare(b) : ra - rb
+  })
+  return { perms, sources }
 }

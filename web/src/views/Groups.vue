@@ -7,7 +7,8 @@
  * 字段用 ui/FormField、按钮用 ui/AppButton —— 两页的「关闭/回车/报错」是同一套行为。
  *
  * 谁能看到什么由后端决定(GET /api/groups 已按可见范围过滤),页面只读结论开关按钮:
- *   - 建组 / 删组      → 「设置类」能力(分组本身是设置类资源)
+ *   - 建组             → 功能点 group.create(默认只有内置管理员,可单独授予角色)
+ *   - 删组             → 「设置类」能力(后端路由挂在 RequireAdmin 下)
  *   - 改组 / 管成员    → 有设置能力或该组组长(canManage 由后端给)
  *   - 换组长           → 仅有设置能力
  * 未归组(资源 groupId='')= 全员可见可操作,是存量数据的默认态。
@@ -29,6 +30,7 @@ import { useSessionStore } from '../stores/session'
 import AppModal from '../components/ui/AppModal.vue'
 import AppButton from '../components/ui/AppButton.vue'
 import FormField from '../components/ui/FormField.vue'
+import TransferList from '../components/ui/TransferList.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 
@@ -39,6 +41,13 @@ const toast = useToast()
 
 /** 「设置类」能力:与路由/侧栏同一份来源(lib/roles),不再各处写 role === 'admin'。 */
 const canSettings = computed(() => sessionStore.canSettings)
+
+/**
+ * 建组是一个独立功能点(group.create):后端 POST /api/groups 按点判,不按管理员判。
+ * 默认只有内置管理员持有;自定义角色可以被单独授予「能开新组、但改不动各组名册」。
+ * 删组仍是管理员专属(后端路由挂在 RequireAdmin 下),所以那两处继续用 canSettings。
+ */
+const canCreateGroup = computed(() => sessionStore.canPerm('group.create'))
 
 // ─── state ──────────────────────────────────────────────────────────────────
 
@@ -87,12 +96,6 @@ const form = ref<{
   memberIds: string[]
 }>({ name: '', description: '', visibility: 'private', ownerId: '', memberIds: [] })
 
-/** 新建时的成员候选:全员名册去掉已选。 */
-const createCandidates = computed(() => {
-  const picked = new Set(form.value.memberIds)
-  return roster.value.filter((u) => !picked.has(u.id))
-})
-
 function openAdd(): void {
   editing.value = null
   form.value = { name: '', description: '', visibility: 'private', ownerId: '', memberIds: [] }
@@ -107,17 +110,31 @@ function openEdit(g: Group): void {
     description: g.description,
     visibility: g.visibility,
     ownerId: g.ownerId,
-    memberIds: [],
+    memberIds: g.members.map((m) => m.id),
   }
-  newMemberId.value = ''
   formBanner.value = ''
   modalOpen.value = true
 }
 
-/** 提交中/成员操作中不关弹窗:否则用户以为没保存,实际已经落库了。 */
+/** 提交中不关弹窗:否则用户以为没保存,实际已经落库了。 */
 function closeModal(): void {
-  if (formSubmitting.value || memberBusy.value) return
+  if (formSubmitting.value) return
   modalOpen.value = false
+}
+
+/**
+ * 编辑保存时把勾选结果折算成增/删:后端只有单人增删接口。
+ * 两个方向都幂等,所以上一次保存半途失败后直接重试也不会重复加人或漏删。
+ */
+async function syncMembers(groupId: string, before: string[]): Promise<void> {
+  const was = new Set(before)
+  const now = new Set(form.value.memberIds)
+  for (const id of now) {
+    if (!was.has(id)) await addGroupMember(groupId, id)
+  }
+  for (const id of was) {
+    if (!now.has(id)) await removeGroupMember(groupId, id)
+  }
 }
 
 async function submitForm(): Promise<void> {
@@ -136,6 +153,7 @@ async function submitForm(): Promise<void> {
         patch.ownerId = form.value.ownerId
       }
       await updateGroup(g.id, patch)
+      await syncMembers(g.id, g.members.map((m) => m.id))
     } else {
       await createGroup({
         name: form.value.name,
@@ -154,58 +172,17 @@ async function submitForm(): Promise<void> {
   }
 }
 
-// ─── 成员名册(编辑态弹窗内即时增删,离屏也能看清谁进了组) ──────────────────
-
-const newMemberId = ref('')
-const memberBusy = ref(false)
-
-async function addMember(): Promise<void> {
-  const g = liveGroup.value
-  if (!g || !newMemberId.value) return
-  memberBusy.value = true
-  formBanner.value = ''
-  try {
-    await addGroupMember(g.id, newMemberId.value)
-    newMemberId.value = ''
-    await load()
-    const fresh = groups.value.find((x) => x.id === g.id)
-    if (fresh) editing.value = fresh
-  } catch (err) {
-    formBanner.value = errText(err, 'groups.errMemberAdd')
-  } finally {
-    memberBusy.value = false
-  }
-}
-
-async function dropMember(userId: string): Promise<void> {
-  const g = liveGroup.value
-  if (!g) return
-  memberBusy.value = true
-  formBanner.value = ''
-  try {
-    await removeGroupMember(g.id, userId)
-    await load()
-    const fresh = groups.value.find((x) => x.id === g.id)
-    if (fresh) editing.value = fresh
-  } catch (err) {
-    formBanner.value = errText(err, 'groups.errMemberRemove')
-  } finally {
-    memberBusy.value = false
-  }
-}
-
-/** 弹窗刷新后把表单字段对齐到最新组数据(成员增删会重拉列表)。 */
-const liveGroup = computed<Group | null>(() =>
-  editing.value ? (groups.value.find((g) => g.id === editing.value?.id) ?? editing.value) : null,
-)
-
-/** 名册里可加入的人:排除已在组内与组长(组长天然是组的人,不必重复列)。 */
-const rosterCandidates = computed<GroupMember[]>(() => {
-  const g = liveGroup.value
-  if (!g) return []
-  const inGroup = new Set([g.ownerId, ...g.members.map((m) => m.id)])
-  return roster.value.filter((u) => !inGroup.has(u.id))
+/** 当前表单里的组长 id:新建时 ownerId 为空表示「我自己」,按用户名从名册里认回来。 */
+const ownerId = computed(() => {
+  if (form.value.ownerId) return form.value.ownerId
+  const self = sessionStore.user?.username
+  return roster.value.find((u) => u.username === self)?.id ?? ''
 })
+
+/** 穿梭框的候选项:名册只有 id + username,展示名直接用用户名;createdAt 供「最新的在前」排序。 */
+const memberOptions = computed(() =>
+  roster.value.map((u) => ({ id: u.id, label: u.username, createdAt: u.createdAt })),
+)
 
 // ─── delete ─────────────────────────────────────────────────────────────────
 
@@ -249,7 +226,7 @@ function isMine(g: Group): boolean {
         <h2 class="view-title">{{ t('groups.title') }}</h2>
         <p class="view-sub">{{ t('groups.desc') }}</p>
       </div>
-      <div v-if="canSettings" class="header-actions">
+      <div v-if="canCreateGroup" class="header-actions">
         <AppButton variant="primary" @click="openAdd">+ {{ t('groups.add') }}</AppButton>
       </div>
     </header>
@@ -332,7 +309,7 @@ function isMine(g: Group): boolean {
       :title="editing ? t('groups.editTitle') : t('groups.createTitle')"
       :subtitle="t('groups.formHint')"
       width="lg"
-      :busy="formSubmitting || memberBusy"
+      :busy="formSubmitting"
       @close="closeModal"
       @submit="submitForm"
     >
@@ -401,56 +378,29 @@ function isMine(g: Group): boolean {
         </FormField>
 
         <FormField
-          v-if="!editing"
           class="field--wide"
           :label="t('groups.fieldMembers')"
           field-id="group-members"
           :hint="t('groups.membersHint')"
         >
-          <template #default="{ fieldId }">
-            <select
+          <template #default="{ fieldId, ariaDescribedby }">
+            <!-- 新建与编辑共用同一个穿梭框:右栏就是当前名册,左栏是可加入的人。
+                 组长天然拥有组内权限,作为锁定项显示在右栏,不占名册名额。 -->
+            <TransferList
               :id="fieldId"
               v-model="form.memberIds"
-              class="ui-input ui-input--multi"
-              multiple
-              size="6"
+              :options="memberOptions"
+              :locked-ids="ownerId ? [ownerId] : []"
+              :locked-label="t('groups.colOwner')"
               :disabled="formSubmitting"
-            >
-              <option v-for="u in createCandidates" :key="u.id" :value="u.id">
-                {{ u.username }}
-              </option>
-            </select>
+              :aria-describedby="ariaDescribedby"
+            />
           </template>
         </FormField>
       </div>
 
-      <!-- 成员名册:编辑态逐人增删(每次操作立即落库,不是保存时才生效) -->
-      <div v-if="liveGroup" class="roster">
-        <h3 class="roster-title">{{ t('groups.fieldMembers') }}</h3>
-        <p v-if="!liveGroup.members.length" class="cell-dim">{{ t('groups.noMembers') }}</p>
-        <ul v-else class="roster-list">
-          <li v-for="m in liveGroup.members" :key="m.id">
-            <span class="chip">{{ m.username }}</span>
-            <AppButton variant="ghost" size="sm" :disabled="memberBusy" @click="dropMember(m.id)">
-              {{ t('groups.removeMember') }}
-            </AppButton>
-          </li>
-        </ul>
-        <div class="roster-add">
-          <select v-model="newMemberId" class="ui-input" :disabled="memberBusy">
-            <option value="">{{ t('groups.memberAddPlaceholder') }}</option>
-            <option v-for="u in rosterCandidates" :key="u.id" :value="u.id">
-              {{ u.username }}
-            </option>
-          </select>
-          <AppButton size="sm" :disabled="!newMemberId || memberBusy" @click="addMember">
-            {{ t('groups.addMember') }}
-          </AppButton>
-        </div>
-      </div>
-
       <template #actions>
-        <AppButton :disabled="formSubmitting || memberBusy" @click="closeModal">
+        <AppButton :disabled="formSubmitting" @click="closeModal">
           {{ t('groups.cancel') }}
         </AppButton>
         <AppButton
@@ -576,37 +526,5 @@ function isMine(g: Group): boolean {
 }
 .cell-nowrap {
   white-space: nowrap;
-}
-/* 弹窗里的成员名册:slot 内容带着本页的 scope,所以样式留在这一侧。 */
-.roster {
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
-}
-.roster-title {
-  font-size: var(--text-label);
-  font-weight: 600;
-  color: var(--color-dim);
-  margin-bottom: 8px;
-}
-.roster-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 var(--space-3);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-}
-.roster-list li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.roster-add {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.roster-add .ui-input {
-  max-width: 320px;
 }
 </style>

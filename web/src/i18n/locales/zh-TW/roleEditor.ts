@@ -20,6 +20,12 @@ export default {
   permsMore: '還有 {n} 個',
   permsCollapse: '收起',
   userCount: '{n} 個帳號',
+  viewMembers: '查看帳號',
+  membersTitle: '{name} 的帳號',
+  membersHint: '唯讀名單。誰掛哪個角色在「帳號與角色」分頁裡改;這裡只回答「這個角色現在有哪些人」。',
+  membersOthers: '其他帳號',
+  membersCurrent: '該角色帳號',
+  errMembers: '帳號名單載入失敗',
   builtinTag: '內建範本',
   builtinEditHint: '內建管理員是程式碼表裡的範本,不可修改也不可刪除 —— 要調整請複製一份。',
   deleteBlockedHint: '還有 {n} 個帳號掛著這個角色,請先在帳號分頁改派再來刪除。',
@@ -51,6 +57,9 @@ export default {
   clearAll: '清空',
   permsHint: '功能點是入口級的:同一個「伺服器」類別下,主機狀態、容器、憑證、預覽、異常偵測可以分別給或分別不给。',
   settingsOnly: '僅內建管理員',
+  treeExpand: '展開',
+  treeCollapse: '收合',
+  treeGroupAll: '全選 / 清空這一組',
   settingsBlocked: '「進得了設定」這一項只給內建管理員,自訂角色拿不到。',
   effectHint: '儲存後對方重新整理頁面即生效(能力位每次讀取工作階段都重算);只有把帳號換到另一個角色才需要對方重新登入。',
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: '執行歷史、環境視圖與 DORA 指標都是從執行算出來的彙整頁。',
   kindServerHint: '主機狀態、容器、憑證、預覽環境與異常偵測共用這台機器這條軸。',
   kindClusterHint: '叢集瀏覽與發佈 / 回滾,對應 deploy_k8s 那條腿。',
-  kindPlatformHint: '全域憑證、保險庫、稽核、通知、AI、DNS、系統與伺服器/叢集登記 —— 這一組要嘛全給要嘛全不给,所以只內建管理員可得。',
+  kindPlatformHint: '全域憑證、保險庫、稽核、通知、AI、DNS、系統與伺服器/叢集登記 —— 這些只給內建管理員;「建立分組」是例外,可以單獨給自訂角色。',
 
   perm: {
     dashboard_view: '概覽',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: '改異常偵測規則與告警',
     cluster_view: 'K8s 叢集與工作負載',
     cluster_operate: '發佈 / 回滾到叢集',
+    group_create: '建立分組',
     settings_access: '進得了設定(全域憑證 / 稽核 / 登記)',
   },
 }

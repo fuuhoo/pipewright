@@ -20,6 +20,12 @@ export default {
   permsMore: '他 {n} 件',
   permsCollapse: '閉じる',
   userCount: '{n} アカウント',
+  viewMembers: 'アカウントを表示',
+  membersTitle: '{name} のアカウント',
+  membersHint: '参照専用の名簿です。どのロールを誰に付けるかは「アカウントとロール」タブで変更します。ここでは「このロールを持つ人」だけを示します。',
+  membersOthers: 'その他のアカウント',
+  membersCurrent: 'このロールのアカウント',
+  errMembers: 'アカウント名簿の読み込みに失敗しました',
   builtinTag: '組み込みテンプレ',
   builtinEditHint: '組み込みの管理者はコード上のテンプレートです。変更・削除はできません — 複製して調整してください。',
   deleteBlockedHint: 'まだ {n} 個のアカウントがこのロールを使用しています。まず「アカウント」タブで割り当てを変更してください。',
@@ -51,6 +57,9 @@ export default {
   clearAll: '解除',
   permsHint: '機能ポイントは入口単位です。「サーバー」カテゴリ内でも、ホスト状態・コンテナ・証明書・プレビュー・異常検知を個別に許可または非許可にできます。',
   settingsOnly: '組み込み管理者のみ',
+  treeExpand: '展開',
+  treeCollapse: '折りたたむ',
+  treeGroupAll: 'このグループを全選択 / 全解除',
   settingsBlocked: '「設定に入れる」項目は組み込み管理者専用で、カスタムロールには付与できません。',
   effectHint: '保存後、相手はページを再読み込みすれば反映されます(能力はセッション読み取り毎に再計算)。アカウントを別ロールへ移す場合のみ再ログインが必要です。',
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: '実行履歴、環境ビュー、DORA 指標はいずれも実行から算出される集計ページです。',
   kindServerHint: 'ホスト状態、コンテナ、証明書、プレビュー環境、異常検知はこのマシン軸を共用します。',
   kindClusterHint: 'クラスタ参照とデプロイ / ロールバック、deploy_k8s に相当します。',
-  kindPlatformHint: 'グローバル資格情報、ヴォールト、監査、通知、AI、DNS、システム情報、サーバー/クラスタ登録 —— このグループは全有or全无のため組み込み管理者のみです。',
+  kindPlatformHint: 'グローバル資格情報、ヴォールト、監査、通知、AI、DNS、システム情報、サーバー/クラスタ登録 —— これらは組み込み管理者のみです。「グループ作成」だけは例外で、カスタムロールに単独で付与できます。',
 
   perm: {
     dashboard_view: '概要',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: '異常検知ルールとアラートの編集',
     cluster_view: 'K8s クラスタとワークロード',
     cluster_operate: 'クラスタへのデプロイ / ロールバック',
+    group_create: 'グループ作成',
     settings_access: '設定に入れる(グローバル資格情報 / 監査 / 登録)',
   },
 }

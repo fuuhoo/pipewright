@@ -10,6 +10,20 @@ const en: typeof zhCN = {
     detailArrow: 'Details →',
     close: 'Close',
     aiTokens: 'This call · {prompt} in / {completion} out tokens',
+    transfer: {
+      available: 'Available',
+      selected: 'Selected',
+      searchAvailable: 'Search…',
+      searchSelected: 'Search selected…',
+      add: 'Add',
+      remove: 'Remove',
+      noMatch: 'No matches',
+      emptyAvailable: 'Nothing left to add',
+      emptySelected: 'Nothing selected yet',
+      prevPage: 'Previous page',
+      nextPage: 'Next page',
+      pageOf: 'Page {page} of {pages}',
+    },
   },
 
   locale: {

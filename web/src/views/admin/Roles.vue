@@ -30,14 +30,14 @@ import {
 } from '../../api/roles'
 import type { PermPoint, Role } from '../../api/roles'
 import type { PermId } from '../../api/auth'
+import { listUsers } from '../../api/users'
+import type { User } from '../../api/users'
 import { HttpError } from '../../api/http'
 import {
   MAX_ROLE_NAME_LEN,
   canDeleteRole,
-  groupPoints,
   labelForRoleId,
   permsDiff,
-  permLabelKey,
   seedFromTemplate,
   validateRoleName,
   type NameIssue,
@@ -45,6 +45,8 @@ import {
 import AppModal from '../../components/ui/AppModal.vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import FormField from '../../components/ui/FormField.vue'
+import TransferList from '../../components/ui/TransferList.vue'
+import PermissionTree from '../../components/permissions/PermissionTree.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToast } from '../../composables/useToast'
 
@@ -91,8 +93,6 @@ const rolesById = computed<Record<string, Role>>(() => {
   return out
 })
 
-const groups = computed(() => groupPoints(points.value))
-
 function roleLabel(id: string): string {
   return labelForRoleId(id, rolesById.value, t)
 }
@@ -104,10 +104,6 @@ function roleLabel(id: string): string {
  */
 function isPresetRole(r: Role): boolean {
   return !r.builtin && r.name === r.id
-}
-
-function pointLabel(id: PermId): string {
-  return t(permLabelKey(id))
 }
 
 // ─── 编辑器(新建 / 编辑同一弹窗)──────────────────────────────────────────────
@@ -168,27 +164,12 @@ function applyTemplate(id: string): void {
   form.value.perms = seedFromTemplate(id ? rolesById.value[id] : null)
 }
 
-function togglePoint(id: PermId, on: boolean): void {
-  if (on) {
-    if (!form.value.perms.includes(id)) form.value.perms = [...form.value.perms, id]
-    return
-  }
-  form.value.perms = form.value.perms.filter((x) => x !== id)
+function setPerms(ids: PermId[]): void {
+  form.value.perms = ids
 }
 
 const selectedCount = computed(() => form.value.perms.length)
 const assignableCount = computed(() => points.value.filter((p) => !p.builtinOnly).length)
-
-function toggleGroup(members: PermPoint[], on: boolean): void {
-  const ids = members.filter((p) => !p.builtinOnly).map((p) => p.id)
-  if (on) {
-    const set = new Set(form.value.perms)
-    form.value.perms = [...form.value.perms, ...ids.filter((id) => !set.has(id))]
-    return
-  }
-  const off = new Set(ids)
-  form.value.perms = form.value.perms.filter((id) => !off.has(id))
-}
 
 function toggleAll(on: boolean): void {
   form.value.perms = on
@@ -196,31 +177,7 @@ function toggleAll(on: boolean): void {
     : []
 }
 
-function inGroupCount(members: PermPoint[]): number {
-  const picked = new Set(form.value.perms)
-  return members.filter((p) => picked.has(p.id)).length
-}
-
-// ─── 列表里的点集展开 ─────────────────────────────────────────────────────────
-
-/**
- * 一行 21 个芯片会把整页撑成墙,所以默认只露前几个 + 「还有 N 个」。
- * 内置档点不开编辑器(不可改),这一列就是唯一能看到它点集的地方,因此必须能展开全部。
- */
-const PEEK_PERMS = 6
-const expanded = ref<Record<string, boolean>>({})
-
-function isExpanded(id: string): boolean {
-  return expanded.value[id] === true
-}
-
-function visiblePerms(r: Role): PermId[] {
-  return isExpanded(r.id) ? r.perms : r.perms.slice(0, PEEK_PERMS)
-}
-
-function hiddenPermCount(r: Role): number {
-  return Math.max(0, r.perms.length - PEEK_PERMS)
-}
+// ─── 列表里的点集树 ───────────────────────────────────────────────────────────
 
 async function submitEdit(): Promise<void> {
   const current = editing.value
@@ -345,6 +302,77 @@ async function askDelete(r: Role): Promise<void> {
     toast.error(errText(err, 'roleEditor.errDelete'))
   }
 }
+
+// ─── 账号数:这个角色现在有哪些人(只读)──────────────────────────────────────
+
+/**
+ * 名单是查的,不是改的:「谁挂哪个角色」归账号 tab。这里只把 userCount 那句数字打开,
+ * 用穿梭框的左右分栏回答「挂着的人 / 其他人」。userCount 含已禁用账号,所以拉人时
+ * includeDisabled 与之同口径,两边的数字才对得上。
+ */
+const membersOpen = ref(false)
+const membersRole = ref<Role | null>(null)
+const membersState = ref<'idle' | 'loading' | 'error'>('idle')
+const membersError = ref('')
+const membersUsers = ref<User[]>([])
+let membersRequest = 0
+
+function holdsRole(u: User, roleId: string): boolean {
+  return (u.roles && u.roles.length ? u.roles : [u.role]).includes(roleId)
+}
+
+const memberIds = computed<string[]>(() => {
+  const role = membersRole.value
+  if (!role) return []
+  return membersUsers.value.filter((u) => holdsRole(u, role.id)).map((u) => u.id)
+})
+
+const memberOptions = computed(() =>
+  membersUsers.value.map((u) => {
+    const meta = [u.displayName && u.displayName !== u.username ? u.displayName : '', u.enabled ? '' : t('adminUsers.disabled')]
+      .filter(Boolean)
+      .join(' · ')
+    return { id: u.id, label: u.username, createdAt: u.createdAt, ...(meta ? { meta } : {}) }
+  }),
+)
+
+/** 后端单页上限 500,按 offset 翻完为止;账号总量不大,一次拉全再本地筛。 */
+async function loadAllUsers(): Promise<User[]> {
+  const pageSize = 500
+  const out: User[] = []
+  for (let offset = 0; ; offset += pageSize) {
+    const batch = await listUsers({ includeDisabled: true, limit: pageSize, offset })
+    out.push(...batch)
+    if (batch.length < pageSize) return out
+  }
+}
+
+async function openMembers(r: Role): Promise<void> {
+  if (r.userCount === 0) return
+  const token = ++membersRequest
+  membersRole.value = r
+  membersOpen.value = true
+  membersState.value = 'loading'
+  membersError.value = ''
+  membersUsers.value = []
+  try {
+    const all = await loadAllUsers()
+    if (token !== membersRequest) return
+    membersUsers.value = all
+    membersState.value = 'idle'
+  } catch (err) {
+    if (token !== membersRequest) return
+    membersError.value = errText(err, 'roleEditor.errMembers')
+    membersState.value = 'error'
+  }
+}
+
+function closeMembers(): void {
+  membersRequest++
+  membersOpen.value = false
+  membersRole.value = null
+  membersUsers.value = []
+}
 </script>
 
 <template>
@@ -395,27 +423,27 @@ async function askDelete(r: Role): Promise<void> {
               <div class="cell-dim">
                 {{ t('roleEditor.permCount', { n: r.perms.length, total: points.length }) }}
               </div>
-              <div v-if="r.perms.length" class="chips">
-                <span v-for="id in visiblePerms(r)" :key="id" class="chip">{{ pointLabel(id) }}</span>
-                <button
-                  v-if="hiddenPermCount(r)"
-                  class="chip chip--more"
-                  type="button"
-                  @click="expanded[r.id] = !isExpanded(r.id)"
-                >
-                  {{
-                    isExpanded(r.id)
-                      ? t('roleEditor.permsCollapse')
-                      : t('roleEditor.permsMore', { n: hiddenPermCount(r) })
-                  }}
-                </button>
-              </div>
+              <PermissionTree
+                v-if="r.perms.length"
+                class="role-tree"
+                :points="points"
+                :selected="r.perms"
+                readonly
+                :initially-expanded="false"
+              />
               <div v-else class="cell-dim">{{ t('roleEditor.permsNone') }}</div>
             </td>
             <td class="cell-nowrap">
-              <span :class="r.userCount ? 'cell-strong' : 'cell-dim'">
+              <button
+                v-if="r.userCount"
+                type="button"
+                class="count-link"
+                :title="t('roleEditor.viewMembers')"
+                @click="openMembers(r)"
+              >
                 {{ t('roleEditor.userCount', { n: r.userCount }) }}
-              </span>
+              </button>
+              <span v-else class="cell-dim">{{ t('roleEditor.userCount', { n: 0 }) }}</span>
             </td>
             <td>
               <div class="cell-actions">
@@ -453,141 +481,135 @@ async function askDelete(r: Role): Promise<void> {
       </table>
     </div>
 
+    <!-- ─── 账号数:只读成员名单 ─── -->
+    <AppModal
+      v-if="membersOpen"
+      :title="t('roleEditor.membersTitle', { name: membersRole ? roleLabel(membersRole.id) : '' })"
+      :subtitle="t('roleEditor.membersHint')"
+      width="xl"
+      @close="closeMembers"
+    >
+      <p v-if="membersState === 'loading'" class="state">{{ t('common.refresh') }}…</p>
+      <div v-else-if="membersState === 'error'" class="state state--error">
+        <p>{{ membersError }}</p>
+        <AppButton @click="membersRole && openMembers(membersRole)">{{ t('common.refresh') }}</AppButton>
+      </div>
+      <TransferList
+        v-else
+        readonly
+        :model-value="memberIds"
+        :options="memberOptions"
+        :source-title="t('roleEditor.membersOthers')"
+        :target-title="t('roleEditor.membersCurrent')"
+      />
+      <template #actions>
+        <AppButton @click="closeMembers">{{ t('common.close') }}</AppButton>
+      </template>
+    </AppModal>
+
     <!-- ─── 新建 / 编辑:点集编辑器 ─── -->
     <AppModal
       v-if="editOpen"
       :title="editing ? t('roleEditor.editTitle', { name: roleLabel(editing.id) }) : t('roleEditor.createTitle')"
       :subtitle="t('roleEditor.formHint')"
-      width="lg"
+      width="xl"
       :busy="busy"
       @close="closeEdit"
       @submit="submitEdit"
     >
       <p v-if="banner" class="banner banner--err" role="alert">{{ banner }}</p>
 
-      <div class="form-grid">
-        <FormField
-          :label="t('roleEditor.fieldName')"
-          field-id="role-name"
-          :error="nameIssue ? t(NAME_ISSUE_KEY[nameIssue]) : ''"
-          :hint="editing && isPresetRole(editing) ? t('roleEditor.nameHintPreset') : t('roleEditor.nameHint', { n: MAX_ROLE_NAME_LEN })"
-          required
-        >
-          <template #default="{ fieldId, ariaDescribedby }">
-            <input
-              :id="fieldId"
-              v-model="form.name"
-              class="ui-input"
-              type="text"
-              autocomplete="off"
-              :aria-describedby="ariaDescribedby"
-              :disabled="busy"
-            />
-          </template>
-        </FormField>
-
-        <FormField :label="t('roleEditor.fieldDesc')" field-id="role-desc">
-          <template #default="{ fieldId }">
-            <input
-              :id="fieldId"
-              v-model="form.description"
-              class="ui-input"
-              type="text"
-              autocomplete="off"
-              :disabled="busy"
-            />
-          </template>
-        </FormField>
-
-        <FormField
-          v-if="!editing"
-          class="field--wide"
-          :label="t('roleEditor.fieldTemplate')"
-          field-id="role-template"
-          :hint="t('roleEditor.templateHint')"
-        >
-          <template #default="{ fieldId, ariaDescribedby }">
-            <select
-              :id="fieldId"
-              class="ui-input"
-              :value="form.baseRole"
-              :aria-describedby="ariaDescribedby"
-              :disabled="busy"
-              @change="applyTemplate(($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">{{ t('roleEditor.templateNone') }}</option>
-              <!-- 模板 = 整份服务端名单(内置 admin + 库里的角色)。名字可能被人改过,
-                   按 id 取值、按 roleLabel 显示,才不会「改了名就找不到这个模板」。 -->
-              <option v-for="r in roles" :key="r.id" :value="r.id">{{ roleLabel(r.id) }}</option>
-            </select>
-          </template>
-        </FormField>
-      </div>
-
-      <!-- 点集:按资源类别分组勾选,组头能整组选/清,settings.access 永远灰着 -->
-      <div class="points">
-        <div class="points-bar">
-          <h3 class="points-title">
-            {{ t('roleEditor.fieldPerms') }}
-            <span class="cell-dim">
-              {{ t('roleEditor.permTotal', { n: selectedCount, total: assignableCount }) }}
-            </span>
-          </h3>
-          <div class="points-bar-actions">
-            <AppButton size="sm" :disabled="busy" @click="toggleAll(true)">
-              {{ t('roleEditor.selectAll') }}
-            </AppButton>
-            <AppButton size="sm" :disabled="busy" @click="toggleAll(false)">
-              {{ t('roleEditor.clearAll') }}
-            </AppButton>
-          </div>
-        </div>
-        <p class="points-hint">{{ t('roleEditor.permsHint') }}</p>
-
-        <section v-for="g in groups" :key="g.kind" class="point-group">
-          <header class="point-group-head">
-            <div>
-              <span class="point-group-title">{{ g.labelKey ? t(g.labelKey) : g.kind }}</span>
-              <span class="cell-dim">{{ inGroupCount(g.points) }} / {{ g.points.length }}</span>
-              <p v-if="g.hintKey" class="point-group-hint">{{ t(g.hintKey) }}</p>
-            </div>
-            <div class="point-group-actions">
-              <AppButton
-                size="sm"
+      <!-- 左设置、右点集:改名字/模板的同时能看到这份角色能打开哪些入口。 -->
+      <div class="editor-grid">
+        <div class="form-grid form-grid--single">
+          <FormField
+            :label="t('roleEditor.fieldName')"
+            field-id="role-name"
+            :error="nameIssue ? t(NAME_ISSUE_KEY[nameIssue]) : ''"
+            :hint="editing && isPresetRole(editing) ? t('roleEditor.nameHintPreset') : t('roleEditor.nameHint', { n: MAX_ROLE_NAME_LEN })"
+            required
+          >
+            <template #default="{ fieldId, ariaDescribedby }">
+              <input
+                :id="fieldId"
+                v-model="form.name"
+                class="ui-input"
+                type="text"
+                autocomplete="off"
+                :aria-describedby="ariaDescribedby"
                 :disabled="busy"
-                @click="toggleGroup(g.points, true)"
+              />
+            </template>
+          </FormField>
+
+          <FormField :label="t('roleEditor.fieldDesc')" field-id="role-desc">
+            <template #default="{ fieldId }">
+              <input
+                :id="fieldId"
+                v-model="form.description"
+                class="ui-input"
+                type="text"
+                autocomplete="off"
+                :disabled="busy"
+              />
+            </template>
+          </FormField>
+
+          <FormField
+            v-if="!editing"
+            class="field--wide"
+            :label="t('roleEditor.fieldTemplate')"
+            field-id="role-template"
+            :hint="t('roleEditor.templateHint')"
+          >
+            <template #default="{ fieldId, ariaDescribedby }">
+              <select
+                :id="fieldId"
+                class="ui-input"
+                :value="form.baseRole"
+                :aria-describedby="ariaDescribedby"
+                :disabled="busy"
+                @change="applyTemplate(($event.target as HTMLSelectElement).value)"
               >
+                <option value="">{{ t('roleEditor.templateNone') }}</option>
+                <!-- 模板 = 整份服务端名单(内置 admin + 库里的角色)。名字可能被人改过,
+                     按 id 取值、按 roleLabel 显示,才不会「改了名就找不到这个模板」。 -->
+                <option v-for="r in roles" :key="r.id" :value="r.id">{{ roleLabel(r.id) }}</option>
+              </select>
+            </template>
+          </FormField>
+        </div>
+
+        <!-- 点集:按资源类别分组勾选,组头能整组选/清,settings.access 永远灰着 -->
+        <div class="points">
+          <div class="points-bar">
+            <h3 class="points-title">
+              {{ t('roleEditor.fieldPerms') }}
+              <span class="cell-dim">
+                {{ t('roleEditor.permTotal', { n: selectedCount, total: assignableCount }) }}
+              </span>
+            </h3>
+            <div class="points-bar-actions">
+              <AppButton size="sm" :disabled="busy" @click="toggleAll(true)">
                 {{ t('roleEditor.selectAll') }}
               </AppButton>
-              <AppButton size="sm" :disabled="busy" @click="toggleGroup(g.points, false)">
+              <AppButton size="sm" :disabled="busy" @click="toggleAll(false)">
                 {{ t('roleEditor.clearAll') }}
               </AppButton>
             </div>
-          </header>
-          <label
-            v-for="p in g.points"
-            :key="p.id"
-            class="point"
-            :class="{ 'point--locked': p.builtinOnly }"
-          >
-            <input
-              type="checkbox"
-              :checked="form.perms.includes(p.id)"
-              :disabled="busy || p.builtinOnly"
-              @change="
-                togglePoint(p.id, ($event.target as HTMLInputElement).checked)
-              "
-            />
-            <span class="point-label">
-              {{ t(permLabelKey(p.id)) }}
-              <span v-if="p.builtinOnly" class="tag tag--locked">
-                {{ t('roleEditor.settingsOnly') }}
-              </span>
-            </span>
-          </label>
-        </section>
+          </div>
+          <p class="points-hint">{{ t('roleEditor.permsHint') }}</p>
 
-        <p class="effect-hint">{{ t('roleEditor.effectHint') }}</p>
+          <!-- 树:类别作父节点、入口作叶子;组头的勾选框整组选/清,settings.access 永远灰着 -->
+          <PermissionTree
+            :points="points"
+            :selected="form.perms"
+            :disabled="busy"
+            @update:selected="setPerms"
+          />
+
+          <p class="effect-hint">{{ t('roleEditor.effectHint') }}</p>
+        </div>
       </div>
 
       <template #actions>
@@ -724,6 +746,23 @@ async function askDelete(r: Role): Promise<void> {
 .cell-nowrap {
   white-space: nowrap;
 }
+/* 账号数是个入口:点开看名单,平时仍是表格里的一行数字。 */
+.count-link {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.count-link:hover {
+  text-decoration: underline;
+}
+.count-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
 /* 挂在内层 div 而不是 td:td 一旦 display:flex 就不再是 table-cell,这格的行底边线会短到按钮下面,列线看着就歪了。 */
 .cell-actions {
   display: flex;
@@ -736,32 +775,10 @@ async function askDelete(r: Role): Promise<void> {
   align-items: center;
   gap: 6px;
 }
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+/* 列表里那棵只读树:组行一行一个,叶子点开才出现,别把表撑成整页。 */
+.role-tree {
   margin-top: 6px;
-}
-.chip {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: rgba(120, 120, 120, 0.13);
-  color: var(--color-dim);
-  font-size: var(--text-small, 0.8em);
-}
-/* 「还有 N 个」是个芯片形状的按钮:与只读芯片同一形状,但看得出来点得动。 */
-.chip--more {
-  border: 1px dashed var(--color-border);
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  font-size: var(--text-small, 0.8em);
-  cursor: pointer;
-}
-.chip--more:hover {
-  border-style: solid;
-  background: rgba(120, 120, 120, 0.13);
+  max-width: 560px;
 }
 .tag {
   display: inline-block;
@@ -789,13 +806,30 @@ async function askDelete(r: Role): Promise<void> {
   background: var(--color-red-soft);
   color: var(--color-red);
 }
+/* 左设置、右点集:xl 弹窗下并排,窄屏退回上下。 */
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.editor-grid > * {
+  min-width: 0;
+}
 /* 点集编辑器:分组小标题 + 一行一个勾选项(名称点的是入口,不是权限术语)。 */
 .points {
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+@media (max-width: 760px) {
+  .editor-grid {
+    grid-template-columns: 1fr;
+  }
+  .points {
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+  }
 }
 .points-bar {
   display: flex;
@@ -808,8 +842,7 @@ async function askDelete(r: Role): Promise<void> {
   font-weight: 600;
   color: var(--color-dim);
 }
-.points-bar-actions,
-.point-group-actions {
+.points-bar-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
@@ -818,48 +851,6 @@ async function askDelete(r: Role): Promise<void> {
   font-size: var(--text-small, 0.85em);
   color: var(--color-faint);
   max-width: 88ch;
-}
-.point-group {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 6px);
-  padding: 10px 12px;
-}
-.point-group-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-.point-group-title {
-  font-size: var(--text-label);
-  font-weight: 600;
-  color: var(--color-text);
-  margin-right: 6px;
-}
-.point-group-hint {
-  font-size: var(--text-small, 0.85em);
-  color: var(--color-faint);
-  margin-top: 2px;
-  max-width: 70ch;
-}
-.point {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: var(--text-label);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.point--locked {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.point-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 .effect-hint {
   font-size: var(--text-small, 0.85em);

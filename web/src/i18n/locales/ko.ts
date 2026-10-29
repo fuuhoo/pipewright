@@ -10,6 +10,20 @@ const ko: typeof zhCN = {
     detailArrow: '상세 →',
     close: '닫기',
     aiTokens: '이번 호출 · 입력 {prompt} / 출력 {completion} tokens',
+    transfer: {
+      available: '선택 가능',
+      selected: '선택됨',
+      searchAvailable: '검색…',
+      searchSelected: '선택된 항목 검색…',
+      add: '추가',
+      remove: '제외',
+      noMatch: '일치하는 항목이 없습니다',
+      emptyAvailable: '추가할 항목이 없습니다',
+      emptySelected: '아직 선택한 항목이 없습니다',
+      prevPage: '이전 페이지',
+      nextPage: '다음 페이지',
+      pageOf: '{page} / {pages} 페이지',
+    },
   },
 
   locale: {

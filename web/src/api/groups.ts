@@ -25,6 +25,8 @@ export type GroupVisibility = 'public' | 'private'
 export interface GroupMember {
   id: string
   username: string
+  /** 建号时间;仅 /groups/assignable 返回,分组名册本身不带。 */
+  createdAt?: string
 }
 
 export interface Group {

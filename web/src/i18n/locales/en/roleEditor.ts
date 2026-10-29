@@ -20,6 +20,12 @@ export default {
   permsMore: '{n} more',
   permsCollapse: 'Collapse',
   userCount: '{n} accounts',
+  viewMembers: 'View accounts',
+  membersTitle: 'Accounts with {name}',
+  membersHint: 'Read-only roster. Who holds which role is changed in the Accounts & roles tab; this only answers “who has this role right now”.',
+  membersOthers: 'Other accounts',
+  membersCurrent: 'Accounts with this role',
+  errMembers: 'Failed to load the account roster',
   builtinTag: 'Built-in template',
   builtinEditHint: 'The built-in Admin lives in the code table: it cannot be edited or deleted — copy it instead.',
   deleteBlockedHint: '{n} accounts still use this role. Reassign them in the Accounts tab first.',
@@ -51,6 +57,9 @@ export default {
   clearAll: 'Clear',
   permsHint: 'Points are entry-level: under one “server” kind, host status, containers, certificates, previews and anomaly detection can each be granted or withheld separately.',
   settingsOnly: 'Built-in admin only',
+  treeExpand: 'Expand',
+  treeCollapse: 'Collapse',
+  treeGroupAll: 'Select / clear this group',
   settingsBlocked: '“Access to settings” is reserved for the built-in admin; custom roles cannot have it.',
   effectHint: 'After saving, the change lands as soon as the other person reloads the page (capabilities are recomputed on every session read). Only reassigning an account to a different role requires them to sign in again.',
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: 'Run history, environment views and DORA metrics are aggregate pages computed from runs.',
   kindServerHint: 'Host status, containers, certificates, preview environments and anomaly detection share this machine axis.',
   kindClusterHint: 'Cluster browsing plus deploy / rollback — the deploy_k8s leg.',
-  kindPlatformHint: 'Global credentials, vault, audit, notifications, AI, DNS, system info and server/cluster registration — this set is all-or-nothing, so only the built-in admin gets it.',
+  kindPlatformHint: 'Global credentials, vault, audit, notifications, AI, DNS, system info and server/cluster registration — reserved for the built-in admin. “Create groups” is the exception: it can be granted to a custom role on its own.',
 
   perm: {
     dashboard_view: 'Overview',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: 'Edit anomaly rules and alerts',
     cluster_view: 'K8s clusters and workloads',
     cluster_operate: 'Deploy / rollback to clusters',
+    group_create: 'Create groups',
     settings_access: 'Access to settings (global credentials / audit / registry)',
   },
 }

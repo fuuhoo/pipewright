@@ -26,6 +26,7 @@ import {
   SETTINGS_POINT,
   canDeleteRole,
   groupPoints,
+  inheritedPerms,
   labelForRoleId,
   permsDiff,
   seedFromTemplate,
@@ -198,6 +199,42 @@ describe('labelForRoleId —— 角色展示名', () => {
   })
 })
 
+describe('inheritedPerms —— 多角色的能力并集', () => {
+  const points = [
+    point('dashboard.view', 'project'),
+    point('server.view', 'server'),
+    point('server.exec', 'server'),
+    point('cluster.operate', 'kube_cluster'),
+  ]
+  const byId: Record<string, Role> = {
+    developer: preset('developer', { perms: ['dashboard.view', 'server.view'] }),
+    ops: preset('ops', { perms: ['server.view', 'server.exec', 'cluster.operate'] }),
+    viewer: preset('viewer', { perms: [] }),
+  }
+
+  it('并集去重,顺序跟字典而不是勾选顺序', () => {
+    const out = inheritedPerms(['ops', 'developer'], byId, points)
+    expect(out.perms).toEqual(['dashboard.view', 'server.view', 'server.exec', 'cluster.operate'])
+  })
+
+  it('每个点记下来源角色(按传入的角色顺序)', () => {
+    const { sources } = inheritedPerms(['ops', 'developer'], byId, points)
+    expect(sources['server.view']).toEqual(['ops', 'developer'])
+    expect(sources['server.exec']).toEqual(['ops'])
+    expect(sources['dashboard.view']).toEqual(['developer'])
+  })
+
+  it('一个角色都没有 / 角色不在名单里时不凭空给出点', () => {
+    expect(inheritedPerms([], byId, points)).toEqual({ perms: [], sources: {} })
+    expect(inheritedPerms(['gone'], byId, points).perms).toEqual([])
+  })
+
+  it('字典里没有的历史点不丢,排在最后', () => {
+    const stale: Record<string, Role> = { legacy: custom('legacy', '旧档', { perms: ['server.view', 'old.point' as PermId] }) }
+    expect(inheritedPerms(['legacy'], stale, points).perms).toEqual(['server.view', 'old.point'])
+  })
+})
+
 describe('功能点标签在 zh-CN 真查得到(动态 t() 键的补充守卫)', () => {
   // 与 i18n/componentKeys.test.ts 同一套装配方式:zh-CN.ts + locales/zh-CN/<ns>.ts。
   const baseModules = import.meta.glob<{ default: Record<string, unknown> }>(
@@ -230,11 +267,11 @@ describe('功能点标签在 zh-CN 真查得到(动态 t() 键的补充守卫)',
     return typeof node === 'string' && node.length > 0
   }
 
-  it('PERM_LABEL_KEY 覆盖 22 个功能点,每个都能在 roleEditor.perm 下命中', () => {
+  it('PERM_LABEL_KEY 覆盖 23 个功能点,每个都能在 roleEditor.perm 下命中', () => {
     // 数量与 internal/access/perms.go 的字典同源于 PermId(Record 缺键编译不过),
     // 这里再钉一次数字:Go 侧加点时必须同时改 PermId + 这张表 + 8 份词条。
     const keys = Object.keys(PERM_LABEL_KEY)
-    expect(keys.length).toBe(22)
+    expect(keys.length).toBe(23)
     for (const id of keys) expect(resolves(PERM_LABEL_KEY[id as PermId])).toBe(true)
   })
 

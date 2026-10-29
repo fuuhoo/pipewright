@@ -21,8 +21,8 @@ const props = withDefaults(defineProps<{
   subtitle?: string
   /** 提交中:禁止背景/Esc/× 关闭。 */
   busy?: boolean
-  /** 弹层宽度档:确认类用 sm,单列用 md,双列表单用 lg。 */
-  width?: 'sm' | 'md' | 'lg'
+  /** 弹层宽度档:确认类用 sm,单列用 md,双列表单用 lg,左右分栏(角色 + 权限树)用 xl。 */
+  width?: 'sm' | 'md' | 'lg' | 'xl'
 }>(), { busy: false, width: 'md' })
 
 const emit = defineEmits<{
@@ -166,6 +166,9 @@ onBeforeUnmount(() => {
 }
 .app-modal--lg {
   max-width: 680px;
+}
+.app-modal--xl {
+  max-width: 960px;
 }
 .app-modal__head {
   display: flex;

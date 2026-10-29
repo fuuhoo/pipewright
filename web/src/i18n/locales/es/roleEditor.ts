@@ -20,6 +20,12 @@ export default {
   permsMore: '{n} más',
   permsCollapse: 'Contraer',
   userCount: '{n} cuentas',
+  viewMembers: 'Ver cuentas',
+  membersTitle: 'Cuentas con {name}',
+  membersHint: 'Lista de solo lectura. Quién tiene cada rol se cambia en la pestaña «Cuentas y roles»; aquí solo se responde «quién tiene este rol ahora».',
+  membersOthers: 'Otras cuentas',
+  membersCurrent: 'Cuentas con este rol',
+  errMembers: 'No se pudo cargar la lista de cuentas',
   builtinTag: 'Plantilla integrada',
   builtinEditHint: 'El rol Admin integrado vive en el código: no se edita ni se borra. Duplíquelo para ajustarlo.',
   deleteBlockedHint: '{n} cuentas aún usan este rol. Reasígnelas primero en la pestaña de cuentas.',
@@ -51,6 +57,9 @@ export default {
   clearAll: 'Desmarcar',
   permsHint: 'Los puntos son por entrada: dentro de la misma categoría «servidor», estado del host, contenedores, certificados, previsualizaciones y detección de anomalías se pueden conceder o negar por separado.',
   settingsOnly: 'Solo administrador integrado',
+  treeExpand: 'Expandir',
+  treeCollapse: 'Contraer',
+  treeGroupAll: 'Seleccionar / vaciar este grupo',
   settingsBlocked: '«Acceso a ajustes» está reservado al administrador integrado; los roles personalizados no pueden tenerlo.',
   effectHint: 'Al guardar, el cambio se aplica cuando la otra persona recargue la página (las capacidades se recalculan en cada lectura de sesión). Solo hace falta volver a iniciar sesión cuando se mueve una cuenta a otro rol.',
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: 'Historial de ejecuciones, vista de entornos y métricas DORA: páginas agregadas calculadas desde las ejecuciones.',
   kindServerHint: 'Estado del host, contenedores, certificados, entornos de previsualización y detección de anomalías comparten este eje.',
   kindClusterHint: 'Explorar el clúster y desplegar / revertir, la rama de deploy_k8s.',
-  kindPlatformHint: 'Credenciales globales, bóveda, auditoría, notificaciones, IA, DNS, info del sistema y registro de servidores/clústeres: este bloque se da entero o no se da, por eso solo lo tiene el administrador integrado.',
+  kindPlatformHint: 'Credenciales globales, bóveda, auditoría, notificaciones, IA, DNS, info del sistema y registro de servidores/clústeres: reservado al administrador integrado. «Crear grupos» es la excepción: puede concederse solo a un rol personalizado.',
 
   perm: {
     dashboard_view: 'Resumen',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: 'Editar reglas de anomalías y alertas',
     cluster_view: 'Clústeres y cargas de trabajo K8s',
     cluster_operate: 'Desplegar / revertir en el clúster',
+    group_create: 'Crear grupos',
     settings_access: 'Acceso a ajustes (credenciales globales / auditoría / registro)',
   },
 }

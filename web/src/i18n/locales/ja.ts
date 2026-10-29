@@ -10,6 +10,20 @@ const ja: typeof zhCN = {
     detailArrow: '詳細 →',
     close: '閉じる',
     aiTokens: 'この呼び出し · 入力 {prompt} / 出力 {completion} tokens',
+    transfer: {
+      available: '候補',
+      selected: '選択済み',
+      searchAvailable: '検索…',
+      searchSelected: '選択済みを検索…',
+      add: '追加',
+      remove: '除外',
+      noMatch: '一致する項目がありません',
+      emptyAvailable: '追加できる項目はありません',
+      emptySelected: 'まだ何も選択されていません',
+      prevPage: '前のページ',
+      nextPage: '次のページ',
+      pageOf: '{page} / {pages} ページ',
+    },
   },
 
   locale: {

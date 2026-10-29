@@ -9,6 +9,20 @@ export default {
     detailArrow: '详情 →',
     close: '关闭',
     aiTokens: '本次调用 · 输入 {prompt} / 输出 {completion} tokens',
+    transfer: {
+      available: '可选',
+      selected: '已选',
+      searchAvailable: '搜索…',
+      searchSelected: '在已选中搜索…',
+      add: '加入',
+      remove: '移出',
+      noMatch: '没有匹配项',
+      emptyAvailable: '没有可添加的项',
+      emptySelected: '还没有选择任何项',
+      prevPage: '上一页',
+      nextPage: '下一页',
+      pageOf: '第 {page} / {pages} 页',
+    },
   },
 
   locale: {

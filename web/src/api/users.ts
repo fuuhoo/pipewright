@@ -33,7 +33,10 @@ export const BOOTSTRAP_ADMIN_ID = '00000000-0000-0000-0000-000000000001'
 export interface User {
   id: string
   username: string
+  /** 主角色(users.role):展示与旧数据沿用它,实际能力是 `roles` 的并集。 */
   role: RoleId
+  /** 账号挂的全部角色,主角色在首位。一个账号可以同时有多个角色,能力取并集。 */
+  roles: RoleId[]
   enabled: boolean
   description: string
   /** 本地档案:显示名(昵称)。平台身份首次建号写入,之后由本人/管理员编辑,登录不再覆盖。 */
@@ -54,12 +57,18 @@ export interface ListUsersParams {
   role?: RoleId
   /** 列出已禁用账号(默认 false)。 */
   includeDisabled?: boolean
+  /** 分页:后端默认 100、上限 500。 */
+  limit?: number
+  offset?: number
 }
 
 export interface CreateUserInput {
   username: string
   password: string
-  role: RoleId
+  /** 旧单角色字段;`roles` 非空时后端忽略它。 */
+  role?: RoleId
+  /** 建号时挂的角色集合(第一个是主角色);空数组/不传 = 普通用户。 */
+  roles?: RoleId[]
   description?: string
   displayName?: string
   email?: string
@@ -68,8 +77,13 @@ export interface CreateUserInput {
 export interface UpdateUserInput {
   description?: string
   enabled?: boolean
-  /** 改角色(内置档 id 或自定义角色 UUID)。未知名后端回 400(不会静默降级成 user,那是建号路径的取舍)。 */
+  /** 旧单角色字段;只改单角色时沿用。 */
   role?: RoleId
+  /**
+   * 改角色集合(第一个是主角色)。传入即整体替换;空数组后端回 400(至少留一个)。
+   * 未知名后端回 400(不会静默降级成 user,那是建号路径的取舍)。
+   */
+  roles?: RoleId[]
   /**
    * 本地档案两列。后端是**一行 UPDATE 同时写两列**,所以只改一个时要把另一个的现值一起提交
    * —— 省略即「不改」,传空串才是「清空」。
@@ -82,6 +96,8 @@ export async function listUsers(params: ListUsersParams = {}): Promise<User[]> {
   const qs = new URLSearchParams()
   if (params.role) qs.set('role', params.role)
   if (params.includeDisabled) qs.set('includeDisabled', '1')
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.offset) qs.set('offset', String(params.offset))
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const res = await http.get<ListEnvelope>(`/api/admin/users${suffix}`)
   return res.items ?? []

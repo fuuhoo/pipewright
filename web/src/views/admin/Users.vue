@@ -29,13 +29,13 @@ import {
   MIN_PASSWORD_LEN,
 } from '../../api/users'
 import type { User } from '../../api/users'
-import { listRoles } from '../../api/roles'
-import type { Role, RoleId } from '../../api/roles'
+import { listRoles, listPermPoints } from '../../api/roles'
+import type { PermPoint, Role, RoleId } from '../../api/roles'
 import { listGroups, addGroupMember, removeGroupMember } from '../../api/groups'
 import type { Group } from '../../api/groups'
 import { HttpError } from '../../api/http'
 import { ROLE_TAG_CLASS } from '../../lib/roles'
-import { labelForRoleId } from '../../lib/roleEditor'
+import { inheritedPerms, labelForRoleId } from '../../lib/roleEditor'
 import {
   PROFILE_EMAIL_MAX,
   PROFILE_NAME_MAX,
@@ -48,6 +48,8 @@ import {
 import AppModal from '../../components/ui/AppModal.vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import FormField from '../../components/ui/FormField.vue'
+import TransferList from '../../components/ui/TransferList.vue'
+import PermissionTree from '../../components/permissions/PermissionTree.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToast } from '../../composables/useToast'
 
@@ -62,22 +64,26 @@ const includeDisabled = ref(false)
 // 行内改描述/改角色失败的提示:它不属于「整页加载失败」,所以单独一条横幅而不是复用 loadError。
 const rowError = ref('')
 
-// 角色名单与分组名册都是这一页的输入:下拉要角色,「关联分组」弹窗要每个组的当前成员。
-// 它们各自失败不该拖垮账号列表,所以失败只记在 rolesError / groupsError 上,列表照常用。
+// 角色名单、功能点字典与分组名册都是这一页的输入:角色勾选与继承权限树要角色和点,
+// 「关联分组」弹窗要每个组的当前成员。它们各自失败不该拖垮账号列表,所以失败只记在
+// 整页 loadError 上,列表照常用(这三份都从同一批 admin 接口来,缺一份页面就用不了)。
 const roles = ref<Role[]>([])
+const points = ref<PermPoint[]>([])
 const groups = ref<Group[]>([])
 
 async function load(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
   try {
-    const [list, roleList, groupList] = await Promise.all([
+    const [list, roleList, pointList, groupList] = await Promise.all([
       listUsers({ includeDisabled: includeDisabled.value }),
       listRoles(),
+      listPermPoints(),
       listGroups(),
     ])
     users.value = list
     roles.value = roleList
+    points.value = pointList
     groups.value = groupList
     loadState.value = 'idle'
   } catch (err) {
@@ -109,6 +115,24 @@ function roleLabel(role: RoleId): string {
   return labelForRoleId(role, rolesById.value, t)
 }
 
+/** 穿梭框的候选项;角色不多,但名字可能被改过,统一按 id 取值、按展示名显示。 */
+const roleOptions = computed(() =>
+  roles.value.map((r) => ({ id: r.id, label: roleLabel(r.id), createdAt: r.createdAt })),
+)
+
+/**
+ * 账号的角色集合。老后端/老数据只有 `role` 一列,这里退回单角色,
+ * 免得升级后列表里的角色列忽然空掉。
+ */
+function userRoles(u: User): RoleId[] {
+  return u.roles && u.roles.length ? u.roles : [u.role]
+}
+
+/** 集合比较按顺序:第一个角色是主角色,换顺序是有语义的改动。 */
+function sameRoles(a: RoleId[], b: RoleId[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i])
+}
+
 /** 标签配色按 id 走(五个预置 id 各一色),不看 builtin:预置档自 0063 起也是库里的普通行,
  *  但 id 稳定,管理员改了名字也不该让标签换色;自建角色一律用那条通用灰绿。 */
 function roleTagClass(role: RoleId): string {
@@ -130,13 +154,14 @@ const createOpen = ref(false)
 const createBusy = ref(false)
 const createBanner = ref('')
 // 默认档取内置 user(与后端建号路径的降级同档);自定义角色的 UUID 也在同一份名单里选。
+// 一个账号可以挂多个角色,能力取并集;穿梭框按「加入先后」保留顺序,首个即主角色。
 // 显示名/邮箱可留空:留空就是「让本人自己在账户设置里填」,昵称缺失时页面回落到登录名。
-const createForm = ref({ username: '', password: '', role: 'user', description: '', displayName: '', email: '' })
-const createErrors = ref({ username: '', password: '', email: '' })
+const createForm = ref({ username: '', password: '', roles: ['user'] as RoleId[], description: '', displayName: '', email: '' })
+const createErrors = ref({ username: '', password: '', roles: '', email: '' })
 
 function openCreate(): void {
-  createForm.value = { username: '', password: '', role: 'user', description: '', displayName: '', email: '' }
-  createErrors.value = { username: '', password: '', email: '' }
+  createForm.value = { username: '', password: '', roles: ['user'], description: '', displayName: '', email: '' }
+  createErrors.value = { username: '', password: '', roles: '', email: '' }
   createBanner.value = ''
   createOpen.value = true
 }
@@ -155,7 +180,7 @@ function emailErrorKey(problem: EmailProblem): string {
 }
 
 function validateCreate(): boolean {
-  createErrors.value = { username: '', password: '', email: '' }
+  createErrors.value = { username: '', password: '', roles: '', email: '' }
   let ok = true
   if (!createForm.value.username.trim()) {
     createErrors.value.username = t('adminUsers.errUsernameRequired')
@@ -163,6 +188,10 @@ function validateCreate(): boolean {
   }
   if (createForm.value.password.length < MIN_PASSWORD_LEN) {
     createErrors.value.password = t('adminUsers.errPasswordShort', { n: MIN_PASSWORD_LEN })
+    ok = false
+  }
+  if (createForm.value.roles.length === 0) {
+    createErrors.value.roles = t('adminUsers.rolesRequired')
     ok = false
   }
   const emailErr = emailErrorKey(emailProblem(createForm.value.email))
@@ -181,7 +210,7 @@ async function submitCreate(): Promise<void> {
     const u = await createUser({
       username: createForm.value.username.trim(),
       password: createForm.value.password,
-      role: createForm.value.role,
+      roles: createForm.value.roles,
       description: createForm.value.description.trim(),
       displayName: createForm.value.displayName,
       email: createForm.value.email.trim(),
@@ -301,41 +330,39 @@ async function saveDescription(u: User, value: string): Promise<void> {
   }
 }
 
-// ─── 改角色(功能轴)──────────────────────────────────────────────────────────
-
-const roleBusyId = ref('')
+// ─── 角色与继承权限(功能轴)────────────────────────────────────────────────────
 
 /**
- * 改某人的角色档位。失败时把这一行的下拉弹回原值:DOM 已经显示成新选项了,
- * 不回滚就是「看着改成功了、其实没改」——那是最难排查的一类错觉。
+ * 一个账号可以挂多个角色,能力取并集(后端 access.HasPerm / Ceiling 都是并集语义)。
+ * 权限设置只有一个入口:左边选角色、右边实时看这组角色并起来能看到的入口树,下方改分组归属。
+ * 勾掉一个角色,右侧那棵树立刻少掉它独有的点 —— 比只看一张角色名单更容易理解多角色意味着什么。
+ *
+ * 树里的每个点都标出来源角色;顺序按 roles 列表(第一个是主角色,列表与旧数据沿用它)。
+ * 内置管理员那一行由 admin_user 同步,后端对它的写端点一律 409,所以角色区只读、分组仍可调。
+ * 角色是登录快照,下次登录才生效;分组归属每请求重判,刷新页面就生效。
  */
-async function saveRole(u: User, next: RoleId, el: HTMLSelectElement): Promise<void> {
-  if (next === u.role) return
-  rowError.value = ''
-  roleBusyId.value = u.id
-  try {
-    const fresh = await updateUser(u.id, { role: next })
-    users.value = users.value.map((x) => (x.id === fresh.id ? fresh : x))
-  } catch (err) {
-    el.value = u.role
-    rowError.value = errText(err, 'adminUsers.errRoleUpdate')
-  } finally {
-    roleBusyId.value = ''
-  }
-}
-// ─── 关联分组(数据轴)──────────────────────────────────────────────────────
+const permsOpen = ref(false)
+const permsTarget = ref<User | null>(null)
+const roleDraft = ref<RoleId[]>([])
+const permsBusy = ref(false)
+const permsBanner = ref('')
+const permsIssue = ref('')
+// 一页塞「角色 + 权限树 + 分组」太长,拆成两档;保存仍一次性提交两边。
+const permsTab = ref<'roles' | 'groups'>('roles')
 
-/**
- * 一人的分组归属就在这一页改,不必绕去分组页找他。弹窗里把**所有**组列出来(含他没进的、
- * 也含他管不着的),管不着的那些勾不上 —— canManage 是后端用同一套判定算出来的结论。
- * 保存按差集逐条写 /api/groups/{id}/members:每写成一个就立刻把返回的名册换回本地,
- * 这样中途失败时页面上显示的仍是「真的改成了什么」,而不是我想当然的终态。
- */
-const groupsOpen = ref(false)
-const groupsTarget = ref<User | null>(null)
-const groupsBusy = ref(false)
-const groupsBanner = ref('')
-const groupDraft = ref<Record<string, boolean>>({})
+const permsLocked = computed(() => (permsTarget.value ? isBootstrapAdmin(permsTarget.value) : false))
+const draftTree = computed(() =>
+  inheritedPerms(roleDraft.value, rolesById.value, points.value),
+)
+
+/** 穿梭框直接改草稿;顺序即 roles 列表顺序(先选的在前),与后端「首角色为主」一致。 */
+const roleDraftModel = computed<RoleId[]>({
+  get: () => roleDraft.value,
+  set: (next) => {
+    roleDraft.value = next
+    permsIssue.value = ''
+  },
+})
 
 function isMember(g: Group, userId: string): boolean {
   return g.members.some((m) => m.id === userId)
@@ -346,44 +373,89 @@ function groupNames(u: User): string[] {
   return groups.value.filter((g) => isMember(g, u.id)).map((g) => g.name)
 }
 
-function openGroups(u: User): void {
-  groupsTarget.value = u
-  const draft: Record<string, boolean> = {}
-  for (const g of groups.value) draft[g.id] = isMember(g, u.id)
-  groupDraft.value = draft
-  groupsBanner.value = ''
-  groupsOpen.value = true
+// 只装「可移入移出」的组 id;不归当前账号管的成员组由 lockedIds 顶在右栏。
+const groupDraft = ref<string[]>([])
+
+const groupLockedIds = computed(() => {
+  const target = permsTarget.value
+  if (!target) return []
+  return groups.value.filter((g) => !g.canManage && isMember(g, target.id)).map((g) => g.id)
+})
+const groupUnmanageableIds = computed(() => groups.value.filter((g) => !g.canManage).map((g) => g.id))
+const groupOptions = computed(() =>
+  groups.value.map((g) => ({
+    id: g.id,
+    label: g.name,
+    meta: t('adminUsers.groupsMembers', { n: g.members.length }),
+    createdAt: g.createdAt,
+  })),
+)
+
+function openPermissions(u: User): void {
+  permsTarget.value = u
+  roleDraft.value = [...userRoles(u)]
+  groupDraft.value = groups.value.filter((g) => g.canManage && isMember(g, u.id)).map((g) => g.id)
+  permsBanner.value = ''
+  permsIssue.value = ''
+  permsTab.value = 'roles'
+  permsOpen.value = true
 }
 
-function closeGroups(): void {
-  if (groupsBusy.value) return
-  groupsOpen.value = false
-  groupsTarget.value = null
+function closePermissions(): void {
+  if (permsBusy.value) return
+  permsOpen.value = false
+  permsTarget.value = null
 }
 
-async function submitGroups(): Promise<void> {
-  const target = groupsTarget.value
+async function submitPermissions(): Promise<void> {
+  const target = permsTarget.value
   if (!target) return
-  groupsBusy.value = true
-  groupsBanner.value = ''
-  let changed = 0
+  if (!permsLocked.value && roleDraft.value.length === 0) {
+    // 校验失败时把用户带回角色档,否则错误提示藏在另一个 tab 里看不见。
+    permsTab.value = 'roles'
+    permsIssue.value = t('adminUsers.rolesRequired')
+    return
+  }
+  const rolesChanged = !permsLocked.value && !sameRoles(roleDraft.value, userRoles(target))
+  const groupOps: { g: Group; want: boolean }[] = []
+  for (const g of groups.value) {
+    if (!g.canManage) continue
+    const want = groupDraft.value.includes(g.id)
+    if (want !== isMember(g, target.id)) groupOps.push({ g, want })
+  }
+  if (!rolesChanged && groupOps.length === 0) {
+    closePermissions()
+    return
+  }
+
+  permsBusy.value = true
+  permsBanner.value = ''
+  let stage: 'roles' | 'groups' = 'roles'
   try {
-    for (const g of groups.value) {
-      const want = Boolean(groupDraft.value[g.id])
-      if (want === isMember(g, target.id) || !g.canManage) continue
+    if (rolesChanged) {
+      const fresh = await updateUser(target.id, { roles: roleDraft.value })
+      users.value = users.value.map((x) => (x.id === fresh.id ? fresh : x))
+      // 分组中途失败时弹窗不关,下一次保存不该把已经写成功的角色再写一遍。
+      permsTarget.value = fresh
+    }
+    stage = 'groups'
+    // 差集逐条写:每写成一个就把返回的名册换回本地,中途失败时显示的是「真的改成了什么」。
+    for (const { g, want } of groupOps) {
       const fresh = want
         ? await addGroupMember(g.id, target.id)
         : await removeGroupMember(g.id, target.id)
       groups.value = groups.value.map((x) => (x.id === fresh.id ? fresh : x))
-      changed++
     }
-    if (changed > 0) toast.success(t('adminUsers.groupsSaved', { name: target.username }))
-    groupsOpen.value = false
-    groupsTarget.value = null
+    permsOpen.value = false
+    permsTarget.value = null
+    toast.success(t('adminUsers.permsSaved', { name: target.username }))
   } catch (err) {
-    groupsBanner.value = errText(err, 'adminUsers.errGroupsUpdate')
+    permsBanner.value = errText(
+      err,
+      stage === 'roles' ? 'adminUsers.errRoleUpdate' : 'adminUsers.errGroupsUpdate',
+    )
   } finally {
-    groupsBusy.value = false
+    permsBusy.value = false
   }
 }
 
@@ -503,38 +575,32 @@ async function submitProfile(): Promise<void> {
               </div>
             </td>
             <td>
-              <span v-if="isBootstrapAdmin(u)" class="tag" :class="roleTagClass(u.role)">
-                {{ roleLabel(u.role) }}
-              </span>
-              <select
-                v-else
-                class="role-select"
-                :value="u.role"
-                :disabled="roleBusyId === u.id"
-                :title="t('adminUsers.roleChangeHint')"
-                @change="saveRole(u, ($event.target as HTMLSelectElement).value, $event.target as HTMLSelectElement)"
-              >
-                <option v-for="r in roles" :key="r.id" :value="r.id">{{ roleLabel(r.id) }}</option>
-              </select>
+              <div class="role-tags">
+                <span v-for="rid in userRoles(u)" :key="rid" class="tag" :class="roleTagClass(rid)">
+                  {{ roleLabel(rid) }}
+                </span>
+              </div>
             </td>
             <td>
               <div class="cell-groups">
                 <span v-for="name in groupNames(u)" :key="name" class="tag tag--group">{{ name }}</span>
-                <span v-if="groupNames(u).length === 0" class="cell-dim">{{ t('adminUsers.groupsNone') }}</span>
-                <AppButton variant="ghost" size="sm" @click="openGroups(u)">
-                  {{ t('adminUsers.assocGroups') }}
-                </AppButton>
+                <span v-if="groupNames(u).length === 0" class="cell-dim cell-dim--inline">
+                  {{ t('adminUsers.groupsNone') }}
+                </span>
               </div>
             </td>
-            <td>
+            <td class="cell-nowrap">
               <span :class="u.enabled ? 'ok' : 'off'">
                 {{ u.enabled ? t('adminUsers.enabled') : t('adminUsers.disabled') }}
               </span>
             </td>
-            <td>{{ fmtTime(u.lastLoginAt) }}</td>
-            <td>{{ fmtTime(u.createdAt) }}</td>
+            <td class="cell-nowrap">{{ fmtTime(u.lastLoginAt) }}</td>
+            <td class="cell-nowrap">{{ fmtTime(u.createdAt) }}</td>
             <td>
               <div class="cell-actions">
+                <AppButton variant="ghost" size="sm" @click="openPermissions(u)">
+                  {{ t('adminUsers.setPerms') }}
+                </AppButton>
                 <AppButton
                   variant="ghost"
                   size="sm"
@@ -664,17 +730,20 @@ async function submitProfile(): Promise<void> {
             />
           </template>
         </FormField>
-        <FormField
-          :label="t('adminUsers.fieldRole')"
-          field-id="user-create-role"
-          :hint="t('adminUsers.roleDesc')"
-        >
-          <template #default="{ fieldId }">
-            <select :id="fieldId" v-model="createForm.role" class="ui-input" :disabled="createBusy">
-              <option v-for="r in roles" :key="r.id" :value="r.id">{{ roleLabel(r.id) }}</option>
-            </select>
-          </template>
-        </FormField>
+        <div class="field--wide">
+          <p class="field-title">
+            {{ t('adminUsers.fieldRoles') }}
+            <span class="field-required" aria-hidden="true">*</span>
+          </p>
+          <TransferList
+            v-model="createForm.roles"
+            :options="roleOptions"
+            preserve-order
+            :disabled="createBusy"
+          />
+          <p v-if="createErrors.roles" class="field-error" role="alert">{{ createErrors.roles }}</p>
+          <p v-else class="field-hint">{{ t('adminUsers.rolesHint') }}</p>
+        </div>
         <FormField :label="t('adminUsers.fieldDesc')" field-id="user-create-desc">
           <template #default="{ fieldId }">
             <input
@@ -734,34 +803,106 @@ async function submitProfile(): Promise<void> {
       </template>
     </AppModal>
 
-    <!-- ─── 关联分组 ─── -->
+    <!-- ─── 设置权限:角色(功能轴)+ 分组(数据轴)─── -->
     <AppModal
-      v-if="groupsOpen"
-      :title="t('adminUsers.groupsTitle', { name: groupsTarget?.username })"
-      width="md"
-      :busy="groupsBusy"
-      @close="closeGroups"
-      @submit="submitGroups"
+      v-if="permsOpen"
+      :title="t('adminUsers.permsTitle', { name: permsTarget?.username })"
+      width="xl"
+      :busy="permsBusy"
+      @close="closePermissions"
+      @submit="submitPermissions"
     >
-      <p v-if="groupsBanner" class="banner banner--err" role="alert">{{ groupsBanner }}</p>
-      <p class="modal-desc">{{ t('adminUsers.groupsDesc') }}</p>
-      <p v-if="groups.length === 0" class="state">{{ t('adminUsers.groupsEmpty') }}</p>
-      <div v-else class="group-list">
-        <label v-for="g in groups" :key="g.id" class="group-item" :class="{ 'group-item--locked': !g.canManage }">
-          <input
-            v-model="groupDraft[g.id]"
-            type="checkbox"
-            :disabled="!g.canManage || groupsBusy"
-            :title="g.canManage ? '' : t('adminUsers.groupsLockedHint')"
+      <p v-if="permsBanner" class="banner banner--err" role="alert">{{ permsBanner }}</p>
+
+      <!-- 两条轴分两档:同屏堆叠太长,保存仍一次提交两边。 -->
+      <div class="perms-tabs" role="tablist">
+        <button
+          type="button"
+          class="perms-tab"
+          :class="{ 'perms-tab--active': permsTab === 'roles' }"
+          role="tab"
+          :aria-selected="permsTab === 'roles'"
+          @click="permsTab = 'roles'"
+        >
+          {{ t('adminUsers.fieldRoles') }}
+          <span class="perms-tab__count">{{ roleDraft.length }}</span>
+        </button>
+        <button
+          type="button"
+          class="perms-tab"
+          :class="{ 'perms-tab--active': permsTab === 'groups' }"
+          role="tab"
+          :aria-selected="permsTab === 'groups'"
+          @click="permsTab = 'groups'"
+        >
+          {{ t('adminUsers.colGroups') }}
+          <span class="perms-tab__count">{{ groupDraft.length + groupLockedIds.length }}</span>
+        </button>
+      </div>
+
+      <div v-if="permsTab === 'roles'" class="perms-panel" role="tabpanel">
+        <p class="modal-desc">{{ t('adminUsers.accessDesc') }}</p>
+
+        <!-- 左选角色、右看结果:勾掉一个角色,右边那棵树当场少掉它独有的点。 -->
+        <div class="access-grid">
+          <section class="access-roles">
+            <header class="inherited-head">
+              <h3 class="inherited-title">{{ t('adminUsers.fieldRoles') }}</h3>
+              <span class="cell-dim">{{ roleDraft.length }} / {{ roles.length }}</span>
+            </header>
+            <TransferList
+              v-model="roleDraftModel"
+              :options="roleOptions"
+              preserve-order
+              :disabled="permsLocked || permsBusy"
+            />
+            <p v-if="permsLocked" class="field-hint">{{ t('adminUsers.rolesLocked') }}</p>
+            <p v-else-if="permsIssue" class="field-error" role="alert">{{ permsIssue }}</p>
+            <p v-else class="field-hint">{{ t('adminUsers.rolesHint') }}</p>
+          </section>
+
+          <section class="inherited">
+            <header class="inherited-head">
+              <h3 class="inherited-title">{{ t('adminUsers.inheritedTitle') }}</h3>
+              <span class="cell-dim">
+                {{ t('adminUsers.permsTotal', { n: draftTree.perms.length, total: points.length }) }}
+              </span>
+            </header>
+            <p v-if="draftTree.perms.length === 0" class="cell-dim">{{ t('adminUsers.permsEmpty') }}</p>
+            <PermissionTree
+              v-else
+              :points="points"
+              :selected="draftTree.perms"
+              readonly
+              :sources="draftTree.sources"
+              :role-label="roleLabel"
+            />
+          </section>
+        </div>
+      </div>
+
+      <div v-else class="perms-panel" role="tabpanel">
+        <p class="modal-desc">{{ t('adminUsers.groupsDesc') }}</p>
+        <p v-if="groups.length === 0" class="state">{{ t('adminUsers.groupsEmpty') }}</p>
+        <template v-else>
+          <!-- 已在他名下的组预置在右栏;不归你管的组在左栏置灰、在右栏锁定。 -->
+          <TransferList
+            v-model="groupDraft"
+            :options="groupOptions"
+            :locked-ids="groupLockedIds"
+            :disabled-ids="groupUnmanageableIds"
+            :locked-label="t('adminUsers.groupsLockedTag')"
+            :disabled="permsBusy"
           />
-          <span class="group-name">{{ g.name }}</span>
-          <span class="group-meta">{{ t('adminUsers.groupsMembers', { n: g.members.length }) }}</span>
-        </label>
+          <p v-if="groupUnmanageableIds.length" class="field-hint">
+            {{ t('adminUsers.groupsLockedHint') }}
+          </p>
+        </template>
       </div>
 
       <template #actions>
-        <AppButton :disabled="groupsBusy" @click="closeGroups">{{ t('adminUsers.cancel') }}</AppButton>
-        <AppButton variant="primary" type="submit" :loading="groupsBusy">
+        <AppButton :disabled="permsBusy" @click="closePermissions">{{ t('adminUsers.cancel') }}</AppButton>
+        <AppButton variant="primary" type="submit" :loading="permsBusy">
           {{ t('adminUsers.save') }}
         </AppButton>
       </template>
@@ -898,6 +1039,13 @@ async function submitProfile(): Promise<void> {
   border-bottom: 1px solid var(--color-border);
   vertical-align: top;
 }
+/* 角色/分组列给足宽度,标签按两三枚一行铺开,不再被挤成竖条。 */
+.grid th:nth-child(2),
+.grid td:nth-child(2),
+.grid th:nth-child(3),
+.grid td:nth-child(3) {
+  min-width: 180px;
+}
 .cell-strong {
   font-weight: 600;
   color: var(--color-text);
@@ -933,10 +1081,11 @@ async function submitProfile(): Promise<void> {
 }
 .tag {
   display: inline-block;
-  padding: 2px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
   font-size: var(--text-small, 0.8em);
   font-weight: 600;
+  white-space: nowrap;
 }
 .tag--admin {
   background: rgba(59, 130, 246, 0.15);
@@ -963,12 +1112,6 @@ async function submitProfile(): Promise<void> {
   background: rgba(139, 92, 246, 0.14);
   color: #6d28d9;
 }
-.cell-groups {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
 .tag--group {
   background: rgba(14, 165, 233, 0.13);
   color: #0369a1;
@@ -979,58 +1122,119 @@ async function submitProfile(): Promise<void> {
   margin: 0 0 10px;
   max-width: 76ch;
 }
-.group-list {
+/* 角色 / 分组列只陈列标签,操作统一收到一行的「设置权限」里。 */
+.role-tags,
+.cell-groups {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.group-item {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
-  border-radius: var(--radius-sm, 6px);
-  font-size: var(--text-label);
-  cursor: pointer;
+  gap: 4px;
+  min-width: 0;
 }
-.group-item:hover {
-  background: var(--color-bg, #f8fafc);
+.cell-dim--inline {
+  margin-top: 0;
 }
-.group-item--locked {
-  cursor: not-allowed;
-  color: var(--color-faint);
-}
-.group-name {
-  font-weight: 600;
-}
-.group-meta {
-  margin-left: auto;
-  font-size: var(--text-small, 0.85em);
-  color: var(--color-faint);
+.cell-nowrap {
   white-space: nowrap;
 }
-/* 行内改角色:与描述输入一样做成「看着像文本、点开才像控件」,避免整表变成表单。 */
-.role-select {
-  padding: 4px 8px;
-  font-size: var(--text-small, 0.85em);
-  font-weight: 600;
-  color: var(--color-text);
+.field-title {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--color-dim);
+  margin-bottom: 6px;
+}
+.field-required {
+  color: var(--color-red);
+  margin-left: 2px;
+}
+.field-hint {
+  margin-top: 6px;
+  font-size: var(--text-small, 0.8em);
+  color: var(--color-faint);
+}
+.field-error {
+  margin-top: 6px;
+  font-size: var(--text-small, 0.8em);
+  color: var(--color-red);
+}
+/* 角色 × 继承权限:左选右看。xl 弹窗下并排,窄屏再退回上下。 */
+.access-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.access-roles {
+  min-width: 0;
+}
+.inherited {
+  min-width: 0;
+}
+/* 角色 / 分组两档:切换不改草稿,保存时两边一起提交。 */
+.perms-tabs {
+  align-self: flex-start;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded);
+}
+.perms-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--rounded-sm, 4px);
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm, 6px);
+  color: var(--color-dim);
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
   cursor: pointer;
 }
-.role-select:hover,
-.role-select:focus {
-  border-color: var(--color-border);
-  background: var(--color-bg, #fff);
-  outline: none;
+.perms-tab:hover {
+  color: var(--color-text);
 }
-.role-select:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.perms-tab--active {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+.perms-tab__count {
+  min-width: 1.5em;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--color-faint);
+  background: var(--color-border);
+  text-align: center;
+}
+.perms-tab--active .perms-tab__count {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.perms-panel {
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .access-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.inherited-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.inherited-title {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-dim);
 }
 .ok {
   color: #16a34a;

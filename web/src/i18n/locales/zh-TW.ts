@@ -10,6 +10,20 @@ const zhTW: typeof zhCN = {
     detailArrow: '詳情 →',
     close: '關閉',
     aiTokens: '本次呼叫 · 輸入 {prompt} / 輸出 {completion} tokens',
+    transfer: {
+      available: '可選',
+      selected: '已選',
+      searchAvailable: '搜尋…',
+      searchSelected: '在已選中搜尋…',
+      add: '加入',
+      remove: '移出',
+      noMatch: '沒有符合的項目',
+      emptyAvailable: '沒有可新增的項目',
+      emptySelected: '還沒有選擇任何項目',
+      prevPage: '上一頁',
+      nextPage: '下一頁',
+      pageOf: '第 {page} / {pages} 頁',
+    },
   },
 
   locale: {

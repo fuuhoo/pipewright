@@ -25,6 +25,12 @@ export default {
   permsMore: '还有 {n} 个',
   permsCollapse: '收起',
   userCount: '{n} 个账号',
+  viewMembers: '查看账号',
+  membersTitle: '{name} 的账号',
+  membersHint: '只读名单。谁挂哪个角色在「账号与角色」tab 里改;这里只回答「这个角色现在有哪些人」。',
+  membersOthers: '其他账号',
+  membersCurrent: '该角色账号',
+  errMembers: '账号名单加载失败',
   builtinTag: '内置模板',
   builtinEditHint: '内置管理员是代码表里的模板,不可修改也不可删除 —— 要调整就复制一份。',
   deleteBlockedHint: '还有 {n} 个账号挂着这个角色,先在账号 tab 改派再来删。',
@@ -56,6 +62,9 @@ export default {
   clearAll: '清空',
   permsHint: '功能点是入口级的:同一个「服务器」类别下,主机状态、容器、证书、预览、异常检测可以分别给或分别不给。',
   settingsOnly: '仅内置管理员',
+  treeExpand: '展开',
+  treeCollapse: '收起',
+  treeGroupAll: '全选 / 清空这一组',
   settingsBlocked: '「进得了设置」这一项只给内置管理员,自定义角色拿不到。',
   effectHint: '保存后对方刷新页面即生效(能力位每次会话读取都重算);只有把账号换到另一个角色才需要对方重新登录。',
 
@@ -87,7 +96,7 @@ export default {
   kindRunHint: '运行历史、环境视图与 DORA 指标都是从运行算出来的聚合页。',
   kindServerHint: '主机状态、容器、证书、预览环境与异常检测共用这台机器这条轴。',
   kindClusterHint: '集群浏览与发布 / 回滚,对应 deploy_k8s 那条腿。',
-  kindPlatformHint: '全局凭据、保险库、审计、通知、AI、DNS、系统与服务器/集群登记 —— 这一组要么全给要么全不给,所以只内置管理员可得。',
+  kindPlatformHint: '全局凭据、保险库、审计、通知、AI、DNS、系统与服务器/集群登记 —— 这些只给内置管理员;「创建分组」是个例外,可以单独给自定义角色。',
 
   perm: {
     dashboard_view: '概览',
@@ -111,6 +120,7 @@ export default {
     anomaly_edit: '改异常检测规则与告警',
     cluster_view: 'K8s 集群与工作负载',
     cluster_operate: '发布 / 回滚到集群',
+    group_create: '创建分组',
     settings_access: '进得了设置(全局凭据 / 审计 / 登记)',
   },
 }

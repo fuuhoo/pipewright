@@ -20,6 +20,12 @@ export default {
   permsMore: '외 {n}개',
   permsCollapse: '접기',
   userCount: '{n}개 계정',
+  viewMembers: '계정 보기',
+  membersTitle: '{name} 계정',
+  membersHint: '읽기 전용 명단입니다. 누가 어떤 역할을 갖는지는 「계정과 역할」 탭에서 바꿉니다. 여기서는 이 역할을 가진 사람만 보여 줍니다.',
+  membersOthers: '다른 계정',
+  membersCurrent: '이 역할의 계정',
+  errMembers: '계정 명단을 불러오지 못했습니다',
   builtinTag: '기본 템플릿',
   builtinEditHint: '기본 관리자는 코드에 정의된 템플릿입니다. 수정·삭제할 수 없으니 복제해서 조절하세요.',
   deleteBlockedHint: '아직 {n}개 계정이 이 역할을 사용 중입니다. 계정 탭에서 먼저 할당을 변경하세요.',
@@ -51,6 +57,9 @@ export default {
   clearAll: '전체 해제',
   permsHint: '기능 항목은 진입점 단위입니다. 같은 “서버” 분류 안에서도 호스트 상태, 컨테이너, 인증서, 미리보기, 이상 탐지를 각각 허용하거나 막을 수 있습니다.',
   settingsOnly: '기본 관리자만',
+  treeExpand: '펼치기',
+  treeCollapse: '접기',
+  treeGroupAll: '이 그룹 모두 선택 / 해제',
   settingsBlocked: '“설정 접근” 항목은 기본 관리자 전용이며 사용자 정의 역할에는 줄 수 없습니다.',
   effectHint: '저장 후 상대는 페이지를 새로고침하면 반영됩니다(능력은 세션 읽을 때마다 재계산). 계정을 다른 역할로 옮길 때만 재로그인이 필요합니다.',
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: '실행 이력, 환경 뷰, DORA 지표는 모두 실행에서 계산된 집계 페이지입니다.',
   kindServerHint: '호스트 상태, 컨테이너, 인증서, 미리보기 환경, 이상 탐지가 이 축을 함께 씁니다.',
   kindClusterHint: '클러스터 조회와 배포 / 롤백, deploy_k8s 단계에 해당합니다.',
-  kindPlatformHint: '공통 자격 증명, 볼트, 감사, 알림, AI, DNS, 시스템 정보, 서버/클러스터 등록 — 이 묶음은 전부 주거나 안 주거나라 기본 관리자만 가능합니다.',
+  kindPlatformHint: '공통 자격 증명, 볼트, 감사, 알림, AI, DNS, 시스템 정보, 서버/클러스터 등록 — 기본 관리자 전용입니다. 단, "그룹 생성"은 예외로 사용자 정의 역할에 단독 부여할 수 있습니다.',
 
   perm: {
     dashboard_view: '개요',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: '이상 탐지 규칙·경고 수정',
     cluster_view: 'K8s 클러스터와 워크로드',
     cluster_operate: '클러스터 배포 / 롤백',
+    group_create: '그룹 생성',
     settings_access: '설정 접근(공통 자격 증명 / 감사 / 등록)',
   },
 }

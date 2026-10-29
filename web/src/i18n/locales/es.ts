@@ -10,6 +10,20 @@ const es: typeof zhCN = {
     detailArrow: 'Detalles →',
     close: 'Cerrar',
     aiTokens: 'Esta llamada · {prompt} de entrada / {completion} de salida tokens',
+    transfer: {
+      available: 'Disponibles',
+      selected: 'Seleccionados',
+      searchAvailable: 'Buscar…',
+      searchSelected: 'Buscar en seleccionados…',
+      add: 'Añadir',
+      remove: 'Quitar',
+      noMatch: 'Sin coincidencias',
+      emptyAvailable: 'No queda nada por añadir',
+      emptySelected: 'Aún no hay nada seleccionado',
+      prevPage: 'Página anterior',
+      nextPage: 'Página siguiente',
+      pageOf: 'Página {page} de {pages}',
+    },
   },
 
   locale: {

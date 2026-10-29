@@ -20,6 +20,12 @@ export default {
   permsMore: '{n} de plus',
   permsCollapse: 'Réduire',
   userCount: '{n} comptes',
+  viewMembers: 'Voir les comptes',
+  membersTitle: 'Comptes avec {name}',
+  membersHint: 'Liste en lecture seule. L’attribution des rôles se modifie dans l’onglet « Comptes et rôles » ; ici, on répond seulement à « qui a ce rôle maintenant ».',
+  membersOthers: 'Autres comptes',
+  membersCurrent: 'Comptes avec ce rôle',
+  errMembers: 'Échec du chargement de la liste des comptes',
   builtinTag: 'Modèle intégré',
   builtinEditHint: "Le rôle Admin intégré vit dans le code : on ne peut ni le modifier ni le supprimer — dupliquez-le pour l'ajuster.",
   deleteBlockedHint: '{n} comptes utilisent encore ce rôle. Réaffectez-les d’abord dans l’onglet Comptes.',
@@ -51,6 +57,9 @@ export default {
   clearAll: 'Tout décocher',
   permsHint: "Les points sont granulaires par entrée : sous la même catégorie « serveur », l'état de l'hôte, les conteneurs, les certificats, les prévisualisations et la détection d'anomalies peuvent être accordés ou refusés séparément.",
   settingsOnly: 'Administrateur intégré uniquement',
+  treeExpand: 'Déplier',
+  treeCollapse: 'Replier',
+  treeGroupAll: 'Tout cocher / décocher ce groupe',
   settingsBlocked: "« Accès aux réglages » est réservé à l'administrateur intégré ; un rôle personnalisé ne peut pas l'obtenir.",
   effectHint: "Après l'enregistrement, le changement prend effet dès que l'intéressé recharge la page (les capacités sont recalculées à chaque lecture de session). Un nouveau login n'est nécessaire que si vous changez le rôle d'un compte.",
 
@@ -82,7 +91,7 @@ export default {
   kindRunHint: "Historique d'exécutions, vue environnements et métriques DORA : des pages agrégées calculées depuis les exécutions.",
   kindServerHint: "État de l'hôte, conteneurs, certificats, environnements de prévisualisation et détection d'anomalies partagent cet axe.",
   kindClusterHint: 'Parcours du cluster et déploiement / retour en arrière — la branche deploy_k8s.',
-  kindPlatformHint: "Identifiants globaux, coffre, audit, notifications, IA, DNS, infos système et enregistrement des serveurs/clusters : ce bloc se donne en entier ou pas du tout, d'où l'exclusivité de l'administrateur intégré.",
+  kindPlatformHint: "Identifiants globaux, coffre, audit, notifications, IA, DNS, infos système et enregistrement des serveurs/clusters : réservé à l'administrateur intégré. « Créer des groupes » fait exception : ce point peut être accordé seul à un rôle personnalisé.",
 
   perm: {
     dashboard_view: 'Vue d’ensemble',
@@ -106,6 +115,7 @@ export default {
     anomaly_edit: "Modifier les règles d'anomalies et les alertes",
     cluster_view: 'Clusters et charges de travail K8s',
     cluster_operate: 'Déployer / revenir en arrière sur le cluster',
+    group_create: 'Créer des groupes',
     settings_access: 'Accès aux réglages (identifiants globaux / audit / enregistrements)',
   },
 }
