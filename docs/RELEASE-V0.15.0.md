@@ -92,8 +92,30 @@ c2e2879 chore(前端): 重新生成 dist 入口,指向上一条打包产物
 
 ## 发版流程
 
-1. **推送 master**: `git push git@github.com:fuuhoo/pipewright.git master`
-2. **打 tag**: `git tag -a v0.15.0 -m "v0.15.0: multi-role users, group.create, server metrics cache"`
-3. **推 tag**: `git push git@github.com:fuuhoo/pipewright.git v0.15.0`
-4. **盯四条 workflow**: `release`, `aliyun-image`, `caddy-image`, `ci`(push & tag)
-5. **终检**: Release 资产可下载、ACR 四标签存在、镜像自述版本 = 0.15.0、latest 已切
+1. **推送 master**: `git push git@github.com:fuuhoo/pipewright.git master` ✅
+2. **打 tag**: `git tag -a v0.15.0 -m "v0.15.0: 一人多角色、建组功能点、状态页指标后台采样"` ✅
+3. **推 tag**: `git push git@github.com:fuuhoo/pipewright.git v0.15.0` ✅
+4. **盯四条 workflow**: `release`, `aliyun-image`, `caddy-image`, `ci`(push & tag)✅ 五条 run 一次全绿
+5. **终检**: 见下
+
+---
+
+## 发版结果(2026-10-29)
+
+- 五条 run 全绿:`ci`(master push)3m32s、`ci`(tag)4m31s、`release` 6m10s、`aliyun-image` 4m26s、
+  `caddy-image` **20m19s**(又是最慢的一条)。
+- Release:`draft=false`、`prerelease=false`、7 个资产;六个平台包 `shasum -a 256 -c checksums.txt` 逐行 OK;
+  `releases/latest` 指向 v0.15.0。
+- ghcr:`latest` 两个子 manifest digest 与 `0.15.0` 相同(`53d67977…` / `ec1ef9cd…`);
+  镜像内二进制 `--version` = `0.15.0 (commit 4453df9, …, linux/arm64)`。
+- ACR(本机登录仍有效):四标签 `docker manifest inspect` 均列出 amd64 + arm64;
+  `0.15.0` = `latest` = `sha256:aab093dd…`,`0.15.0-docker` = `latest-docker` = `sha256:c259007e…`。
+- 发布产物抽验:darwin/arm64 二进制 `--version` = `0.15.0 (commit 4453df9)`;空目录里
+  `reset-admin-password --generate` 退出码 2、报出解析到的绝对路径,目录里没有留下 `.db`。
+- 本机 8080 / 8081 两个实例已换到 `index-BrtSu2VA.js` 新包并返回 200。
+
+### 环境备注
+
+- `~/github/pat.txt` 的 token 已失效(401 Bad credentials),本次用匿名 runs 接口查流水线、
+  `docker buildx imagetools inspect` 验 ACR;`jobs/{id}/logs` 匿名 403,下次发版前需换新 token。
+
