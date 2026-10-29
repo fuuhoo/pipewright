@@ -36,6 +36,14 @@ export async function changePassword(input: ChangePasswordInput): Promise<void> 
   return http.post<void>('/api/account/password', input)
 }
 
+/**
+ * 首次设置本地口令:仅对没有本地口令的账号(OAuth/OIDC 首登自动建号)有效。
+ * 不要求当前口令 —— 占位口令的明文从未存在。已有口令的账号返回 409 password_already_set。
+ */
+export async function setInitialPassword(newPassword: string): Promise<void> {
+  return http.post<void>('/api/account/password/initial', { newPassword })
+}
+
 export async function listSessions(): Promise<Session[]> {
   const res = await http.get<{ sessions: Session[] }>('/api/account/sessions')
   return res.sessions

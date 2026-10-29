@@ -322,6 +322,8 @@ func (s *Service) provision(ctx context.Context, app *oauth.LoginAppConfig, id *
 		Description:  fmt.Sprintf("OAuth 自动建号(%s:%s)", id.Provider, displayHandle(id)),
 		DisplayName:  id.Name,
 		Email:        id.Email,
+		// 占位哈希没人知道明文:标成「没有本地口令」,账户页才会给「首次设置口令」入口。
+		PlaceholderPassword: true,
 	})
 	if err != nil {
 		if errors.Is(err, users.ErrConflict) {

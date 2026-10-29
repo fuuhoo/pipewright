@@ -903,6 +903,9 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 改口令 / 撤销会话为敏感操作,业务成功后接 audit(detail 绝无明文口令)。
 		ac := o.account
 		ar.Post("/account/password", makeChangePasswordHandler(ac, aud))
+		// 首次设置本地口令(OAuth/OIDC 自动建号没有本人知道的口令,不能走「输入当前口令」)。
+		// 仅在账号尚无本地口令时放行,已有口令 → 409(见 auth.SetInitialPassword)。
+		ar.Post("/account/password/initial", makeSetInitialPasswordHandler(ac, aud))
 		// 本地档案(显示名 + 邮箱)本人可改;写 users 两列,审计记新值供事后认出冒充。
 		ar.Post("/account/profile", makeUpdateProfileHandler(o.usersSvc, aud))
 		ar.Get("/account/sessions", makeListSessionsHandler(ac))
@@ -1414,6 +1417,10 @@ type sessionPayload struct {
 	// Roles 是会话持有的全部角色(选择器拆分结果,主角色在首位)。
 	Roles        []string            `json:"roles"`
 	Capabilities access.Capabilities `json:"capabilities"`
+	// HasLocalPassword 为 false 表示这个账号没有本人知道的本地口令(OAuth/OIDC 首登自动建号,
+	// 库里是随机占位哈希)。账户页据此给「首次设置口令」,而不是要求输入当前口令。
+	// 解析不出 users 行(旧会话 / 服务未装配)时按 true 回:宁可不给入口,也不给错入口。
+	HasLocalPassword bool `json:"hasLocalPassword"`
 }
 
 // newSessionPayload 组装会话响应。role 需先过 sessionRoleOf(旧会话空串按 admin)。
@@ -1434,12 +1441,14 @@ func newSessionPayload(username, role string) sessionPayload {
 // 拿不到昵称不是把人挡在门外的理由。
 func buildSessionPayload(us *users.Service, sess *auth.Session, username, role string) sessionPayload {
 	p := newSessionPayload(username, role)
+	p.HasLocalPassword = true
 	if us == nil || sess == nil || sess.UserID == "" {
 		return p
 	}
 	if u, err := us.GetByID(sess.UserID); err == nil {
 		p.DisplayName = u.DisplayName
 		p.Email = u.Email
+		p.HasLocalPassword = u.HasLocalPassword
 	}
 	return p
 }

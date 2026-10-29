@@ -18,6 +18,8 @@ type accountService interface {
 	ChangePassword(current, newPassword, currentToken string) error
 	// ChangeUserPassword 改 users 表账号(普通用户 / 额外管理员)自己的口令。
 	ChangeUserPassword(userID, current, newPassword, currentToken string) error
+	// SetInitialPassword 给没有本地口令的账号(OAuth/OIDC 首登自动建号)设置第一个口令。
+	SetInitialPassword(userID, newPassword, currentToken string) error
 	ListSessions(userID, currentToken string) ([]auth.SessionMeta, error)
 	RevokeSession(userID, id string) error
 }
@@ -116,6 +118,60 @@ func makeChangePasswordHandler(svc accountService, aud audit.Recorder) http.Hand
 			TargetType: audit.TargetAccount,
 			TargetID:   auditActor,
 			Detail:     map[string]any{"otherSessionsRevoked": true},
+			IP:         clientIP(r),
+		})
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// makeSetInitialPasswordHandler 返回 POST /api/account/password/initial handler(认证 + CSRF)。
+//
+// 只对「没有本地口令」的账号生效(OAuth/OIDC 首登自动建号:库里是随机占位哈希,明文从未存在,
+// 要求输入当前口令等于把这类账号锁死)。已有本地口令的账号返回 409 password_already_set ——
+// 这个接口不校验旧口令,对它们放行就是改密后门。
+func makeSetInitialPasswordHandler(svc accountService, aud audit.Recorder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "no_auth", "认证服务未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		var req struct {
+			NewPassword string `json:"newPassword"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+
+		userID := currentUserIDFromRequest(r)
+		err := svc.SetInitialPassword(userID, req.NewPassword, currentSessionToken(r))
+		switch {
+		case err == nil:
+			// continue
+		case errors.Is(err, auth.ErrWeakPassword):
+			writeError(w, http.StatusUnprocessableEntity, "weak_password", "口令至少 8 位")
+			return
+		case errors.Is(err, auth.ErrPasswordAlreadySet):
+			writeError(w, http.StatusConflict, "password_already_set", "账号已设置口令,请用「修改密码」")
+			return
+		case errors.Is(err, auth.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, "user_not_found", "账号不存在或已被禁用")
+			return
+		case errors.Is(err, auth.ErrInvalidCurrentPassword):
+			writeError(w, http.StatusUnauthorized, "invalid_current_password", "请重新登录后再试")
+			return
+		default:
+			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+			return
+		}
+
+		recordAudit(r.Context(), aud, audit.Entry{
+			Actor:      auditActor,
+			Action:     audit.ActionPasswordChange,
+			TargetType: audit.TargetAccount,
+			TargetID:   auditActor,
+			Detail:     map[string]any{"initial": true, "otherSessionsRevoked": true},
 			IP:         clientIP(r),
 		})
 		w.WriteHeader(http.StatusNoContent)

@@ -27,6 +27,9 @@ export default {
   newPwHint: 'At least 8 characters',
   confirmPwLabel: 'Confirm new password',
   changePwBtn: 'Change password',
+  initPwTitle: 'Set a local password',
+  initPwSub: 'This account was created by OAuth/OIDC sign-in and has no local password yet. Once set, you can sign in with username + password as well as OAuth.',
+  initPwBtn: 'Set password',
 
   errCurrentRequired: 'Please enter your current password',
   errNewTooShort: 'New password must be at least 8 characters',
@@ -36,6 +39,8 @@ export default {
   toastPwUpdated: 'Password updated',
   toastPwUpdatedDetail: 'Other sessions have been revoked; the current session stays signed in',
   toastPwFailed: 'Failed to update password',
+  toastInitPwSet: 'Local password set',
+  toastInitPwSetDetail: 'You can now sign in with username + password',
   unknownError: 'Unknown error',
 
   sessionsTitle: 'Active sessions',

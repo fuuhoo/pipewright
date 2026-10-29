@@ -27,6 +27,9 @@ export default {
   newPwHint: '최소 8자',
   confirmPwLabel: '새 비밀번호 확인',
   changePwBtn: '비밀번호 변경',
+  initPwTitle: '로컬 비밀번호 설정',
+  initPwSub: 'OAuth/OIDC 로그인으로 생성된 계정에는 아직 로컬 비밀번호가 없습니다. 설정하면 사용자 이름 + 비밀번호로도 로그인할 수 있으며 OAuth 로그인도 그대로 사용할 수 있습니다.',
+  initPwBtn: '비밀번호 설정',
 
   errCurrentRequired: '현재 비밀번호를 입력하세요',
   errNewTooShort: '새 비밀번호는 최소 8자 이상이어야 합니다',
@@ -36,6 +39,8 @@ export default {
   toastPwUpdated: '비밀번호가 업데이트되었습니다',
   toastPwUpdatedDetail: '다른 세션은 해지되었으며 현재 세션은 로그인 상태를 유지합니다',
   toastPwFailed: '비밀번호 업데이트에 실패했습니다',
+  toastInitPwSet: '로컬 비밀번호가 설정되었습니다',
+  toastInitPwSetDetail: '이제 사용자 이름 + 비밀번호로 로그인할 수 있습니다',
   unknownError: '알 수 없는 오류',
 
   sessionsTitle: '활성 세션',

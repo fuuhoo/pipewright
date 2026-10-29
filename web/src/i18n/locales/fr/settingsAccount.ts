@@ -27,6 +27,9 @@ export default {
   newPwHint: 'Au moins 8 caractères',
   confirmPwLabel: 'Confirmer le nouveau mot de passe',
   changePwBtn: 'Changer le mot de passe',
+  initPwTitle: 'Définir un mot de passe local',
+  initPwSub: 'Ce compte a été créé via une connexion OAuth/OIDC et n’a pas encore de mot de passe local. Une fois défini, vous pourrez vous connecter avec identifiant + mot de passe en plus d’OAuth.',
+  initPwBtn: 'Définir le mot de passe',
 
   errCurrentRequired: 'Veuillez saisir votre mot de passe actuel',
   errNewTooShort: 'Le nouveau mot de passe doit comporter au moins 8 caractères',
@@ -36,6 +39,8 @@ export default {
   toastPwUpdated: 'Mot de passe mis à jour',
   toastPwUpdatedDetail: 'Les autres sessions ont été révoquées ; la session actuelle reste connectée',
   toastPwFailed: 'Échec de la mise à jour du mot de passe',
+  toastInitPwSet: 'Mot de passe local défini',
+  toastInitPwSetDetail: 'Vous pouvez désormais vous connecter avec identifiant + mot de passe',
   unknownError: 'Erreur inconnue',
 
   sessionsTitle: 'Sessions actives',

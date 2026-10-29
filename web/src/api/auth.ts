@@ -88,6 +88,11 @@ export interface SessionUser {
   capabilities: Capabilities
   displayName: string
   email: string
+  /**
+   * 账号是否有「本人知道的」本地口令。false = OAuth/OIDC 首登自动建号(库里是随机占位哈希),
+   * 账户页给「设置本地口令」入口,而不是要求输入当前口令。老响应缺省时按 true 看待。
+   */
+  hasLocalPassword?: boolean
 }
 
 /**

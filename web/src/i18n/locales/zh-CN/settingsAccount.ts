@@ -26,6 +26,9 @@ export default {
   newPwHint: '至少 8 位',
   confirmPwLabel: '确认新密码',
   changePwBtn: '修改密码',
+  initPwTitle: '设置本地口令',
+  initPwSub: '这个账号由 OAuth/OIDC 登录建立,还没有本地口令。设置后既可用用户名 + 口令登录,也能继续用 OAuth 登录。',
+  initPwBtn: '设置口令',
 
   errCurrentRequired: '请输入当前密码',
   errNewTooShort: '新密码至少 8 位',
@@ -35,6 +38,8 @@ export default {
   toastPwUpdated: '密码已更新',
   toastPwUpdatedDetail: '其它会话已被注销,当前会话保持登录',
   toastPwFailed: '密码更新失败',
+  toastInitPwSet: '本地口令已设置',
+  toastInitPwSetDetail: '现在可以用用户名 + 口令登录这个账号',
   unknownError: '未知错误',
 
   sessionsTitle: '活跃会话',

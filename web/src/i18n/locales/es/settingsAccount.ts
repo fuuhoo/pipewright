@@ -27,6 +27,9 @@ export default {
   newPwHint: 'Al menos 8 caracteres',
   confirmPwLabel: 'Confirmar nueva contraseña',
   changePwBtn: 'Cambiar contraseña',
+  initPwTitle: 'Establecer contraseña local',
+  initPwSub: 'Esta cuenta se creó con inicio de sesión OAuth/OIDC y aún no tiene contraseña local. Una vez establecida, podrás iniciar sesión con usuario + contraseña además de OAuth.',
+  initPwBtn: 'Establecer contraseña',
 
   errCurrentRequired: 'Introduce tu contraseña actual',
   errNewTooShort: 'La nueva contraseña debe tener al menos 8 caracteres',
@@ -36,6 +39,8 @@ export default {
   toastPwUpdated: 'Contraseña actualizada',
   toastPwUpdatedDetail: 'Las demás sesiones se han revocado; la sesión actual permanece conectada',
   toastPwFailed: 'Error al actualizar la contraseña',
+  toastInitPwSet: 'Contraseña local establecida',
+  toastInitPwSetDetail: 'Ahora puedes iniciar sesión con usuario + contraseña',
   unknownError: 'Error desconocido',
 
   sessionsTitle: 'Sesiones activas',

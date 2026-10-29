@@ -27,6 +27,9 @@ export default {
   newPwHint: 'Mindestens 8 Zeichen',
   confirmPwLabel: 'Neues Passwort bestätigen',
   changePwBtn: 'Passwort ändern',
+  initPwTitle: 'Lokales Passwort festlegen',
+  initPwSub: 'Dieses Konto wurde per OAuth/OIDC-Anmeldung angelegt und hat noch kein lokales Passwort. Nach dem Festlegen kannst du dich zusätzlich zu OAuth auch mit Benutzername + Passwort anmelden.',
+  initPwBtn: 'Passwort festlegen',
 
   errCurrentRequired: 'Bitte gib dein aktuelles Passwort ein',
   errNewTooShort: 'Das neue Passwort muss mindestens 8 Zeichen lang sein',
@@ -36,6 +39,8 @@ export default {
   toastPwUpdated: 'Passwort aktualisiert',
   toastPwUpdatedDetail: 'Andere Sitzungen wurden widerrufen; die aktuelle Sitzung bleibt angemeldet',
   toastPwFailed: 'Passwort konnte nicht aktualisiert werden',
+  toastInitPwSet: 'Lokales Passwort festgelegt',
+  toastInitPwSetDetail: 'Du kannst dich jetzt mit Benutzername + Passwort anmelden',
   unknownError: 'Unbekannter Fehler',
 
   sessionsTitle: 'Aktive Sitzungen',

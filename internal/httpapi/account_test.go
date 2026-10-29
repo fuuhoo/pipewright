@@ -13,6 +13,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/mask"
 	"github.com/fuuhoo/pipewright/internal/store"
+	"github.com/fuuhoo/pipewright/internal/users"
 )
 
 // mustURL 解析 URL,失败即 fatal。
@@ -34,7 +35,7 @@ func setupAccountServer(t *testing.T) (*httptest.Server, *http.Client, string, *
 		t.Fatalf("bootstrap: %v", err)
 	}
 	rec := audit.New(st.DB, mask.NewMasker(), nil)
-	srv := httptest.NewServer(New(testWebFSAuth(), svc, WithAccount(svc), WithAudit(rec)))
+	srv := httptest.NewServer(New(testWebFSAuth(), svc, WithAccount(svc), WithUsers(users.NewService(st.DB)), WithAudit(rec)))
 	t.Cleanup(srv.Close)
 
 	client := newTestClient(t)

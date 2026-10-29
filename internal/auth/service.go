@@ -34,6 +34,10 @@ var ErrInvalidCurrentPassword = errors.New("auth: invalid current password")
 // ErrWeakPassword 新口令不满足强度规则(至少 8 位、非空)。
 var ErrWeakPassword = errors.New("auth: weak password")
 
+// ErrPasswordAlreadySet 表示账号已有本人知道的本地口令,不能再走「首次设置口令」。
+// 这条必须存在:首次设置不校验当前口令,若对已有口令的账号也放行,它就成了改密后门。
+var ErrPasswordAlreadySet = errors.New("auth: password already set")
+
 // minPasswordLen 新口令最小长度。
 const minPasswordLen = 8
 
@@ -459,6 +463,67 @@ func (s *Service) ChangeUserPassword(userID, current, newPassword, currentToken 
 		newHash, now, userID,
 	); err != nil {
 		return fmt.Errorf("auth: update user password hash: %w", err)
+	}
+	if _, err := s.sessions.DeleteOthersForUser(userID, currentToken); err != nil {
+		return fmt.Errorf("auth: revoke other sessions: %w", err)
+	}
+	return nil
+}
+
+// SetInitialPassword 给「没有本地口令」的账号设置第一个口令:OAuth/OIDC 首登自动建号时
+// 写的是随机占位哈希,明文从未存在,没人能提供「当前口令」。
+//
+// 安全性全部压在那条前提上:users.has_local_password=0 才放行。已有本地口令的账号一律
+// ErrPasswordAlreadySet —— 否则这个不校验旧口令的接口就成了绕过改密校验的后门。
+// 更新时带 `AND has_local_password = 0` 条件,并发下也不会把刚设好的口令再覆盖一次。
+//
+// 成功后撤销其它会话(与 ChangeUserPassword 同一取舍:改口令即清场,当前会话保留)。
+func (s *Service) SetInitialPassword(userID, newPassword, currentToken string) error {
+	if userID == "" {
+		return ErrUserNotFound
+	}
+	if currentToken == "" {
+		return ErrInvalidCurrentPassword
+	}
+	if len(newPassword) < minPasswordLen {
+		return ErrWeakPassword
+	}
+
+	var enabled, hasLocal int
+	err := s.db.QueryRow(`SELECT enabled, has_local_password FROM users WHERE id = ?`, userID).Scan(&enabled, &hasLocal)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("auth: query user for initial password: %w", err)
+	}
+	if enabled != 1 {
+		return ErrUserNotFound
+	}
+	if hasLocal != 0 {
+		return ErrPasswordAlreadySet
+	}
+
+	newHash, err := HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("auth: hash new password: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.Exec(
+		`UPDATE users SET password_hash = ?, has_local_password = 1, updated_at = ?
+		 WHERE id = ? AND has_local_password = 0`,
+		newHash, now, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("auth: set initial password: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("auth: rows affected: %w", err)
+	}
+	if n == 0 {
+		// 并发请求先一步设好了(或管理员刚好重置过),按已设置返回。
+		return ErrPasswordAlreadySet
 	}
 	if _, err := s.sessions.DeleteOthersForUser(userID, currentToken); err != nil {
 		return fmt.Errorf("auth: revoke other sessions: %w", err)

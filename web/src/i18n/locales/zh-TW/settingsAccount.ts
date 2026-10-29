@@ -26,6 +26,9 @@ export default {
   newPwHint: '至少 8 位',
   confirmPwLabel: '確認新密碼',
   changePwBtn: '修改密碼',
+  initPwTitle: '設定本機密碼',
+  initPwSub: '這個帳號由 OAuth/OIDC 登入建立,還沒有本機密碼。設定後既可用使用者名稱 + 密碼登入,也能繼續用 OAuth 登入。',
+  initPwBtn: '設定密碼',
 
   errCurrentRequired: '請輸入目前密碼',
   errNewTooShort: '新密碼至少 8 位',
@@ -35,6 +38,8 @@ export default {
   toastPwUpdated: '密碼已更新',
   toastPwUpdatedDetail: '其它工作階段已被中斷,目前工作階段保持登入',
   toastPwFailed: '密碼更新失敗',
+  toastInitPwSet: '本機密碼已設定',
+  toastInitPwSetDetail: '現在可以用使用者名稱 + 密碼登入這個帳號',
   unknownError: '未知錯誤',
 
   sessionsTitle: '活躍工作階段',

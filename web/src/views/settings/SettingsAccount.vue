@@ -43,6 +43,7 @@ import {
 import { HttpError } from '../../api/http'
 import {
   changePassword,
+  setInitialPassword,
   listIdentities,
   listSessions,
   revokeSession,
@@ -139,6 +140,13 @@ async function onSubmitProfile(): Promise<void> {
 }
 
 // ——— change-password form ———
+/**
+ * OAuth/OIDC 首登自动建号的账号没有「本人知道的」本地口令(库里是随机占位哈希),
+ * 要求输入当前口令等于把这类账号锁死。hasLocalPassword 由会话载荷带下来:
+ * false 时表单切成「设置本地口令」(新口令 + 确认,不要当前口令),接口只在这种账号上放行。
+ */
+const isInitialSetup = computed(() => sessionStore.user?.hasLocalPassword === false)
+
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
@@ -156,7 +164,7 @@ function clearPwErrors(): void {
 function validatePassword(): boolean {
   clearPwErrors()
   let ok = true
-  if (!currentPassword.value) {
+  if (!isInitialSetup.value && !currentPassword.value) {
     currentError.value = t('settingsAccount.errCurrentRequired')
     ok = false
   }
@@ -175,6 +183,18 @@ async function onSubmitPassword(): Promise<void> {
   if (!validatePassword()) return
   submitting.value = true
   try {
+    if (isInitialSetup.value) {
+      await setInitialPassword(newPassword.value)
+      const me = sessionStore.user
+      // 本地更新即可换成「修改密码」表单,不必等下一次 /api/auth/session。
+      if (me) sessionStore.setUser({ ...me, hasLocalPassword: true })
+      newPassword.value = ''
+      confirmPassword.value = ''
+      clearPwErrors()
+      toast.success(t('settingsAccount.toastInitPwSet'), { detail: t('settingsAccount.toastInitPwSetDetail') })
+      await loadSessions()
+      return
+    }
     await changePassword({
       currentPassword: currentPassword.value,
       newPassword: newPassword.value,
@@ -194,6 +214,13 @@ async function onSubmitPassword(): Promise<void> {
       }
       if (err.apiError?.code === 'weak_password') {
         newError.value = t('settingsAccount.errNewTooShort')
+        return
+      }
+      if (err.apiError?.code === 'password_already_set') {
+        // 并发/管理员刚重置过:以服务端为准,把页面切回「修改密码」。
+        const me = sessionStore.user
+        if (me) sessionStore.setUser({ ...me, hasLocalPassword: true })
+        toast.error(t('settingsAccount.toastPwFailed'), { detail: err.apiError.message })
         return
       }
     }
@@ -480,14 +507,24 @@ onMounted(async () => {
       </form>
     </section>
 
-    <!-- Change password -->
+    <!-- Change password / set the first local password (OAuth-provisioned accounts) -->
     <section class="acct-card" aria-labelledby="acct-pw-h">
       <header class="acct-card__h">
-        <h2 id="acct-pw-h" class="acct-card__title">{{ t('settingsAccount.changePwTitle') }}</h2>
-        <p class="acct-card__sub">{{ t('settingsAccount.changePwSub') }}</p>
+        <h2 id="acct-pw-h" class="acct-card__title">
+          {{ t(isInitialSetup ? 'settingsAccount.initPwTitle' : 'settingsAccount.changePwTitle') }}
+        </h2>
+        <p class="acct-card__sub">
+          {{ t(isInitialSetup ? 'settingsAccount.initPwSub' : 'settingsAccount.changePwSub') }}
+        </p>
       </header>
       <form class="acct-form" @submit.prevent="onSubmitPassword">
-        <FormField :label="t('settingsAccount.currentPwLabel')" field-id="acct-current" :error="currentError" required>
+        <FormField
+          v-if="!isInitialSetup"
+          :label="t('settingsAccount.currentPwLabel')"
+          field-id="acct-current"
+          :error="currentError"
+          required
+        >
           <template #default="{ fieldId, ariaDescribedby }">
             <input
               :id="fieldId"
@@ -540,7 +577,7 @@ onMounted(async () => {
 
         <div class="acct-form__actions">
           <AppButton variant="primary" type="submit" :loading="submitting">
-            {{ t('settingsAccount.changePwBtn') }}
+            {{ t(isInitialSetup ? 'settingsAccount.initPwBtn' : 'settingsAccount.changePwBtn') }}
           </AppButton>
         </div>
       </form>

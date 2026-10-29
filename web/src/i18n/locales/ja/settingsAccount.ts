@@ -27,6 +27,9 @@ export default {
   newPwHint: '8 文字以上',
   confirmPwLabel: '新しいパスワードの確認',
   changePwBtn: 'パスワード変更',
+  initPwTitle: 'ローカルパスワードを設定',
+  initPwSub: 'OAuth/OIDC ログインで作成されたアカウントには、まだローカルパスワードがありません。設定すると、ユーザー名 + パスワードでもログインできます (OAuth ログインはそのまま使えます)。',
+  initPwBtn: 'パスワードを設定',
 
   errCurrentRequired: '現在のパスワードを入力してください',
   errNewTooShort: '新しいパスワードは 8 文字以上にしてください',
@@ -36,6 +39,8 @@ export default {
   toastPwUpdated: 'パスワードを更新しました',
   toastPwUpdatedDetail: '他のセッションは無効化され、現在のセッションはログインを維持しています',
   toastPwFailed: 'パスワードの更新に失敗しました',
+  toastInitPwSet: 'ローカルパスワードを設定しました',
+  toastInitPwSetDetail: 'ユーザー名 + パスワードでもログインできるようになりました',
   unknownError: '不明なエラー',
 
   sessionsTitle: 'アクティブなセッション',

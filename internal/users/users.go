@@ -110,10 +110,14 @@ type User struct {
 	DisplayName string
 	// Email 是档案邮箱,仅用于展示与联系。登录判定与域名白名单都不看它
 	// (白名单读 user_identities.email 那份平台快照,见 internal/identity)。
-	Email       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	LastLoginAt *time.Time
+	Email string
+	// HasLocalPassword 表示这个账号有一个「本人知道的」本地口令。OAuth/OIDC 首登自动建号时
+	// 写的是随机占位哈希(明文从未存在),这里为 false:账户页据此提供「首次设置口令」,
+	// 而不是要求输入一个没人知道的当前口令。
+	HasLocalPassword bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	LastLoginAt      *time.Time
 }
 
 // Service 是 users 领域对外接口。
@@ -173,7 +177,7 @@ func (s *Service) SyncAdminPasswordChange(username, newPasswordHash string) erro
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		`UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ? AND role = ?`,
+		`UPDATE users SET password_hash = ?, has_local_password = 1, updated_at = ? WHERE username = ? AND role = ?`,
 		newPasswordHash, now, username, RoleAdmin,
 	)
 	if err != nil {
@@ -200,7 +204,7 @@ type InternalUser struct {
 func (s *Service) GetByUsername(username string) (*InternalUser, error) {
 	row := s.db.QueryRow(
 		`SELECT id, username, password_hash, role, enabled, description, display_name, email,
-		        created_at, updated_at, last_login_at
+		        has_local_password, created_at, updated_at, last_login_at
 		 FROM users WHERE username = ?`, username)
 	u, err := scanInternal(row)
 	if err != nil {
@@ -216,7 +220,7 @@ func (s *Service) GetByUsername(username string) (*InternalUser, error) {
 func (s *Service) GetByID(id string) (*User, error) {
 	row := s.db.QueryRow(
 		`SELECT id, username, role, enabled, description, display_name, email,
-		        created_at, updated_at, last_login_at
+		        has_local_password, created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id)
 	u, err := scanView(row)
 	if err != nil {
@@ -267,7 +271,7 @@ func (s *Service) List(f ListFilter) ([]*User, error) {
 
 	rows, err := s.db.Query(
 		`SELECT id, username, role, enabled, description, display_name, email,
-		        created_at, updated_at, last_login_at
+		        has_local_password, created_at, updated_at, last_login_at
 		 FROM users WHERE `+strings.Join(conds, " AND ")+`
 		 ORDER BY username ASC
 		 LIMIT ? OFFSET ?`, args...)
@@ -427,6 +431,10 @@ type CreateInput struct {
 	Description string
 	DisplayName string // 展示名;空则各处回退到 Username
 	Email       string // 档案邮箱;仅展示,不参与任何判定
+	// PlaceholderPassword = PasswordHash 是随机占位(明文无人知道,OAuth 首登自动建号)。
+	// 这类账号标记 has_local_password=0,账户页给「首次设置口令」而不是「输入当前口令」。
+	// 零值 = 真实口令(管理员建号 / bootstrap 同步行)。
+	PlaceholderPassword bool
 }
 
 // Create 建普通用户或管理员账号(管理员建号,v6.2 阶段 9)。
@@ -464,12 +472,16 @@ func (s *Service) Create(in CreateInput) (*User, error) {
 		return nil, fmt.Errorf("users: begin create: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	hasLocalPw := 1
+	if in.PlaceholderPassword {
+		hasLocalPw = 0
+	}
 	_, err = tx.Exec(
 		`INSERT INTO users (id, username, password_hash, role, enabled, description,
-		                   display_name, email, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		                   display_name, email, has_local_password, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
 		id, username, in.PasswordHash, roles[0], strings.TrimSpace(in.Description),
-		displayName, email, now, now,
+		displayName, email, hasLocalPw, now, now,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -530,7 +542,7 @@ func (s *Service) SetPassword(id, passwordHash string) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.execOneRow("set password",
-		`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE users SET password_hash = ?, has_local_password = 1, updated_at = ? WHERE id = ?`,
 		passwordHash, now, id,
 	)
 }
@@ -877,10 +889,11 @@ type scanner interface {
 func scanInternal(sc scanner) (*InternalUser, error) {
 	var u InternalUser
 	var lastLogin sql.NullString
+	var hasLocalPw int
 	var createdStr, updatedStr string
 	if err := sc.Scan(
 		&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Enabled, &u.Description,
-		&u.DisplayName, &u.Email, &createdStr, &updatedStr, &lastLogin,
+		&u.DisplayName, &u.Email, &hasLocalPw, &createdStr, &updatedStr, &lastLogin,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -897,6 +910,7 @@ func scanInternal(sc scanner) (*InternalUser, error) {
 	}
 	u.CreatedAt = created
 	u.UpdatedAt = updated
+	u.HasLocalPassword = hasLocalPw != 0
 	if lastLogin.Valid && lastLogin.String != "" {
 		t, err := time.Parse(time.RFC3339, lastLogin.String)
 		if err != nil {
@@ -907,22 +921,23 @@ func scanInternal(sc scanner) (*InternalUser, error) {
 	return &u, nil
 }
 
-// scanView 把「10 列视图 SELECT(id, username, role, enabled, description, display_name,
-// email, created_at, updated_at, last_login_at,不含 password_hash)」扫描为 User。
+// scanView 把「11 列视图 SELECT(id, username, role, enabled, description, display_name,
+// email, has_local_password, created_at, updated_at, last_login_at,不含 password_hash)」扫描为 User。
 //
 // 不复用 scanInternal(后者要求 password_hash 在 SELECT 里),否则 GetByID 的
-// 10 列查询会因 destination 数不匹配直接报错(scan: expected 11 destination, not 10)。
+// 11 列查询会因 destination 数不匹配直接报错(scan: expected 12 destination, not 11)。
 func scanView(sc scanner) (*User, error) {
 	var (
 		u            User
 		enabled      int
+		hasLocalPw   int
 		createdStr   string
 		updatedStr   string
 		lastLoginStr sql.NullString
 	)
 	if err := sc.Scan(
 		&u.ID, &u.Username, &u.Role, &enabled, &u.Description, &u.DisplayName, &u.Email,
-		&createdStr, &updatedStr, &lastLoginStr,
+		&hasLocalPw, &createdStr, &updatedStr, &lastLoginStr,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -930,6 +945,7 @@ func scanView(sc scanner) (*User, error) {
 		return nil, fmt.Errorf("users: scan view: %w", err)
 	}
 	u.Enabled = enabled != 0
+	u.HasLocalPassword = hasLocalPw != 0
 	created, err := time.Parse(time.RFC3339, createdStr)
 	if err != nil {
 		return nil, fmt.Errorf("users: parse created_at: %w", err)
