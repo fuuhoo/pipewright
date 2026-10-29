@@ -20,10 +20,17 @@
  *
  * 「复制文件」(copy)步骤编译成**单行** `if command -v rsync …; then rsync -a --exclude=…;
  * else cp -a …; fi`:优先 rsync(支持排除目录/通配、增量覆盖),容器里没装则退回 `cp -a`。
- * 两条分支同一语义 —— 把「源目录的内容」铺进目标目录(rsync 靠源尾斜杠、cp 靠 `源/.`)。
  * `command -v` 探针跑在 `if` 测试上下文里,对 `set -e` 安全;整条单行仍能逐行反解析还原。
  * 填了排除项时,else 分支前额外挂一句 `echo '…排除项未生效'`:cp 没有排除选项,静默整份复制
  * 是最难发现的失败,所以让运行日志自己说清「这镜像没 rsync,排除项被忽略了」。
+ *
+ * 两种复制方式(2026-10 起):
+ *   - contents(默认,老行只有这一种):把「源目录的内容」铺进目标目录 ——
+ *     rsync 靠源尾斜杠 `src/`、cp 靠 `src/.`。源写 `./` 时没有目录名可保留,即工作区根内容。
+ *   - entry:把「源文件夹/文件本身」放进目标目录并保留名称 —— rsync 源不带尾斜杠、cp 直接
+ *     `cp -a src dest/`,于是 `frontend/dist → out` 得到 `out/dist`,单个文件也能复制。
+ * 两种方式的行骨架只差源 token(带不带 `/`、`/.`),反解析据此区分;老配置一律读回 contents,
+ * 行为不变。
  *
  * 编译(steps → config):把有序步骤列表展开成 `commands` 多行串。产物目录不属于步骤,
  * 它是节点的固定属性(`artifactPath`,档位=产物时表单里始终有这一格),由调用方单独持有;
@@ -39,6 +46,11 @@
 import { t } from '../../i18n'
 
 export type StepKind = 'command' | 'env' | 'workDir' | 'copy' | 'condition'
+
+/**
+ * 复制方式:contents=复制目录内容(老语义,默认);entry=把文件夹/文件本身放进目标目录(保留名称)。
+ */
+export type CopyMode = 'contents' | 'entry'
 
 export interface StepBlock {
   /** 稳定的本地标识(列表 key / 拖拽用),不进 config */
@@ -58,6 +70,8 @@ export interface StepBlock {
   copyDest?: string
   /** copy:排除项(空格/逗号分隔,编译成若干 `--exclude=`) */
   copyExcludes?: string
+  /** copy:复制方式;缺省(含老配置)=复制目录内容 */
+  copyMode?: CopyMode
   /** condition:shell 条件表达式(不成立则跳过后续步骤) */
   condition?: string
 }
@@ -114,21 +128,29 @@ function trimTrailingSlash(p: string): string {
 }
 
 /**
- * 把「源目录内容 → 目标目录」编译成单行:有 rsync 用 `rsync -a [--exclude=…] 'src/' 'dest/'`,
- * 没装退回 `cp -a 'src/.' 'dest/'`。两条分支都先 `mkdir -p 'dest/'`,语义一致。
- * 有排除项时兜底分支先 echo 一句告警(cp 不吃排除,日志必须说清那几项没生效)。
- * 源/目标尾斜杠会被归一(带不带都同一个意思);任一空 → 返回空串(该步骤不发命令)。
+ * 把复制步骤编译成单行。两种方式的骨架相同,只差源 token:
+ *   - contents:`rsync 'src/' 'dest/'` / `cp -a 'src/.' 'dest/'`(复制目录内容)
+ *   - entry:   `rsync 'src' 'dest/'` / `cp -a 'src' 'dest/'`(复制文件夹/文件本身,保留名称)
+ * 两条分支都先 `mkdir -p 'dest/'`,语义一致。有排除项时兜底分支先 echo 一句告警
+ * (cp 不吃排除,日志必须说清那几项没生效)。源/目标尾斜杠会被归一;任一空 → 返回空串。
  */
-export function copyStepLine(src: string, dest: string, excludes: readonly string[]): string {
+export function copyStepLine(
+  src: string,
+  dest: string,
+  excludes: readonly string[],
+  mode: CopyMode = 'contents',
+): string {
   const s = trimTrailingSlash(src.trim())
   const d = trimTrailingSlash(dest.trim())
   if (!s || !d) return ''
   const destTok = shellQuote(`${d}/`)
   const excludeTok = excludes.map((e) => `${COPY_EXCLUDE}${shellQuote(e)} `).join('')
   const warn = excludes.length ? COPY_WARN : ''
+  const rsyncSrc = mode === 'entry' ? s : `${s}/`
+  const cpSrc = mode === 'entry' ? s : `${s}/.`
   return (
-    `${COPY_HEAD}${destTok}${COPY_RSYNC}${excludeTok}${shellQuote(`${s}/`)} ${destTok}` +
-    `${COPY_ELSE}${warn}${COPY_MKDIR}${destTok}${COPY_CP}${shellQuote(`${s}/.`)} ${destTok}${COPY_TAIL}`
+    `${COPY_HEAD}${destTok}${COPY_RSYNC}${excludeTok}${shellQuote(rsyncSrc)} ${destTok}` +
+    `${COPY_ELSE}${warn}${COPY_MKDIR}${destTok}${COPY_CP}${shellQuote(cpSrc)} ${destTok}${COPY_TAIL}`
   )
 }
 
@@ -157,7 +179,12 @@ export function stepToCommandLines(step: StepBlock): string[] {
       return [`cd ${shellQuote(dir)}`]
     }
     case 'copy': {
-      const line = copyStepLine(step.copySrc ?? '', step.copyDest ?? '', splitExcludes(step.copyExcludes ?? ''))
+      const line = copyStepLine(
+        step.copySrc ?? '',
+        step.copyDest ?? '',
+        splitExcludes(step.copyExcludes ?? ''),
+        step.copyMode ?? 'contents',
+      )
       return line ? [line] : []
     }
     case 'condition': {
@@ -260,10 +287,16 @@ function readQuotedToken(s: string, i: number): { value: string; next: number } 
 
 /**
  * 反解析复制步骤:严格按 copyStepLine 的字面骨架逐段吃,并校验两条分支路径一致
- * (mkdir / rsync / cp 三处目标同值、rsync 的 `src/` 与 cp 的 `src/.` 同源)。
+ * (mkdir / rsync / cp 三处目标同值;contents 的 `src/` 对 `src/.`,entry 两边同为 `src`)。
+ * 源 token 是否带尾斜杠就是两种方式的区别 —— 老行永远带,读回 contents,行为不变。
  * 用户手改过任何一个字面段 → 返回 null,整行退回「运行命令」原样保留(绝不丢内容)。
  */
-export function parseCopyLine(line: string): { src: string; dest: string; excludes: string[] } | null {
+export function parseCopyLine(line: string): {
+  src: string
+  dest: string
+  excludes: string[]
+  mode: CopyMode
+} | null {
   const t = line.trim()
   if (!t.startsWith(COPY_HEAD)) return null
   let i = COPY_HEAD.length
@@ -288,7 +321,11 @@ export function parseCopyLine(line: string): { src: string; dest: string; exclud
     if (!skip(' ')) return null
   }
   const rsyncSrc = take()
-  if (!rsyncSrc || !rsyncSrc.value.endsWith('/') || !skip(' ')) return null
+  if (!rsyncSrc || !skip(' ')) return null
+  // 尾斜杠 = 「复制目录内容」;没有 = 「复制文件夹/文件本身」。两种方式的 cp 源据此校验。
+  const mode: CopyMode = rsyncSrc.value.endsWith('/') ? 'contents' : 'entry'
+  const srcName = mode === 'contents' ? rsyncSrc.value.slice(0, -1) : rsyncSrc.value
+  if (!srcName) return null
   const rsyncDest = take()
   if (!rsyncDest || rsyncDest.value !== destMkdir.value || !skip(COPY_ELSE)) return null
   // 兜底告警段:生成器只在有排除项时才写它。老配置里没有这一段(可选吃掉),
@@ -299,11 +336,11 @@ export function parseCopyLine(line: string): { src: string; dest: string; exclud
   const destAgain = take()
   if (!destAgain || destAgain.value !== destMkdir.value || !skip(COPY_CP)) return null
   const cpSrc = take()
-  const srcName = rsyncSrc.value.slice(0, -1)
-  if (!cpSrc || cpSrc.value !== `${srcName}/.` || !skip(' ')) return null
+  const expectCpSrc = mode === 'contents' ? `${srcName}/.` : srcName
+  if (!cpSrc || cpSrc.value !== expectCpSrc || !skip(' ')) return null
   const cpDest = take()
   if (!cpDest || cpDest.value !== destMkdir.value || !t.startsWith(COPY_TAIL, i)) return null
-  return { src: srcName, dest: destMkdir.value.replace(/\/+$/, ''), excludes }
+  return { src: srcName, dest: destMkdir.value.replace(/\/+$/, ''), excludes, mode }
 }
 
 /**
@@ -323,6 +360,8 @@ export function lineToStep(line: string): StepBlock {
       copySrc: copy.src,
       copyDest: copy.dest,
       copyExcludes: copy.excludes.join(' '),
+      // contents 是缺省值,不写进对象(老配置读出的步骤形状保持不变)。
+      ...(copy.mode === 'entry' ? { copyMode: 'entry' as const } : {}),
     }
   }
   const cond = COND_LINE.exec(trimmed)

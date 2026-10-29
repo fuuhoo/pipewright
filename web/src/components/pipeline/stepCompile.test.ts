@@ -302,6 +302,51 @@ describe('stepCompile', () => {
       )
       expect(lineToStep(tampered).kind).toBe('command')
     })
+
+    describe('复制方式:entry(文件夹/文件本身)', () => {
+      it('entry 编译成源 token 不带斜杠:rsync 与 cp -a 都把 src 本身放进目标', () => {
+        expect(copyStepLine('frontend/dist', 'build/out', [], 'entry')).toBe(
+          "if command -v rsync >/dev/null 2>&1; then mkdir -p 'build/out/' && rsync -a 'frontend/dist' 'build/out/';" +
+            " else mkdir -p 'build/out/' && cp -a 'frontend/dist' 'build/out/'; fi",
+        )
+      })
+
+      it('entry 用步骤编译时同样带 copyMode(文件源也能复制,不再是 app.jar/)', () => {
+        const [line] = stepToCommandLines(
+          step({ kind: 'copy', copySrc: 'app.jar', copyDest: 'out', copyMode: 'entry' }),
+        )
+        expect(line).toContain("rsync -a 'app.jar' 'out/'")
+        expect(line).toContain("cp -a 'app.jar' 'out/'")
+      })
+
+      it('entry 带排除项时兜底分支照样告警,且 round-trip 保 copyMode', () => {
+        const back = lineToStep(copyStepLine("it's/dist", 'o/ut', ['node_modules'], 'entry'))
+        expect(back.kind).toBe('copy')
+        expect(back.copyMode).toBe('entry')
+        expect(back.copySrc).toBe("it's/dist")
+        expect(back.copyDest).toBe('o/ut')
+        expect(back.copyExcludes).toBe('node_modules')
+      })
+
+      it('老行(源带尾斜杠)仍读回 contents —— copyMode 不写进步骤对象,形状不变', () => {
+        const back = lineToStep(copyStepLine('src', 'out', []))
+        expect(back.kind).toBe('copy')
+        expect('copyMode' in back).toBe(false)
+      })
+
+      it('entry 行手改任一侧(rsync 与 cp 源不一致)→ 退回运行命令', () => {
+        const generated = copyStepLine('src', 'out', [], 'entry')
+        const tampered = generated.replace("cp -a 'src' 'out/'", "cp -a 'src/.' 'out/'")
+        expect(lineToStep(tampered).kind).toBe('command')
+      })
+
+      it('entry 里源写 ./ 只剩「.」,仍能编译(等于复制当前目录内容,不是目录名)', () => {
+        const line = copyStepLine('./', 'out', [], 'entry')
+        expect(line).toContain("rsync -a '.' 'out/'")
+        expect(line).toContain("cp -a '.' 'out/'")
+        expect(lineToStep(line).copyMode).toBe('entry')
+      })
+    })
   })
 
   describe('configUsesTemplate', () => {

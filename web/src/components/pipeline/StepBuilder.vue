@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n'
 import {
   type StepBlock,
   type StepKind,
+  type CopyMode,
   STEP_KIND_META,
   nextStepId,
   parseSteps,
@@ -53,12 +54,18 @@ const steps = ref<StepBlock[]>([])
  */
 const rsyncState = computed(() => rsyncSupportFor(props.image))
 
-const copyHintText = computed<string>(() => {
+/** 「复制文件」提示随复制方式变:内容模式与「文件夹本身」模式说的是两回事。 */
+function copyHintText(step: StepBlock): string {
   const image = (props.image ?? '').trim()
+  if (step.copyMode === 'entry') {
+    return rsyncState.value === 'no'
+      ? t('pipelineJob.sbCopyHintEntryNo', { image })
+      : t('pipelineJob.sbCopyHintEntry')
+  }
   if (rsyncState.value === 'no') return t('pipelineJob.sbCopyHintNo', { image })
   if (rsyncState.value === 'yes') return t('pipelineJob.sbCopyHintYes', { image })
   return t('pipelineJob.sbCopyHint')
-})
+}
 
 /** 初次 / 切换节点时从 config 反解析步骤(允许有损,空则起手给一个空命令步骤)。 */
 function hydrate(config: Record<string, string>): void {
@@ -122,6 +129,12 @@ function appendTemplate(tpl: CommandTemplate): void {
 
 function patchStep(id: string, patch: Partial<StepBlock>): void {
   steps.value = steps.value.map((s) => (s.id === id ? { ...s, ...patch } : s))
+}
+
+/** 切换复制方式:立刻回传(下拉选择没有 blur 可等)。contents 是缺省值,写回对象也无妨。 */
+function setCopyMode(step: StepBlock, mode: CopyMode): void {
+  patchStep(step.id, { copyMode: mode })
+  flush()
 }
 
 // ─── 排序:上下移按钮 + 原生 HTML5 拖拽 ─────────────────────────────────────────
@@ -277,8 +290,21 @@ const stepCount = computed(() => steps.value.length)
           @blur="flush"
         />
 
-        <!-- 复制文件:源目录内容 → 目标目录,rsync 优先(能排除),没装则 cp 兜底 -->
+        <!-- 复制文件:源 → 目标目录,rsync 优先(能排除),没装则 cp 兜底 -->
         <div v-else-if="step.kind === 'copy'" class="sb-copy">
+          <!-- 复制方式:老语义是「复制目录内容」;需要在目标里保留同名文件夹/复制单个文件时切到「本身」。 -->
+          <div class="sb-copy-mode">
+            <span class="sb-copy-mode-label">{{ t('pipelineJob.sbCopyModeLabel') }}</span>
+            <select
+              class="sb-input sb-select"
+              :value="step.copyMode ?? 'contents'"
+              :aria-label="t('pipelineJob.sbCopyModeAria', { n: index + 1 })"
+              @change="setCopyMode(step, ($event.target as HTMLSelectElement).value as CopyMode)"
+            >
+              <option value="contents">{{ t('pipelineJob.sbCopyModeContents') }}</option>
+              <option value="entry">{{ t('pipelineJob.sbCopyModeEntry') }}</option>
+            </select>
+          </div>
           <div class="sb-copy-path">
             <input
               :value="step.copySrc ?? ''"
@@ -313,7 +339,7 @@ const stepCount = computed(() => steps.value.length)
               @blur="flush"
             />
           </div>
-          <p class="sb-copy-hint" :class="{ 'sb-copy-hint--warn': rsyncState === 'no' }">{{ copyHintText }}</p>
+          <p class="sb-copy-hint" :class="{ 'sb-copy-hint--warn': rsyncState === 'no' }">{{ copyHintText(step) }}</p>
         </div>
 
         <!-- 条件守卫 -->
@@ -580,6 +606,31 @@ const stepCount = computed(() => steps.value.length)
   color: var(--color-faint);
   font-family: var(--font-mono);
   font-weight: 700;
+}
+
+.sb-copy-mode {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-copy-mode-label {
+  font-size: 0.7rem;
+  color: var(--color-dim);
+  white-space: nowrap;
+}
+
+/* 原生 select 跟 .sb-input 对齐(高度/边框/字号),再自己画个箭头。 */
+.sb-select {
+  appearance: none;
+  padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--color-faint) 50%),
+    linear-gradient(135deg, var(--color-faint) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
 }
 
 .sb-copy-excl {

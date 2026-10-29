@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import JobDrawer from './JobDrawer.vue'
 import StepBuilder from './StepBuilder.vue'
+import { copyStepLine } from './stepCompile'
 import type { PipelineJob, PipelineStage } from '../../api/pipeline'
 
 const stage: PipelineStage = { id: 's1', name: '构建', kind: 'build', jobs: [] }
@@ -88,6 +89,23 @@ describe('JobDrawer + StepBuilder integration', () => {
       .findAll('.drawer-section .drawer-field')
       .find((n) => n.find('.drawer-field-label').exists() && n.find('.drawer-field-label').text() === '产物路径')
     expect(artifactField?.find('textarea').element.value).toBe('frontend/dist')
+  })
+
+  it('reparses an entry-mode copy line and switches back to contents via the mode select', async () => {
+    const job = builderJob({ image: 'node:20', commands: copyStepLine('frontend/dist', 'out', [], 'entry') })
+    const wrapper = mount(JobDrawer, { props: { job, stage } })
+    const builder = wrapper.findComponent(StepBuilder)
+    const select = builder.find('select.sb-select')
+    expect((select.element as HTMLSelectElement).value).toBe('entry')
+
+    await select.setValue('contents')
+
+    const events = wrapper.emitted('update')
+    expect(events).toBeTruthy()
+    const last = events!.at(-1)![0] as Partial<PipelineJob>
+    // 切回 contents = 老语义(源尾斜杠),其它字段原样
+    expect(last.config!.commands).toBe(copyStepLine('frontend/dist', 'out', []))
+    expect(last.config!.image).toBe('node:20')
   })
 
   it('defaults to raw view for a templated node (commandTemplate present)', () => {
