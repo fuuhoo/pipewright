@@ -74,6 +74,9 @@ var (
 	ErrPortConflict = errors.New("proxy: 80/443 端口被占用,无法启动反代(Let's Encrypt 校验需要 80)")
 	// ErrCaddyStart 表示 Caddy 容器启动失败。
 	ErrCaddyStart = errors.New("proxy: 启动反代容器失败")
+	// ErrCaddyImagePull 表示反代镜像既拉不下来、目标机没有、控制机也推不过去(ghcr.io 不可达
+	// 或镜像名写错)。与 ErrCaddyStart 分开:前者要用户换镜像源/预拉镜像,后者要看 docker 权限与 stderr。
+	ErrCaddyImagePull = errors.New("proxy: 拉取反代镜像失败")
 	// ErrUpstreamConnect 表示把上游容器接入共享网络失败。
 	ErrUpstreamConnect = errors.New("proxy: 上游容器接入反代网络失败")
 	// ErrApply 表示渲染/下发/reload Caddy 配置失败。
@@ -108,7 +111,40 @@ var (
 	ErrInvalidHealthInterval = errors.New("proxy: invalid health_interval")
 	// ErrInvalidTCPPassthrough 表示 TCP 透传配置非法(监听/上游端口越界 / 上游容器名非法)。
 	ErrInvalidTCPPassthrough = errors.New("proxy: invalid tcp passthrough config")
+
+	// ErrInvalidCaddyImage 表示自定义反代镜像引用含非法字符(它会原样进 docker run 参数)。
+	ErrInvalidCaddyImage = errors.New("proxy: invalid caddy image reference")
 )
+
+// orchestrationErr 给编排类错误挂上 docker 的原始输出(不含任何凭据),HTTP 层据此把失败原因
+// 拼进人话 —— 否则「启动反代容器失败」等于什么都没说,用户只能干瞪眼。errors.Is 仍按 base 判定。
+type orchestrationErr struct {
+	base   error
+	detail string
+}
+
+func (e *orchestrationErr) Error() string {
+	if e.detail == "" {
+		return e.base.Error()
+	}
+	return e.base.Error() + ": " + e.detail
+}
+
+func (e *orchestrationErr) Unwrap() error { return e.base }
+
+// newOrchestrationErr 构造带 docker 原始输出的编排错误(空白输出退化为不带头).
+func newOrchestrationErr(base error, detail string) error {
+	return &orchestrationErr{base: base, detail: strings.TrimSpace(detail)}
+}
+
+// DetailOf 取出编排错误附带的 docker 原始输出(供 HTTP 层诊断用);没有则空串。
+func DetailOf(err error) string {
+	var oe *orchestrationErr
+	if errors.As(err, &oe) {
+		return oe.detail
+	}
+	return ""
+}
 
 // Route 是一条反代路由领域模型(冻结契约)。
 type Route struct {
@@ -267,6 +303,11 @@ type Service interface {
 	// RemoveCaddy 停止并删除某主机上的反代容器(pipewright-caddy);保留命名卷(避免重签触发 LE 限速)。
 	// 幂等:容器已不存在也成功。
 	RemoveCaddy(ctx context.Context, serverID string) error
+	// CaddyImage 读取反代镜像配置(显式设置 > 环境变量 > 内置默认)与本次生效值。
+	CaddyImage(ctx context.Context) (CaddyImageSetting, error)
+	// SetCaddyImage 保存反代镜像;空串 = 清除并回落到环境变量/内置默认。
+	// 非法引用 → ErrInvalidCaddyImage(它会原样进 docker run 参数)。
+	SetCaddyImage(ctx context.Context, image string) (CaddyImageSetting, error)
 }
 
 // certProber 抽象「对 域名:443 做 TLS 握手并回报证书状态」的能力(注入便于单测,不触真网络)。
@@ -602,7 +643,7 @@ func (s *service) RemoveCaddy(ctx context.Context, serverID string) error {
 func (s *service) ensureAndApply(ctx context.Context, serverID, container string) error {
 	// 取本主机所有 enabled 路由声明的 TCP 透传监听端口 —— ensureCaddy 据此确保 Caddy 容器
 	// 对宿主发布这些端口(缺则带「既有映射 ∪ TCP 端口」重建),否则 layer4 监听不可达。
-	if err := ensureCaddy(ctx, s.tg, serverID, s.tcpPortsForServer(ctx, serverID)); err != nil {
+	if err := ensureCaddy(ctx, s.tg, serverID, s.effectiveCaddyImage(ctx), s.tcpPortsForServer(ctx, serverID)); err != nil {
 		return err
 	}
 	if container != "" {
@@ -638,7 +679,7 @@ func (s *service) PrepareCaddy(ctx context.Context, serverID string) (*CaddyStat
 		return nil, ErrEmptyServerID
 	}
 	// 显式部署:按本主机既有 TCP 路由(若有)发布端口;无则 80/443 起。
-	if err := ensureCaddy(ctx, s.tg, serverID, s.tcpPortsForServer(ctx, serverID)); err != nil {
+	if err := ensureCaddy(ctx, s.tg, serverID, s.effectiveCaddyImage(ctx), s.tcpPortsForServer(ctx, serverID)); err != nil {
 		return nil, err
 	}
 	return s.CaddyStatus(ctx, serverID)

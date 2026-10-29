@@ -59,6 +59,11 @@ type fakeTarget struct {
 	execCalls   [][]string
 	uploads     []string // 记录 Upload 的 remotePath
 	uploadBytes map[string]string
+	// stdinCalls / stdinBytes 记录 ExecWithStdin(镜像推送)的命令与投递字节。
+	stdinCalls  [][]string
+	stdinBytes  []byte
+	stdinResult *target.ExecResult
+	stdinErr    error
 	// resultFor 决定某次 Exec 返回的结果(按命令决定);nil 则默认 exit0。
 	resultFor func(cmd []string) *target.ExecResult
 }
@@ -113,8 +118,17 @@ func (f *fakeTarget) Test(context.Context, string) (*target.TestResult, error) {
 func (f *fakeTarget) ExecStream(context.Context, string, []string) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (f *fakeTarget) ExecWithStdin(context.Context, string, []string, io.Reader) (*target.ExecResult, error) {
-	return nil, nil
+func (f *fakeTarget) ExecWithStdin(_ context.Context, _ string, cmd []string, stdin io.Reader) (*target.ExecResult, error) {
+	f.stdinCalls = append(f.stdinCalls, cmd)
+	b, _ := io.ReadAll(stdin)
+	f.stdinBytes = append(f.stdinBytes, b...)
+	if f.stdinErr != nil {
+		return nil, f.stdinErr
+	}
+	if f.stdinResult != nil {
+		return f.stdinResult, nil
+	}
+	return &target.ExecResult{ExitCode: 0}, nil
 }
 func (f *fakeTarget) ExecStreamWithExit(context.Context, string, []string, func(string, []byte)) (int, error) {
 	return 0, nil

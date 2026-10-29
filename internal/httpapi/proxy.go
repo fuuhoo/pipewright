@@ -27,7 +27,9 @@ const (
 	auditActionProxyCaddyRemove = "proxy.caddy.remove"
 	// 反代环境(pipewright-caddy 容器)显式部署审计。detail 仅 serverId,无敏感信息。
 	auditActionProxyCaddyPrepare = "proxy.caddy.prepare"
-	auditTargetProxyCaddy        = "proxy_caddy"
+	// 反代镜像(Caddy)全局配置变更审计。detail 仅镜像引用,无敏感信息。
+	auditActionProxyCaddyImage = "proxy.caddy.image_update"
+	auditTargetProxyCaddy      = "proxy_caddy"
 )
 
 // proxyRedirectDTO 是单条重定向规则对外响应体(camelCase;冻结契约)。
@@ -173,8 +175,7 @@ func toProxyRouteDTO(r proxy.Route) proxyRouteDTO {
 	}
 }
 
-// writeProxyError 把领域错误映射为契约错误码/状态码;绝不回显明文/栈。
-// 编排类失败(端口冲突 / Caddy 起不来 / apply 失败 / SSH 不可达)→ 502/503 + 人话;
+// writeProxyError 把领域错误映射为契约错误码/状态码;绝不回显明文/栈。// 编排类失败(端口冲突 / Caddy 起不来 / apply 失败 / SSH 不可达)→ 502/503 + 人话;
 // 校验类 → 400/409/422;不存在 → 404。
 func writeProxyError(w http.ResponseWriter, err error) {
 	switch {
@@ -213,11 +214,23 @@ func writeProxyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, proxy.ErrBcrypt):
 		writeError(w, http.StatusInternalServerError, "internal", "口令哈希失败")
 	case errors.Is(err, proxy.ErrPortConflict):
-		writeError(w, http.StatusConflict, "port_conflict", "目标主机 80/443 端口被占用,无法启动反代(Let's Encrypt 校验需要 80)")
+		writeError(w, http.StatusConflict, "port_conflict",
+			"目标主机 80/443 端口被占用,无法启动反代(Let's Encrypt 校验需要 80)"+proxyErrDetail(err))
+	case errors.Is(err, proxy.ErrInvalidCaddyImage):
+		writeError(w, http.StatusBadRequest, "invalid_caddy_image",
+			"镜像地址非法:只能包含字母/数字与 . _ - / : @,且不能以 - 开头")
+	case errors.Is(err, proxy.ErrCaddyImagePull):
+		writeError(w, http.StatusBadGateway, "caddy_image_pull_failed",
+			"拉取反代镜像失败,且无法从控制机推送过去(控制机本地没有该镜像、架构不一致或传输失败)。"+
+				"可在目标主机上手动 docker pull,或在「设置 → 系统 → 反代运行环境」里换一个可达的镜像"+
+				"(也可用环境变量 PIPEWRIGHT_CADDY_IMAGE)"+
+				proxyErrDetail(err))
 	case errors.Is(err, proxy.ErrCaddyStart):
-		writeError(w, http.StatusBadGateway, "caddy_start_failed", "启动反代容器失败,请确认目标主机已安装 docker 且有权限")
+		writeError(w, http.StatusBadGateway, "caddy_start_failed",
+			"启动反代容器失败,请确认目标主机已安装 docker 且有权限"+proxyErrDetail(err))
 	case errors.Is(err, proxy.ErrUpstreamConnect):
-		writeError(w, http.StatusBadGateway, "upstream_connect_failed", "上游容器接入反代网络失败,请确认容器名正确且正在运行")
+		writeError(w, http.StatusBadGateway, "upstream_connect_failed",
+			"上游容器接入反代网络失败,请确认容器名正确且正在运行"+proxyErrDetail(err))
 	case errors.Is(err, proxy.ErrApply):
 		writeError(w, http.StatusBadGateway, "apply_failed", "下发反代配置失败")
 	// target(SSH)层错误:复用其语义映射。
@@ -234,6 +247,21 @@ func writeProxyError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}
+}
+
+// proxyErrDetail 把编排错误附带的 docker 原始输出拼成人话尾巴(单行、限长)。
+// 只用于起容器/拉镜像这类输出里不会出现凭据的路径;apply/validate 的输出可能回显 Caddyfile
+// (含 DNS-01 token),那里不拼。
+func proxyErrDetail(err error) string {
+	detail := strings.TrimSpace(proxy.DetailOf(err))
+	if detail == "" {
+		return ""
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	if r := []rune(detail); len(r) > 300 {
+		detail = string(r[:300]) + "…"
+	}
+	return "(" + detail + ")"
 }
 
 // makeListProxyRoutesHandler 返回 GET /api/proxy/routes?serverId= → { items: [...] }。
@@ -629,6 +657,70 @@ func makeRemoveProxyCaddyHandler(svc proxy.Service, rec audit.Recorder) http.Han
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
+// proxySettingsDTO 是反代运行环境(镜像)配置的响应体(camelCase;冻结契约,无敏感信息)。
+type proxySettingsDTO struct {
+	// Image 是显式配置;空 = 未设置(回落环境变量/内置默认)。
+	Image string `json:"image"`
+	// Effective 是下一次部署/重建容器真正会用的镜像(DB > PIPEWRIGHT_CADDY_IMAGE > 内置默认)。
+	Effective string `json:"effective"`
+	// DefaultImage 是内置自构建镜像,供前端写「恢复默认」的说明文案。
+	DefaultImage string `json:"defaultImage"`
+}
+
+func toProxySettingsDTO(s proxy.CaddyImageSetting) proxySettingsDTO {
+	return proxySettingsDTO{Image: s.Image, Effective: s.Effective, DefaultImage: s.DefaultImage}
+}
+
+// makeGetProxySettingsHandler 返回 GET /api/proxy/settings handler(认证,只读)。
+func makeGetProxySettingsHandler(svc proxy.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "反代服务未初始化")
+			return
+		}
+		s, err := svc.CaddyImage(r.Context())
+		if err != nil {
+			writeProxyError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toProxySettingsDTO(s))
+	}
+}
+
+// makeSaveProxySettingsHandler 返回 PUT /api/proxy/settings handler(认证 + CSRF + 审计)。
+// body {"image":"<ref>"};空串 = 清除显式配置(回落到 PIPEWRIGHT_CADDY_IMAGE / 内置默认)。
+// 非法引用 → 400 invalid_caddy_image(它会原样进 docker run 参数)。
+func makeSaveProxySettingsHandler(svc proxy.Service, rec audit.Recorder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "反代服务未初始化")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<14)
+		var req struct {
+			Image string `json:"image"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+			return
+		}
+		s, err := svc.SetCaddyImage(r.Context(), req.Image)
+		if err != nil {
+			writeProxyError(w, err)
+			return
+		}
+		recordAudit(r.Context(), rec, audit.Entry{
+			Actor:      auditActor,
+			Action:     auditActionProxyCaddyImage,
+			TargetType: auditTargetProxyCaddy,
+			TargetID:   "global",
+			Detail:     map[string]any{"image": s.Image, "effective": s.Effective},
+			IP:         clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, toProxySettingsDTO(s))
 	}
 }
 

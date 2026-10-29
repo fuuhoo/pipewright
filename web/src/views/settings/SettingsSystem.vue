@@ -13,6 +13,7 @@ import { useI18n } from 'vue-i18n'
 import { getVersion, checkUpdate, applyUpdate } from '../../api/version'
 import type { VersionInfo, UpdateInfo } from '../../api/version'
 import { getRetentionConfig, setRetentionConfig, type RetentionConfig } from '../../api/retention'
+import { getProxyImageSetting, saveProxyImageSetting } from '../../api/reverseProxy'
 import { HttpError } from '../../api/http'
 import AppButton from '../../components/ui/AppButton.vue'
 
@@ -209,9 +210,74 @@ async function saveRetention(): Promise<void> {
   }
 }
 
+// ——— 反代运行环境 Caddy 镜像 ———
+// 每台目标主机上的 pipewright-caddy 容器都从这个镜像起。默认镜像在 ghcr.io:目标主机连不上
+// (内网/限流/被墙)时部署反代会失败,这里换成内网 registry 或已预拉的镜像。
+// 空 = 清除显式配置,回落 PIPEWRIGHT_CADDY_IMAGE / 内置默认。
+const proxyImage = ref('')
+const proxyImageStored = ref('') // 服务端当前显式配置(脏判定基准)
+const proxyImageEffective = ref('')
+const proxyImageDefault = ref('')
+const proxyImageLoading = ref(true)
+const proxyImageSaving = ref(false)
+const proxyImageSaved = ref(false)
+const proxyImageError = ref('')
+const proxyImageDirty = computed(() => proxyImage.value.trim() !== proxyImageStored.value)
+
+function applyProxyImage(s: { image: string; effective: string; defaultImage: string }): void {
+  proxyImage.value = s.image
+  proxyImageStored.value = s.image
+  proxyImageEffective.value = s.effective
+  proxyImageDefault.value = s.defaultImage
+}
+
+async function loadProxyImage(): Promise<void> {
+  proxyImageLoading.value = true
+  proxyImageError.value = ''
+  try {
+    applyProxyImage(await getProxyImageSetting())
+  } catch {
+    proxyImageError.value = t('settingsSystem.proxyImageLoadFailed')
+  } finally {
+    proxyImageLoading.value = false
+  }
+}
+
+async function persistProxyImage(image: string): Promise<void> {
+  proxyImageSaving.value = true
+  proxyImageSaved.value = false
+  proxyImageError.value = ''
+  try {
+    applyProxyImage(await saveProxyImageSetting(image))
+    proxyImageSaved.value = true
+    setTimeout(() => { proxyImageSaved.value = false }, 2000)
+  } catch (err) {
+    proxyImageError.value =
+      err instanceof HttpError
+        ? (err.apiError?.message ?? t('settingsSystem.proxyImageSaveFailed'))
+        : t('settingsSystem.proxyImageSaveFailed')
+  } finally {
+    proxyImageSaving.value = false
+  }
+}
+
+function saveProxyImage(): void {
+  const image = proxyImage.value.trim()
+  if (image === proxyImageStored.value) return
+  void persistProxyImage(image)
+}
+
+/** 清除显式配置:回落到 PIPEWRIGHT_CADDY_IMAGE / 内置默认。 */
+function resetProxyImage(): void {
+  if (proxyImageStored.value === '') return
+  proxyImage.value = ''
+  void persistProxyImage('')
+}
+
 onMounted(() => {
   void loadVersion()
   void loadRetention()
+  void loadProxyImage()
 })
 </script>
 
@@ -372,6 +438,53 @@ onMounted(() => {
         <span v-if="rtError" class="rt-err" role="alert">{{ rtError }}</span>
         <AppButton variant="primary" :loading="rtSaving" :disabled="rtLoading" @click="saveRetention">
           {{ t('settingsSystem.retentionSave') }}
+        </AppButton>
+      </div>
+    </article>
+
+    <!-- 反代运行环境:Caddy 镜像 -->
+    <article class="sys-panel">
+      <span class="sys-accent" aria-hidden="true" />
+      <div class="rt-head">
+        <div class="rt-head-text">
+          <h3 class="rt-title">{{ t('settingsSystem.proxyImageTitle') }}</h3>
+          <p class="rt-sub">{{ t('settingsSystem.proxyImageSub') }}</p>
+        </div>
+      </div>
+
+      <div class="rt-fields">
+        <label class="rt-field rt-field--grow">
+          <span class="rt-label">{{ t('settingsSystem.proxyImageLabel') }}</span>
+          <input
+            v-model="proxyImage"
+            class="rt-input rt-input--wide mono"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            :placeholder="proxyImageDefault || 'ghcr.io/fuuhoo/pipewright-caddy:latest'"
+            :disabled="proxyImageLoading || proxyImageSaving"
+          />
+          <span class="rt-hint">{{ t('settingsSystem.proxyImageHint') }}</span>
+        </label>
+      </div>
+
+      <p class="rt-rule">
+        {{ t('settingsSystem.proxyImageEffective', { image: proxyImageEffective || proxyImageDefault || '—' }) }}
+      </p>
+
+      <div class="rt-actions">
+        <span v-if="proxyImageSaved" class="rt-saved" role="status">{{ t('settingsSystem.proxyImageSaved') }}</span>
+        <span v-if="proxyImageError" class="rt-err" role="alert">{{ proxyImageError }}</span>
+        <AppButton :disabled="proxyImageLoading || proxyImageSaving || proxyImageStored === ''" @click="resetProxyImage">
+          {{ t('settingsSystem.proxyImageReset') }}
+        </AppButton>
+        <AppButton
+          variant="primary"
+          :loading="proxyImageSaving"
+          :disabled="proxyImageLoading || !proxyImageDirty"
+          @click="saveProxyImage"
+        >
+          {{ t('settingsSystem.proxyImageSave') }}
         </AppButton>
       </div>
     </article>
@@ -919,6 +1032,8 @@ onMounted(() => {
   font-weight: 500;
   color: var(--color-dim);
 }
+.rt-field--grow { flex: 1 1 320px; }
+.rt-input--wide { width: 100%; }
 .rt-input {
   width: 120px;
   padding: 7px 10px;

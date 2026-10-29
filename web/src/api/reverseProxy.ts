@@ -353,3 +353,35 @@ export interface AllocateSubdomainInput {
 export async function allocateSubdomain(body: AllocateSubdomainInput): Promise<ProxyRoute> {
   return http.post<ProxyRoute>('/api/proxy/subdomains', body)
 }
+
+/**
+ * Reverse-proxy runtime image (Caddy) — global setting.
+ *
+ * The per-host `pipewright-caddy` container is started from this image. The
+ * built-in default (`ghcr.io/fuuhoo/pipewright-caddy:latest`) needs the target
+ * host to reach ghcr.io; when it can't, point this at a registry it can reach
+ * (or pre-pull the image on the host).
+ *
+ * GET /api/proxy/settings → ProxyImageSetting
+ * PUT /api/proxy/settings → ProxyImageSetting   (needs CSRF)
+ *
+ * Precedence: explicit setting > `PIPEWRIGHT_CADDY_IMAGE` > built-in default.
+ * Empty `image` clears the explicit setting. Invalid references are rejected
+ * with 400 `invalid_caddy_image`.
+ */
+export interface ProxyImageSetting {
+  /** Explicit setting ('' = not set). */
+  image: string
+  /** Image actually used on the next deploy/recreate. */
+  effective: string
+  /** Built-in default image (for the "reset to default" hint). */
+  defaultImage: string
+}
+
+export async function getProxyImageSetting(): Promise<ProxyImageSetting> {
+  return http.get<ProxyImageSetting>('/api/proxy/settings')
+}
+
+export async function saveProxyImageSetting(image: string): Promise<ProxyImageSetting> {
+  return http.put<ProxyImageSetting>('/api/proxy/settings', { image })
+}

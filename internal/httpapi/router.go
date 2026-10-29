@@ -1155,6 +1155,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// POST 显式部署反代环境(ensureCaddy,无需先绑域名;写方法,过 auth + CSRF + 审计)。
 		ar.Post("/proxy/caddy", makeProxyCaddyPrepareHandler(px, aud))
 		ar.Delete("/proxy/caddy", makeRemoveProxyCaddyHandler(px, aud))
+		// 反代镜像(Caddy)全局配置:目标主机连不上 ghcr.io 时换一个可达镜像。
+		// GET 只读(auth);PUT 写方法(auth + CSRF + 审计)。字面段 /proxy/settings 不与既有段冲突。
+		// 生效优先级:显式配置 > PIPEWRIGHT_CADDY_IMAGE > 内置自构建镜像;空串 = 清除显式配置。
+		ar.Get("/proxy/settings", makeGetProxySettingsHandler(px))
+		ar.Put("/proxy/settings", makeSaveProxySettingsHandler(px, aud))
 
 		// DNS 提供商集成层(R3 E3.1–E3.4):Cloudflare / DNSPod / 阿里云 DNS 接入(凭据走 vault)。
 		// dp 为 nil → handler 返回 503。GET(列表)过 auth;POST/DELETE/verify 为写方法,过 auth + CSRF + 审计。

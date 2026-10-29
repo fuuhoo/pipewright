@@ -276,7 +276,8 @@ func renderReverseProxy(b *strings.Builder, indent string, r Route, cfg RouteCon
 // Caddy 容器**对宿主发布**(-p)才能被外部访问 —— layer4 监听在容器内,不发布则不可达。Docker 端口
 // 在容器创建时固定,故当既有 Caddy 容器未发布某个新增 TCP 端口时,需带「既有映射 ∪ TCP 端口」重建容器
 // (镜像自带默认 Caddyfile 兜底启动,随后 apply 会覆盖为真实配置 + reload;证书/配置走持久卷不丢)。
-func ensureCaddy(ctx context.Context, tg target.Service, serverID string, tcpPorts []int) error {
+func ensureCaddy(ctx context.Context, tg target.Service, serverID, image string, tcpPorts []int) error {
+	image = resolveCaddyImage(image)
 	// 1) 共享网络(存在即跳过)。inspect 非零退出(网络不存在)→ create。
 	netInsp, err := tg.Exec(ctx, serverID, []string{"docker", "network", "inspect", proxyNetwork})
 	if err != nil {
@@ -288,7 +289,7 @@ func ensureCaddy(ctx context.Context, tg target.Service, serverID string, tcpPor
 			return mapExecErr(cerr)
 		}
 		if res.ExitCode != 0 {
-			return fmt.Errorf("%w:%s", ErrCaddyStart, strings.TrimSpace(firstNonEmpty(res.Stderr, res.Stdout)))
+			return newOrchestrationErr(ErrCaddyStart, firstNonEmpty(res.Stderr, res.Stdout))
 		}
 	}
 
@@ -310,27 +311,25 @@ func ensureCaddy(ctx context.Context, tg target.Service, serverID string, tcpPor
 		if rmRes, rmErr := tg.Exec(ctx, serverID, []string{"docker", "rm", "-f", caddyContainer}); rmErr != nil {
 			return mapExecErr(rmErr)
 		} else if rmRes.ExitCode != 0 {
-			return fmt.Errorf("%w:%s", ErrCaddyStart, strings.TrimSpace(firstNonEmpty(rmRes.Stderr, rmRes.Stdout)))
+			return newOrchestrationErr(ErrCaddyStart, firstNonEmpty(rmRes.Stderr, rmRes.Stdout))
 		}
-		return runCaddyContainer(ctx, tg, serverID, mergeCaddyPorts(cur, tcpPorts))
+		return runCaddyContainer(ctx, tg, serverID, image, mergeCaddyPorts(cur, tcpPorts))
 	}
 
 	// 3) 全新部署:起前探测 80/443 占用(避免与既有进程抢端口,LE 校验需 80)。
 	if busy, detail := portsBusy(ctx, tg, serverID); busy {
-		return fmt.Errorf("%w%s", ErrPortConflict, detail)
+		return newOrchestrationErr(ErrPortConflict, detail)
 	}
 	// 默认映射 80→80 / 443→443,再叠加 TCP 端口(p→p)。
 	defaults := map[int]int{80: 80, 443: 443}
-	return runCaddyContainer(ctx, tg, serverID, mergeCaddyPorts(defaults, tcpPorts))
+	return runCaddyContainer(ctx, tg, serverID, image, mergeCaddyPorts(defaults, tcpPorts))
 }
 
 // runCaddyContainer 用给定的「容器端口 → 宿主端口」映射起 Caddy 容器(array 不拼 shell)。
 // --add-host host.docker.internal:host-gateway 让 address 类上游能反代到宿主机服务。
-func runCaddyContainer(ctx context.Context, tg target.Service, serverID string, ports map[int]int) error {
-	image := caddyImageRef()
-	// best-effort pull(离线/已缓存场景交由 docker run 决断)。
-	if _, perr := tg.Exec(ctx, serverID, []string{"docker", "pull", image}); perr != nil {
-		return mapExecErr(perr)
+func runCaddyContainer(ctx context.Context, tg target.Service, serverID, image string, ports map[int]int) error {
+	if err := pullCaddyImage(ctx, tg, serverID, image); err != nil {
+		return err
 	}
 	runCmd := []string{
 		"docker", "run", "-d",
@@ -359,7 +358,47 @@ func runCaddyContainer(ctx context.Context, tg target.Service, serverID string, 
 		return mapExecErr(err)
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("%w:%s", ErrCaddyStart, strings.TrimSpace(firstNonEmpty(res.Stderr, res.Stdout)))
+		msg := firstNonEmpty(res.Stderr, res.Stdout)
+		// docker run 拿不到端口时只会给一句 "port is already allocated":这本质上就是端口冲突,
+		// 按 ErrPortConflict 报,别让用户对着「启动失败」去猜是不是 docker 没装。
+		if portAllocConflict(msg) {
+			return newOrchestrationErr(ErrPortConflict, msg)
+		}
+		return newOrchestrationErr(ErrCaddyStart, msg)
+	}
+	return nil
+}
+
+// portAllocConflict 报告 docker run 的失败输出是否是宿主机端口被占(含 80/443 之外的 TCP 透传端口)。
+func portAllocConflict(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "port is already allocated") ||
+		strings.Contains(m, "address already in use") ||
+		strings.Contains(m, "ports are not available")
+}
+
+// pullCaddyImage 先拉镜像再起容器。拉取失败时:目标机本地已有该镜像 → 照常继续(离线/受限网络下的
+// 老部署);目标机也没有 → 把控制机本地那一份推过去(受限网络里 ghcr.io 往往整段不可达,
+// 推过去比让用户登录目标机手拉省事);控制机也没有才报 ErrCaddyImagePull —— 否则只会看到
+// docker run 那句 "Unable to find image",看不出是 ghcr.io 连不上、镜像名写错还是镜像不存在。
+func pullCaddyImage(ctx context.Context, tg target.Service, serverID, image string) error {
+	res, err := tg.Exec(ctx, serverID, []string{"docker", "pull", image})
+	if err != nil {
+		return mapExecErr(err)
+	}
+	if res != nil && res.ExitCode == 0 {
+		return nil
+	}
+	pullMsg := firstNonEmpty(res.Stderr, res.Stdout)
+	local, lerr := tg.Exec(ctx, serverID, []string{"docker", "image", "inspect", image})
+	if lerr != nil {
+		return mapExecErr(lerr)
+	}
+	if local != nil && local.ExitCode == 0 {
+		return nil
+	}
+	if perr := pushCaddyImage(ctx, tg, serverID, image); perr != nil {
+		return newOrchestrationErr(ErrCaddyImagePull, strings.TrimSpace(pullMsg+"；"+perr.Error()))
 	}
 	return nil
 }
@@ -506,23 +545,58 @@ func removeCaddy(ctx context.Context, tg target.Service, serverID string) error 
 }
 
 // portsBusy 探测目标主机 80/443 是否被(非 Caddy 容器的)进程占用。best-effort:探测命令本身
-// 失败(无 ss / 无权限)视为「无法确认占用」→ 不阻断起容器(返回 false)。
+// 失败(无 ss / 无 netstat / 无权限)视为「无法确认占用」→ 不阻断起容器(返回 false)。
+// 先 ss(Linux),没有就退到 netstat(macOS/BSD 不带 ss);两条都拿不到才放弃探测 ——
+// 放弃时靠 docker run 的 "port is already allocated" 兜底分类(见 runCaddyContainer)。
 func portsBusy(ctx context.Context, tg target.Service, serverID string) (bool, string) {
-	res, err := tg.Exec(ctx, serverID, []string{"ss", "-ltn"})
-	if err != nil || res == nil || res.ExitCode != 0 {
+	out, ok := listenTable(ctx, tg, serverID, []string{"ss", "-ltn"})
+	if !ok {
+		out, ok = listenTable(ctx, tg, serverID, []string{"netstat", "-ltn"})
+	}
+	if !ok {
 		return false, ""
 	}
-	out := res.Stdout
 	var hit []string
-	for _, p := range []string{":80 ", ":443 "} {
-		if strings.Contains(out, p) {
-			hit = append(hit, strings.TrimSpace(strings.TrimSuffix(p, " ")))
+	for _, p := range []int{80, 443} {
+		if listenOnPort(out, p) {
+			hit = append(hit, ":"+strconv.Itoa(p))
 		}
 	}
 	if len(hit) == 0 {
 		return false, ""
 	}
 	return true, "(" + strings.Join(hit, "、") + " 已被占用)"
+}
+
+// listenTable 跑一条「列出监听端口」的命令,成功返回 stdout。
+func listenTable(ctx context.Context, tg target.Service, serverID string, cmd []string) (string, bool) {
+	res, err := tg.Exec(ctx, serverID, cmd)
+	if err != nil || res == nil || res.ExitCode != 0 {
+		return "", false
+	}
+	return res.Stdout, true
+}
+
+// listenOnPort 在 ss/netstat 的监听表里找本地端口。两种输出的端口分隔符不同
+// (ss 一律 `:port`;BSD netstat 是 `*.port`),所以按「本地地址最后一个分隔符后的数字」判断,
+// 不做子串匹配 —— 否则 :8080 会把 :80 误判成被占。
+func listenOnPort(out string, port int) bool {
+	want := strconv.Itoa(port)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		local := fields[3]
+		idx := strings.LastIndexAny(local, ".:")
+		if idx < 0 || idx == len(local)-1 {
+			continue
+		}
+		if local[idx+1:] == want {
+			return true
+		}
+	}
+	return false
 }
 
 // connectUpstream 把上游容器接入共享网络,使 Caddy 能按容器名访问它。
@@ -537,7 +611,7 @@ func connectUpstream(ctx context.Context, tg target.Service, serverID, container
 		if strings.Contains(msg, "already exists") || strings.Contains(msg, "already") {
 			return nil
 		}
-		return fmt.Errorf("%w:%s", ErrUpstreamConnect, strings.TrimSpace(firstNonEmpty(res.Stderr, res.Stdout)))
+		return newOrchestrationErr(ErrUpstreamConnect, firstNonEmpty(res.Stderr, res.Stdout))
 	}
 	return nil
 }
@@ -591,17 +665,23 @@ func looksUnsupported(stderr string) bool {
 		strings.Contains(s, "unknown shorthand")
 }
 
-// caddyImageRef 返回反代镜像引用:PIPEWRIGHT_CADDY_IMAGE 覆盖,否则默认自构建镜像。
+// caddyImageRef 返回环境变量/内置默认的反代镜像引用(未显式配置时的回落)。
 // 仅接受合法镜像引用字符集(防经 env 注入 docker 额外 flag/参数);非法即回退默认。
 func caddyImageRef() string {
-	v := strings.TrimSpace(os.Getenv(caddyImageEnv))
-	if v == "" {
-		return defaultCaddyImage
+	env := strings.TrimSpace(os.Getenv(caddyImageEnv))
+	if env != "" && imageRefRe.MatchString(env) {
+		return env
 	}
-	if !imageRefRe.MatchString(v) {
-		return defaultCaddyImage
+	return defaultCaddyImage
+}
+
+// resolveCaddyImage 归一化显式配置的镜像引用:合法即用;空串/非法回落到 caddyImageRef。
+func resolveCaddyImage(image string) string {
+	v := strings.TrimSpace(image)
+	if v != "" && imageRefRe.MatchString(v) {
+		return v
 	}
-	return v
+	return caddyImageRef()
 }
 
 // firstNonEmpty 返回首个非空白字符串。

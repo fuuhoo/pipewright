@@ -30,6 +30,11 @@ type stubProxyService struct {
 	prepareID     string
 	prepareStatus *proxy.CaddyStatus
 	prepareErr    error
+
+	caddyImage    proxy.CaddyImageSetting
+	caddyImageErr error
+	setImageIn    string
+	setImageErr   error
 }
 
 func (s *stubProxyService) List(context.Context, string) ([]proxy.Route, error) { return nil, nil }
@@ -65,6 +70,19 @@ func (s *stubProxyService) CaddyStatus(_ context.Context, serverID string) (*pro
 func (s *stubProxyService) RemoveCaddy(_ context.Context, serverID string) error {
 	s.removeCaddyID = serverID
 	return s.removeCaddyErr
+}
+func (s *stubProxyService) CaddyImage(context.Context) (proxy.CaddyImageSetting, error) {
+	if s.caddyImageErr != nil {
+		return proxy.CaddyImageSetting{}, s.caddyImageErr
+	}
+	return s.caddyImage, nil
+}
+func (s *stubProxyService) SetCaddyImage(_ context.Context, image string) (proxy.CaddyImageSetting, error) {
+	s.setImageIn = image
+	if s.setImageErr != nil {
+		return proxy.CaddyImageSetting{}, s.setImageErr
+	}
+	return s.caddyImage, nil
 }
 func (s *stubProxyService) PrepareCaddy(_ context.Context, serverID string) (*proxy.CaddyStatus, error) {
 	s.prepareID = serverID
@@ -350,6 +368,24 @@ func TestProxyCaddyPrepare_PortConflict(t *testing.T) {
 	}
 }
 
+// TestProxyCaddyPrepare_ImagePullFailure 验证「镜像拉不下来」不再塌进笼统的启动失败:
+// 单独的错误码 + 指出「控制机也推不过去」并给换镜像/预拉的人话,用户才知道下一步干什么。
+func TestProxyCaddyPrepare_ImagePullFailure(t *testing.T) {
+	px := &stubProxyService{prepareErr: proxy.ErrCaddyImagePull}
+	srv, client, csrf := setupProxyServer(t, px)
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/proxy/caddy?serverId=srv-1", csrf, "")
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (%s)", resp.StatusCode, raw)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "caddy_image_pull_failed") ||
+		!strings.Contains(body, "控制机") || !strings.Contains(body, "PIPEWRIGHT_CADDY_IMAGE") {
+		t.Fatalf("错误码/提示不符: %s", body)
+	}
+}
+
 // TestProxyUpdate_UpstreamKindRoundtrips 验证 config.upstreamKind 经 PUT 入参传到领域层,DTO 回显。
 func TestProxyUpdate_UpstreamKindRoundtrips(t *testing.T) {
 	now := time.Now().UTC()
@@ -425,5 +461,67 @@ func TestProxyCaddy_Unconfigured503(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+// TestProxySettings_GetAndPut 验证反代镜像配置的读写:GET 回显三项,PUT 透传镜像并回显生效值。
+func TestProxySettings_GetAndPut(t *testing.T) {
+	px := &stubProxyService{caddyImage: proxy.CaddyImageSetting{
+		Image:        "registry.local/caddy:1",
+		Effective:    "registry.local/caddy:1",
+		DefaultImage: "ghcr.io/fuuhoo/pipewright-caddy:latest",
+	}}
+	srv, client, csrf := setupProxyServer(t, px)
+
+	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/proxy/settings", "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", resp.StatusCode)
+	}
+	var got struct {
+		Image        string `json:"image"`
+		Effective    string `json:"effective"`
+		DefaultImage string `json:"defaultImage"`
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Image != "registry.local/caddy:1" || got.Effective != "registry.local/caddy:1" ||
+		got.DefaultImage == "" {
+		t.Fatalf("unexpected settings payload: %+v", got)
+	}
+
+	px.caddyImage = proxy.CaddyImageSetting{
+		Image:        "registry.local/caddy:2",
+		Effective:    "registry.local/caddy:2",
+		DefaultImage: got.DefaultImage,
+	}
+	put := doJSON(t, client, http.MethodPut, srv.URL+"/api/proxy/settings", csrf,
+		`{"image":"registry.local/caddy:2"}`)
+	defer put.Body.Close()
+	if put.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(put.Body)
+		t.Fatalf("PUT status = %d, want 200 (%s)", put.StatusCode, raw)
+	}
+	if px.setImageIn != "registry.local/caddy:2" {
+		t.Fatalf("镜像未透传到领域层: %q", px.setImageIn)
+	}
+}
+
+// TestProxySettings_PutInvalidImage 验证非法镜像引用 → 400 invalid_caddy_image。
+func TestProxySettings_PutInvalidImage(t *testing.T) {
+	px := &stubProxyService{setImageErr: proxy.ErrInvalidCaddyImage}
+	srv, client, csrf := setupProxyServer(t, px)
+
+	resp := doJSON(t, client, http.MethodPut, srv.URL+"/api/proxy/settings", csrf,
+		`{"image":"bad image; rm -rf /"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "invalid_caddy_image") {
+		t.Fatalf("body should carry invalid_caddy_image, got %s", raw)
 	}
 }
