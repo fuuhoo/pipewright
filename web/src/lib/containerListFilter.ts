@@ -5,7 +5,7 @@
  * Stack(compose 项目)名 / 机器名 / 机器 IP 任意一项即算命中;多个词之间取 AND(每词各自命中,词序无关)。
  *
  * 机器内网 IP(172.17.x)不在这里:聚合列表来自 `docker ps --format {{json .}}`,那一列压根
- * 没有 IP,要拿就得每台每 12s 多跑一次 `docker inspect`。端口映射列里的宿主绑定地址
+ * 没有 IP,要拿就得每台每 60s 多跑一次 `docker inspect`。端口映射列里的宿主绑定地址
  * (`0.0.0.0:80->80/tcp`)和机器 IP 已经够定位「哪台机器上的哪个口」。
  */
 import type { ContainerInfo } from '../api/containers'

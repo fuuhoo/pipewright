@@ -2,7 +2,7 @@
 /*
   Containers.vue — 容器/镜像管理总览。顶部聚合 KPI + 服务器切换 + 状态筛选,下面每台
   可见服务器一张 ServerCard(卡片内部按 容器/镜像 分 tab,只针对这一台)。日志走抽屉、
-  终端跳全屏页、新增容器走弹窗。每 12s 自动刷新聚合(stale-while-revalidate)。
+  终端跳全屏页、新增容器走弹窗。每 60s 自动刷新聚合(stale-while-revalidate)。
 */
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -94,7 +94,7 @@ function hostGroupTag(serverId: string): string {
   return groupLabel(hostGroupIds(serverId), permGroups.value, groupLabels.value)
 }
 
-const POLL_MS = 12_000
+const POLL_MS = 60_000
 let timer: ReturnType<typeof setInterval> | null = null
 
 // ─── 服务器切换 ───────────────────────────────────────────────────────────────

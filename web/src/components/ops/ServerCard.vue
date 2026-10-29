@@ -138,7 +138,7 @@ const matchedContainers = computed(() => {
 })
 
 // 分页单位是一张卡片里的行:卡片按机器分组,行才是会长到几百条的那一维。
-// 页码留在卡片本地 —— 轮询只 patch props,实例不重建,所以翻页不会被 12s 一次的刷新打断。
+// 页码留在卡片本地 —— 轮询只 patch props,实例不重建,所以翻页不会被 60s 一次的刷新打断。
 const rowPage = ref(1)
 const containerPage = computed(() => paginate(matchedContainers.value, rowPage.value, props.pageSize))
 // 列表变短(容器被删、筛得更严)时把越界页码夹回来,免得停在空白末页。
@@ -208,7 +208,7 @@ function statFor(name: string): ContainerStat | undefined {
   return containerStats.value.get(name)
 }
 
-// 挂载时(每卡片一次,不随 12s 轮询重跑):容器 tab 拉 stats;并后台并行预取
+// 挂载时(每卡片一次,不随 60s 轮询重跑):容器 tab 拉 stats;并后台并行预取
 // 镜像/Stacks/卷/网络 的计数,让各 tab 上的数字一开始就有(不必点开)。仅对连得上且有
 // 运行时的服务器预取,避免对不可达主机白跑 SSH。
 onMounted(() => {
