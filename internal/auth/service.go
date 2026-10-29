@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"database/sql"
 	"errors"
@@ -147,7 +148,8 @@ func (s *Service) Bootstrap(username, password string) error {
 // v6.2 阶段 6:先查 admin_user(兼容旧部署);若用户名匹配或 admin 不存在,再查
 // users 表以支持普通用户登录。匹配规则:
 //  1. admin_user.username == username → role="admin",UserID=BootstrapAdminRegularUserID
-//  2. users.username == username AND enabled=1 → role=users.role,UserID=users.id
+//  2. users.username == username AND enabled=1 → role=角色选择器(user_roles 并集,
+//     主角色在首位),UserID=users.id
 //
 // 优先 admin_user:旧部署管理员行可能在 users 也有同步行,但 admin_user.id=1 的
 // 语义优先(避免普通用户重名 admin 时被普通用户抢占)。
@@ -232,7 +234,13 @@ func (s *Service) Login(username, password string) (*Session, error) {
 		sessUsername = username
 	case useUser:
 		sessUserID = userID
-		sessRole = userRole
+		// 角色选择器:user_roles 的并集(主角色在首位);join 行缺失时回退 users.role。
+		sessRole = users.RoleSelectorForUser(context.Background(), s.db, userID, userRole)
+		if sessRole == "" {
+			// 库里的账号一个角色都没有(脏数据):空串在旧会话语义里等于管理员,
+			// 绝不能把它签到一条新会话上 —— 按认证失败处理。
+			return nil, ErrInvalidCredentials
+		}
 		sessUsername = username
 	}
 	sess, err := s.sessions.Create(sessUserID, sessRole)
@@ -270,6 +278,9 @@ func (s *Service) IssueSessionForUser(userID, username, role string) (*Session, 
 	if role == "" {
 		return nil, ErrSessionRoleMissing
 	}
+	// 调用方给的可能是单个角色(OAuth 建号返回的默认档);按库里 join 行补全成选择器,
+	// 让多角色账号无论从哪条路登录都拿到同一套权限。
+	role = users.RoleSelectorForUser(context.Background(), s.db, userID, role)
 	sess, err := s.sessions.Create(userID, role)
 	if err != nil {
 		return nil, fmt.Errorf("auth: create session: %w", err)

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/users"
 	"github.com/google/uuid"
 )
 
@@ -72,7 +73,8 @@ type Principal struct {
 	TokenID  string
 	UserID   string
 	Username string
-	Role     string
+	// Role 是角色选择器(user_roles 并集,主角色在首位),不是单个角色 id。
+	Role string
 	// AllowedTools / GroupScope 口径同 Token:len==0 = 不限。
 	AllowedTools []string
 	GroupScope   []string
@@ -297,6 +299,8 @@ func (s *Service) Verify(ctx context.Context, plaintext string) (*Principal, err
 	if err != nil {
 		return nil, fmt.Errorf("apitoken: verify: %w", err)
 	}
+	// 多角色:以 join 表为准拼选择器(主角色在首位),join 行缺失时回退 users.role。
+	p.Role = users.RoleSelectorForUser(ctx, s.db, p.UserID, p.Role)
 	// 范围列解析不动(手改过库、迁移没跑全)就当这次校验失败:与其带着坏数据按「不限」
 	// 放行,不如让这把令牌立刻不可用,逼操作人重签。
 	if p.AllowedTools, err = unmarshalScope(toolsJSON); err != nil {

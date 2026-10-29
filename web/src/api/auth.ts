@@ -56,6 +56,7 @@ export type PermId =
   | 'anomaly.edit'
   | 'cluster.view'
   | 'cluster.operate'
+  | 'group.create'
   | 'settings.access'
 
 /** 会话能力位;后端 access.Capabilities 的镜像。 */
@@ -82,6 +83,8 @@ export interface Capabilities {
 export interface SessionUser {
   username: string
   role: UserRole
+  /** 账号挂的全部角色(主角色在首位);服务端新会话才带,老响应可能缺省。 */
+  roles?: string[]
   capabilities: Capabilities
   displayName: string
   email: string

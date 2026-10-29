@@ -8,26 +8,33 @@
 // created_by 列,因此 ListWithActor/DisableWithActor 走完整 SQL(不再有兼容分支)。
 package vault
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/fuuhoo/pipewright/internal/access"
+)
 
 // Actor 表示当前操作者身份。
-//   - Role="admin" → 可看 global 凭据 + 自己的 personal;可禁用他人 personal
-//   - Role="user"  → 只能看自己的 personal
-//   - nil Actor     → 视为 admin(系统调用)
+//   - 含 admin 的角色选择器 → 可看 global 凭据 + 自己的 personal;可禁用他人 personal
+//   - 其它角色 → 只能看自己的 personal
+//   - nil Actor → 视为 admin(系统调用)
 type Actor struct {
 	UserID string // users.id(UUID v4)
-	Role   string // "admin" | "user"
+	Role   string // 角色选择器:"admin" / "viewer,ops" / ...
 }
 
-// IsAdmin 判断 Actor 是否管理员。
+// IsAdmin 判断 Actor 是否管理员(多角色取并集:任一角色是 admin 即管理员)。
 //   - nil Actor → true(系统调用视为 admin)
-//   - Role=="admin" → true
-//   - 其余 → false
+//   - 选择器含 admin → true
+//   - 空串 / 其余 → false
+//
+// 空串在这里不算管理员(与 access.Actor 的旧会话兼容口径不同):vault 只认明确的 admin,
+// 旧会话的空角色由 HTTP 层在进保险库之前就已经按管理员放行或拒绝。
 func (a *Actor) IsAdmin() bool {
 	if a == nil {
 		return true
 	}
-	return a.Role == "admin"
+	return a.Role != "" && access.IsAdminRole(a.Role)
 }
 
 // ListFilter 按 scope+owner 过滤凭据列表。

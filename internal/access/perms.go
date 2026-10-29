@@ -23,7 +23,10 @@
 // 也照样管得了自己组的名册与归属。
 package access
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // Perm 是一个功能点的声明。
 type Perm struct {
@@ -44,6 +47,18 @@ const Platform = Kind("platform")
 // 系统信息 / 服务器与集群登记)。这一组本期不再逐页拆点:它们的端点本来就统一收在
 // RequireAdmin 后面,拆了只会多出一堆「要么全给要么全不给」的伪粒度。
 const PermSettingsAccess = "settings.access"
+
+// PermGroupCreate 是「建资源分组」这个点。它不是设置类总闸的一部分:分组是协作资源,
+// 管理员可以让某个角色自己开组(但仍只在自己建/被加入的组里管事)。删组仍是管理员动作 ——
+// 删掉一个组会让组内项目的归属一夜之间失效,和「开一个新组」不是同一量级的动作。
+const PermGroupCreate = "group.create"
+
+// roleSeparator 是「角色选择器」里多个角色 id 的分隔符。
+//
+// 一个账号可以挂多个角色(见 0084 user_roles),会话与 Actor 里存的就是这种逗号串。
+// 判定一律是**并集**:任一角色持有该点/该档,就算持有 —— 多挂一个角色只会多给权限,
+// 不会因为「另一档更低」而收窄(收窄是数据轴分组的事,不是角色并集的事)。
+const roleSeparator = ","
 
 // permDict 是全部功能点。顺序即序列化顺序与前端列表顺序,固定下来便于逐条评审。
 var permDict = []Perm{
@@ -82,6 +97,9 @@ var permDict = []Perm{
 	{ID: "cluster.operate", Kind: KindKubeCluster, Act: ActOperate},
 
 	// —— 平台 ——
+	// 建组:平台级动作,不吃四类资源上限;它只决定「能不能开一个新组」,
+	// 开出来之后管不管得动仍由数据轴(组长/名册)判。
+	{ID: PermGroupCreate, Kind: Platform, Act: ActOperate},
 	{ID: PermSettingsAccess, Kind: Platform, Act: ActView},
 }
 
@@ -140,34 +158,103 @@ func ValidRole(role string) bool {
 	return ok
 }
 
-// HasPerm 报告角色是否持有某个功能点。空串按管理员口径(旧会话不该因为升级当天少一块菜单),
-// 未知角色一律 false(fail closed:认不出的东西先什么都别给)。
-func HasPerm(role, id string) bool {
-	if role == "" {
-		return true
+// SplitRoles 把角色选择器拆成有序去重的角色 id。
+// 空串返回 nil:空串是 0053 之前旧会话的取值,语义是「按管理员」,不是「一个角色都没有」。
+func SplitRoles(selector string) []string {
+	seen := make(map[string]bool, 2)
+	out := make([]string, 0, 2)
+	for _, raw := range strings.Split(selector, roleSeparator) {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
 	}
-	perms, ok := pointsFor(role)
-	if !ok {
-		return false
-	}
-	return slices.Contains(perms, id)
+	return out
 }
 
-// PermsFor 返回角色的功能点集(字典序,便于序列化与测试比对)。
-//   - 空串 / 管理员 → 全字典。
-//   - 未知角色 → 空集;前端据此把所有挂门的入口收起,一个都不亮。
-func PermsFor(role string) []string {
-	if role == "" || role == RoleAdmin {
+// JoinRoles 把角色 id 列表拼成选择器(去空去重,保持顺序)。空列表返回空串。
+func JoinRoles(roles []string) string {
+	seen := make(map[string]bool, len(roles))
+	out := make([]string, 0, len(roles))
+	for _, raw := range roles {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return strings.Join(out, roleSeparator)
+}
+
+// IsAdminRole 报告选择器是否含管理员。空串按管理员口径(旧会话兼容)。
+// 管理员与其它角色并挂时仍算管理员:并集语义下 admin 已经给了全集,不必再细分。
+func IsAdminRole(selector string) bool {
+	if strings.TrimSpace(selector) == "" {
+		return true
+	}
+	return slices.Contains(SplitRoles(selector), RoleAdmin)
+}
+
+// ValidRoleSelector 报告选择器里的每个角色是否都认得。
+// 空串 / 任一未知角色 → false(fail closed;RequireUser 用它挡掉指向已删角色的会话)。
+// 单个角色与多角色走同一条判据,调用方不必区分。
+func ValidRoleSelector(selector string) bool {
+	roles := SplitRoles(selector)
+	if len(roles) == 0 {
+		return false
+	}
+	for _, role := range roles {
+		if !ValidRole(role) {
+			return false
+		}
+	}
+	return true
+}
+
+// HasPerm 报告选择器是否持有某个功能点(多角色取并集)。
+// 空串 / 含管理员 → 真;未知角色不贡献任何点(fail closed:认不出的东西先什么都别给)。
+func HasPerm(selector, id string) bool {
+	if IsAdminRole(selector) {
+		return true
+	}
+	for _, role := range SplitRoles(selector) {
+		perms, ok := pointsFor(role)
+		if ok && slices.Contains(perms, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// PermsFor 返回选择器的功能点并集(字典序,便于序列化与测试比对)。
+//   - 空串 / 含管理员 → 全字典。
+//   - 一个角色都认不出 → 空集;前端据此把所有挂门的入口收起,一个都不亮。
+func PermsFor(selector string) []string {
+	if IsAdminRole(selector) {
 		return permIDs()
 	}
-	perms, ok := pointsFor(role)
-	if !ok {
+	granted := make(map[string]bool, 16)
+	known := false
+	for _, role := range SplitRoles(selector) {
+		perms, ok := pointsFor(role)
+		if !ok {
+			continue
+		}
+		known = true
+		for _, id := range perms {
+			granted[id] = true
+		}
+	}
+	if !known {
 		return []string{}
 	}
 	// 回传前按字典过滤一遍:手抄错一个 ID 不该让前端拿到一个谁也不认的字符串。
-	out := make([]string, 0, len(perms))
+	out := make([]string, 0, len(granted))
 	for _, id := range permIDs() {
-		if slices.Contains(perms, id) {
+		if granted[id] {
 			out = append(out, id)
 		}
 	}

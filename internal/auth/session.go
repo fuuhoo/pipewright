@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/fuuhoo/pipewright/internal/access"
 )
 
 const (
@@ -28,7 +30,8 @@ var ErrSessionNotFound = errors.New("auth: session not found or expired")
 // UserID / Role 是 sessions 表新增列的内存镜像:
 //   - admin 登录(从 admin_user 表认证)→ UserID = users.BootstrapAdminRegularUserID,
 //     Role = "admin"
-//   - 普通 user 登录(从 users 表认证)→ UserID = 该用户 id,Role = "user"
+//   - 普通 user 登录(从 users 表认证)→ UserID = 该用户 id,Role = 角色选择器
+//     (单角色如 "user",多角色如 "viewer,ops";见 0084 user_roles)
 //   - 旧部署未升级前签发的会话行 user_id/role 均为 "" → 这里也填空,
 //     requireAuth 后由中间件根据 Role 判断;旧会话在登出重登一次前不参与 RBAC 校验
 //     (见 rbac.go RequireAdmin 文档)
@@ -36,20 +39,20 @@ type Session struct {
 	Token      string
 	CSRFToken  string
 	UserID     string // v6.2 阶段 6:绑定的 users.id(admin 取固定 UUID)
-	Role       string // v6.2 阶段 6:"admin" | "user" | ''(旧会话)
+	Role       string // v6.2 阶段 6:"admin" | 角色选择器 | ''(旧会话)
 	Username   string // v6.2:登录名(内存字段,不落 sessions 表;Verify 时按 UserID 解析)
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 	LastSeenAt time.Time
 }
 
-// IsAdmin 报告会话是否为管理员角色。
+// IsAdmin 报告会话是否含管理员角色(多角色取并集:任一含 admin 即管理员)。
 // 旧会话(role=""为兼容保留)按 admin 放行;阶段 6 起新会话必填 Role。
 func (s *Session) IsAdmin() bool {
 	if s == nil {
 		return false
 	}
-	return s.Role == "" || s.Role == "admin"
+	return access.IsAdminRole(s.Role)
 }
 
 // SessionStore 操作 sessions 表。

@@ -210,6 +210,23 @@ func requireLibraryPerm(w http.ResponseWriter, r *http.Request, point string) bo
 	return true
 }
 
+// requireGroupCreate 判定当前会话能否建资源分组(group.create)。
+//
+// 建组从 v6.2 的「仅管理员」放宽成一个可分配的功能点:分组是协作资源,组长/名册仍由数据轴
+// (access.Decide)约束,所以放开建组不等于放开别人的组。删组仍是管理员动作(路由层仍收 admin)。
+func requireGroupCreate(w http.ResponseWriter, r *http.Request) bool {
+	sess, ok := sessionFromContext(r.Context())
+	if !ok || sess == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
+		return false
+	}
+	if !access.HasPerm(sess.Role, access.PermGroupCreate) {
+		writeError(w, http.StatusForbidden, "role_denied", "你的角色不能创建分组,需要管理员调整角色")
+		return false
+	}
+	return true
+}
+
 // visibleGroups 算出 actor 的资源列表可见分组范围(项目 / 服务器共用:运行与服务器都挂在
 // 同一套分组语义上)。未装配权限服务时返回「不受限」(与中间件同策略)。
 func visibleGroups(r *http.Request, svc *access.Service) (access.ListFilter, error) {

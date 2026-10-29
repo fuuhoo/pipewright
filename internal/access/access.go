@@ -95,7 +95,8 @@ var (
 type Actor struct {
 	UserID   string
 	Username string
-	Role     string
+	// Role 是角色选择器("viewer" 或 "viewer,ops"),判定侧按并集解释(见 perms.go)。
+	Role string
 	// GroupScope 是「这次调用所用 API 令牌端点」的分组范围:空 = 不限;
 	// 非空 = 只有列出的分组可见可操作。它是硬收窄,只在原有权限上取交集,
 	// 归属人是管理员也一样(见 Decide 与 VisibleGroups)。
@@ -103,9 +104,10 @@ type Actor struct {
 	GroupScope []string
 }
 
-// IsAdmin 判断是否管理员。与 vault.Actor 不同:nil 不视为 admin。
+// IsAdmin 判断是否管理员(多角色中任一为 admin 即算)。
+// 与 vault.Actor 不同:nil 不视为 admin。
 func (a *Actor) IsAdmin() bool {
-	return a != nil && a.Role == RoleAdmin
+	return a != nil && IsAdminRole(a.Role)
 }
 
 // InScope 报告该分组是否落在端点范围内(范围为空 = 不限)。

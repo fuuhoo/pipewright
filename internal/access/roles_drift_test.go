@@ -249,8 +249,17 @@ func TestSeededPresetGranularity(t *testing.T) {
 	if HasPerm("user", PermSettingsAccess) {
 		t.Fatal("普通用户不该拿到设置点")
 	}
-	if len(PermsFor("user")) != len(Perms())-1 {
-		t.Fatalf("普通用户点集 = %d, want 全字典减一 %d", len(PermsFor("user")), len(Perms()))
+	// 平台点(group.create / settings.access)不参与「普通用户=全部资源点」的承诺:
+	// 它们默认只给管理员,由管理员按角色显式勾选。资源点则必须一个不落地跟上 ——
+	// 少播一个就是当场改写了这一档的既有行为。
+	wantResourcePoints := make([]string, 0, len(Perms()))
+	for _, p := range Perms() {
+		if p.Kind != Platform {
+			wantResourcePoints = append(wantResourcePoints, p.ID)
+		}
+	}
+	if len(PermsFor("user")) != len(wantResourcePoints) {
+		t.Fatalf("普通用户点集 = %d, want 全部资源点 %d", len(PermsFor("user")), len(wantResourcePoints))
 	}
 }
 

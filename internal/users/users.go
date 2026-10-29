@@ -18,14 +18,17 @@
 package users
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/store"
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 )
@@ -93,9 +96,13 @@ func (b DeleteBlocked) Is(target error) bool {
 
 // User 是对外可见的用户视图(不含 password_hash;敏感字段不暴露)。
 type User struct {
-	ID          string
-	Username    string
-	Role        string
+	ID       string
+	Username string
+	// Role 是**主角色**(users.role),用于展示与旧口径回退;判定一律读 Roles 的并集。
+	Role string
+	// Roles 是这个账号挂的全部角色(0084 user_roles),顺序即展示顺序(Role 在首位)。
+	// 读不到 join 行时回退成 [Role],保证旧库/迁移未跑全时账号仍可用。
+	Roles       []string
 	Enabled     bool
 	Description string
 	// DisplayName 是展示用的昵称/全名;为空时各处回退到 Username。
@@ -141,6 +148,16 @@ func (s *Service) BootstrapAdminRow(username, passwordHash string) error {
 	if err != nil {
 		return fmt.Errorf("users: bootstrap admin: %w", err)
 	}
+	// 角色集合也要有 admin 这一行:0084 之后判定读 user_roles,只写 users.role 会让
+	// 内置管理员在「账号与角色」里显示成没有角色(会话仍按 users.role 兜底,但计数难看)。
+	_, err = s.db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`+
+			store.DoNothingSuffix(store.DialectOf(s.db), []string{"user_id", "role_id"}),
+		BootstrapAdminRegularUserID, RoleAdmin, now,
+	)
+	if err != nil {
+		return fmt.Errorf("users: bootstrap admin role: %w", err)
+	}
 	return nil
 }
 
@@ -185,7 +202,14 @@ func (s *Service) GetByUsername(username string) (*InternalUser, error) {
 		`SELECT id, username, password_hash, role, enabled, description, display_name, email,
 		        created_at, updated_at, last_login_at
 		 FROM users WHERE username = ?`, username)
-	return scanInternal(row)
+	u, err := scanInternal(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachRoles(&u.User); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 // GetByID 取用户 view(无 hash)。
@@ -194,7 +218,14 @@ func (s *Service) GetByID(id string) (*User, error) {
 		`SELECT id, username, role, enabled, description, display_name, email,
 		        created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id)
-	return scanView(row)
+	u, err := scanView(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachRoles(u); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 // ListFilter 用户列表过滤/分页(v6.2 阶段 9:admin 用户管理页)。
@@ -224,8 +255,10 @@ func (s *Service) List(f ListFilter) ([]*User, error) {
 	conds := []string{"1=1"}
 	args := []any{}
 	if f.Role != "" {
-		conds = append(conds, "role = ?")
-		args = append(args, f.Role)
+		// 多角色:命中主角色或 user_roles 里的任一条都算。
+		conds = append(conds, `(role = ? OR EXISTS (
+			SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_id = ?))`)
+		args = append(args, f.Role, f.Role)
 	}
 	if !f.IncludeDisabled {
 		conds = append(conds, "enabled = 1")
@@ -251,7 +284,129 @@ func (s *Service) List(f ListFilter) ([]*User, error) {
 		}
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.attachRolesFor(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachRoles 读单个账号的角色集合并装进视图。
+func (s *Service) attachRoles(u *User) error {
+	sets, err := s.rolesForUsers([]string{u.ID})
+	if err != nil {
+		return err
+	}
+	applyRoles(u, sets[u.ID])
+	return nil
+}
+
+// attachRolesFor 一次读回一批账号的角色集合(列表用,避免 N+1)。
+func (s *Service) attachRolesFor(users []*User) error {
+	if len(users) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(users))
+	for _, u := range users {
+		ids = append(ids, u.ID)
+	}
+	sets, err := s.rolesForUsers(ids)
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		applyRoles(u, sets[u.ID])
+	}
+	return nil
+}
+
+// rolesForUsers 批量读 user_roles(userID → 角色 id 集合)。
+func (s *Service) rolesForUsers(ids []string) (map[string][]string, error) {
+	if len(ids) == 0 {
+		return map[string][]string{}, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		`SELECT user_id, role_id FROM user_roles WHERE user_id IN (`+ph+`)
+		 ORDER BY created_at ASC, role_id ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("users: load roles: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string][]string, len(ids))
+	for rows.Next() {
+		var uid, rid string
+		if err := rows.Scan(&uid, &rid); err != nil {
+			return nil, fmt.Errorf("users: scan role: %w", err)
+		}
+		if rid == "" {
+			continue
+		}
+		out[uid] = append(out[uid], rid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("users: iterate roles: %w", err)
+	}
+	return out, nil
+}
+
+// applyRoles 把 join 行装进视图:主角色排首位(展示口径),其余按查询顺序。
+// join 行为空且 users.role 也为空 → 角色集合为空(不是「默认 user」):调用方据此 fail closed,
+// 绝不拿一个猜出来的角色去签会话。
+func applyRoles(u *User, set []string) {
+	roles := make([]string, 0, len(set)+1)
+	if u.Role != "" {
+		roles = append(roles, u.Role)
+	}
+	for _, r := range set {
+		if !slices.Contains(roles, r) {
+			roles = append(roles, r)
+		}
+	}
+	u.Roles = roles
+}
+
+// RoleSelectorForUser 把某账号的角色集合拼成会话/令牌用的选择器(主角色在首位)。
+// 只拿到 *sql.DB 的调用方(auth 口令登录、apitoken 校验)复用它,不必各自抄一遍。
+// 读不到 join 行时回退 primary —— 旧库只有 users.role 也照样能用。
+func RoleSelectorForUser(ctx context.Context, db *sql.DB, userID, primary string) string {
+	primary = strings.TrimSpace(primary)
+	if strings.TrimSpace(userID) == "" {
+		return primary
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT role_id FROM user_roles WHERE user_id = ? ORDER BY created_at ASC, role_id ASC`, userID)
+	if err != nil {
+		return primary
+	}
+	defer func() { _ = rows.Close() }()
+	roles := make([]string, 0, 2)
+	if primary != "" {
+		roles = append(roles, primary)
+	}
+	for rows.Next() {
+		var r string
+		if rows.Scan(&r) != nil {
+			continue
+		}
+		r = strings.TrimSpace(r)
+		if r != "" && !slices.Contains(roles, r) {
+			roles = append(roles, r)
+		}
+	}
+	if len(roles) == 0 {
+		return primary
+	}
+	return access.JoinRoles(roles)
 }
 
 // NewID 生成新用户 ID(UUID v4);供后续 story(邀请注册)使用。
@@ -265,10 +420,13 @@ const MinPasswordLen = 8
 type CreateInput struct {
 	Username     string
 	PasswordHash string
-	Role         string // RoleAdmin | RoleUser;空 → RoleUser
-	Description  string
-	DisplayName  string // 展示名;空则各处回退到 Username
-	Email        string // 档案邮箱;仅展示,不参与任何判定
+	// Role 是单角色入参(旧调用点);Roles 非空时以 Roles 为准,Role 忽略。
+	Role string
+	// Roles 是这个账号要挂的全部角色(0084)。空 → 用 Role;两者都空 / Role 不认识 → user。
+	Roles       []string
+	Description string
+	DisplayName string // 展示名;空则各处回退到 Username
+	Email       string // 档案邮箱;仅展示,不参与任何判定
 }
 
 // Create 建普通用户或管理员账号(管理员建号,v6.2 阶段 9)。
@@ -295,19 +453,22 @@ func (s *Service) Create(in CreateInput) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	role := strings.TrimSpace(in.Role)
-	if !access.ValidRole(role) {
-		// 空串与未知名都落 user。注意:users.role 的空串只属于 0053 之前的旧**会话**行,
-		// 语义是「按管理员」;建号时若把空串写进 users.role,下次登录就会继承那个含义。
-		role = RoleUser
+	roles, err := createRoles(in)
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := NewID()
-	_, err = s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("users: begin create: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(
 		`INSERT INTO users (id, username, password_hash, role, enabled, description,
 		                   display_name, email, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-		id, username, in.PasswordHash, role, strings.TrimSpace(in.Description),
+		id, username, in.PasswordHash, roles[0], strings.TrimSpace(in.Description),
 		displayName, email, now, now,
 	)
 	if err != nil {
@@ -316,7 +477,49 @@ func (s *Service) Create(in CreateInput) (*User, error) {
 		}
 		return nil, fmt.Errorf("users: create: %w", err)
 	}
+	for _, role := range roles {
+		if _, err := tx.Exec(
+			`INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`,
+			id, role, now,
+		); err != nil {
+			return nil, fmt.Errorf("users: create role %s: %w", role, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("users: commit create: %w", err)
+	}
 	return s.GetByID(id)
+}
+
+// createRoles 归一化建号入参的角色集合;空 / 不认识的历史单角色路径仍落 user。
+func createRoles(in CreateInput) ([]string, error) {
+	if len(in.Roles) == 0 {
+		role := strings.TrimSpace(in.Role)
+		if !access.ValidRole(role) {
+			// 空串与未知名都落 user。注意:users.role 的空串只属于 0053 之前的旧**会话**行,
+			// 语义是「按管理员」;建号时若把空串写进 users.role,下次登录就会继承那个含义。
+			return []string{RoleUser}, nil
+		}
+		return []string{role}, nil
+	}
+	roles := access.SplitRoles(access.JoinRoles(in.Roles))
+	if len(roles) == 0 {
+		return []string{RoleUser}, nil
+	}
+	if err := validateRoleIDs(roles); err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
+// validateRoleIDs 确认每个角色 id 都在枚举内(含已装载的自定义角色)。
+func validateRoleIDs(roles []string) error {
+	for _, role := range roles {
+		if !access.ValidRole(role) {
+			return fmt.Errorf("%w:角色 %q 不在枚举内", ErrValidation, role)
+		}
+	}
+	return nil
 }
 
 // SetPassword 按用户 ID 重置口令(hash 由调用方生成)。
@@ -354,21 +557,57 @@ func (s *Service) SetDescription(id, description string) error {
 	)
 }
 
-// SetRole 改角色(功能轴)。角色名必须在 access 的角色枚举内,否则 ErrValidation。
+// SetRole 改单一角色(保留旧签名;等价于 SetRoles(id, []string{role}))。
+func (s *Service) SetRole(id, role string) error {
+	return s.SetRoles(id, []string{role})
+}
+
+// SetRoles 改写账号的完整角色集合(0084)。roles 去空去重,至少一个;首个成为主角色
+// (users.role,展示与旧口径回退用)。任一 id 不在枚举内 → ErrValidation。
 //
-// 生效时机:role 是登录时快照进 sessions.role 的,改库不会让已签发的会话立刻变色,
+// 生效时机:角色是建会话时快照进 sessions.role 的,改库不会让已签发的会话立刻变色,
 // 对方重新登录才拿到新档位(与「禁用账号不撤销会话」同一取舍,见 docs/权限架构说明.md §11.2)。
 // 内置管理员那一行由 HTTP 层的 isBootstrapAdminRow 挡在门外,不在这里重复判。
-func (s *Service) SetRole(id, role string) error {
-	role = strings.TrimSpace(role)
-	if !access.ValidRole(role) {
-		return fmt.Errorf("%w:角色 %q 不在枚举内", ErrValidation, role)
+func (s *Service) SetRoles(id string, roles []string) error {
+	normalized := access.SplitRoles(access.JoinRoles(roles))
+	if len(normalized) == 0 {
+		return fmt.Errorf("%w:至少需要一个角色", ErrValidation)
 	}
+	if err := validateRoleIDs(normalized); err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("users: begin set roles: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now().UTC().Format(time.RFC3339)
-	return s.execOneRow("set role",
-		`UPDATE users SET role = ?, updated_at = ? WHERE id = ?`,
-		role, now, id,
-	)
+	res, err := tx.Exec(`UPDATE users SET role = ?, updated_at = ? WHERE id = ?`,
+		normalized[0], now, id)
+	if err != nil {
+		return fmt.Errorf("users: set role: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("users: rows affected: %w", err)
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(`DELETE FROM user_roles WHERE user_id = ?`, id); err != nil {
+		return fmt.Errorf("users: clear roles: %w", err)
+	}
+	for _, role := range normalized {
+		if _, err := tx.Exec(
+			`INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`,
+			id, role, now,
+		); err != nil {
+			return fmt.Errorf("users: set role %s: %w", role, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("users: commit set roles: %w", err)
+	}
+	return nil
 }
 
 // SetProfile 改本地档案:显示名与邮箱。两个字段都由调用方决定,允许清空
@@ -473,10 +712,39 @@ func (s *Service) Delete(id string) error {
 		return DeleteBlocked{OwnedGroups: ownedGroups, PersonalCredentials: personalCreds}
 	}
 
-	if role == RoleAdmin && enabled != 0 {
+	// 角色集合:主角色 + user_roles;join 行为空时回退主角色(旧库)。
+	roleRows, err := tx.Query(`SELECT role_id FROM user_roles WHERE user_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("users: read roles: %w", err)
+	}
+	roles := make([]string, 0, 2)
+	for roleRows.Next() {
+		var r string
+		if err := roleRows.Scan(&r); err != nil {
+			_ = roleRows.Close()
+			return fmt.Errorf("users: scan role: %w", err)
+		}
+		if r != "" {
+			roles = append(roles, r)
+		}
+	}
+	if err := roleRows.Err(); err != nil {
+		_ = roleRows.Close()
+		return fmt.Errorf("users: iterate roles: %w", err)
+	}
+	_ = roleRows.Close()
+	if len(roles) == 0 && role != "" {
+		roles = []string{role}
+	}
+
+	if access.IsAdminRole(access.JoinRoles(roles)) && enabled != 0 {
 		var otherAdmins int
 		if err := tx.QueryRow(
-			`SELECT COUNT(1) FROM users WHERE role = ? AND enabled = 1 AND id <> ?`, RoleAdmin, id,
+			`SELECT COUNT(DISTINCT u.id) FROM users u
+			  WHERE u.enabled = 1 AND u.id <> ?
+			    AND (u.role = ? OR EXISTS (
+			        SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = ?))`,
+			id, RoleAdmin, RoleAdmin,
 		).Scan(&otherAdmins); err != nil {
 			return fmt.Errorf("users: count other admins: %w", err)
 		}
@@ -491,6 +759,8 @@ func (s *Service) Delete(id string) error {
 		`DELETE FROM resource_group_members WHERE user_id = ?`,
 		// API 令牌同样没有外键:留行就是留一把「谁也认不出归属、但可能被某台机器还在用」的凭据。
 		`DELETE FROM api_tokens WHERE user_id = ?`,
+		// 角色挂靠行没有外键,不删就留下指向已消失账号的脏行。
+		`DELETE FROM user_roles WHERE user_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return fmt.Errorf("users: clear references: %w", err)

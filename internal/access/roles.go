@@ -39,47 +39,49 @@ func Roles() []string {
 // 同名 id 的自定义行顶掉它(见 catalog.go 的 ReloadRoles)。
 func IsBuiltinRole(id string) bool { return isBuiltinRole(id) }
 
-// NormalizeRole 把任意入参角色归一到枚举内:未知名一律按 RoleUser 处理,
-// 空串保留为空(空串是 0053 迁移前旧会话的取值,语义是「按管理员」,不能改写成 user)。
+// NormalizeRole 把任意入参选择器归一到可读形状:每个角色都认得时回拼接后的串,
+// 否则按 RoleUser 处理;空串保留为空(空串是 0053 迁移前旧会话的取值,语义是「按管理员」)。
 //
 // 只给展示与报错文案用,别把它接进判定:它认不出自定义角色 id 时会退成 user,
 // 那是「读起来顺」的口径而不是「权限够」的口径。真正的判定读 Ceiling / HasPerm,
 // 认不出的角色一律 fail closed。
-func NormalizeRole(role string) string {
-	if role == "" {
+func NormalizeRole(selector string) string {
+	if selector == "" {
 		return ""
 	}
-	if !ValidRole(role) {
-		return RoleUser
+	if ValidRoleSelector(selector) {
+		return JoinRoles(SplitRoles(selector))
 	}
-	return role
+	return RoleUser
 }
 
-// Ceiling 返回角色对该类资源允许的最高档位,由 perms.go 的角色点集算出来。
+// Ceiling 返回选择器对该类资源允许的最高档位(多角色取并集:任一角色够就够)。
 //   - 认不出的类别 → ActView:先只让看(fail closed),管理员也不例外 —— 新加 Kind 却没配点时,
 //     它不该顺手继承「什么都允许」。
-//   - 空串(旧部署会话)与管理员 → ActManage,即功能轴不拦任何动作。
-//   - 未知角色 / 该类资源一个点都没有 → ActView。
-func Ceiling(role string, kind Kind) Act {
+//   - 空串(旧部署会话)与含管理员 → ActManage,即功能轴不拦任何动作。
+//   - 一个角色都认不出 / 该类资源一个点都没有 → ActView。
+func Ceiling(selector string, kind Kind) Act {
 	if !slices.Contains(ResourceKinds(), kind) {
 		return ActView
 	}
-	if role == "" || role == RoleAdmin {
+	if IsAdminRole(selector) {
 		return ActManage
-	}
-	perms, ok := pointsFor(role)
-	if !ok {
-		return ActView
 	}
 	// 取该类别下所有点的最高档。Act 从 1 起(View),0 是哨兵「这类一个点都没有」。
 	best := Act(0)
-	for _, id := range perms {
-		p, known := permByID[id]
-		if !known || p.Kind != kind || p.Act == ActManage {
+	for _, role := range SplitRoles(selector) {
+		perms, ok := pointsFor(role)
+		if !ok {
 			continue
 		}
-		if p.Act > best {
-			best = p.Act
+		for _, id := range perms {
+			p, known := permByID[id]
+			if !known || p.Kind != kind || p.Act == ActManage {
+				continue
+			}
+			if p.Act > best {
+				best = p.Act
+			}
 		}
 	}
 	if best < ActView {
@@ -88,9 +90,9 @@ func Ceiling(role string, kind Kind) Act {
 	return best
 }
 
-// SettingsAllowed 报告角色能否进入设置类入口(构建环境 / 配置资源 / 全局凭据 / 用户管理 / 审计)。
-// 就是「有没有那个点」;空串按管理员口径保留放行,免得升级当天把管理员旧会话锁在门外。
-func SettingsAllowed(role string) bool { return HasPerm(role, PermSettingsAccess) }
+// SettingsAllowed 报告选择器能否进入设置类入口(构建环境 / 配置资源 / 全局凭据 / 用户管理 / 审计)。
+// 就是「有没有那个点」(多角色取并集);空串按管理员口径保留放行,免得升级当天把管理员旧会话锁在门外。
+func SettingsAllowed(selector string) bool { return HasPerm(selector, PermSettingsAccess) }
 
 // Capabilities 是回传给前端的角色能力位。前端据它决定菜单与控件是否出现,
 // 但它只是展示层副本——服务端每个请求仍重新查表判定,不以它为准。
@@ -110,12 +112,12 @@ func ResourceKinds() []Kind {
 	return []Kind{KindProject, KindRun, KindServer, KindKubeCluster}
 }
 
-// CapabilitiesFor 从角色点集算出要回传的能力位。
-func CapabilitiesFor(role string) Capabilities {
+// CapabilitiesFor 从角色选择器算出的能力位(多角色取并集)。
+func CapabilitiesFor(selector string) Capabilities {
 	kinds := ResourceKinds()
 	out := make(map[string]string, len(kinds))
 	for _, k := range kinds {
-		out[string(k)] = Ceiling(role, k).String()
+		out[string(k)] = Ceiling(selector, k).String()
 	}
-	return Capabilities{Settings: SettingsAllowed(role), Kinds: out, Perms: PermsFor(role)}
+	return Capabilities{Settings: SettingsAllowed(selector), Kinds: out, Perms: PermsFor(selector)}
 }

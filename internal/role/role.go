@@ -483,9 +483,18 @@ func (s *Service) listCustomRows(ctx context.Context) ([]Role, error) {
 	return out, nil
 }
 
-// userCounts 一次拿到所有角色的账号数(users.role → 计数)。
+// userCounts 一次拿到所有角色的账号数。
+//
+// 0084 之后一个账号可挂多个角色,计数以 user_roles 为准;UNION users.role 兜住
+// 迁移未跑全 / 手工改库的旧行(同一 (user, role) 会被 UNION 去重,不会重计)。
 func (s *Service) userCounts(ctx context.Context) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT role, COUNT(*) FROM users GROUP BY role`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT role_id, COUNT(*) FROM (
+			SELECT user_id, role_id FROM user_roles
+			UNION
+			SELECT id AS user_id, role AS role_id FROM users WHERE TRIM(role) <> ''
+		) t
+		GROUP BY role_id`)
 	if err != nil {
 		return nil, fmt.Errorf("role: 统计账号数: %w", err)
 	}

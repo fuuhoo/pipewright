@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
 )
@@ -24,9 +25,9 @@ const auditActor = "admin"
 
 // actorFromSession 从 context 中的 Session 派生审计 actor。
 //   - 无 session → "system"(兜底)
-//   - Session.Role="admin" → "admin:<username>"(兼容旧部署 username 由 AdminUsername 取)
+//   - 角色选择器含 admin(含旧会话空串)→ "admin:<username>"
 //   - Session.Role="user"  → "user:<username>"(admin 不混用 user: 前缀)
-//   - 其余(自定义角色,Role=roles.id uuid)→ "user:<登录名>"
+//   - 其余(自定义角色 / 多角色选择器)→ "user:<登录名>"
 //
 // 实际 username 在登录时由 auth.Service.Login 写入 last_login_at 路径同步;
 // 为避免 httpapi → users 的硬依赖,这里采用「Session.UserID/Role + admin 路径走
@@ -37,8 +38,8 @@ func actorFromSession(ctx context.Context, ac auth.Authenticator) string {
 	if !ok || sess == nil {
 		return auditActorFallback
 	}
-	switch sess.Role {
-	case "admin", "":
+	switch {
+	case access.IsAdminRole(sess.Role):
 		// 旧会话或 admin:优先从 auth 取 admin username(兼容旧部署)。
 		if ac != nil {
 			if u, err := ac.AdminUsername(); err == nil && u != "" {
@@ -46,10 +47,10 @@ func actorFromSession(ctx context.Context, ac auth.Authenticator) string {
 			}
 		}
 		return "admin"
-	case "user":
+	case sess.Role == "user":
 		return "user:" + sess.UserID
 	default:
-		// 自定义角色:Session.Role 是 roles.id(uuid)。直接把它当 actor 落库等于没记 ——
+		// 自定义角色 / 多角色:Session.Role 是 roles.id 或逗号串。直接把它当 actor 落库等于没记 ——
 		//  uuid 既不能按人查也认不出是谁。真实登录名在 v6.2 已进 Session.Username(内存字段,
 		//  Verify 时按 UserID 解析),优先用它;再退 UserID;全空才回落角色串(旧会话)。
 		if sess.Username != "" {

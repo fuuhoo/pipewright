@@ -131,8 +131,12 @@ func TestBoundAccountWithEmptyRoleIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	// 脏化「一个角色都没有」:0084 之后角色集合以 user_roles 为准,两处都清掉才真的是空。
 	if _, err := db.Exec(`UPDATE users SET role = '' WHERE id = ?`, created.ID); err != nil {
 		t.Fatalf("脏化 role: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM user_roles WHERE user_id = ?`, created.ID); err != nil {
+		t.Fatalf("清角色集合: %v", err)
 	}
 	if _, err := svc.Bind(context.Background(), created.ID, identityOf("9002", "legacy"), nil); err != nil {
 		t.Fatalf("bind: %v", err)

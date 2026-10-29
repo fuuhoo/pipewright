@@ -729,19 +729,18 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			userR.Get("/build-envs/languages", makeListBuildEnvLanguagesHandler(o.buildEnvSvc))
 			userR.Get("/config-profiles", makeListEnabledConfigProfilesHandler(o.cpSvc))
 
-			// 资源分组(v6.2 分组权限)。列表/详情/改名册走 handler 内的 access.Decide,
-			// 建组与删组是「设置类」动作,只在路由层收 admin。
+			// 资源分组(v6.2 分组权限)。列表/详情/改名册走 handler 内的 access.Decide;
+			// 建组是 group.create 功能点(handler 里判点),删组仍是管理员动作。
 			// assignable 是静态段,chi 优先于 /groups/{id},注册顺序无所谓但放在一起更好读。
 			gs := o.groupSvc
 			userR.Get("/groups", makeListGroupsHandler(gs, o.usersSvc))
 			userR.Get("/groups/assignable", makeGroupAssignableUsersHandler(o.usersSvc))
 			userR.Get("/groups/{id}", makeGetGroupHandler(gs, o.usersSvc))
 			userR.Patch("/groups/{id}", makeUpdateGroupHandler(gs, aud, authn))
+			userR.Post("/groups", makeCreateGroupHandler(gs, aud, authn))
 			userR.Post("/groups/{id}/members", makeGroupMemberHandler(gs, aud, authn, true))
 			userR.Delete("/groups/{id}/members/{userId}", makeGroupMemberHandler(gs, aud, authn, false))
-			adminR2 := ar.With(RequireAdmin)
-			adminR2.Post("/groups", makeCreateGroupHandler(gs, aud, authn))
-			adminR2.Delete("/groups/{id}", makeDeleteGroupHandler(gs, aud, authn))
+			ar.With(RequireAdmin).Delete("/groups/{id}", makeDeleteGroupHandler(gs, aud, authn))
 		})
 
 		// 项目接入与列表(Story 2.1)。p 为 nil 时 handler 返回 503。
@@ -1398,16 +1397,22 @@ func sessionRoleOf(sess *auth.Session) string {
 // displayName / email 是 users 表里的**本地档案**(0069):显示名给顶栏与账户页用,
 // 为空时前端回退到 username。两者都刻意不做进会话快照 —— 见 buildSessionPayload。
 type sessionPayload struct {
-	Username     string              `json:"username"`
-	DisplayName  string              `json:"displayName"`
-	Email        string              `json:"email"`
-	Role         string              `json:"role"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	// Role 是主角色/选择器串(兼容旧前端展示);多角色以 roles 为准。
+	Role string `json:"role"`
+	// Roles 是会话持有的全部角色(选择器拆分结果,主角色在首位)。
+	Roles        []string            `json:"roles"`
 	Capabilities access.Capabilities `json:"capabilities"`
 }
 
 // newSessionPayload 组装会话响应。role 需先过 sessionRoleOf(旧会话空串按 admin)。
 func newSessionPayload(username, role string) sessionPayload {
-	return sessionPayload{Username: username, Role: role, Capabilities: access.CapabilitiesFor(role)}
+	return sessionPayload{
+		Username: username, Role: role, Roles: access.SplitRoles(role),
+		Capabilities: access.CapabilitiesFor(role),
+	}
 }
 
 // buildSessionPayload 在 newSessionPayload 之上补本地档案两项。

@@ -189,6 +189,10 @@ func makeCreateGroupHandler(gs *group.Service, aud audit.Recorder, ac auth.Authe
 			writeError(w, http.StatusServiceUnavailable, "internal", "分组服务未初始化")
 			return
 		}
+		// 建组是 group.create 功能点(不是设置类总闸):管理员照旧,自定义角色勾了就给。
+		if !requireGroupCreate(w, r) {
+			return
+		}
 		actor, ok := groupActor(w, r)
 		if !ok {
 			return
@@ -207,7 +211,12 @@ func makeCreateGroupHandler(gs *group.Service, aud audit.Recorder, ac auth.Authe
 		}
 		// 组长缺省为创建者本人:管理员建的组若不留组长,就变成「只有管理员能管」的孤儿组,
 		// 更符合直觉的是「你建的就是你带」——管理员想指定别人时显式传 ownerId。
+		// 非管理员只能把自己立为组长:替别人建组等于替他扩权,那是管理员的指派动作。
 		ownerID := req.OwnerID
+		if ownerID != "" && ownerID != actor.UserID && !actor.IsAdmin() {
+			writeError(w, http.StatusForbidden, "role_denied", "只有管理员可以指定其他组长")
+			return
+		}
 		if ownerID == "" {
 			ownerID = actor.UserID
 		}
@@ -389,10 +398,19 @@ func makeGroupMemberHandler(gs *group.Service, aud audit.Recorder, ac auth.Authe
 	}
 }
 
+// assignableUserDTO 是 /groups/assignable 的一行:最小名册 + 建号时间。
+//
+// createdAt 是给穿梭框排序用的(最新的账号在前),不是资料展示;邮箱/描述/登录时间依旧不外泄。
+type assignableUserDTO struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // makeGroupAssignableUsersHandler 返回 GET /api/groups/assignable handler。
 //
 // 组长要往名册里加人,但 /api/admin/users 是 admin-only——所以这里给一条普通登录用户
-// 可读的最小名册(仅 id + username,不含邮箱/描述/登录时间)。用户名在内网实例里不是
+// 可读的最小名册(仅 id + username + createdAt,不含邮箱/描述/登录时间)。用户名在内网实例里不是
 // 秘密(项目、运行、审计页到处都在展示),而缺了它组长的成员选择器就是死的。
 func makeGroupAssignableUsersHandler(usersSvc *users.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -408,9 +426,13 @@ func makeGroupAssignableUsersHandler(usersSvc *users.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return
 		}
-		out := make([]groupMemberDTO, 0, len(list))
+		out := make([]assignableUserDTO, 0, len(list))
 		for _, u := range list {
-			out = append(out, groupMemberDTO{ID: u.ID, Username: u.Username})
+			out = append(out, assignableUserDTO{
+				ID:        u.ID,
+				Username:  u.Username,
+				CreatedAt: u.CreatedAt.UTC().Format(time.RFC3339),
+			})
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

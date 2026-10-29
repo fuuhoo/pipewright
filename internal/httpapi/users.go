@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/users"
@@ -31,16 +32,18 @@ import (
 // displayName / email 是本地档案(迁移 0069):列表页拿 display_name 当主标签、
 // username 当登录名并列显示。两者可为空(老账号/没走 OAuth 建号的),前端回退到 username。
 type userDTO struct {
-	ID          string  `json:"id"`
-	Username    string  `json:"username"`
-	DisplayName string  `json:"displayName"`
-	Email       string  `json:"email"`
-	Role        string  `json:"role"`
-	Enabled     bool    `json:"enabled"`
-	Description string  `json:"description"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
-	LastLoginAt *string `json:"lastLoginAt"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	// Roles 是账号挂的全部角色(0084;主角色在首位),前端多选与继承点树都读它。
+	Roles       []string `json:"roles"`
+	Enabled     bool     `json:"enabled"`
+	Description string   `json:"description"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
+	LastLoginAt *string  `json:"lastLoginAt"`
 }
 
 func toUserDTO(u *users.User) userDTO {
@@ -52,12 +55,17 @@ func toUserDTO(u *users.User) userDTO {
 		s := u.LastLoginAt.UTC().Format("2006-01-02T15:04:05Z07:00")
 		lastLogin = &s
 	}
+	roles := u.Roles
+	if roles == nil {
+		roles = []string{}
+	}
 	return userDTO{
 		ID:          u.ID,
 		Username:    u.Username,
 		DisplayName: u.DisplayName,
 		Email:       u.Email,
 		Role:        u.Role,
+		Roles:       roles,
 		Enabled:     u.Enabled,
 		Description: u.Description,
 		CreatedAt:   u.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
@@ -168,12 +176,13 @@ func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authen
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Username    string `json:"username"`
-			Password    string `json:"password"`
-			Role        string `json:"role"`
-			Description string `json:"description"`
-			DisplayName string `json:"displayName"`
-			Email       string `json:"email"`
+			Username    string   `json:"username"`
+			Password    string   `json:"password"`
+			Role        string   `json:"role"`
+			Roles       []string `json:"roles"`
+			Description string   `json:"description"`
+			DisplayName string   `json:"displayName"`
+			Email       string   `json:"email"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -192,6 +201,7 @@ func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authen
 			Username:     req.Username,
 			PasswordHash: hash,
 			Role:         req.Role,
+			Roles:        req.Roles,
 			Description:  req.Description,
 			DisplayName:  req.DisplayName,
 			Email:        req.Email,
@@ -204,7 +214,7 @@ func makeCreateUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authen
 			Action:     audit.ActionUserAdminCreate,
 			TargetType: audit.TargetUser,
 			TargetID:   u.ID,
-			Detail:     map[string]any{"username": u.Username, "role": u.Role},
+			Detail:     map[string]any{"username": u.Username, "role": u.Role, "roles": u.Roles},
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, toUserDTO(u))
@@ -279,20 +289,21 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Description *string `json:"description"`
-			DisplayName *string `json:"displayName"`
-			Email       *string `json:"email"`
-			Enabled     *bool   `json:"enabled"`
-			Role        *string `json:"role"`
+			Description *string   `json:"description"`
+			DisplayName *string   `json:"displayName"`
+			Email       *string   `json:"email"`
+			Enabled     *bool     `json:"enabled"`
+			Role        *string   `json:"role"`
+			Roles       *[]string `json:"roles"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 			return
 		}
 		if req.Description == nil && req.DisplayName == nil && req.Email == nil &&
-			req.Enabled == nil && req.Role == nil {
+			req.Enabled == nil && req.Role == nil && req.Roles == nil {
 			writeError(w, http.StatusBadRequest, "bad_request",
-				"至少提供 description、displayName、email、enabled 或 role")
+				"至少提供 description、displayName、email、enabled、role 或 roles")
 			return
 		}
 		// 禁用自己在写库前拦下:把唯一的管理员账号禁用掉之后再没人能改回来。
@@ -332,9 +343,19 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 				return
 			}
 		}
-		// 改角色只有真正变了才写库与记账;角色名不在枚举内 → 400(领域层 ErrValidation)。
+		// 改角色:roles 优先(多角色整组替换);只有真正变了才写库与记账。
+		// 角色名不在枚举内 → 400(领域层 ErrValidation)。
 		roleChanged := false
-		if req.Role != nil && *req.Role != target.Role {
+		switch {
+		case req.Roles != nil:
+			if access.JoinRoles(*req.Roles) != access.JoinRoles(target.Roles) {
+				if err := us.SetRoles(id, *req.Roles); err != nil {
+					writeUsersError(w, err)
+					return
+				}
+				roleChanged = true
+			}
+		case req.Role != nil && *req.Role != target.Role:
 			if err := us.SetRole(id, *req.Role); err != nil {
 				writeUsersError(w, err)
 				return
@@ -353,9 +374,12 @@ func makePatchUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authent
 				action = audit.ActionUserDisabled
 			}
 		}
-		detail := map[string]any{"username": fresh.Username, "role": fresh.Role, "enabled": fresh.Enabled}
+		detail := map[string]any{
+			"username": fresh.Username, "role": fresh.Role, "roles": fresh.Roles, "enabled": fresh.Enabled,
+		}
 		if roleChanged {
 			detail["role_from"] = target.Role
+			detail["roles_from"] = target.Roles
 		}
 		// 档案改过就把新值留下:改显示名可以冒充别人,只记「改过」事后看不出改成了什么。
 		if req.DisplayName != nil || req.Email != nil {
@@ -415,6 +439,7 @@ func makeDeleteUserHandler(us *users.Service, aud audit.Recorder, ac auth.Authen
 			Detail: map[string]any{
 				"username":    target.Username,
 				"role":        target.Role,
+				"roles":       target.Roles,
 				"displayName": target.DisplayName,
 				"email":       target.Email,
 			},

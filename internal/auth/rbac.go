@@ -54,6 +54,7 @@ func IsAdminSession(s *Session) bool {
 // 新增角色不用改这里。代价是这条判定依赖 catalog 已装载:main.go 那次 ReloadRoles 没成功,
 // 非内置角色的会话就会在 RequireUser 上 401 —— 所以启动时那次装载的告警要盯住。
 // 旧会话 role="" 仍然拒绝(0053 之前的行没有角色,普通用户端点要求明确角色,登出重登一次即可)。
+// 多角色用选择器判定:每个角色都认得才算有效,任一未知角色 → 拒(fail closed)。
 func IsUserSession(s *Session) bool {
-	return s != nil && access.ValidRole(s.Role)
+	return s != nil && access.ValidRoleSelector(s.Role)
 }

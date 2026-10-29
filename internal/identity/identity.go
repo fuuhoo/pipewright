@@ -81,6 +81,7 @@ type Binding struct {
 type Account struct {
 	UserID   string
 	Username string
+	// Role 是角色选择器(user_roles 并集,主角色在首位),不是单个角色 id。
 	Role     string
 	Provider string
 	// Provisioned 为 true 表示这次登录新建了账号 —— 审计要能分清「首次建号」与「既有登录」。
@@ -249,8 +250,9 @@ func (s *Service) accountFromBinding(ctx context.Context, b *Binding, id *oauth.
 	if !u.Enabled {
 		return nil, ErrAccountUnavailable
 	}
-	role := strings.TrimSpace(u.Role)
-	if role == "" || !access.ValidRole(role) {
+	// 角色选择器:多角色取并集;任一角色认不出就拒(fail closed,绝不因脏数据白拿权限)。
+	role := access.JoinRoles(u.Roles)
+	if !access.ValidRoleSelector(role) {
 		return nil, ErrAccountUnavailable
 	}
 	// 展示字段每次登录刷新一次(平台上改了昵称/邮箱,这边跟着走)。
@@ -335,7 +337,7 @@ func (s *Service) provision(ctx context.Context, app *oauth.LoginAppConfig, id *
 	}
 	credID := s.syncGitCredential(ctx, b, id, grant)
 	return &Account{
-		UserID: u.ID, Username: u.Username, Role: u.Role,
+		UserID: u.ID, Username: u.Username, Role: access.JoinRoles(u.Roles),
 		Provider: b.Provider, Provisioned: true, CredentialID: credID,
 	}, nil
 }
