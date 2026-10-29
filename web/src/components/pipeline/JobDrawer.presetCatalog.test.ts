@@ -29,6 +29,18 @@ const presetEnvs: PresetBuildEnv[] = [
     imageCheckStatus: 'available',
     sortOrder: 30,
   },
+  {
+    // 已启用但镜像被复查为不可用:仍列出(便于看出它为什么不能选),但不给选中。
+    id: 'env-py312',
+    language: 'python',
+    version: '3.12',
+    displayName: 'Python 3.12',
+    description: '',
+    sourceType: 'official',
+    image: 'python:3.12-slim',
+    imageCheckStatus: 'unavailable',
+    sortOrder: 40,
+  },
 ]
 const presetProfiles: ConfigProfile[] = [
   {
@@ -105,6 +117,37 @@ describe('JobDrawer 预置构建环境选择器', () => {
     const last = events!.at(-1)![0] as Partial<PipelineJob>
     expect(last.config!.buildEnvId).toBe('env-node20')
     expect(last.config!.image).toBe('node:20-alpine')
+  })
+
+  it('镜像不可用的预置环境置灰不可选,可用的照常可选', async () => {
+    const wrapper = mount(JobDrawer, { props: { job: scriptJob({}), stage } })
+    await flushPromises()
+
+    const envSelect = wrapper
+      .findAll('select.drawer-select')
+      .find((s) => s.text().includes('Python 3.12'))!
+    const unavailable = envSelect
+      .findAll('option')
+      .find((o) => o.text().includes('Python 3.12'))!
+    expect((unavailable.element as HTMLOptionElement).disabled).toBe(true)
+    expect(unavailable.text()).toContain('不可用')
+
+    const available = envSelect
+      .findAll('option')
+      .find((o) => o.text().includes('Node.js 20'))!
+    expect((available.element as HTMLOptionElement).disabled).toBe(false)
+  })
+
+  it('已选中的环境事后变为不可用 → 仍回显原值,只是不能再选回来', async () => {
+    const wrapper = mount(JobDrawer, {
+      props: { job: scriptJob({ buildEnvId: 'env-py312', image: 'python:3.12-slim' }), stage },
+    })
+    await flushPromises()
+
+    const envSelect = wrapper
+      .findAll('select.drawer-select')
+      .find((s) => s.text().includes('Python 3.12'))!
+    expect((envSelect.element as HTMLSelectElement).value).toBe('env-py312')
   })
 
   it('旧配置反查:只有 image 且命中目录 → 下拉回显对应预置', async () => {

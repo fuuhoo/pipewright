@@ -1082,8 +1082,15 @@ async function confirmSave(): Promise<void> {
               ? t('pipelineJob.fieldBuildEnvLegacy')
               : t('pipelineJob.fieldBuildEnvUnselected')
           }}</option>
-          <option v-for="env in presetEnvs" :key="env.id" :value="env.id">
-            {{ env.displayName }} · {{ env.image }}
+          <!-- 镜像已判定不可用的条目仍列出(便于看出「为什么这个环境不见了」),但选不中:
+               选中它只会在构建时拉不到镜像。disabled 的 option 在当前已选时仍能正常回显。 -->
+          <option
+            v-for="env in presetEnvs"
+            :key="env.id"
+            :value="env.id"
+            :disabled="env.imageCheckStatus === 'unavailable'"
+          >
+            {{ env.displayName }} · {{ env.image }}{{ env.imageCheckStatus === 'unavailable' ? ' · ' + t('pipelineJob.fieldBuildEnvUnavailable') : '' }}
           </option>
         </select>
 
