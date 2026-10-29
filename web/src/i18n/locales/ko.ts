@@ -99,6 +99,24 @@ const ko: typeof zhCN = {
     oauthDivider: '또는 외부 계정으로 로그인',
     oauthGroupAria: '외부 계정으로 로그인',
     oauthLoginWith: '{provider} 계정으로 로그인',
+    resetHelpBtn: '관리자 비밀번호를 잊으셨나요?',
+    resetHelpTitle: '내장 관리자 비밀번호 재설정',
+    resetHelpSub:
+      '비밀번호는 단방향 해시로만 저장되어 누구도 복구할 수 없습니다. 이 인스턴스를 실행하는 머신에서 명령 한 줄로 다시 설정하는 것이 유일한 방법입니다. 로그인이나 재시작은 필요 없습니다.',
+    resetHelpLockHint:
+      '잠긴 것뿐이라면 재설정이 필요 없을 수 있습니다. 5회 연속 실패하면 15분간 잠기고 이후 자동으로 해제됩니다.',
+    resetHelpStep1: '이 인스턴스를 실행하는 서버에 접속합니다(Docker 배포라면 컨테이너에 들어갑니다).',
+    resetHelpStep2: '서비스 작업 디렉터리(데이터베이스가 있는 곳)에서 다음 중 하나를 실행합니다:',
+    resetHelpLabelBinary: '바이너리 / 프로세스 배포',
+    resetHelpLabelDocker: 'Docker / compose 배포',
+    resetHelpStep3: '재설정 완료 메시지가 나오면 새 비밀번호로 바로 로그인할 수 있습니다.',
+    resetHelpGen:
+      '--generate 는 강력한 비밀번호를 만들어 한 번만 보여 줍니다. 직접 정하려면 --stdin < 비밀번호.txt 또는 --password-file 을 쓰세요.',
+    resetHelpCwd:
+      '명령의 현재 디렉터리 기준으로 찾은 데이터베이스를 변경합니다. 컨테이너에서는 기본이 /data 이므로 하위 디렉터리로 cd 한 뒤 실행하지 마세요.',
+    resetHelpCopy: '복사',
+    resetHelpCopied: '복사됨',
+    resetHelpClose: '닫기',
   },
 
   // OAuth 콜백은 기계 코드만 돌려보냅니다(/login?oauth_error=name_taken).

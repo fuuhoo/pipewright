@@ -99,6 +99,27 @@ const es: typeof zhCN = {
     oauthDivider: 'O inicia sesión con una cuenta externa',
     oauthGroupAria: 'Iniciar sesión con una cuenta externa',
     oauthLoginWith: 'Continuar con {provider}',
+    resetHelpBtn: '¿Has olvidado la contraseña de administrador?',
+    resetHelpTitle: 'Restablecer la contraseña del administrador integrado',
+    resetHelpSub:
+      'La contraseña solo se guarda como hash unidireccional: nadie puede recuperarla. La única salida es ejecutar un comando en la máquina que aloja esta instancia. No hace falta iniciar sesión ni reiniciar el servicio.',
+    resetHelpLockHint:
+      'Estar bloqueado no es lo mismo que haberla olvidado: 5 fallos consecutivos bloquean el acceso 15 minutos y luego se libera solo.',
+    resetHelpStep1:
+      'Abre una shell en el servidor que ejecuta esta instancia (en Docker, entra en el contenedor).',
+    resetHelpStep2:
+      'Ejecuta uno de estos comandos en el directorio de trabajo del servicio (donde está la base de datos):',
+    resetHelpLabelBinary: 'Despliegue con binario / proceso',
+    resetHelpLabelDocker: 'Despliegue con Docker / compose',
+    resetHelpStep3:
+      'Cuando confirme el cambio, inicia sesión con la nueva contraseña: surte efecto de inmediato.',
+    resetHelpGen:
+      '--generate imprime una contraseña fuerte una sola vez; para elegir la tuya usa --stdin < contraseña.txt o --password-file <archivo>.',
+    resetHelpCwd:
+      'Restablece la base de datos resuelta desde el directorio actual. En contenedores es /data por defecto: no hagas cd a un subdirectorio antes de ejecutarlo.',
+    resetHelpCopy: 'Copiar',
+    resetHelpCopied: 'Copiado',
+    resetHelpClose: 'Cerrar',
   },
 
   // El callback de OAuth vuelve solo con un código de máquina (/login?oauth_error=name_taken);

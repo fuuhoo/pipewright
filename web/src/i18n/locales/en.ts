@@ -99,6 +99,27 @@ const en: typeof zhCN = {
     oauthDivider: 'Or sign in with an external account',
     oauthGroupAria: 'Sign in with an external account',
     oauthLoginWith: 'Continue with {provider}',
+    resetHelpBtn: 'Forgot admin password?',
+    resetHelpTitle: 'Reset the built-in admin password',
+    resetHelpSub:
+      'Passwords are stored only as one-way hashes, so nobody can recover them. The only way back is one command on the machine that hosts this instance — no login or restart needed.',
+    resetHelpLockHint:
+      'Being locked out is not the same as forgetting: 5 consecutive failures lock sign-in for 15 minutes, then it clears on its own.',
+    resetHelpStep1:
+      'Open a shell on the server that runs this instance (for Docker, enter the container).',
+    resetHelpStep2:
+      'Run one of these from the working directory the service uses (where the database lives):',
+    resetHelpLabelBinary: 'Binary / process deployment',
+    resetHelpLabelDocker: 'Docker / compose deployment',
+    resetHelpStep3:
+      'When it reports the reset, sign in with the new password — it takes effect immediately.',
+    resetHelpGen:
+      '--generate prints a strong password once; to choose your own, use --stdin < password.txt or --password-file <file>.',
+    resetHelpCwd:
+      'It resets the database resolved from the current directory. In containers that is /data by default — do not cd into a subdirectory first.',
+    resetHelpCopy: 'Copy',
+    resetHelpCopied: 'Copied',
+    resetHelpClose: 'Close',
   },
 
   // The OAuth callback redirects back with a machine code only (/login?oauth_error=name_taken);

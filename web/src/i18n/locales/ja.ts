@@ -99,6 +99,25 @@ const ja: typeof zhCN = {
     oauthDivider: 'または外部アカウントでログイン',
     oauthGroupAria: '外部アカウントでログイン',
     oauthLoginWith: '{provider} でログイン',
+    resetHelpBtn: '管理者パスワードをお忘れですか?',
+    resetHelpTitle: '内蔵管理者パスワードの再設定',
+    resetHelpSub:
+      'パスワードは一方向ハッシュでのみ保存されるため、誰も復元できません。このインスタンスを動かすマシン上で 1 コマンド実行するのが唯一の方法です。ログインも再起動も不要です。',
+    resetHelpLockHint:
+      'ロックされただけなら再設定は不要かもしれません。5 回連続で失敗すると 15 分間ロックされ、経過後に自動解除されます。',
+    resetHelpStep1:
+      'このインスタンスを動かしているサーバーにログインします(Docker の場合はコンテナに入ります)。',
+    resetHelpStep2: 'サービスの作業ディレクトリ(データベースがある場所)で次のいずれかを実行します:',
+    resetHelpLabelBinary: 'バイナリ / プロセス運用',
+    resetHelpLabelDocker: 'Docker / compose 運用',
+    resetHelpStep3: '再設定の完了が表示されたら、新しいパスワードでそのままログインできます。',
+    resetHelpGen:
+      '--generate は強力なパスワードを生成し、一度だけ表示します。自分で決める場合は --stdin < パスワード.txt か --password-file を使います。',
+    resetHelpCwd:
+      '変更されるのはコマンドの現在ディレクトリで解決されたデータベースです。コンテナ内は既定で /data なので、サブディレクトリに cd してから実行しないでください。',
+    resetHelpCopy: 'コピー',
+    resetHelpCopied: 'コピーしました',
+    resetHelpClose: '閉じる',
   },
 
   // OAuth コールバックは機械コードだけを返します(/login?oauth_error=name_taken)。

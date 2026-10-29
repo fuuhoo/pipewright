@@ -99,6 +99,27 @@ const de: typeof zhCN = {
     oauthDivider: 'Oder mit einem externen Konto anmelden',
     oauthGroupAria: 'Mit einem externen Konto anmelden',
     oauthLoginWith: 'Weiter mit {provider}',
+    resetHelpBtn: 'Admin-Passwort vergessen?',
+    resetHelpTitle: 'Passwort des eingebauten Administrators zurücksetzen',
+    resetHelpSub:
+      'Passwörter liegen nur als Einweg-Hash vor – niemand kann sie wiederherstellen. Der einzige Weg ist ein Befehl auf dem Rechner, der diese Instanz betreibt. Anmeldung und Neustart sind nicht nötig.',
+    resetHelpLockHint:
+      'Gesperrt ist nicht dasselbe wie vergessen: Nach 5 Fehlversuchen ist die Anmeldung 15 Minuten gesperrt und wird danach automatisch freigegeben.',
+    resetHelpStep1:
+      'Melden Sie sich auf dem Server an, der diese Instanz betreibt (bei Docker: im Container).',
+    resetHelpStep2:
+      'Führen Sie einen der Befehle im Arbeitsverzeichnis des Dienstes (dort liegt die Datenbank) aus:',
+    resetHelpLabelBinary: 'Binary-/Prozess-Betrieb',
+    resetHelpLabelDocker: 'Docker-/Compose-Betrieb',
+    resetHelpStep3:
+      'Sobald der Befehl den Erfolg meldet, melden Sie sich mit dem neuen Passwort an – es gilt sofort.',
+    resetHelpGen:
+      '--generate zeigt ein starkes Passwort einmalig an; für ein eigenes nutzen Sie --stdin < passwort.txt oder --password-file <Datei>.',
+    resetHelpCwd:
+      'Geändert wird die aus dem aktuellen Verzeichnis ermittelte Datenbank. Im Container ist das standardmäßig /data – wechseln Sie vorher nicht in ein Unterverzeichnis.',
+    resetHelpCopy: 'Kopieren',
+    resetHelpCopied: 'Kopiert',
+    resetHelpClose: 'Schließen',
   },
 
   // Der OAuth-Callback springt nur mit einem Maschinencode zurück (/login?oauth_error=name_taken);

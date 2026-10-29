@@ -99,6 +99,27 @@ const fr: typeof zhCN = {
     oauthDivider: 'Ou connexion avec un compte externe',
     oauthGroupAria: 'Se connecter avec un compte externe',
     oauthLoginWith: 'Continuer avec {provider}',
+    resetHelpBtn: 'Mot de passe administrateur oublié ?',
+    resetHelpTitle: 'Réinitialiser le mot de passe de l’administrateur intégré',
+    resetHelpSub:
+      'Le mot de passe n’est conservé que sous forme de hachage à sens unique : personne ne peut le retrouver. La seule issue est une commande sur la machine qui héberge cette instance. Ni connexion ni redémarrage nécessaire.',
+    resetHelpLockHint:
+      'Être verrouillé n’est pas synonyme d’oubli : 5 échecs consécutifs bloquent la connexion 15 minutes, puis elle se débloque seule.',
+    resetHelpStep1:
+      'Ouvrez un shell sur le serveur qui exécute cette instance (pour Docker, entrez dans le conteneur).',
+    resetHelpStep2:
+      'Lancez l’une de ces commandes depuis le répertoire de travail du service (celui de la base) :',
+    resetHelpLabelBinary: 'Déploiement binaire / processus',
+    resetHelpLabelDocker: 'Déploiement Docker / compose',
+    resetHelpStep3:
+      'Une fois la réinitialisation confirmée, connectez-vous avec le nouveau mot de passe : il est actif immédiatement.',
+    resetHelpGen:
+      '--generate affiche un mot de passe robuste une seule fois ; pour le choisir vous-même, utilisez --stdin < motdepasse.txt ou --password-file <fichier>.',
+    resetHelpCwd:
+      'La commande modifie la base résolue depuis le répertoire courant. Dans un conteneur, c’est /data par défaut : ne faites pas cd dans un sous-répertoire avant de la lancer.',
+    resetHelpCopy: 'Copier',
+    resetHelpCopied: 'Copié',
+    resetHelpClose: 'Fermer',
   },
 
   // Le callback OAuth ne rapporte qu'un code machine (/login?oauth_error=name_taken) ;

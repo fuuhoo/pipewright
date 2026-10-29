@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
 import { login } from '../api/auth'
@@ -34,6 +34,48 @@ const bannerError = ref('')
 
 // Whether this is a lockout (429)
 const isLockedOut = ref(false)
+
+// ─── 「忘记管理员密码」说明弹层 ─────────────────────────────────────────────
+// 口令是单向哈希,没有「找回」接口;唯一自救路径是到部署机上跑 reset-admin-password
+// 子命令。被锁的这一刻正是最需要知道这条路的时候,所以入口只挂在锁定态上。
+const showResetHelp = ref(false)
+const resetPanel = ref<HTMLElement | null>(null)
+const copiedCmd = ref('')
+let copiedTimer = 0
+
+// 两段命令与 README 保持一致:占位符 <容器名> 要保持字面量,复制后由人替换。
+const resetCmdBinary = 'pipewright reset-admin-password --generate'
+const resetCmdDocker = 'docker exec -it <容器名> /pipewright reset-admin-password --generate'
+
+async function openResetHelp(): Promise<void> {
+  showResetHelp.value = true
+  await nextTick()
+  resetPanel.value?.focus()
+}
+
+function closeResetHelp(): void {
+  showResetHelp.value = false
+  copiedCmd.value = ''
+}
+
+async function copyResetCmd(cmd: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(cmd)
+    copiedCmd.value = cmd
+    window.clearTimeout(copiedTimer)
+    copiedTimer = window.setTimeout(() => {
+      copiedCmd.value = ''
+      copiedTimer = 0
+    }, 1600)
+  } catch {
+    // 非安全上下文(clipboard 不可用):命令本身已可读可手选,静默即可。
+  }
+}
+
+function onEscape(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && showResetHelp.value) closeResetHelp()
+}
+onMounted(() => window.addEventListener('keydown', onEscape))
 
 function clearErrors(): void {
   usernameError.value = ''
@@ -252,6 +294,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onEscape)
+  if (copiedTimer) window.clearTimeout(copiedTimer)
   if (rafId) window.cancelAnimationFrame(rafId)
   if (onResize) window.removeEventListener('resize', onResize)
   if (onPointerMove) window.removeEventListener('pointermove', onPointerMove)
@@ -303,6 +347,15 @@ onBeforeUnmount(() => {
               <span class="banner__icon" aria-hidden="true">{{ isLockedOut ? '⊘' : '⚠' }}</span>
               <span>{{ bannerError }}</span>
             </div>
+
+            <!-- 被锁了才出现:口令忘了同样卡在这里,给一条不需要登录的自救路径。 -->
+            <button v-if="isLockedOut" type="button" class="forgot" @click="openResetHelp">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v5M12 16h.01" stroke-linecap="round" />
+              </svg>
+              <span>{{ t('login.resetHelpBtn') }}</span>
+            </button>
 
             <!-- Username field -->
             <div class="field">
@@ -444,6 +497,68 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 「忘记管理员密码」说明:只讲本机自救那一条路,不给任何在线找回的假承诺。 -->
+    <div v-if="showResetHelp" class="modal" role="dialog" aria-modal="true" aria-labelledby="reset-help-title">
+      <div class="modal__scrim" aria-hidden="true" @click="closeResetHelp" />
+      <div ref="resetPanel" class="modal__panel" tabindex="-1">
+        <header class="modal__head">
+          <h2 id="reset-help-title" class="modal__title">{{ t('login.resetHelpTitle') }}</h2>
+          <button type="button" class="modal__close" :aria-label="t('login.resetHelpClose')" @click="closeResetHelp">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+            </svg>
+          </button>
+        </header>
+
+        <p class="modal__sub">{{ t('login.resetHelpSub') }}</p>
+        <p class="modal__hint">
+          <span aria-hidden="true">⏱</span>
+          <span>{{ t('login.resetHelpLockHint') }}</span>
+        </p>
+
+        <ol class="steps">
+          <li class="step">
+            <span class="step__n" aria-hidden="true">1</span>
+            <p class="step__text">{{ t('login.resetHelpStep1') }}</p>
+          </li>
+          <li class="step">
+            <span class="step__n" aria-hidden="true">2</span>
+            <div class="step__body">
+              <p class="step__text">{{ t('login.resetHelpStep2') }}</p>
+              <div class="cmd">
+                <span class="cmd__label">{{ t('login.resetHelpLabelBinary') }}</span>
+                <div class="cmd__row">
+                  <code class="cmd__text">{{ resetCmdBinary }}</code>
+                  <button type="button" class="cmd__copy" @click="copyResetCmd(resetCmdBinary)">
+                    {{ copiedCmd === resetCmdBinary ? t('login.resetHelpCopied') : t('login.resetHelpCopy') }}
+                  </button>
+                </div>
+              </div>
+              <div class="cmd">
+                <span class="cmd__label">{{ t('login.resetHelpLabelDocker') }}</span>
+                <div class="cmd__row">
+                  <code class="cmd__text">{{ resetCmdDocker }}</code>
+                  <button type="button" class="cmd__copy" @click="copyResetCmd(resetCmdDocker)">
+                    {{ copiedCmd === resetCmdDocker ? t('login.resetHelpCopied') : t('login.resetHelpCopy') }}
+                  </button>
+                </div>
+              </div>
+              <p class="step__note">{{ t('login.resetHelpGen') }}</p>
+              <p class="step__note">{{ t('login.resetHelpCwd') }}</p>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step__n" aria-hidden="true">3</span>
+            <p class="step__text">{{ t('login.resetHelpStep3') }}</p>
+          </li>
+        </ol>
+
+        <button type="button" class="modal__ok" @click="closeResetHelp">
+          {{ t('login.resetHelpClose') }}
+        </button>
       </div>
     </div>
 
@@ -841,6 +956,32 @@ onBeforeUnmount(() => {
   margin-top: 1px;
 }
 
+/* ——— 「忘记管理员密码」入口 ——— */
+.forgot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: -8px 0 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #fcd34d;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.forgot:hover {
+  color: #fde68a;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.forgot svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ——— fields ——— */
 .field {
   margin-bottom: 15px;
@@ -1081,6 +1222,200 @@ onBeforeUnmount(() => {
   border-top-color: var(--lp-sky);
 }
 
+/* ——— 「忘记管理员密码」弹层 ——— */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 7, 15, 0.72);
+  backdrop-filter: blur(4px);
+}
+.modal__panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 560px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 26px 26px 22px;
+  border-radius: 22px;
+  background: linear-gradient(160deg, rgba(24, 32, 52, 0.98), rgba(12, 17, 30, 0.98));
+  border: 1px solid var(--lp-brd);
+  box-shadow:
+    0 30px 80px -20px rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  outline: none;
+  animation: rise 0.28s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+.modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.modal__title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.modal__close {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--lp-faint);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    border-color 0.15s;
+}
+.modal__close:hover {
+  color: var(--lp-text);
+  background: var(--lp-glass);
+  border-color: var(--lp-brd);
+}
+.modal__close svg {
+  width: 15px;
+  height: 15px;
+}
+.modal__sub {
+  margin-top: 9px;
+  color: var(--lp-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.modal__hint {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 11px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  color: #fcd34d;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.steps {
+  margin-top: 18px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.step__n {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--lp-blue), var(--lp-cyan));
+}
+.step__body {
+  flex: 1;
+  min-width: 0;
+}
+.step__text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--lp-text);
+}
+.cmd {
+  margin-top: 9px;
+}
+.cmd__label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--lp-faint);
+}
+.cmd__row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.cmd__text {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid var(--lp-brd);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #cfe0ff;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.cmd__copy {
+  flex-shrink: 0;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--lp-brd);
+  background: var(--lp-glass);
+  color: var(--lp-dim);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.cmd__copy:hover {
+  border-color: rgba(59, 130, 246, 0.6);
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--lp-text);
+}
+.step__note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--lp-faint);
+}
+.modal__ok {
+  width: 100%;
+  margin-top: 20px;
+  padding: 12px;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 700;
+  background: linear-gradient(100deg, var(--lp-blue), var(--lp-indigo));
+}
+.modal__ok:hover {
+  filter: brightness(1.08);
+}
+
 /* ——— trust bar ——— */
 .trust {
   position: absolute;
@@ -1132,7 +1467,8 @@ onBeforeUnmount(() => {
   .eyebrow__dot,
   .brand,
   .trust,
-  .card-shell {
+  .card-shell,
+  .modal__panel {
     animation: none;
   }
   .particles {
@@ -1149,6 +1485,18 @@ onBeforeUnmount(() => {
   }
   .headline {
     font-size: 26px;
+  }
+  .modal {
+    padding: 14px;
+  }
+  .modal__panel {
+    padding: 20px 18px 18px;
+  }
+  .cmd__row {
+    flex-direction: column;
+  }
+  .cmd__copy {
+    padding: 8px 12px;
   }
 }
 </style>
