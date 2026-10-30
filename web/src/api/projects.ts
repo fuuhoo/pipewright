@@ -48,6 +48,13 @@ export interface Project {
    * 分组名称由前端用 GET /api/groups 映射,后端只给 ID。
    */
   groupId: string
+  /**
+   * 归属服务(纯展示 / 筛选,不参与权限)。'' = 未归属;
+   * 与分组正交:一个服务可跨多个分组,一个项目最多挂一个服务。
+   * serviceName 由后端 join 好,直接渲染即可。
+   */
+  serviceId: string
+  serviceName: string
   /** null until pipeline runs exist (Story 2.x). */
   lastRunStatus: RunStatus | null
   /** Empty until servers are bound (Story 2.x). */
@@ -64,6 +71,8 @@ export interface CreateProjectInput {
   defaultBranch?: string
   /** Optional group id; omitted or '' = 未归组(仅管理员可登记未归组项目)。 */
   groupId?: string
+  /** Optional service id; omitted or '' = 未归属服务(纯展示属性,不参与权限)。 */
+  serviceId?: string
 }
 
 export interface UpdateProjectInput {
@@ -81,6 +90,8 @@ export interface UpdateProjectInput {
   prStatusEnabled?: boolean
   /** 归组/改组;传 '' 表示移出分组。需要对该组(含原组)有 Manage 权。 */
   groupId?: string
+  /** 改归属服务;传 '' 表示取消归属。省略 = 不动(不参与权限判定)。 */
+  serviceId?: string
 }
 
 export interface TestCloneResult {

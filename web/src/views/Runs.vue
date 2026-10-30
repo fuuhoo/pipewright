@@ -8,9 +8,11 @@ import TypedRunParams from '../components/TypedRunParams.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { listProjects, type Project } from '../api/projects'
 import { listGroups, type Group } from '../api/groups'
+import { listServices, type Service } from '../api/services'
 import { HttpError } from '../api/http'
 import ProjectPicker from '../components/projects/ProjectPicker.vue'
 import { GROUP_ALL, groupOptions } from '../lib/groupFilter'
+import { SERVICE_ALL, SERVICE_NONE, serviceOptions } from '../lib/serviceFilter'
 import { resolveProjectFilter, withProjectFilter } from '../lib/runProjectFilter'
 
 const { t } = useI18n()
@@ -46,6 +48,18 @@ const projectsLoading = ref(false)
 const groups       = ref<Group[]>([])
 const groupsLoaded = ref(false)
 const groupFilter  = ref<string>(GROUP_ALL)
+
+// 归属服务筛选:与分组正交的第二个维度,由服务端按「项目的 service_id」筛 ——
+// 运行列表是分页取回的,本地筛只能筛到这一屏,那不算筛选。
+const services      = ref<Service[]>([])
+const serviceFilter = ref<string>(SERVICE_ALL)
+
+const SERVICE_OPTIONS = computed(() =>
+  serviceOptions(services.value, {
+    all: t('services.filterAll'),
+    unassigned: t('services.unassigned'),
+  }),
+)
 
 const groupLabels = computed(() => ({
   all: t('groups.filterAll'),
@@ -100,6 +114,10 @@ async function loadRuns(): Promise<void> {
     const params: ListRunsParams = { pageSize: RUNS_PAGE_SIZE }
     if (statusFilter.value !== 'all') params.status = statusFilter.value
     if (projectId.value) params.projectId = projectId.value
+    if (serviceFilter.value !== SERVICE_ALL) {
+      if (serviceFilter.value === SERVICE_NONE) params.serviceUnassigned = true
+      else params.serviceId = serviceFilter.value
+    }
     const res = await listRuns(params)
     runs.value = res.items
     totalRuns.value = res.total
@@ -121,6 +139,7 @@ onMounted(() => {
   // 下拉候选和触发弹窗用的是同一份清单:一次 GET,两处都有得选。
   void loadProjects()
   void loadGroups()
+  void loadServices()
 })
 
 function onFilterChange(): void {
@@ -130,9 +149,10 @@ function onFilterChange(): void {
 // 地址栏改了(卡片上的「运行记录」按钮、下拉换项目、浏览器前进后退)都从这一条路重载。
 watch(projectId, () => { void loadRuns() })
 
-/** 空态那颗「清除筛选」:两个筛选条件一起归位,别让清除完还剩着项目。 */
+/** 空态那颗「清除筛选」:筛选条件一起归位,别让清除完还剩着条件。 */
 function clearFilters(): void {
   statusFilter.value = 'all'
+  serviceFilter.value = SERVICE_ALL
   if (projectId.value) setProject('')
   else void loadRuns()
 }
@@ -171,6 +191,15 @@ async function loadGroups(): Promise<void> {
     groupsLoaded.value = true
   } catch {
     // 列表照旧出,项目下拉退回「不分分组,全给」。
+  }
+}
+
+// 没有服务时整个控件不出现:只有「全部 / 未归属」的下拉是摆设。
+async function loadServices(): Promise<void> {
+  try {
+    services.value = await listServices()
+  } catch {
+    // 列表照旧出,服务筛选隐藏。
   }
 }
 
@@ -439,6 +468,26 @@ function isFailedStatus(status: RunStatus): boolean {
           @click="setProject('')"
         >{{ t('runs.projectFilterClear') }}</button>
       </div>
+
+      <!-- 归属服务筛选:服务端筛(列表分页取回,本地筛只能筛到一屏) -->
+      <div v-if="services.length" class="service-filter">
+        <span class="project-filter-label">{{ t('services.filterLabel') }}</span>
+        <div class="select-wrap project-filter-select">
+          <select
+            v-model="serviceFilter"
+            class="field-select"
+            :aria-label="t('services.filterAria')"
+            @change="onFilterChange"
+          >
+            <option v-for="opt in SERVICE_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </div>
+      </div>
     </div>
 
     <!-- ─── Loading skeleton ─────────────────────────────────────────────── -->
@@ -486,11 +535,11 @@ function isFailedStatus(status: RunStatus): boolean {
         </div>
         <p class="empty-label">{{ t('runs.empty') }}</p>
         <p class="empty-hint">
-          <template v-if="statusFilter !== 'all' || projectId">{{ t('runs.emptyFiltered') }}</template>
+          <template v-if="statusFilter !== 'all' || projectId || serviceFilter !== SERVICE_ALL">{{ t('runs.emptyFiltered') }}</template>
           <template v-else>{{ t('runs.emptyHint') }}</template>
         </p>
         <button
-          v-if="statusFilter !== 'all' || projectId"
+          v-if="statusFilter !== 'all' || projectId || serviceFilter !== SERVICE_ALL"
           class="btn-secondary"
           @click="clearFilters"
         >{{ t('runs.clearFilter') }}</button>
@@ -878,6 +927,14 @@ function isFailedStatus(status: RunStatus): boolean {
 
 /* ─── project filter ─────────────────────────────────────────────────────── */
 .project-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ─── service filter(与项目筛选同款,单独一组)────────────────────────────── */
+.service-filter {
   display: flex;
   align-items: center;
   gap: 6px;

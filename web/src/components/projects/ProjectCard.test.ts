@@ -15,6 +15,8 @@ function project(over: Partial<Project> = {}): Project {
     pacEnabled: false,
     prStatusEnabled: false,
     groupId: 'g-pay',
+    serviceId: '',
+    serviceName: '',
     lastRunStatus: null,
     targetServers: [],
     updatedAt: new Date().toISOString(),
@@ -28,7 +30,7 @@ function mountCard(props: Partial<{ project: Project; groupLabel: string; canAss
   })
 }
 
-/** 明细行依次是:上次运行 / 目标服务器 / 仓库凭据 / 分组。 */
+/** 明细行依次是:上次运行 / 目标服务器 / 仓库凭据 / 分组 / 归属服务。 */
 function metaRow(wrapper: ReturnType<typeof mountCard>, index: number) {
   return wrapper.findAll('.card-meta-row')[index]
 }
@@ -100,5 +102,19 @@ describe('ProjectCard', () => {
 
     const running = mountCard({ project: project({ lastRunStatus: '进行中' }) })
     expect(running.find('.status-dot--pulse').exists()).toBe(true)
+  })
+
+  it('归属服务行:未归属也照实说,点它报出要改哪张卡', async () => {
+    const unassigned = mountCard()
+    expect(metaRow(unassigned, 4).get('.service-link').text()).toBe('未归属')
+    expect(metaRow(unassigned, 4).get('.service-link').classes()).toContain('service-link--empty')
+
+    const p = project({ serviceId: 'svc-1', serviceName: '订单中心' })
+    const assigned = mountCard({ project: p })
+    expect(metaRow(assigned, 4).get('.service-link').text()).toBe('订单中心')
+    expect(metaRow(assigned, 4).get('.service-link').classes()).not.toContain('service-link--empty')
+
+    await assigned.get('.service-link').trigger('click')
+    expect(assigned.emitted('assignService')?.[0]).toEqual([p])
   })
 })

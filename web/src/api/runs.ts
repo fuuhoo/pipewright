@@ -196,6 +196,10 @@ export interface RunListResponse {
 export interface ListRunsParams {
   projectId?: string
   status?: RunStatus
+  /** 只看归属某服务的项目的运行(纯筛选,不改可见范围)。 */
+  serviceId?: string
+  /** 只看未归属任何服务的项目(serviceId 为空时生效)。 */
+  serviceUnassigned?: boolean
   page?: number
   pageSize?: number
 }
@@ -206,6 +210,8 @@ export function listRuns(params: ListRunsParams = {}): Promise<RunListResponse> 
   const qs = new URLSearchParams()
   if (params.projectId) qs.set('projectId', params.projectId)
   if (params.status) qs.set('status', params.status)
+  if (params.serviceId) qs.set('serviceId', params.serviceId)
+  if (params.serviceUnassigned) qs.set('serviceUnassigned', '1')
   if (params.page !== undefined) qs.set('page', String(params.page))
   if (params.pageSize !== undefined) qs.set('pageSize', String(params.pageSize))
   const query = qs.toString()

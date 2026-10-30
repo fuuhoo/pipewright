@@ -30,6 +30,7 @@ const emit = defineEmits<{
   copy: [project: Project]
   remove: [project: Project]
   assign: [project: Project]
+  assignService: [project: Project]
 }>()
 
 const { t } = useI18n()
@@ -169,6 +170,17 @@ function relativeTime(isoStr: string): string {
         class="meta-value"
         :title="t('groups.lockedHint')"
       >{{ groupLabel }}</span>
+    </div>
+
+    <!-- 归属服务:纯展示 / 筛选属性,和分组正交;点开即可改(能不能改由服务端判) -->
+    <div class="card-meta-row">
+      <span class="meta-label">{{ t('services.label') }}</span>
+      <button
+        class="meta-value service-link"
+        :class="{ 'service-link--empty': !project.serviceName }"
+        :title="t('services.assignAction', { name: project.name })"
+        @click.stop="emit('assignService', project)"
+      >{{ project.serviceName || t('services.unassigned') }}</button>
     </div>
 
     <!-- Card footer: updatedAt + actions -->
@@ -495,8 +507,10 @@ function relativeTime(isoStr: string): string {
   user-select: none;
 }
 
-/* 分组值可点:只有对该资源归属有管理权时才渲染成按钮(见 canAssignGroup)。 */
-.group-link {
+/* 分组值可点:只有对该资源归属有管理权时才渲染成按钮(见 canAssignGroup)。
+   服务值是纯展示属性,任何人都能点开改(能不能保存由服务端判)。 */
+.group-link,
+.service-link {
   appearance: none;
   background: none;
   border: none;
@@ -507,6 +521,11 @@ function relativeTime(isoStr: string): string {
   text-decoration: underline dotted;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+
+/* 服务未归属时用弱化色:它是个可选属性,空着不该和已填的字段抢注意力。 */
+.service-link--empty {
+  color: var(--color-faint);
 }
 
 /* card footer */

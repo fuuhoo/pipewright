@@ -15,10 +15,12 @@ import {
 } from '../api/projects'
 import { listCredentials, usableCredentials, createCredential, type Credential, type CredentialType } from '../api/credentials'
 import { listGroups, type Group } from '../api/groups'
+import { listServices, createService, updateService, deleteService, type Service } from '../api/services'
 import CredentialSelect from '../components/projects/CredentialSelect.vue'
 import ProjectCard from '../components/projects/ProjectCard.vue'
 import CopyProjectsModal from '../components/projects/CopyProjectsModal.vue'
 import RefPicker from '../components/projects/RefPicker.vue'
+import ServiceBatchRun from '../components/projects/ServiceBatchRun.vue'
 import TriggerRunModal from '../components/projects/TriggerRunModal.vue'
 import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
@@ -28,6 +30,7 @@ import { isSupportedRepoUrl } from '../lib/gitUrl'
 import { runStatusLabel } from '../lib/runStatus'
 // lib 的 groupOptions(筛选下拉候选)与本页那个同名局部量(归组弹窗的可管组候选)不是一回事,别名隔开
 import { GROUP_ALL, GROUP_NONE, groupLabel, groupOptions as buildGroupOptions } from '../lib/groupFilter'
+import { SERVICE_ALL, matchesService, serviceOptions as buildServiceOptions } from '../lib/serviceFilter'
 import { groupProjects, type ProjectGroupSection } from '../lib/projectGroups'
 
 // ─── i18n ─────────────────────────────────────────────────────────────────────
@@ -70,6 +73,9 @@ const statusFilter = ref<RunStatus | 'all'>('all')
 // 用哨兵而不是空串:空串在这里是合法值(它就是「未归组」那一档的 groupId)。
 const groupFilter = ref<string>(GROUP_ALL)
 
+// 归属服务筛选:纯展示维度,和服务端无关(项目列表本来全量取回,这里本地筛)。
+const serviceFilter = ref<string>(SERVICE_ALL)
+
 const STATUS_OPTIONS = computed<Array<{ value: RunStatus | 'all'; label: string }>>(() => [
   { value: 'all',     label: t('projects.statusAll') },
   { value: '成功',     label: runStatusLabel('成功') },
@@ -97,6 +103,9 @@ const filteredProjects = computed(() => {
   if (groupFilter.value !== GROUP_ALL) {
     const want = groupFilter.value === GROUP_NONE ? '' : groupFilter.value
     list = list.filter((p) => p.groupId === want)
+  }
+  if (serviceFilter.value !== SERVICE_ALL) {
+    list = list.filter((p) => matchesService(p.serviceId, serviceFilter.value))
   }
   return list
 })
@@ -149,6 +158,30 @@ async function loadGroups(): Promise<void> {
   } catch {
     // 分组读不到不影响项目列表本身:归属列退化成「未归组」,不弹错误横幅。
     groups.value = []
+  }
+}
+
+// ─── 归属服务(纯展示 / 筛选,与分组正交)──────────────────────────────────
+//
+// 服务只影响「怎么分组看」:不参与可见性,也不改谁能操作,所以筛选在本地做,
+// 也不需要像分组那样再判一遍 Manage。写操作(建/改名/删服务)是管理员动作。
+
+const services = ref<Service[]>([])
+
+/** 筛选下拉候选:全部 / 未归属 / 每个服务。 */
+const SERVICE_OPTIONS = computed(() =>
+  buildServiceOptions(services.value, {
+    all: t('services.filterAll'),
+    unassigned: t('services.unassigned'),
+  }),
+)
+
+async function loadServices(): Promise<void> {
+  try {
+    services.value = await listServices()
+  } catch {
+    // 服务读不到不影响项目列表:卡片退化成「未归属」,筛选只剩全部 / 未归属。
+    services.value = []
   }
 }
 
@@ -284,7 +317,7 @@ async function loadProjects(): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProjects(), loadCredentials(), loadGroups()])
+  await Promise.all([loadProjects(), loadCredentials(), loadGroups(), loadServices()])
 })
 
 // ─── new project modal ────────────────────────────────────────────────────────
@@ -299,6 +332,7 @@ const createForm = ref({
   credentialId: '',
   defaultBranch: '',
   groupId: '',
+  serviceId: '',
 })
 
 const createErrors = ref({
@@ -326,7 +360,7 @@ const remoteBranches = ref<string[]>([])
 const remoteTags = ref<string[]>([])
 
 function openCreateModal(): void {
-  createForm.value = { name: '', bindRepo: true, repoUrl: '', credentialId: '', defaultBranch: '', groupId: '' }
+  createForm.value = { name: '', bindRepo: true, repoUrl: '', credentialId: '', defaultBranch: '', groupId: '', serviceId: '' }
   clearCreateErrors()
   createBanner.value = ''
   testState.value = 'idle'
@@ -476,6 +510,10 @@ async function handleCreateSubmit(): Promise<void> {
   // 未归组是零值,不必发送;发出去反而让后端按「放进某个组」做 Manage 校验。
   if (createForm.value.groupId) {
     input.groupId = createForm.value.groupId
+  }
+  // 未归属服务同理:它是可选项,空 = 不归属,不必发送。
+  if (createForm.value.serviceId) {
+    input.serviceId = createForm.value.serviceId
   }
 
   try {
@@ -775,6 +813,213 @@ async function handleGroupSubmit(): Promise<void> {
   }
 }
 
+// ─── 归属服务 modal ───────────────────────────────────────────────────────────
+//
+// 与归组不同:服务不参与权限,所以候选是「全部服务」(不必是管理得动的),
+// 能不能保存由后端按项目 ActOperate 判 —— 这里只负责把 403 / 服务已删除说清楚。
+
+const serviceModalOpen = ref(false)
+const servicingProject = ref<Project | null>(null)
+const serviceValue = ref('')
+const serviceBanner = ref('')
+const serviceSubmitting = ref(false)
+
+function openServiceModal(p: Project): void {
+  servicingProject.value = p
+  serviceValue.value = p.serviceId
+  serviceBanner.value = ''
+  serviceSubmitting.value = false
+  serviceModalOpen.value = true
+  // 别人可能刚建/删过服务:打开时重取一次,免得下拉里是过期名单。
+  void loadServices()
+}
+
+function closeServiceModal(): void {
+  if (serviceSubmitting.value) return
+  serviceModalOpen.value = false
+  servicingProject.value = null
+}
+
+async function handleServiceSubmit(): Promise<void> {
+  const target = servicingProject.value
+  if (!target) return
+  if (serviceValue.value === target.serviceId) {
+    closeServiceModal()
+    return
+  }
+  serviceSubmitting.value = true
+  serviceBanner.value = ''
+  try {
+    const updated = await updateProject(target.id, { serviceId: serviceValue.value })
+    projects.value = projects.value.map((p) => (p.id === updated.id ? updated : p))
+    serviceModalOpen.value = false
+    servicingProject.value = null
+  } catch (err) {
+    if (err instanceof HttpError) {
+      const code = err.apiError?.code
+      if (code === 'service_not_found') {
+        serviceBanner.value = t('services.assignErrNotFound')
+        await loadServices()
+      } else if (err.status === 0) {
+        serviceBanner.value = t('services.errNetwork')
+      } else if (err.status === 403) {
+        serviceBanner.value = err.apiError?.message ?? t('services.errForbidden')
+      } else {
+        serviceBanner.value = err.apiError?.message ?? t('services.assignErrStatus', { status: err.status })
+      }
+    } else {
+      serviceBanner.value = t('services.assignErrRetry')
+    }
+  } finally {
+    serviceSubmitting.value = false
+  }
+}
+
+// ─── 归属服务管理 modal(管理员)─────────────────────────────────────────────
+//
+// 改名会改所有人看到的标签,建 / 删是全局变更,所以入口只对管理员开放(与后端一致)。
+// 删除先本地拦一道「仍有项目归属」:后端也会 409,但那要等一个来回。
+
+const servicesModalOpen = ref(false)
+const serviceManageLoading = ref(false)
+const serviceManageBanner = ref('')
+const newServiceName = ref('')
+const newServiceDesc = ref('')
+const serviceCreating = ref(false)
+const editingServiceId = ref('')
+const editingServiceName = ref('')
+const editingServiceDesc = ref('')
+const serviceSaving = ref(false)
+const pendingDeleteId = ref('')
+const serviceDeletingId = ref('')
+
+async function openServicesModal(): Promise<void> {
+  servicesModalOpen.value = true
+  serviceManageBanner.value = ''
+  newServiceName.value = ''
+  newServiceDesc.value = ''
+  editingServiceId.value = ''
+  pendingDeleteId.value = ''
+  batchServiceId.value = ''
+  serviceManageLoading.value = true
+  try {
+    services.value = await listServices()
+  } catch {
+    serviceManageBanner.value = t('services.errNetwork')
+  } finally {
+    serviceManageLoading.value = false
+  }
+}
+
+/** 服务写操作的失败说法:两个 409 各有各的处置,别混成一句「失败」。 */
+function serviceManageErrorText(err: unknown): string {
+  if (err instanceof HttpError) {
+    const code = err.apiError?.code
+    if (code === 'service_name_taken') return t('services.errNameTaken')
+    if (code === 'invalid_service') return t('services.errNameRequired')
+    if (err.status === 0) return t('services.errNetwork')
+    return err.apiError?.message ?? t('services.errStatus', { status: err.status })
+  }
+  return t('services.errRetry')
+}
+
+async function handleServiceCreate(): Promise<void> {
+  if (!newServiceName.value.trim()) {
+    serviceManageBanner.value = t('services.errNameRequired')
+    return
+  }
+  serviceCreating.value = true
+  serviceManageBanner.value = ''
+  try {
+    await createService({
+      name: newServiceName.value.trim(),
+      description: newServiceDesc.value.trim(),
+    })
+    newServiceName.value = ''
+    newServiceDesc.value = ''
+    // 顺序以服务端为准:本地排序和 SQLite/MySQL 的排序规则不一定一致,重开弹窗就会跳位。
+    services.value = await listServices()
+  } catch (err) {
+    serviceManageBanner.value = serviceManageErrorText(err)
+  } finally {
+    serviceCreating.value = false
+  }
+}
+
+function startServiceEdit(s: Service): void {
+  editingServiceId.value = s.id
+  editingServiceName.value = s.name
+  editingServiceDesc.value = s.description
+  pendingDeleteId.value = ''
+  serviceManageBanner.value = ''
+}
+
+function cancelServiceEdit(): void {
+  editingServiceId.value = ''
+}
+
+async function saveServiceEdit(): Promise<void> {
+  const id = editingServiceId.value
+  if (!id) return
+  if (!editingServiceName.value.trim()) {
+    serviceManageBanner.value = t('services.errNameRequired')
+    return
+  }
+  serviceSaving.value = true
+  serviceManageBanner.value = ''
+  try {
+    const updated = await updateService(id, {
+      name: editingServiceName.value.trim(),
+      description: editingServiceDesc.value.trim(),
+    })
+    services.value = services.value.map((s) => (s.id === id ? updated : s))
+    editingServiceId.value = ''
+    // 卡片上的服务名来自后端 join:改名后重拉一次,列表才显示新名。
+    await Promise.all([loadProjects(), loadServices()])
+  } catch (err) {
+    serviceManageBanner.value = serviceManageErrorText(err)
+  } finally {
+    serviceSaving.value = false
+  }
+}
+
+function askDeleteService(s: Service): void {
+  pendingDeleteId.value = s.id
+  editingServiceId.value = ''
+  serviceManageBanner.value = ''
+}
+
+async function confirmDeleteService(s: Service): Promise<void> {
+  serviceDeletingId.value = s.id
+  serviceManageBanner.value = ''
+  try {
+    await deleteService(s.id)
+    services.value = services.value.filter((x) => x.id !== s.id)
+    if (serviceFilter.value === s.id) serviceFilter.value = SERVICE_ALL
+    pendingDeleteId.value = ''
+  } catch (err) {
+    if (err instanceof HttpError && err.apiError?.code === 'service_in_use') {
+      serviceManageBanner.value = t('services.errInUse', { n: s.projectCount })
+    } else {
+      serviceManageBanner.value = serviceManageErrorText(err)
+    }
+  } finally {
+    serviceDeletingId.value = ''
+  }
+}
+
+// ─── 批量执行(在归属服务管理弹窗里,选中某个服务后展开)────────────────────
+//
+// 一次点击发 N 个「单个项目触发」请求,而不是一个新造的批量端点:每个项目各自的默认分支、
+// 各自的触发权、审计里各自一行,这些都是服务端已有的判定,前端不该另立一套再猜一遍。
+// 逐条回执由面板自己摆在服务行下面,页面不跟着刷列表(卡片的「上次运行」还是后端占位字段)。
+
+const batchServiceId = ref('')
+
+function toggleBatchService(s: Service): void {
+  batchServiceId.value = batchServiceId.value === s.id ? '' : s.id
+}
+
 // ─── delete confirm modal ─────────────────────────────────────────────────────
 
 const deleteModalOpen = ref(false)
@@ -876,16 +1121,31 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
         <h1 class="page-title">{{ t('projects.title') }}</h1>
         <p class="page-sub">{{ t('projects.subtitle') }}</p>
       </div>
-      <button
-        class="btn-primary"
-        :disabled="loadState === 'loading'"
-        @click="openCreateModal"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
-        {{ t('projects.newProject') }}
-      </button>
+      <div class="page-header-actions">
+        <button
+          v-if="isAdminUser"
+          class="btn-secondary"
+          @click="openServicesModal"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+          </svg>
+          {{ t('services.manageAction') }}
+        </button>
+        <button
+          class="btn-primary"
+          :disabled="loadState === 'loading'"
+          @click="openCreateModal"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          {{ t('projects.newProject') }}
+        </button>
+      </div>
     </header>
 
     <!-- ─── Load error banner ────────────────────────────────────────────── -->
@@ -930,6 +1190,22 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
           :aria-label="t('groups.filterAria')"
         >
           <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+        <svg class="select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </div>
+
+      <!-- 归属服务筛选:和分组正交的第二个维度 -->
+      <div class="select-wrap group-filter">
+        <select
+          v-model="serviceFilter"
+          class="field-select"
+          :aria-label="t('services.filterAria')"
+        >
+          <option v-for="opt in SERVICE_OPTIONS" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </option>
         </select>
@@ -1031,7 +1307,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
         <p class="empty-hint">{{ t('projects.noMatchHint') }}</p>
         <button
           class="btn-secondary"
-          @click="searchQuery = ''; statusFilter = 'all'; groupFilter = GROUP_ALL"
+          @click="searchQuery = ''; statusFilter = 'all'; groupFilter = GROUP_ALL; serviceFilter = SERVICE_ALL"
         >{{ t('projects.clearFilter') }}</button>
       </div>
     </template>
@@ -1040,7 +1316,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
     <template v-else-if="loadState === 'idle'">
       <p class="result-count" aria-live="polite">
         {{ t('projects.resultCount', { n: filteredProjects.length }) }}
-        <template v-if="searchQuery || statusFilter !== 'all' || groupFilter !== GROUP_ALL">
+        <template v-if="searchQuery || statusFilter !== 'all' || groupFilter !== GROUP_ALL || serviceFilter !== SERVICE_ALL">
           {{ t('projects.resultCountTotal', { total: projects.length }) }}
         </template>
       </p>
@@ -1063,6 +1339,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
           @copy="openCopyModal"
           @remove="openDeleteModal"
           @assign="openGroupModal"
+          @assign-service="openServiceModal"
         />
       </ul>
 
@@ -1141,6 +1418,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
                 @copy="openCopyModal"
                 @remove="openDeleteModal"
                 @assign="openGroupModal"
+                @assign-service="openServiceModal"
               />
             </ul>
             <p v-else class="group-empty">{{ t('projects.groupEmpty') }}</p>
@@ -1429,6 +1707,18 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
               </option>
             </select>
             <span v-if="!manageableGroups.length" class="field-hint">{{ t('groups.noGroupsHint') }}</span>
+          </div>
+
+          <!-- 归属服务:纯展示 / 筛选,可与分组交叉;不选 = 未归属 -->
+          <div class="field">
+            <label class="field-label" for="proj-service">
+              {{ t('services.fieldService') }}
+              <span class="field-hint-inline">{{ t('services.assignHint') }}</span>
+            </label>
+            <select id="proj-service" v-model="createForm.serviceId" class="field-input" :disabled="createSubmitting">
+              <option value="">{{ t('services.unassigned') }}</option>
+              <option v-for="s in services" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </select>
           </div>
 
           <!-- Test clone — left-bottom, separated from primary actions -->
@@ -1846,6 +2136,235 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
     </div>
   </Teleport>
 
+  <!-- 归属服务弹窗:纯展示属性,候选是全部服务(不判 Manage) -->
+  <Teleport to="body">
+    <div
+      v-if="serviceModalOpen && servicingProject"
+      class="modal-scrim"
+      role="dialog"
+      :aria-label="t('services.assignTitle')"
+      aria-modal="true"
+      @keydown.esc="closeServiceModal"
+      @click.self="closeServiceModal"
+    >
+      <div class="modal modal--sm">
+        <div class="modal-head">
+          <div class="modal-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="modal-title">{{ t('services.assignTitle') }}</h3>
+            <p class="modal-sub">{{ t('services.assignSub', { name: servicingProject.name }) }}</p>
+          </div>
+          <button
+            class="modal-close"
+            :aria-label="t('projects.closeDialog')"
+            :disabled="serviceSubmitting"
+            @click="closeServiceModal"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div v-if="serviceBanner" class="banner banner--error modal-banner" role="alert">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {{ serviceBanner }}
+        </div>
+
+        <form class="modal-form" novalidate @submit.prevent="handleServiceSubmit">
+          <div class="field">
+            <label class="field-label" for="service-select">{{ t('services.fieldService') }}</label>
+            <select id="service-select" v-model="serviceValue" class="field-input" :disabled="serviceSubmitting">
+              <option value="">{{ t('services.unassigned') }}</option>
+              <option v-for="s in services" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </select>
+            <span class="field-hint">{{ t('services.assignHint') }}</span>
+            <span v-if="services.length === 0" class="field-hint">
+              {{ t('services.empty') }}<template v-if="isAdminUser">
+                <button type="button" class="link-btn" @click="closeServiceModal(); openServicesModal()">
+                  {{ t('services.manageAction') }}
+                </button>
+              </template>
+            </span>
+          </div>
+
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="serviceSubmitting"
+              @click="closeServiceModal"
+            >{{ t('projects.cancel') }}</button>
+            <button
+              type="submit"
+              class="btn-primary"
+              :disabled="serviceSubmitting"
+              :aria-busy="serviceSubmitting"
+            >
+              <span v-if="serviceSubmitting" class="spinner" aria-hidden="true" />
+              {{ serviceSubmitting ? t('projects.saving') : t('projects.save') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 归属服务管理(管理员):建 / 改名 / 删;删前本地拦「仍有项目归属」 -->
+  <Teleport to="body">
+    <div
+      v-if="servicesModalOpen"
+      class="modal-scrim"
+      role="dialog"
+      :aria-label="t('services.manageTitle')"
+      aria-modal="true"
+      @keydown.esc="servicesModalOpen = false"
+      @click.self="servicesModalOpen = false"
+    >
+      <div class="modal">
+        <div class="modal-head">
+          <div class="modal-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="modal-title">{{ t('services.manageTitle') }}</h3>
+            <p class="modal-sub">{{ t('services.manageSub') }}</p>
+          </div>
+          <button class="modal-close" :aria-label="t('projects.closeDialog')" @click="servicesModalOpen = false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div v-if="serviceManageBanner" class="banner banner--error modal-banner" role="alert">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {{ serviceManageBanner }}
+        </div>
+
+        <div class="modal-body">
+          <div class="svc-create">
+            <input
+              v-model="newServiceName"
+              class="field-input svc-create-name"
+              type="text"
+              :placeholder="t('services.createNamePlaceholder')"
+              :aria-label="t('services.fieldName')"
+              :disabled="serviceCreating"
+              @keydown.enter.prevent="handleServiceCreate"
+            />
+            <input
+              v-model="newServiceDesc"
+              class="field-input svc-create-desc"
+              type="text"
+              :placeholder="t('services.createDescPlaceholder')"
+              :aria-label="t('services.fieldDesc')"
+              :disabled="serviceCreating"
+              @keydown.enter.prevent="handleServiceCreate"
+            />
+            <button class="btn-secondary" :disabled="serviceCreating" @click="handleServiceCreate">
+              {{ serviceCreating ? t('projects.saving') : t('services.createAction') }}
+            </button>
+          </div>
+
+          <p v-if="serviceManageLoading" class="svc-note">{{ t('projects.loading') }}</p>
+          <p v-else-if="!services.length" class="svc-note">{{ t('services.empty') }}</p>
+          <ul v-else class="svc-list" :class="{ 'svc-list--batch': !!batchServiceId }" role="list">
+            <li v-for="s in services" :key="s.id" class="svc-row">
+              <template v-if="editingServiceId === s.id">
+                <div class="svc-edit">
+                  <input
+                    v-model="editingServiceName"
+                    class="field-input"
+                    type="text"
+                    :aria-label="t('services.fieldName')"
+                    :disabled="serviceSaving"
+                  />
+                  <input
+                    v-model="editingServiceDesc"
+                    class="field-input"
+                    type="text"
+                    :placeholder="t('services.createDescPlaceholder')"
+                    :aria-label="t('services.fieldDesc')"
+                    :disabled="serviceSaving"
+                  />
+                </div>
+                <div class="svc-actions">
+                  <button class="btn-ghost" :disabled="serviceSaving" @click="cancelServiceEdit">
+                    {{ t('projects.cancel') }}
+                  </button>
+                  <button class="btn-primary" :disabled="serviceSaving" @click="saveServiceEdit">
+                    {{ serviceSaving ? t('projects.saving') : t('projects.save') }}
+                  </button>
+                </div>
+              </template>
+              <template v-else>
+                <div class="svc-info">
+                  <span class="svc-name">{{ s.name }}</span>
+                  <span class="svc-desc">{{ s.description || '—' }}</span>
+                </div>
+                <span class="svc-count">{{ t('services.projectCount', { n: s.projectCount }) }}</span>
+                <div class="svc-actions">
+                  <template v-if="pendingDeleteId === s.id">
+                    <span class="svc-confirm">{{ t('services.removeConfirm', { name: s.name }) }}</span>
+                    <button class="btn-ghost" @click="pendingDeleteId = ''">{{ t('projects.cancel') }}</button>
+                    <button
+                      class="btn-danger"
+                      :disabled="serviceDeletingId === s.id"
+                      @click="confirmDeleteService(s)"
+                    >{{ serviceDeletingId === s.id ? t('projects.deleting') : t('services.remove') }}</button>
+                  </template>
+                  <template v-else>
+                    <button
+                      class="btn-ghost"
+                      :aria-expanded="batchServiceId === s.id"
+                      @click="toggleBatchService(s)"
+                    >{{ t('services.batchAction') }}</button>
+                    <button class="btn-ghost" @click="startServiceEdit(s)">{{ t('services.rename') }}</button>
+                    <button
+                      class="btn-ghost"
+                      :disabled="s.projectCount > 0"
+                      :title="s.projectCount > 0 ? t('services.inUseHint') : ''"
+                      @click="askDeleteService(s)"
+                    >{{ t('services.remove') }}</button>
+                  </template>
+                </div>
+                <!-- 展开的批量执行面板:它自己按「服务 + 分组」把候选收敛到看得见的项目 -->
+                <ServiceBatchRun
+                  v-if="batchServiceId === s.id"
+                  :service="s"
+                  :projects="projects"
+                  :groups="groups"
+                  @open-run="onTriggered"
+                />
+              </template>
+            </li>
+          </ul>
+        </div>
+
+        <div class="modal-footer modal-footer--body">
+          <button class="btn-secondary" @click="servicesModalOpen = false">{{ t('services.close') }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- ═══════════════════════════════════════════════════════════════════════
        Delete confirm modal
   ════════════════════════════════════════════════════════════════════════ -->
@@ -1942,6 +2461,14 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
 
 .page-header-text {
   flex: 1;
+}
+
+/* 页头动作区:管理员多一个「归属服务管理」,两个按钮同高右对齐。 */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .page-title {
@@ -2929,5 +3456,125 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
 
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; border-top-color: currentColor; }
+}
+
+/* ─── 归属服务管理弹窗 ──────────────────────────────────────────────────────────── */
+.svc-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.svc-create-name {
+  flex: 0 0 180px;
+}
+
+.svc-create-desc {
+  flex: 1;
+  min-width: 0;
+}
+
+.svc-note {
+  font-size: 0.8rem;
+  color: var(--color-faint);
+  padding: 12px 0;
+}
+
+.svc-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* 展开批量执行面板时给足高度:嵌套两层滚动区(外层服务列表 + 面板项目列表)会互相抢滚轮。 */
+.svc-list--batch {
+  max-height: 560px;
+}
+
+.svc-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded);
+}
+
+.svc-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.svc-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.svc-desc {
+  font-size: 0.74rem;
+  color: var(--color-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.svc-count {
+  font-size: 0.74rem;
+  color: var(--color-dim);
+  white-space: nowrap;
+}
+
+.svc-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.svc-actions .btn-ghost,
+.svc-actions .btn-danger,
+.svc-actions .btn-primary {
+  height: 26px;
+  padding: 0 9px;
+  font-size: var(--text-micro);
+}
+
+.svc-confirm {
+  font-size: 0.74rem;
+  color: var(--color-amber);
+  max-width: 220px;
+}
+
+.svc-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.svc-edit .field-input {
+  height: 30px;
+}
+
+/* 行内文字链(服务为空时给管理员的「归属服务管理」入口) */
+.link-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0 0 0 4px;
+  font: inherit;
+  color: var(--color-primary);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 </style>
