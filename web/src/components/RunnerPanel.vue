@@ -151,4 +151,40 @@ watch(() => props.projectId, load)
 .runner-banner--ok { color: var(--color-success, #16a34a); }
 .runner-banner--err { color: var(--color-danger, #dc2626); }
 .runner-save { display: flex; justify-content: flex-end; }
+/* 按钮样式在本组件 scoped 内自带一份:外层 TriggersPanel 的 .btn-primary 是 scoped,
+   不会穿透到子组件,漏了这里按钮就退回浏览器原生样式。 */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 0.83rem;
+  font-weight: 600;
+  border-radius: var(--rounded);
+  cursor: pointer;
+  box-shadow: 0 5px 16px var(--color-primary-soft);
+  transition: background-color var(--duration-fast), transform var(--duration-fast);
+  white-space: nowrap;
+}
+.btn-primary:hover:not(:disabled) { background: var(--color-primary-press); transform: translateY(-1px); }
+.btn-primary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: var(--rounded-full);
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-top-color: currentColor; } }
 </style>
