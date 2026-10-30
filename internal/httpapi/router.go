@@ -870,6 +870,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 认证 + CSRF。比 /deploy 多一段,不会被吞。dep 为 nil → 503。
 		ar.Post("/runs/{id}/deploy/continue", makeContinueDeployHandler(o.deployer, rs))
 		ar.Post("/runs/{id}/deploy/abort", makeAbortDeployHandler(o.deployer, rs))
+		// 部署前备份的列表与恢复:列表只读;恢复是写操作(认证 + CSRF + 审计)。
+		// 部署目录 / 重启命令取自该次部署记录,恢复请求体不带任何命令(见 deploy/backup.go)。
+		ar.Get("/runs/{id}/targets/{serverId}/backups", makeListDeployBackupsHandler(o.deployer))
+		ar.Post("/runs/{id}/targets/{serverId}/backups/{backupId}/restore",
+			makeRestoreDeployBackupHandler(o.deployer, aud, authn))
 
 		// AI 失败诊断(Story 7.2):显式(重)诊断。认证 + CSRF(写方法)。
 		// 取 run 失败日志 → 脱敏 → ai.Diagnose → 持久化 → 返回 diagnosis 子 DTO。

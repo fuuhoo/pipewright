@@ -719,6 +719,14 @@ func (d *stubStageDeployer) AbortStageTargets(_ context.Context, _ string, serve
 	return nil, nil
 }
 
+func (d *stubStageDeployer) ListBackups(context.Context, string, string) (deploy.BackupList, error) {
+	panic("ListBackups not expected")
+}
+
+func (d *stubStageDeployer) RestoreBackup(context.Context, deploy.RestoreInput) (deploy.RestoreResult, error) {
+	panic("RestoreBackup not expected")
+}
+
 // TestRunDeployJobPassesImageParams 证 #55:部署节点把镜像产物参数
 // (artifactType/artifactFrom/containerName/ports/runArgs)透传给 deploy.DeployForStage,
 // 使流水线部署节点能部署 #51 的镜像产物(而非只透传 deployPath/restartCommand)。

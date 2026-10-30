@@ -69,6 +69,27 @@ type deployState struct {
 	dir string // 产物直铺目录(= 部署路径)
 }
 
+// annotateFileTarget 把「这次铺到哪、怎么重启、备份范围」写进结果。这三样原本只活在请求体的
+// cfg 里,恢复入口要按目标还原,就必须随结果一起落进 deploy_targets —— 否则恢复时只能再信任
+// 客户端传来的一段 shell。
+func annotateFileTarget(res TargetResult, a run.Artifact, cfg map[string]string) TargetResult {
+	if !fileDeployArtifact(a) {
+		return res
+	}
+	res.DeployPath = deployTargetDir(a, cfg)
+	res.RestartCommand = strings.TrimSpace(cfg["restartCommand"])
+	res.BackupMode = BackupModeOf(cfg)
+	return res
+}
+
+// annotateFileTargets 逐条补上落痕(幂等;非文件产物原样返回)。
+func annotateFileTargets(results []TargetResult, a run.Artifact, cfg map[string]string) []TargetResult {
+	for i := range results {
+		results[i] = annotateFileTarget(results[i], a, cfg)
+	}
+	return results
+}
+
 // deployFileOne 在一台目标机上直铺文件产物 + 重启 + 健康门控。仅在 fileDeployArtifact(a)
 // 为真时被 deployOne 调用。执行错误**不上抛**:映射为 status=failed + 人读 message(绝无明文密钥)。
 func (s *service) deployFileOne(ctx context.Context, srv *target.Server, a run.Artifact, cfg map[string]string, hc *HealthCheck) TargetResult {
@@ -113,6 +134,12 @@ func (s *service) stageFileOne(ctx context.Context, srv *target.Server, a run.Ar
 		if failMsg, ok := s.runStagedCmd(ctx, srv, pre); !ok {
 			return st, "部署前指令失败:" + failMsg, false
 		}
+	}
+
+	// 部署前备份(节点开了备份才做):也跑在产物落位之前,备份失败即该机 failed ——
+	// 用户要的安全网,绝不能悄悄跳过、等他真要恢复时才发现没有。
+	if failMsg, ok := s.backupBeforeDeploy(ctx, srv, st.dir, cfg); !ok {
+		return st, failMsg, false
 	}
 
 	// 制品库支撑的产物走「上传真字节」(上传自己按体积计时,不共用上面那条命令的 60s);

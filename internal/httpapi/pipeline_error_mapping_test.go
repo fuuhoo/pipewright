@@ -26,6 +26,7 @@ func TestWritePipelineErrorMapsEveryJobTypeSentinel(t *testing.T) {
 		{"docker 部署非法", pipeline.ErrDockerDeployInvalid},
 		{"k8s 发布非法", pipeline.ErrK8sDeployInvalid},
 		{"落点与分批非法", pipeline.ErrDeployTargetInvalid},
+		{"部署前备份非法", pipeline.ErrBackupConfigInvalid},
 		{"构建环境必选", pipeline.ErrBuildEnvRequired},
 	}
 	for _, tc := range cases {

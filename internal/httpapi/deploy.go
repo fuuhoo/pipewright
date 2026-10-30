@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/deploy"
 	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -25,6 +28,10 @@ type targetDTO struct {
 	Message    string  `json:"message"`              // 人读摘要(绝无明文密钥)
 	StartedAt  string  `json:"startedAt"`            // RFC3339
 	FinishedAt *string `json:"finishedAt,omitempty"` // RFC3339;未结束为 null
+	// DeployPath / BackupMode 是这次部署落在哪、开了哪种备份(只读展示 + 决定是否给「备份」入口;
+	// 恢复时以服务端记录为准,不从这里回传)。
+	DeployPath string `json:"deployPath,omitempty"`
+	BackupMode string `json:"backupMode,omitempty"`
 }
 
 func toTargetDTO(t run.DeployTarget) targetDTO {
@@ -35,6 +42,8 @@ func toTargetDTO(t run.DeployTarget) targetDTO {
 		Message:    t.Message,
 		StartedAt:  t.StartedAt.UTC().Format(time.RFC3339),
 		FinishedAt: rfc3339Ptr(t.FinishedAt),
+		DeployPath: t.DeployPath,
+		BackupMode: t.BackupMode,
 	}
 }
 
@@ -159,6 +168,8 @@ func targetResultToDTO(r deploy.TargetResult) targetDTO {
 		Message:    r.Message,
 		StartedAt:  r.StartedAt.UTC().Format(time.RFC3339),
 		FinishedAt: finished,
+		DeployPath: r.DeployPath,
+		BackupMode: r.BackupMode,
 	}
 }
 
@@ -298,6 +309,109 @@ func makeAbortDeployHandler(svc deploy.Service, runSvc run.Service) http.Handler
 	}
 }
 
+// ---- 部署前备份的列表与恢复(运行详情 → 部署目标)---------------------------------
+//
+//	GET  /api/runs/{id}/targets/{serverId}/backups             → 该目标机上的可用备份(新→旧)
+//	POST /api/runs/{id}/targets/{serverId}/backups/{backupId}/restore → 覆盖式还原 + 重启
+//
+// 部署目录 / 重启命令一律取自**该次部署记录**(deploy_targets),请求体不带命令 —— 恢复是一段
+// 会在目标机上执行的脚本,绝不让客户端临时指定。
+
+// backupArchiveDTO 是一份可恢复的备份(归档名即 id)。
+type backupArchiveDTO struct {
+	ID        string `json:"id"`
+	CreatedAt string `json:"createdAt"` // RFC3339
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// deployBackupsResponse 是备份列表响应体。mode 为空表示该目标这次部署没开备份。
+type deployBackupsResponse struct {
+	DeployPath string             `json:"deployPath"`
+	Mode       string             `json:"mode"` // dir | suffix | 空
+	Backups    []backupArchiveDTO `json:"backups"`
+}
+
+// restoreBackupResponse 是一次恢复的执行结果(执行失败也是 200:ok=false + 人读 message)。
+type restoreBackupResponse struct {
+	OK         bool   `json:"ok"`
+	BackupID   string `json:"backupId"`
+	DeployPath string `json:"deployPath"`
+	Restarted  bool   `json:"restarted"`
+	Message    string `json:"message"`
+}
+
+// makeListDeployBackupsHandler 返回 GET /api/runs/{id}/targets/{serverId}/backups handler(认证 + 只读)。
+// 未开备份 → 200(mode 为空、backups 为空数组),不是错误。
+func makeListDeployBackupsHandler(svc deploy.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "部署服务未初始化")
+			return
+		}
+		list, err := svc.ListBackups(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "serverId"))
+		if err != nil {
+			writeDeployError(w, err)
+			return
+		}
+		out := make([]backupArchiveDTO, 0, len(list.Archives))
+		for _, b := range list.Archives {
+			out = append(out, backupArchiveDTO{
+				ID:        b.ID,
+				CreatedAt: b.CreatedAt.UTC().Format(time.RFC3339),
+				SizeBytes: b.SizeBytes,
+			})
+		}
+		writeJSON(w, http.StatusOK, deployBackupsResponse{
+			DeployPath: list.DeployPath,
+			Mode:       list.Mode,
+			Backups:    out,
+		})
+	}
+}
+
+// makeRestoreDeployBackupHandler 返回 POST /api/runs/{id}/targets/{serverId}/backups/{backupId}/restore
+// handler(认证 + CSRF + 审计)。定位类错误 → 404/422;解包/重启失败 → 200 + ok=false。
+func makeRestoreDeployBackupHandler(svc deploy.Service, rec audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "部署服务未初始化")
+			return
+		}
+		runID := chi.URLParam(r, "id")
+		serverID := chi.URLParam(r, "serverId")
+		res, err := svc.RestoreBackup(r.Context(), deploy.RestoreInput{
+			RunID:    runID,
+			ServerID: serverID,
+			BackupID: chi.URLParam(r, "backupId"),
+		})
+		if err != nil {
+			writeDeployError(w, err)
+			return
+		}
+		// 恢复是覆盖目标机部署目录的写操作:成功与「执行失败但已尝试」都留痕。
+		recordAuditFromRequest(r, rec, ac, audit.Entry{
+			Action:     "deploy.restore_backup",
+			TargetType: audit.TargetRun,
+			TargetID:   runID,
+			Detail: map[string]any{
+				"serverId":   serverID,
+				"backupId":   res.BackupID,
+				"deployPath": res.DeployPath,
+				"ok":         res.OK,
+				"restarted":  res.Restarted,
+			},
+			IP: clientIP(r),
+		})
+		writeJSON(w, http.StatusOK, restoreBackupResponse{
+			OK:         res.OK,
+			BackupID:   res.BackupID,
+			DeployPath: res.DeployPath,
+			Restarted:  res.Restarted,
+			Message:    res.Message,
+		})
+	}
+}
+
 // writeDeployError 把部署定位类错误映射为契约错误码 / 状态码(绝不回显明文 / 私钥 / 口令 / 栈)。
 // 执行类失败由 deploy.Deploy 内化为每机 failed,不走此路径(整体 200)。
 func writeDeployError(w http.ResponseWriter, err error) {
@@ -308,7 +422,7 @@ func writeDeployError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "run_not_successful", "运行非成功态,无可部署产物")
 	case errors.Is(err, deploy.ErrArtifactNotFound):
 		writeError(w, http.StatusUnprocessableEntity, "artifact_not_found", "该运行下不存在指定产物")
-	case errors.Is(err, deploy.ErrServerNotFound):
+	case errors.Is(err, deploy.ErrServerNotFound), errors.Is(err, target.ErrNotFound):
 		writeError(w, http.StatusUnprocessableEntity, "server_not_found", "目标服务器不存在")
 	case errors.Is(err, deploy.ErrNoServers):
 		writeError(w, http.StatusUnprocessableEntity, "no_servers", "请至少选择一台目标服务器")
@@ -318,6 +432,12 @@ func writeDeployError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "run_not_deployed", "该运行尚未部署过,无可重试目标")
 	case errors.Is(err, deploy.ErrNoPendingTargets):
 		writeError(w, http.StatusUnprocessableEntity, "no_pending_targets", "该运行没有暂停待续发的目标")
+	case errors.Is(err, deploy.ErrTargetNotFound):
+		writeError(w, http.StatusNotFound, "target_not_found", "该运行下没有这台目标机的部署记录")
+	case errors.Is(err, deploy.ErrBackupsDisabled):
+		writeError(w, http.StatusUnprocessableEntity, "backups_disabled", "该目标这次部署未开启备份")
+	case errors.Is(err, deploy.ErrBackupNotFound):
+		writeError(w, http.StatusNotFound, "backup_not_found", "备份不存在或已被裁掉")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}

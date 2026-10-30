@@ -64,20 +64,20 @@ func (s *service) deployInteractiveFirstBatch(ctx context.Context, servers []*ta
 
 	rest := servers[n:]
 	if len(rest) == 0 {
-		return results, false // 无其余可分批 → 等同一次性部署,正常置终态。
+		return annotateFileTargets(results, a, cfg), false // 无其余可分批 → 等同一次性部署,正常置终态。
 	}
 
 	if allSuccess(firstRes) {
 		for i, srv := range rest {
 			results[n+i] = pendingResult(srv, fmt.Sprintf("首批 %d 台已部署成功,等待人工确认后再发布其余 %d 台", n, len(rest)))
 		}
-		return results, true // 暂停,等人确认。
+		return annotateFileTargets(results, a, cfg), true // 暂停,等人确认。
 	}
 	// 首批未全过 → 中止其余(安全:其余机仍运行旧版本)。
 	for i, srv := range rest {
 		results[n+i] = abortedResult(srv, fmt.Sprintf("首批 %d 台未全部成功,已中止后续 %d 台(本机未部署,仍运行旧版本)", n, len(rest)))
 	}
-	return results, false
+	return annotateFileTargets(results, a, cfg), false
 }
 
 // ContinueDeploy 见接口注释:续发 pending 目标。
@@ -134,6 +134,9 @@ func (s *service) AbortDeploy(ctx context.Context, in AbortInput) ([]TargetResul
 			Message:    "已中止分批部署:本机未部署,保留旧版本",
 			StartedAt:  existing[i].StartedAt,
 			FinishedAt: &fin,
+			// 中止的是「还没铺」的机器;落痕照抄既有行,免得 upsert 把部署目录抹成空。
+			DeployPath: existing[i].DeployPath, RestartCommand: existing[i].RestartCommand,
+			BackupMode: existing[i].BackupMode,
 		})
 	}
 	if len(aborted) == 0 {
@@ -190,15 +193,7 @@ func (s *service) loadPending(ctx context.Context, runID, artifactID string) (*r
 func (s *service) upsertAndRecompute(ctx context.Context, runID string, batch []TargetResult, _ []run.DeployTarget) ([]TargetResult, error) {
 	dts := make([]run.DeployTarget, 0, len(batch))
 	for _, r := range batch {
-		dts = append(dts, run.DeployTarget{
-			RunID:      runID,
-			ServerID:   r.ServerID,
-			ServerName: r.ServerName,
-			Status:     r.Status,
-			Message:    r.Message,
-			StartedAt:  r.StartedAt,
-			FinishedAt: r.FinishedAt,
-		})
+		dts = append(dts, deployTargetOf(runID, r))
 	}
 	if err := s.runs.UpsertDeployTargets(ctx, runID, dts); err != nil {
 		return nil, err
@@ -221,6 +216,7 @@ func (s *service) upsertAndRecompute(ctx context.Context, runID string, batch []
 			Message:    t.Message,
 			StartedAt:  t.StartedAt,
 			FinishedAt: t.FinishedAt,
+			DeployPath: t.DeployPath, RestartCommand: t.RestartCommand, BackupMode: t.BackupMode,
 		})
 	}
 	s.seedDiagnosisOnFailure(ctx, runID, final, out)

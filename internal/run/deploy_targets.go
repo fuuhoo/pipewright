@@ -56,16 +56,21 @@ func IsValidTargetStatus(s string) bool {
 //   - Manifests  : 本次实际应用到集群的清单正文(k8s 腿才有;SSH 腿为空)。
 //     **不在** deploy_targets 行上,而是随结果同事务写进 deploy_manifests(表 0060),
 //     供回滚查「上一版到底发了什么」。run-detail 的冻结 DTO 不含它,故只增字段不改形状。
+//   - DeployPath / RestartCommand / BackupMode:该次部署的落点目录、重启命令与备份方式
+//     (migration 0089)。恢复备份要按**当次**的目录与命令做,前端表单刷新即失,故随结果落库。
 type DeployTarget struct {
-	ID         string
-	RunID      string
-	ServerID   string
-	ServerName string
-	Status     string
-	Message    string
-	StartedAt  time.Time
-	FinishedAt *time.Time
-	Manifests  []ManifestDoc
+	ID             string
+	RunID          string
+	ServerID       string
+	ServerName     string
+	Status         string
+	Message        string
+	StartedAt      time.Time
+	FinishedAt     *time.Time
+	DeployPath     string
+	RestartCommand string
+	BackupMode     string
+	Manifests      []ManifestDoc
 }
 
 // SaveDeployTargets 持久化一次部署的多机结果(参数化 SQL;单事务,全成或全不入,
@@ -111,10 +116,12 @@ func (s *service) SaveDeployTargets(ctx context.Context, runID string, targets [
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO deploy_targets
-			   (id, run_id, server_id, server_name, status, message, started_at, finished_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			   (id, run_id, server_id, server_name, status, message, started_at, finished_at,
+			    deploy_path, restart_command, backup_mode)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.ID, runID, t.ServerID, t.ServerName, t.Status, t.Message,
 			t.StartedAt.UTC().Format(time.RFC3339), finished,
+			t.DeployPath, t.RestartCommand, t.BackupMode,
 		); err != nil {
 			if isForeignKeyErr(err) {
 				return ErrNotFound
@@ -195,10 +202,12 @@ func (s *service) UpsertDeployTargets(ctx context.Context, runID string, targets
 		// 先按 (run_id, server_id) 尝试更新既有行(逐目标 upsert,不碰其它机)。
 		res, uerr := tx.ExecContext(ctx,
 			`UPDATE deploy_targets
-			   SET server_name = ?, status = ?, message = ?, started_at = ?, finished_at = ?
+			   SET server_name = ?, status = ?, message = ?, started_at = ?, finished_at = ?,
+			       deploy_path = ?, restart_command = ?, backup_mode = ?
 			 WHERE run_id = ? AND server_id = ?`,
 			t.ServerName, t.Status, t.Message,
 			t.StartedAt.UTC().Format(time.RFC3339), finished,
+			t.DeployPath, t.RestartCommand, t.BackupMode,
 			runID, t.ServerID,
 		)
 		if uerr != nil {
@@ -211,10 +220,12 @@ func (s *service) UpsertDeployTargets(ctx context.Context, runID string, targets
 			}
 			if _, ierr := tx.ExecContext(ctx,
 				`INSERT INTO deploy_targets
-				   (id, run_id, server_id, server_name, status, message, started_at, finished_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				   (id, run_id, server_id, server_name, status, message, started_at, finished_at,
+				    deploy_path, restart_command, backup_mode)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				t.ID, runID, t.ServerID, t.ServerName, t.Status, t.Message,
 				t.StartedAt.UTC().Format(time.RFC3339), finished,
+				t.DeployPath, t.RestartCommand, t.BackupMode,
 			); ierr != nil {
 				if isForeignKeyErr(ierr) {
 					return ErrNotFound
@@ -238,7 +249,8 @@ func (s *service) UpsertDeployTargets(ctx context.Context, runID string, targets
 // 参数化 SQL;不全量驻留无关数据。
 func (s *service) ListDeployTargets(ctx context.Context, runID string) ([]DeployTarget, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, run_id, server_id, server_name, status, message, started_at, finished_at
+		`SELECT id, run_id, server_id, server_name, status, message, started_at, finished_at,
+		        deploy_path, restart_command, backup_mode
 		 FROM deploy_targets WHERE run_id = ? ORDER BY started_at ASC, id ASC`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("run: load deploy targets: %w", err)
@@ -253,7 +265,8 @@ func (s *service) ListDeployTargets(ctx context.Context, runID string) ([]Deploy
 			finishStr  sql.NullString
 		)
 		if err := rows.Scan(&t.ID, &t.RunID, &t.ServerID, &t.ServerName,
-			&t.Status, &t.Message, &startedStr, &finishStr); err != nil {
+			&t.Status, &t.Message, &startedStr, &finishStr,
+			&t.DeployPath, &t.RestartCommand, &t.BackupMode); err != nil {
 			return nil, fmt.Errorf("run: scan deploy target: %w", err)
 		}
 		if ts, perr := time.Parse(time.RFC3339, startedStr); perr == nil {

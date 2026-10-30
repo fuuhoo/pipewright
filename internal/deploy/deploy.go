@@ -47,6 +47,12 @@ var (
 	ErrRunNotDeployed = errors.New("deploy: run has not been deployed yet")
 	// ErrNoPendingTargets 表示该 run 当前无 pending 目标(分批部署续发/中止专用:无暂停中的批次)。
 	ErrNoPendingTargets = errors.New("deploy: run has no pending targets")
+	// ErrTargetNotFound 表示该 run 里没有这台目标机的部署记录(备份列表 / 恢复专用)。
+	ErrTargetNotFound = errors.New("deploy: target not found for run")
+	// ErrBackupsDisabled 表示该目标这次部署没有开启备份,无备份可列 / 可恢复。
+	ErrBackupsDisabled = errors.New("deploy: backups are not enabled for this target")
+	// ErrBackupNotFound 表示备份归档不存在(或归档名不是平台生成的形状)。
+	ErrBackupNotFound = errors.New("deploy: backup archive not found")
 )
 
 // truncateLen 是写入 message 的命令输出最大长度(防超大输出撑爆响应 / 内存)。
@@ -101,6 +107,11 @@ type TargetResult struct {
 	// Manifests 是本次实际交到集群手里的清单正文(只有 k8s「应用清单」那条腿带;SSH 腿为空)。
 	// 它与结果同事务落 deploy_manifests,回滚读的就是这张表里的上一版。
 	Manifests []run.ManifestDoc
+	// DeployPath / RestartCommand / BackupMode 是文件直铺这次的落点与备份配置,随结果落
+	// deploy_targets:恢复入口只认这条落痕,绝不让客户端在恢复时再传一遍命令。
+	DeployPath     string
+	RestartCommand string
+	BackupMode     string
 }
 
 // Service 定义部署执行对外接口(冻结点由 httpapi 层 DTO 承载;本接口可演进)。
@@ -151,6 +162,15 @@ type Service interface {
 	// AbortStageTargets 中止流水线部署节点的剩余落点:把 serverIDs 标为「已中止,保留旧版本」(failed),
 	// 不触碰已发批次、不置 run 终态。
 	AbortStageTargets(ctx context.Context, runID string, serverIDs []string) ([]TargetResult, error)
+
+	// ListBackups 列出某 run 某台目标机上可恢复的备份(部署目录 / 备份范围取自该次部署记录)。
+	// 该目标未开备份 → Mode 为空、Archives 为空,不报错。
+	ListBackups(ctx context.Context, runID, serverID string) (BackupList, error)
+
+	// RestoreBackup 用所选备份**覆盖式**还原该目标的部署目录,再按该次部署记录的重启命令重启。
+	// 定位类错误上抛(run / 目标不存在、未开备份、归档不存在);解包 / 重启执行失败内化为
+	// OK=false + 人读 message(整体仍 200)。
+	RestoreBackup(ctx context.Context, in RestoreInput) (RestoreResult, error)
 }
 
 // service 是 run + target 支撑的 Service 实现。
@@ -449,6 +469,7 @@ func deployTargetOf(runID string, r TargetResult) run.DeployTarget {
 		RunID: runID, ServerID: r.ServerID, ServerName: r.ServerName,
 		Status: r.Status, Message: r.Message,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		DeployPath: r.DeployPath, RestartCommand: r.RestartCommand, BackupMode: r.BackupMode,
 		Manifests: r.Manifests,
 	}
 }
@@ -691,6 +712,7 @@ func (s *service) RetryFailed(ctx context.Context, in RetryInput) ([]TargetResul
 			Message:    t.Message,
 			StartedAt:  t.StartedAt,
 			FinishedAt: t.FinishedAt,
+			DeployPath: t.DeployPath, RestartCommand: t.RestartCommand, BackupMode: t.BackupMode,
 		})
 	}
 
@@ -732,7 +754,8 @@ func (s *service) deployFanout(ctx context.Context, servers []*target.Server, a 
 		}(i, servers[i])
 	}
 	wg.Wait()
-	return results
+	// 文件直铺补上落痕(部署目录 / 重启命令 / 备份范围),恢复入口靠它定位。
+	return annotateFileTargets(results, a, cfg)
 }
 
 // deployOne 在一台目标机上按产物类型分派部署编排:文件类直铺(release.go)、镜像容器编排

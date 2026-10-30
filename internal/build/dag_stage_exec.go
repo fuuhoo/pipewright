@@ -675,6 +675,8 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 		pipeline.ConfigKeyManifestSource,
 		// 分批台数:引擎在 canaryCount(cfg, total) 里读它定首批,不透传就永远只发 1 台。
 		pipeline.ConfigKeyCanaryCount,
+		// 部署前备份(文件直铺):范围 / 后缀清单 / 保留份数。不透传 = 节点上填了却没人读。
+		pipeline.ConfigKeyBackupMode, pipeline.ConfigKeyBackupSuffixes, pipeline.ConfigKeyBackupKeep,
 	} {
 		if v := cfgString(jb.Config, k); v != "" {
 			cfg[k] = v

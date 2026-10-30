@@ -674,6 +674,10 @@ func normalizeSpec(in Spec) (Spec, error) {
 			if err := validateDeployTargets(name, jobName, jobType, cfg); err != nil {
 				return Spec{}, err
 			}
+			// 部署前备份:档位认得、按后缀时真有后缀、保留份数在范围内。不备份是合法选择。
+			if err := validateBackupConfig(name, jobName, jobType, cfg); err != nil {
+				return Spec{}, err
+			}
 			jobs = append(jobs, Job{
 				ID:      jobID,
 				Name:    jobName,

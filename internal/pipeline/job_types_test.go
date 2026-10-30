@@ -492,6 +492,47 @@ func TestNormalizeSpecValidatesDeployTargetsAndBatching(t *testing.T) {
 	}
 }
 
+// 部署前备份的档位 / 后缀 / 保留份数在保存期判:不备份是合法选择,但「按后缀却没填后缀」
+// 「只适用于文件发布却配在 docker/K8s/镜像/命令型上」都得当场说清,而不是发完才发现没有 .pw-backups。
+func TestNormalizeSpecValidatesBackupConfig(t *testing.T) {
+	cases := []struct {
+		name    string
+		jobType string
+		cfg     map[string]any
+		wantErr bool
+	}{
+		{"不备份(不填)通过", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1"}, false},
+		{"整目录备份", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: BackupModeDir, ConfigKeyBackupKeep: "10"}, false},
+		{"按后缀备份(自动补点)", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: BackupModeSuffix, ConfigKeyBackupSuffixes: "jar, .war"}, false},
+		{"档位不存在", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: "daily"}, true},
+		{"按后缀却没填后缀", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: BackupModeSuffix}, true},
+		{"后缀全是不安全字符", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: BackupModeSuffix, ConfigKeyBackupSuffixes: "*; /,$(id)"}, true},
+		{"保留份数为零", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: BackupModeDir, ConfigKeyBackupKeep: "0"}, true},
+		{"保留份数超上限", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyBackupMode: BackupModeDir, ConfigKeyBackupKeep: "999"}, true},
+		{"镜像产物没有可备份目录", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyArtifactType: ArtifactImage, ConfigKeyBackupMode: BackupModeDir}, true},
+		{"命令型没有可备份目录", "deploy_ssh", map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyArtifactType: "command", ConfigKeyBackupMode: BackupModeDir}, true},
+		{"docker 部署不适用", JobTypeDeployDocker, map[string]any{ConfigKeyServerIDs: "s1", ConfigKeyDockerMode: DockerModeRun, ConfigKeyBackupMode: BackupModeDir}, true},
+		{"K8s 发布不适用", JobTypeDeployK8s, map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyBackupMode: BackupModeDir}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeSpec(specWithJobs(Job{ID: "j1", Name: "部署", Type: tc.jobType, Config: tc.cfg}))
+			if tc.wantErr {
+				if !errors.Is(err, ErrBackupConfigInvalid) {
+					t.Fatalf("err = %v, want ErrBackupConfigInvalid", err)
+				}
+				if strings.Contains(err.Error(), "pipeline:") {
+					t.Errorf("报错不应含哨兵前缀,got %q", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
 // K8s 节点的发机器落点也要按新键判:只认旧键的话,填了 serverIds 的节点会既「配了主机」又过了互斥检查。
 func TestValidateDeployK8sRejectsServerIDs(t *testing.T) {
 	cfg := map[string]any{ConfigKeyClusterID: "c1", ConfigKeyWorkloadName: "api", ConfigKeyServerIDs: "s1,s2"}

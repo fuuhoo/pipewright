@@ -206,7 +206,7 @@ func (s *service) deployBlueGreenFile(ctx context.Context, servers []*target.Ser
 				results[i] = abortedResult(srv, "蓝绿:预备阶段其它机失败,已中止本机重启(仍运行旧版本)")
 			}
 		}
-		return results
+		return annotateFileTargets(results, a, cfg)
 	}
 
 	// ── 阶段 2:全机统一重启 + 健康 ───────────────────────────────────────────
@@ -215,7 +215,7 @@ func (s *service) deployBlueGreenFile(ctx context.Context, servers []*target.Ser
 	}, func(idx int, srv *target.Server) {
 		results[idx] = abortedResult(srv, "蓝绿激活阶段执行异常中断")
 	})
-	return results
+	return annotateFileTargets(results, a, cfg)
 }
 
 // deployBlueGreenImage 镜像蓝绿:stage-all(全机 pull)→ cutover-all(全机停旧起新+健康)→

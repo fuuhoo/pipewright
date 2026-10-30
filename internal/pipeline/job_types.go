@@ -33,6 +33,9 @@ var ErrK8sDeployInvalid = errors.New("pipeline: k8s release configuration invali
 // ErrDeployTargetInvalid 是「发机器类部署节点的落点或分批档位不成立」的哨兵错误(HTTP 映射 422)。
 var ErrDeployTargetInvalid = errors.New("pipeline: deploy target and batching configuration invalid")
 
+// ErrBackupConfigInvalid 是「部署前备份的档位 / 后缀 / 保留份数不成立」的哨兵错误(HTTP 映射 422)。
+var ErrBackupConfigInvalid = errors.New("pipeline: deploy backup configuration invalid")
+
 // 合并后的「构建」任务与其相关键。
 const (
 	// JobTypeBuild 是唯一的构建任务类型:按产物档位决定跑脚本构建还是构建镜像。
@@ -202,6 +205,23 @@ const (
 	ConfigKeyCanaryCount = "canaryCount"
 )
 
+// 部署前备份(deploy_ssh / deploy_frontend 的 SSH 文件直铺)的 job.Config 键与取值。
+// 值与 deploy.CfgKeyBackup* / deploy.BackupMode* 逐字一致(build 层原样透传,两侧键名不同
+// 就等于用户在节点里填了却没人读它)。
+const (
+	// ConfigKeyBackupMode 是备份范围:dir(整目录)| suffix(按后缀)| 空(不备份)。
+	ConfigKeyBackupMode = "backupMode"
+	// ConfigKeyBackupSuffixes 是 suffix 模式的后缀清单(逗号 / 空白分隔,如 ".jar,.war")。
+	ConfigKeyBackupSuffixes = "backupSuffixes"
+	// ConfigKeyBackupKeep 是保留份数(空 = 默认 5;1..50)。
+	ConfigKeyBackupKeep = "backupKeep"
+	// BackupModeDir / BackupModeSuffix 是 backupMode 的取值。
+	BackupModeDir    = "dir"
+	BackupModeSuffix = "suffix"
+	// maxBackupKeep 是保留份数的上限(与 deploy.maxBackupKeep 一致:再多只是白占目标机磁盘)。
+	maxBackupKeep = 50
+)
+
 // 发布策略档位取值。blue-green 与 blue_green 都认(前端选项写连字符,引擎归一后是下划线,
 // NormalizeStrategy 两种都收),校验侧没必要另立一套拼写。
 const (
@@ -296,6 +316,71 @@ func validateDeployTargets(stageName, jobName, jobType string, cfg map[string]an
 	}
 	return nil
 }
+
+// validateBackupConfig 校验部署前备份的档位、后缀与保留份数。
+//
+// 备份只存在于「SSH 文件直铺」:docker / K8s / 镜像 / 命令型在目标机上没有可打包的部署目录,
+// 给它们开备份是个不会发生任何事的开关 —— 保存期说清,比发完才发现「怎么没有 .pw-backups」好。
+// 不备份(空)一律通过:那是显式选择,不是漏配。
+func validateBackupConfig(stageName, jobName, jobType string, cfg map[string]any) error {
+	mode := strings.ToLower(strings.TrimSpace(ConfigString(cfg, ConfigKeyBackupMode)))
+	if mode == "" || !IsDeployJobType(jobType) {
+		return nil
+	}
+	where := fmt.Sprintf("阶段「%s」任务「%s」", stageName, jobName)
+	artifactType := strings.TrimSpace(ConfigString(cfg, ConfigKeyArtifactType))
+	switch {
+	case jobType == JobTypeDeployK8s, jobType == JobTypeDeployDocker,
+		artifactType == "command", artifactType == ArtifactImage:
+		return issuef(ErrBackupConfigInvalid,
+			"%s:部署前备份只适用于 SSH 文件发布(docker / K8s / 镜像 / 命令型没有可备份的部署目录)", where)
+	}
+	switch mode {
+	case BackupModeDir, BackupModeSuffix:
+	default:
+		return issuef(ErrBackupConfigInvalid,
+			"%s:备份方式 %q 不存在(整目录 / 按后缀 / 不备份)", where, mode)
+	}
+	if mode == BackupModeSuffix && len(normalizedBackupSuffixes(ConfigString(cfg, ConfigKeyBackupSuffixes))) == 0 {
+		return issuef(ErrBackupConfigInvalid,
+			"%s:备份方式为按后缀,但没有填可用的后缀(如 .jar,.war)", where)
+	}
+	if raw := strings.TrimSpace(ConfigString(cfg, ConfigKeyBackupKeep)); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > maxBackupKeep {
+			return issuef(ErrBackupConfigInvalid,
+				"%s:备份保留份数 %q 不是 1..%d 的整数", where, raw, maxBackupKeep)
+		}
+	}
+	return nil
+}
+
+// normalizedBackupSuffixes 与 deploy 侧的后缀解析同规则(逗号 / 空白分隔、补前导点、
+// 只留 `.[A-Za-z0-9._-]{1,31}`、去重):校验说「有可用后缀」,执行侧才真的会备。
+func normalizedBackupSuffixes(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, tok := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	}) {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if !strings.HasPrefix(tok, ".") {
+			tok = "." + tok
+		}
+		if !backupSuffixPattern.MatchString(tok) || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		out = append(out, tok)
+	}
+	return out
+}
+
+// backupSuffixPattern 是可用后缀的形状(与 deploy.safeBackupSuffix 同规则)。
+var backupSuffixPattern = regexp.MustCompile(`^\.[A-Za-z0-9._-]{1,31}$`)
 
 // deployJobTypes 是「把产物/命令发到目标机」的节点类型集合(唯一出处,执行侧与校验侧共用)。
 // deploy_frontend 是预填 nginx 重启命令的部署模板,与 deploy_ssh 同一条执行路径。
