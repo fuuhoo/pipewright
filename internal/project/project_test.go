@@ -108,6 +108,50 @@ func TestCreateAndList(t *testing.T) {
 	}
 }
 
+// TestServiceAssignment 覆盖归属服务的落库、展示名 join、非法引用与取消归属。
+func TestServiceAssignment(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	svc := New(db, v, &stubProber{branch: "main"})
+	credID := newCred(t, v, "tok")
+	if _, err := db.Exec(
+		`INSERT INTO services (id, name, created_at, updated_at)
+		 VALUES ('svc-1', '订单中心', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed service: %v", err)
+	}
+
+	p, err := svc.Create(context.Background(), CreateInput{
+		Name:         "shop",
+		RepoURL:      "https://gitee.com/acme/shop.git",
+		CredentialID: credID,
+		ServiceID:    "svc-1",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if p.ServiceID != "svc-1" || p.ServiceName != "订单中心" {
+		t.Fatalf("service = %q/%q, want svc-1/订单中心", p.ServiceID, p.ServiceName)
+	}
+
+	if _, err := svc.Create(context.Background(), CreateInput{
+		Name:         "oops",
+		RepoURL:      "https://gitee.com/acme/oops.git",
+		CredentialID: credID,
+		ServiceID:    "nope",
+	}); !errors.Is(err, ErrServiceNotFound) {
+		t.Fatalf("want ErrServiceNotFound, got %v", err)
+	}
+
+	empty := ""
+	got, err := svc.Update(context.Background(), p.ID, UpdateInput{ServiceID: &empty})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got.ServiceID != "" || got.ServiceName != "" {
+		t.Fatalf("detach failed: %q/%q", got.ServiceID, got.ServiceName)
+	}
+}
+
 func TestCreateExplicitDefaultBranchWins(t *testing.T) {
 	db := testDB(t)
 	v := vault.New(db, testMasterKey())

@@ -27,7 +27,11 @@ type projectDTO struct {
 	PRStatusEnabled bool   `json:"prStatusEnabled"`
 	// GroupID 是所属资源分组;'' = 未归组(全员可见可操作)。组名由前端用 /api/groups 映射,
 	// 项目可见即其分组可见,故不必在服务端做名字 join。
-	GroupID       string   `json:"groupId"`
+	GroupID string `json:"groupId"`
+	// ServiceID 是归属服务(纯展示 / 筛选,不参与权限);ServiceName 是后端 join 好的展示名,
+	// 前端直接渲染,不用再拿 /api/services 映射一次;serviceId 为空表示未归属。
+	ServiceID     string   `json:"serviceId"`
+	ServiceName   string   `json:"serviceName"`
 	LastRunStatus *string  `json:"lastRunStatus"`
 	TargetServers []string `json:"targetServers"`
 	CreatedAt     string   `json:"createdAt"`
@@ -46,6 +50,8 @@ func toProjectDTO(p *project.Project) projectDTO {
 		PacEnabled:      p.PacEnabled,
 		PRStatusEnabled: p.PRStatusEnabled,
 		GroupID:         p.GroupID,
+		ServiceID:       p.ServiceID,
+		ServiceName:     p.ServiceName,
 		LastRunStatus:   nil,        // 本期占位:尚无运行
 		TargetServers:   []string{}, // 本期占位:空集合
 		CreatedAt:       p.CreatedAt.UTC().Format(time.RFC3339),
@@ -77,6 +83,8 @@ func writeProjectError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_project", "该项目未绑定仓库,此项设置需要仓库")
 	case errors.Is(err, project.ErrEmptyCredentialID):
 		writeError(w, http.StatusBadRequest, "invalid_project", "请选择仓库凭据")
+	case errors.Is(err, project.ErrServiceNotFound):
+		writeError(w, http.StatusUnprocessableEntity, "service_not_found", "归属服务不存在")
 	default:
 		// 内部错误:不泄漏细节。
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
@@ -169,6 +177,7 @@ func makeCreateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			CredentialID  string `json:"credentialId"`
 			DefaultBranch string `json:"defaultBranch"`
 			GroupID       string `json:"groupId"`
+			ServiceID     string `json:"serviceId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -183,6 +192,7 @@ func makeCreateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			CredentialID:  req.CredentialID,
 			DefaultBranch: req.DefaultBranch,
 			GroupID:       req.GroupID,
+			ServiceID:     req.ServiceID,
 		})
 		if err != nil {
 			writeProjectError(w, err)
@@ -217,6 +227,7 @@ func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			PacEnabled      *bool   `json:"pacEnabled"`
 			PRStatusEnabled *bool   `json:"prStatusEnabled"`
 			GroupID         *string `json:"groupId"`
+			ServiceID       *string `json:"serviceId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -257,6 +268,7 @@ func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			PacEnabled:      req.PacEnabled,
 			PRStatusEnabled: req.PRStatusEnabled,
 			GroupID:         req.GroupID,
+			ServiceID:       req.ServiceID,
 		})
 		if err != nil {
 			writeProjectError(w, err)
@@ -266,7 +278,7 @@ func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			Action:     audit.ActionProjectUpdate,
 			TargetType: audit.TargetProject,
 			TargetID:   p.ID,
-			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch},
+			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch, "serviceId": p.ServiceID},
 			IP:         clientIP(r),
 		})
 		if req.GroupID != nil {

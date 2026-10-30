@@ -416,6 +416,13 @@ func (s *service) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		where = append(where, "pr.status = ?")
 		args = append(args, f.Status)
 	}
+	// 归属服务筛选:同样是项目上的属性(上文已 LEFT JOIN projects p)。
+	if f.ServiceID != "" {
+		where = append(where, "p.service_id = ?")
+		args = append(args, f.ServiceID)
+	} else if f.ServiceUnassigned {
+		where = append(where, "COALESCE(p.service_id, '') = ''")
+	}
 	// 分组收敛:条件挂在上文 LEFT JOIN 的 projects 上(见 ListFilter.VisibleGroups)。
 	if gcond, gargs := f.VisibleGroups.Clause("p.group_id"); gcond != "" {
 		where = append(where, gcond)

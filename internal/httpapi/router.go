@@ -48,6 +48,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/role"
 	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/fuuhoo/pipewright/internal/runner"
+	"github.com/fuuhoo/pipewright/internal/servicecatalog"
 	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/fuuhoo/pipewright/internal/trigger"
 	"github.com/fuuhoo/pipewright/internal/users"
@@ -152,6 +153,10 @@ type options struct {
 	// v6.2 分组权限:分组领域服务 + 判定服务。access 为 nil 时中间件直通(见 access_guard.go)。
 	groupSvc *group.Service
 	access   *access.Service
+	// serviceCatalog 是「归属服务」的领域服务(0090):纯展示 / 筛选属性,不参与权限判定。
+	// nil → /api/services 回 503;项目侧的 serviceId 校验退化为「不校验」(仍能落库,
+	// 只在装配缺失的调试实例上出现)。
+	serviceCatalog *servicecatalog.Catalog
 	// identitySvc 是「外部 git 身份 ↔ 本地账号」的判定服务(OAuth 登录 / 绑定);
 	// sessionIssuer 为验证过的账号签发会话。两者缺一 → 登录回调回人读错误,不 panic。
 	identitySvc   identityLoginer
@@ -161,6 +166,11 @@ type options struct {
 // WithGroups 注入资源分组领域服务(挂载 /api/groups CRUD 与名册端点)。nil → 端点 503。
 func WithGroups(gs *group.Service) Option {
 	return func(o *options) { o.groupSvc = gs }
+}
+
+// WithServiceCatalog 注入归属服务领域服务,挂载 /api/services 路由。nil → 端点 503。
+func WithServiceCatalog(sc *servicecatalog.Catalog) Option {
+	return func(o *options) { o.serviceCatalog = sc }
 }
 
 // WithRoles 注入角色领域服务(P4 可配置角色),挂载 /api/admin/roles* 路由。nil → 端点 503。
@@ -750,6 +760,14 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 			userR.Post("/groups/{id}/members", makeGroupMemberHandler(gs, aud, authn, true))
 			userR.Delete("/groups/{id}/members/{userId}", makeGroupMemberHandler(gs, aud, authn, false))
 			ar.With(RequireAdmin).Delete("/groups/{id}", makeDeleteGroupHandler(gs, aud, authn))
+
+			// 归属服务(0090):项目上的分类标签,与分组正交、不参与权限判定。
+			// 读对所有登录用户开放;写是管理员动作 —— 改名会改所有人看到的标签,建/删是全局变更。
+			sc := o.serviceCatalog
+			userR.Get("/services", makeListServicesHandler(sc))
+			ar.With(RequireAdmin).Post("/services", makeCreateServiceHandler(sc, aud, authn))
+			ar.With(RequireAdmin).Patch("/services/{id}", makeUpdateServiceHandler(sc, aud, authn))
+			ar.With(RequireAdmin).Delete("/services/{id}", makeDeleteServiceHandler(sc, aud, authn))
 		})
 
 		// 项目接入与列表(Story 2.1)。p 为 nil 时 handler 返回 503。

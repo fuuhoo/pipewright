@@ -235,6 +235,10 @@ func makeListRunsHandler(svc run.Service, acc *access.Service) http.HandlerFunc 
 			Page:          page,
 			PageSize:      pageSize,
 			VisibleGroups: visible,
+			// 归属服务:纯筛选维度,不改可见性。serviceId 为空时看 serviceUnassigned
+			// (前端「未归属」那一档),两者都给时 id 优先。
+			ServiceID:         q.Get("serviceId"),
+			ServiceUnassigned: q.Get("serviceUnassigned") == "1",
 		})
 		if err != nil {
 			writeRunError(w, err)

@@ -330,6 +330,54 @@ func TestListFilterAndPaging(t *testing.T) {
 	}
 }
 
+// TestListFiltersByService 验证归属服务筛选:按 id 与「未归属」两档各自只看自己的运行,
+// 服务是纯筛选维度,不改变可见性条件。
+func TestListFiltersByService(t *testing.T) {
+	db := testDB(t)
+	svc := newService(db)
+	projA := seedProject(t, db)
+	projB := seedProject(t, db)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO services (id, name, created_at, updated_at) VALUES ('svc-1', '订单中心', ?, ?)`,
+		now, now); err != nil {
+		t.Fatalf("seed service: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE projects SET service_id = 'svc-1' WHERE id = ?`, projA); err != nil {
+		t.Fatalf("assign service: %v", err)
+	}
+	for _, pid := range []string{projA, projB} {
+		if _, err := svc.Create(context.Background(), pid, Trigger{Type: TriggerManual}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	byService, err := svc.List(context.Background(), ListFilter{ServiceID: "svc-1"})
+	if err != nil {
+		t.Fatalf("List by service: %v", err)
+	}
+	if byService.Total != 1 || byService.Items[0].ProjectID != projA {
+		t.Fatalf("按服务筛选应只命中 projA, got total=%d", byService.Total)
+	}
+
+	unassigned, err := svc.List(context.Background(), ListFilter{ServiceUnassigned: true})
+	if err != nil {
+		t.Fatalf("List unassigned: %v", err)
+	}
+	if unassigned.Total != 1 || unassigned.Items[0].ProjectID != projB {
+		t.Fatalf("未归属应只命中 projB, got total=%d", unassigned.Total)
+	}
+
+	all, err := svc.List(context.Background(), ListFilter{})
+	if err != nil {
+		t.Fatalf("List all: %v", err)
+	}
+	if all.Total != 2 {
+		t.Fatalf("不筛服务应 2 条, got %d", all.Total)
+	}
+}
+
 // TestEnqueueNonBlocking 验证 Enqueue 队列满时返回 ErrQueueFull 而非阻塞(不挂死 Create)。
 func TestEnqueueNonBlocking(t *testing.T) {
 	db := testDB(t)

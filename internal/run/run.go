@@ -233,6 +233,11 @@ type ListFilter struct {
 	Status    string // 空 = 不按状态筛选
 	Page      int    // 1-based;<1 视为 1
 	PageSize  int    // <1 时用默认页大小
+	// ServiceID 收窄到某个归属服务的运行(条件落在项目的 service_id 上);
+	// 空 = 不筛。ServiceUnassigned 只筛未归属服务的项目,两者互斥,ServiceID 优先。
+	// 服务是纯筛选维度,不参与权限判定 —— VisibleGroups 照旧独立生效。
+	ServiceID         string
+	ServiceUnassigned bool
 	// VisibleGroups 是分组可见性过滤:运行信息随所属项目走,所以条件落在项目的 group_id 上
 	// (列表 SQL 已 LEFT JOIN projects p)。零值 = 只看未归组项目的运行,管理员须传
 	// access.ListFilter{Unrestricted: true},否则会把已归组项目从列表里静默藏掉。

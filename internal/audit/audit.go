@@ -135,6 +135,11 @@ const (
 	ActionGroupMemberAdd    = "group_member_add"
 	ActionGroupMemberRemove = "group_member_remove"
 	ActionProjectReassign   = "project_reassign"
+	// 归属服务是纯标签,但它是一条全局可见的配置:建 / 改名 / 删都会改所有人看到的分类,
+	// 同样留痕,事后能回答「这个服务是谁建的、谁把项目挪走的」。
+	ActionServiceCreate = "service_create"
+	ActionServiceUpdate = "service_update"
+	ActionServiceDelete = "service_delete"
 	// 服务器登记的是一台带 SSH 私钥的目标机,高危程度与项目归组同级,故同样留痕。
 	ActionServerCreate   = "server_create"
 	ActionServerUpdate   = "server_update"
@@ -206,6 +211,7 @@ const (
 	TargetUser           = "user"
 	TargetUserInvitation = "user_invitation"
 	TargetResourceGroup  = "resource_group"
+	TargetService        = "service"
 	TargetKubeCluster    = "kube_cluster"
 	TargetRole           = "role"
 	// 证书三档:证书本身、它的一个发布落点(cert_deployments 行)、一个 CA 的 ACME 账户。

@@ -53,6 +53,9 @@ var (
 	// (见迁移 0056),所以这里必须自己挡:悬挂引用会让 access 按最私有一档收敛,
 	// 结果是全组人都打不开这个项目。
 	ErrGroupNotFound = errors.New("project: group not found")
+	// ErrServiceNotFound 表示 service_id 指向的归属服务不存在。同样不建外键,
+	// 悬挂引用会让项目页的服务筛选多出一个查无此人的档位,写入前必须自己挡。
+	ErrServiceNotFound = errors.New("project: service not found")
 )
 
 // 分页上限常量:防全量返回拖垮内存/响应。
@@ -80,9 +83,13 @@ type Project struct {
 	PRStatusEnabled bool
 	// GroupID 是所属资源分组(resource_groups.id);'' = 未归组 = 全员可见可操作(存量即此态)。
 	// 权限判定见 internal/access + internal/group。
-	GroupID   string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	GroupID string
+	// ServiceID 是归属服务(services.id);'' = 未归属。纯展示 / 筛选属性,不参与权限判定。
+	ServiceID string
+	// ServiceName 是冗余只读展示名(join services),便于列表与卡片直接渲染;非持久列。
+	ServiceName string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // CreateInput 是创建项目的入参。
@@ -94,6 +101,8 @@ type CreateInput struct {
 	// GroupID 可空('' = 未归组)。归组权限(能否放进这个组)由 HTTP 层校验,
 	// 本包只管落库——分组是否存在不该由仓库连通性校验来回答。
 	GroupID string
+	// ServiceID 可空('' = 未归属);非空时必须是真实存在的服务。
+	ServiceID string
 }
 
 // UpdateInput 是更新项目的入参;指针字段为 nil 表示不修改。
@@ -111,6 +120,8 @@ type UpdateInput struct {
 	// GroupID 改归属;nil = 不动,指向 '' = 移出分组。归组要求两侧的 Manage,
 	// 由 HTTP 层把关(access.ActManage on 旧组与新组)。
 	GroupID *string
+	// ServiceID 改归属服务;nil = 不动,指向 '' = 取消归属。
+	ServiceID *string
 }
 
 // TestCloneResult 是测试连接的结果(成功时携探测到的默认分支与远端引用列表)。
@@ -221,6 +232,20 @@ func (s *service) groupExists(ctx context.Context, groupID string) (bool, error)
 	return true, nil
 }
 
+// serviceExists 校验 services.id 存在。projects.service_id 同样不建外键(迁移 0090),
+// 悬挂引用会让服务筛选多出一个空档位,写入前必须自己挡。
+func (s *service) serviceExists(ctx context.Context, serviceID string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM services WHERE id = ?`, serviceID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("project: check service: %w", err)
+	}
+	return true, nil
+}
+
 // gitAuthOrErr 取凭据明文并映射干净领域错误;token 仅进程内存在。
 // 凭据不存在 → ErrCredentialNotFound;保险库未配置 → ErrVaultUnconfigured。
 func (s *service) gitAuthOrErr(credentialID string) (vault.GitAuth, error) {
@@ -291,6 +316,17 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 			return nil, ErrGroupNotFound
 		}
 	}
+	// 归属服务同理:空 = 不归属;非空必须是真实存在的服务。
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID != "" {
+		ok, err := s.serviceExists(ctx, serviceID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrServiceNotFound
+		}
+	}
 	// 无仓库项目(纯发布)不探测:既没有地址可连,也就不该因为网络失败而建不出来。
 	var branch string
 	if in.RepoURL != "" {
@@ -310,9 +346,9 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 	nowStr := now.Format(time.RFC3339)
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, group_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Name, in.RepoURL, defaultBranch, credArg(in.CredentialID), groupID, nowStr, nowStr,
+		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, group_id, service_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Name, in.RepoURL, defaultBranch, credArg(in.CredentialID), groupID, serviceID, nowStr, nowStr,
 	)
 	if err != nil {
 		// 外键失败(凭据在校验后被删等竞态)归为凭据不存在;其余为内部错误。
@@ -364,9 +400,11 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 
 	offset := (page - 1) * pageSize
 	listSQL := `SELECT p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
-	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.created_at, p.updated_at
+	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
+	        COALESCE(s.name, ''), p.created_at, p.updated_at
 		 FROM projects p
-		 LEFT JOIN credentials c ON c.id = p.credential_id`
+		 LEFT JOIN credentials c ON c.id = p.credential_id
+		 LEFT JOIN services s ON s.id = p.service_id`
 	if where != "" {
 		listSQL += " WHERE " + where
 	}
@@ -395,9 +433,11 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
-		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.created_at, p.updated_at
+		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
+		        COALESCE(s.name, ''), p.created_at, p.updated_at
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
+		 LEFT JOIN services s ON s.id = p.service_id
 		 WHERE p.id = ?`, id,
 	)
 	p, err := scanProject(row)
@@ -412,11 +452,11 @@ func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 
 func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Project, error) {
 	// 先取当前行(需 repo_url + credential_id 以便在改绑凭据时重做校验)。
-	var name, repoURL, defaultBranch, credentialID, groupID string
+	var name, repoURL, defaultBranch, credentialID, groupID, serviceID string
 	var pacInt, prStatusInt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, repo_url, default_branch, COALESCE(credential_id, ''), pac_enabled, pr_status_enabled, group_id FROM projects WHERE id = ?`, id,
-	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt, &groupID)
+		`SELECT name, repo_url, default_branch, COALESCE(credential_id, ''), pac_enabled, pr_status_enabled, group_id, service_id FROM projects WHERE id = ?`, id,
+	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt, &groupID, &serviceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -501,6 +541,18 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 			}
 		}
 	}
+	if in.ServiceID != nil {
+		serviceID = strings.TrimSpace(*in.ServiceID)
+		if serviceID != "" {
+			ok, err := s.serviceExists(ctx, serviceID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrServiceNotFound
+			}
+		}
+	}
 
 	pacInt = 0
 	if pacEnabled {
@@ -512,8 +564,8 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 	}
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE projects SET name = ?, repo_url = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, updated_at = ? WHERE id = ?`,
-		name, repoURL, defaultBranch, credArg(credentialID), pacInt, prStatusInt, groupID, nowStr, id,
+		`UPDATE projects SET name = ?, repo_url = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, service_id = ?, updated_at = ? WHERE id = ?`,
+		name, repoURL, defaultBranch, credArg(credentialID), pacInt, prStatusInt, groupID, serviceID, nowStr, id,
 	)
 	if err != nil {
 		if isForeignKeyErr(err) {
@@ -583,7 +635,8 @@ func scanProject(sc scanner) (*Project, error) {
 	var pacInt, prStatusInt int
 	if err := sc.Scan(
 		&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.CredentialID,
-		&p.CredentialName, &pacInt, &prStatusInt, &p.GroupID, &createdStr, &updatedStr,
+		&p.CredentialName, &pacInt, &prStatusInt, &p.GroupID, &p.ServiceID,
+		&p.ServiceName, &createdStr, &updatedStr,
 	); err != nil {
 		return nil, err
 	}
