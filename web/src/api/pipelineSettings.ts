@@ -70,6 +70,8 @@ export interface Environment {
 
 export interface SettingsDTO {
   build: BuildConfig
+  /** 引用的复用库变量组 ID(按引用顺序合并进变量表;项目自己的同名变量优先)。 */
+  varGroupIds: string[]
   environments: Environment[]
   updatedAt: string
 }
@@ -107,6 +109,7 @@ export interface SaveSettingsInput {
     vars: SaveBuildVar[]
     cache: Cache
   }
+  varGroupIds?: string[]
   environments: SaveEnvironment[]
 }
 

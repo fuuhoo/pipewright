@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     '可選,多行(set -e 逐行執行);在產品鋪進部署目錄之前於該機執行,用來先備份舊檔案、停服務或清快取。失敗該機即判失敗,舊檔案不會被覆蓋;支援 {\'{{param}}\'} 佔位',
 
+  fieldPreDeployCommandRefLabel: '部署前指令(引用復用庫)',
+  fieldRestartCommandRefLabel: '重啟 / 切換命令(引用復用庫)',
+  fieldHealthCommandRefLabel: '探測命令(引用復用庫)',
+  fieldCommandRefHint:
+    '從復用庫選一條命名指令,執行時按 {\'{{參數}}\'} 渲染;命令裡不能含保險庫 secret(執行時會明確拒絕)。留空則直接填寫下面的正文。',
+  fieldCommandRefInline: '直接填寫命令',
+  fieldCommandRefMissing: '引用的指令已不存在(請重選)',
+  fieldCommandRefNone: '復用庫裡還沒有指令。到「復用庫 · 指令」新建一條。',
+
   fieldBackupModeLabel: '部署前備份',
   fieldBackupModeHint: '在產物鋪進部署目錄前先留一份;保留份數可設,執行詳情裡可依目標還原',
   backupModeOff: '不備份',

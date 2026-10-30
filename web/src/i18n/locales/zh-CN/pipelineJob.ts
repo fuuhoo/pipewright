@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     '可选,多行(set -e 逐行执行);在产物铺进部署目录之前于该机执行,用来先备份旧文件、停服务或清缓存。失败该机即判失败,旧文件不会被覆盖;支持 {\'{{param}}\'} 占位',
 
+  fieldPreDeployCommandRefLabel: '部署前指令(引用复用库)',
+  fieldRestartCommandRefLabel: '重启 / 切换命令(引用复用库)',
+  fieldHealthCommandRefLabel: '探测命令(引用复用库)',
+  fieldCommandRefHint:
+    '从复用库选一条命名指令,执行时按 {\'{{参数}}\'} 渲染;命令里不能含保险库 secret(运行时会明确拒绝)。留空则直接填写下面的正文。',
+  fieldCommandRefInline: '直接填写命令',
+  fieldCommandRefMissing: '引用的指令已不存在(请重选)',
+  fieldCommandRefNone: '复用库里还没有指令。到「复用库 · 指令」新建一条。',
+
   fieldBackupModeLabel: '部署前备份',
   fieldBackupModeHint: '在产物落位前给部署目录留一份;保留份数可设,运行详情里可按目标恢复',
   backupModeOff: '不备份',

@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     'Optional, mehrzeilig (set -e, Zeile für Zeile); wird auf dem Ziel ausgeführt, bevor das Artefakt im Deploy-Verzeichnis landet — vorher alte Dateien sichern, Dienst stoppen oder Cache leeren. Bei einem Fehler gilt dieser Host als fehlgeschlagen, ohne alte Dateien zu überschreiben; unterstützt {\'{{param}}\'}',
 
+  fieldPreDeployCommandRefLabel: 'Befehl vor der Bereitstellung aus der Bibliothek',
+  fieldRestartCommandRefLabel: 'Neustart-/Wechselbefehl aus der Bibliothek',
+  fieldHealthCommandRefLabel: 'Prüfbefehl aus der Bibliothek',
+  fieldCommandRefHint:
+    'Wählen Sie einen benannten Befehl aus der Wiederverwendungsbibliothek; er wird zur Laufzeit mit {\'{{param}}\'} gerendert. Vault-Secrets werden abgelehnt. Leer lassen, um den Befehl hier zu schreiben.',
+  fieldCommandRefInline: 'Befehl hier eingeben',
+  fieldCommandRefMissing: 'Referenzierter Befehl existiert nicht mehr (neu auswählen)',
+  fieldCommandRefNone: 'Noch keine Befehle in der Bibliothek. Legen Sie unter Bibliothek · Befehle einen an.',
+
   fieldBackupModeLabel: 'Sicherung vor der Bereitstellung',
   fieldBackupModeHint: 'Legt vor dem Ablegen des Artefakts eine Kopie des Deploy-Verzeichnisses an; die Aufbewahrungszahl ist einstellbar, und jedes Ziel lässt sich in der Laufzeitansicht wiederherstellen',
   backupModeOff: 'Keine Sicherung',

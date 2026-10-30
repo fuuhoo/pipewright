@@ -72,5 +72,6 @@ export default {
   errInvalidVar: '변수 키는 비워 둘 수 없고 동일 범위 내에서 중복될 수 없습니다. secret 변수에는 볼트 자격 증명을 선택해야 합니다.',
   errInvalidEnvironment: '환경 이름은 비워 둘 수 없으며 이미지 레지스트리 유형은 harbor/acr/dockerhub/custom이어야 합니다.',
   errCredentialNotFound: '참조된 볼트 자격 증명이 존재하지 않습니다. 다시 선택한 후 시도하세요.',
+  errVarGroupNotFound: '참조한 변수 그룹이 더 이상 존재하지 않습니다. "변수 및 캐시"에서 이 참조를 제거한 후 다시 시도하세요.',
   errVaultUnconfigured: '볼트에 master key가 설정되지 않아 secret 자격 증명을 참조할 수 없습니다.',
 }

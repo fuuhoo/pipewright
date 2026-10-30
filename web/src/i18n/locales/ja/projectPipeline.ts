@@ -72,5 +72,6 @@ export default {
   errInvalidVar: '変数キーは空にできず、同一スコープ内で重複できません。secret 変数にはボールトの認証情報を選択する必要があります。',
   errInvalidEnvironment: '環境名は空にできず、イメージレジストリの種類は harbor/acr/dockerhub/custom である必要があります。',
   errCredentialNotFound: '参照されているボールトの認証情報が存在しません。選び直して再試行してください。',
+  errVarGroupNotFound: '参照している変数グループは存在しません。「変数とキャッシュ」でこの参照を削除してから再試行してください。',
   errVaultUnconfigured: 'ボールトに master key が設定されていないため、secret 認証情報を参照できません。',
 }

@@ -72,5 +72,6 @@ export default {
   errInvalidVar: 'Variable key cannot be empty and must be unique within its scope; secret variables require a vault credential.',
   errInvalidEnvironment: 'Environment name cannot be empty, and image registry type must be harbor/acr/dockerhub/custom.',
   errCredentialNotFound: 'The referenced vault credential does not exist. Please reselect and try again.',
+  errVarGroupNotFound: 'A referenced variable group no longer exists. Remove it under Variables & Cache and try again.',
   errVaultUnconfigured: 'The vault has no master key configured, so secret credentials cannot be referenced.',
 }

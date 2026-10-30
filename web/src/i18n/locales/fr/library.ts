@@ -11,6 +11,8 @@ export default {
   tabTemplates: 'Modèles de pipeline',
   tabVariableGroups: 'Groupes de variables',
   tabCustomNodes: 'Nœuds personnalisés',
+  tabCommands: 'Commandes',
+  newCommand: '+ Nouvelle commande',
 
   // ─── common ────────────────────────────────────────────────────
   retry: 'Réessayer',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: 'Résumé d’une ligne affiché sur la carte',
   noParamsHint: 'Aucun paramètre pour le moment. Cliquez sur « + Ajouter un paramètre » pour en ajouter un.',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: 'Aucune commande pour le moment',
+  emptyCommandsHint: 'Enregistrez des extraits shell fréquents (redémarrage, contrôle de santé, préparation) comme commandes nommées, puis référencez-les dans les champs « commande avant déploiement », « redémarrage » ou « sonde » d’un nœud de déploiement. Ils sont rendus avec les paramètres à l’exécution.',
+  editCommand: 'Modifier la commande',
+  fieldCommandBody: 'Corps de la commande',
+  commandNamePlaceholder: 'p. ex. restart-api',
+  commandDescPlaceholder: 'Ce que fait cette commande et pour quels hôtes elle convient',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: 'S’exécute ligne par ligne sous set -e ; prend en charge {\'{{param}}\'}. Les secrets du coffre-fort ne peuvent pas être rendus dans les commandes de déploiement et sont refusés à l’exécution.',
+  commandEmptyBody: 'commande vide',
+  commandNameRequired: 'Le nom de la commande ne peut pas être vide',
+  commandBodyRequired: 'Le corps de la commande ne peut pas être vide',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: 'Supprimer le modèle « {name} » ? Cette action est irréversible.',
   deletedTemplate: 'Modèle « {name} » supprimé',
@@ -99,6 +114,12 @@ export default {
   updatedNode: 'Nœud personnalisé « {name} » mis à jour',
   groupNameRequired: 'Le nom du groupe de variables ne peut pas être vide',
   nodeNameRequired: 'Le nom du nœud personnalisé ne peut pas être vide',
+  confirmDeleteCommand: 'Supprimer la commande « {name} » ? Cette action est irréversible.',
+  deletedCommand: 'Commande « {name} » supprimée',
+  createdCommand: 'Commande « {name} » créée',
+  updatedCommand: 'Commande « {name} » mise à jour',
+  loadCommandsFailed: 'Impossible de charger les commandes',
+  loadCommandsFailedStatus: 'Impossible de charger les commandes ({status})',
   deleteFailed: 'Échec de la suppression',
   saveFailed: 'Échec de l’enregistrement',
   saveFailedStatus: 'Échec de l’enregistrement ({status})',

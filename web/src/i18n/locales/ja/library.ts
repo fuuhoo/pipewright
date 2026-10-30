@@ -11,6 +11,8 @@ export default {
   tabTemplates: 'パイプラインテンプレート',
   tabVariableGroups: '変数グループ',
   tabCustomNodes: 'カスタムノード',
+  tabCommands: 'コマンド',
+  newCommand: '+ 新しいコマンド',
 
   // ─── common ────────────────────────────────────────────────────
   retry: '再試行',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: 'カードに表示する一行の概要',
   noParamsHint: 'パラメータはまだありません。「+ パラメータを追加」をクリックして追加してください。',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: 'コマンドはまだありません',
+  emptyCommandsHint: 'よく使うシェル断片(再起動、ヘルスチェック、デプロイ前準備)を名前付きコマンドとして保存し、デプロイノードの「デプロイ前コマンド / 再起動コマンド / プローブコマンド」から参照できます。実行時にパラメータでレンダリングされます。',
+  editCommand: 'コマンドを編集',
+  fieldCommandBody: 'コマンド本文',
+  commandNamePlaceholder: '例: restart-api',
+  commandDescPlaceholder: 'このコマンドの用途と適したホスト',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: 'set -e で 1 行ずつ実行;{\'{{param}}\'} に対応。ボールトのシークレットはデプロイコマンドにレンダリングできず、実行時に拒否されます。',
+  commandEmptyBody: '空のコマンド',
+  commandNameRequired: 'コマンド名は空にできません',
+  commandBodyRequired: 'コマンド本文は空にできません',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: 'テンプレート「{name}」を削除しますか?この操作は元に戻せません。',
   deletedTemplate: 'テンプレート「{name}」を削除しました',
@@ -99,6 +114,12 @@ export default {
   updatedNode: 'カスタムノード「{name}」を更新しました',
   groupNameRequired: '変数グループ名は空にできません',
   nodeNameRequired: 'カスタムノード名は空にできません',
+  confirmDeleteCommand: 'コマンド「{name}」を削除しますか?この操作は元に戻せません。',
+  deletedCommand: 'コマンド「{name}」を削除しました',
+  createdCommand: 'コマンド「{name}」を作成しました',
+  updatedCommand: 'コマンド「{name}」を更新しました',
+  loadCommandsFailed: 'コマンドの読み込みに失敗しました',
+  loadCommandsFailedStatus: 'コマンドの読み込みに失敗しました({status})',
   deleteFailed: '削除に失敗しました',
   saveFailed: '保存に失敗しました',
   saveFailedStatus: '保存に失敗しました({status})',

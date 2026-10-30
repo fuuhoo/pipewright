@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     '선택, 여러 줄(set -e, 한 줄씩 실행). 산출물을 배포 디렉터리에 놓기 전에 대상 머신에서 실행해 기존 파일 백업·서비스 정지·캐시 삭제 등을 합니다. 실패하면 해당 호스트가 실패로 판정되며 기존 파일은 덮어쓰지 않습니다. {\'{{param}}\'} 지원',
 
+  fieldPreDeployCommandRefLabel: '배포 전 명령(라이브러리 참조)',
+  fieldRestartCommandRefLabel: '재시작 / 전환 명령(라이브러리 참조)',
+  fieldHealthCommandRefLabel: '프로브 명령(라이브러리 참조)',
+  fieldCommandRefHint:
+    '재사용 라이브러리에서 이름 있는 명령을 선택합니다. 실행 시 {\'{{param}}\'} 로 렌더링됩니다. 볼트 시크릿은 거부됩니다. 비워 두면 아래 본문에 직접 입력하세요.',
+  fieldCommandRefInline: '명령 직접 입력',
+  fieldCommandRefMissing: '참조한 명령이 더 이상 존재하지 않습니다(다시 선택)',
+  fieldCommandRefNone: '라이브러리에 아직 명령이 없습니다. "라이브러리 · 명령"에서 만드세요.',
+
   fieldBackupModeLabel: '배포 전 백업',
   fieldBackupModeHint: '산출물을 놓기 전에 배포 디렉터리를 복사해 둡니다. 보관 개수를 설정할 수 있고 실행 상세에서 대상별로 복원할 수 있습니다',
   backupModeOff: '백업 안 함',

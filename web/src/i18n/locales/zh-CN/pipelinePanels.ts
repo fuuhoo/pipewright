@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: '命中后跳过重复下载,显著加速构建',
   vcCachePaths: '缓存路径(每行一条)',
 
+  // ─── VarsCacheTab · 引用的复用库变量组 ─────────────────────────
+  vcVarGroups: '引用复用库变量组',
+  vcVarGroupsSub: '运行时并入流水线变量表 · 与项目变量同名时项目变量优先',
+  vcVarGroupsHint:
+    '变量组来自复用库,按引用顺序合并。secret 项保持保险库引用:脚本与构建可以用,但不会渲染进部署路径或部署命令。',
+  vcVarGroupsAvailable: '可选变量组',
+  vcVarGroupsReferenced: '已引用(合并顺序)',
+  vcVarGroupsEmpty: '复用库里还没有变量组。',
+  vcVarGroupMeta: '{n} 变量',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: '流水线配置校验',
   vpReady: '配置就绪',

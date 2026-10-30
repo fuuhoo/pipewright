@@ -72,5 +72,6 @@ export default {
   errInvalidVar: '變數鍵不能為空且同作用域內不可重複;secret 變數須選擇保險庫憑證。',
   errInvalidEnvironment: '環境名稱不能為空,映像倉庫類型須為 harbor/acr/dockerhub/custom。',
   errCredentialNotFound: '引用的保險庫憑證不存在,請重新選擇後重試。',
+  errVarGroupNotFound: '引用的變數組已不存在,請到「變數與快取」移除這條引用後重試。',
   errVaultUnconfigured: '保險庫未設定 master key,無法引用 secret 憑證。',
 }

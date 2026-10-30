@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: 'Ignore les téléchargements redondants en cas de succès, accélérant nettement les builds',
   vcCachePaths: 'Chemins de cache (un par ligne)',
 
+  // ─── VarsCacheTab · groupes de variables référencés ───────────
+  vcVarGroups: 'Groupes de variables référencés',
+  vcVarGroupsSub: 'Fusionnés dans la table des variables du pipeline à l’exécution · les variables du projet l’emportent en cas de conflit de nom',
+  vcVarGroupsHint:
+    'Les groupes proviennent de la bibliothèque de réutilisation et sont fusionnés dans l’ordre indiqué. Les entrées secrètes restent des références au coffre-fort : les scripts et les builds peuvent les utiliser, mais elles ne sont pas rendues dans les chemins ou commandes de déploiement.',
+  vcVarGroupsAvailable: 'Groupes disponibles',
+  vcVarGroupsReferenced: 'Référencés (ordre de fusion)',
+  vcVarGroupsEmpty: 'Aucun groupe de variables dans la bibliothèque pour le moment.',
+  vcVarGroupMeta: '{n} variables',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: 'Validation de la configuration du Pipeline',
   vpReady: 'Configuration prête',

@@ -20,10 +20,16 @@ import type {
   ArtifactType,
 } from '../../api/pipelineSettings'
 import type { Credential } from '../../api/credentials'
+import type { VariableGroup } from '../../api/variableGroups'
+import TransferList, { type TransferOption } from '../ui/TransferList.vue'
 
 interface Props {
   build: BuildConfig
   credentials: Credential[]
+  /** 引用的复用库变量组 ID(顺序即合并优先级:先引用的组优先)。 */
+  varGroupIds: string[]
+  /** 可引用的变量组(当前账号可见范围)。 */
+  varGroups: VariableGroup[]
   disabled?: boolean
 }
 const props = defineProps<Props>()
@@ -32,6 +38,7 @@ const { t } = useI18n()
 
 const emit = defineEmits<{
   update: [build: BuildConfig]
+  'update:varGroupIds': [ids: string[]]
 }>()
 
 // ─── Local editable copy ────────────────────────────────────────────────────────
@@ -152,6 +159,17 @@ function maskFor(row: VarRow): string {
   const c = props.credentials.find((x) => x.id === row.credentialId)
   return c ? c.maskedValue : '••••'
 }
+
+// ─── Referenced variable groups (复用库) ───────────────────────────────────────
+
+const groupOptions = computed<TransferOption[]>(() =>
+  props.varGroups.map((g) => ({
+    id: g.id,
+    label: g.name,
+    meta: t('pipelinePanels.vcVarGroupMeta', { n: g.vars.length }),
+    createdAt: g.createdAt,
+  })),
+)
 </script>
 
 <template>
@@ -244,6 +262,31 @@ function maskFor(row: VarRow): string {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
           {{ t('pipelinePanels.vcAddVaultSecret') }}
         </button>
+      </div>
+    </section>
+
+    <!-- ─── Referenced variable groups (复用库) ──────────────────────────────── -->
+    <section class="card">
+      <header class="card-head">
+        <span class="card-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7h7v13H4zM13 4h7v16h-7z"/><path d="M6.5 10h2M15.5 8h2M15.5 11h2"/></svg>
+        </span>
+        {{ t('pipelinePanels.vcVarGroups') }}
+        <span class="card-sub">{{ t('pipelinePanels.vcVarGroupsSub') }}</span>
+      </header>
+
+      <div class="vg-body">
+        <p class="vg-hint">{{ t('pipelinePanels.vcVarGroupsHint') }}</p>
+        <TransferList
+          :model-value="varGroupIds"
+          :options="groupOptions"
+          preserve-order
+          :disabled="disabled"
+          :source-title="t('pipelinePanels.vcVarGroupsAvailable')"
+          :target-title="t('pipelinePanels.vcVarGroupsReferenced')"
+          @update:model-value="(ids: string[]) => emit('update:varGroupIds', ids)"
+        />
+        <p v-if="!groupOptions.length" class="vempty">{{ t('pipelinePanels.vcVarGroupsEmpty') }}</p>
       </div>
     </section>
 
@@ -416,6 +459,9 @@ function maskFor(row: VarRow): string {
 .vdel:focus-visible { outline: 2px solid var(--color-primary); }
 
 .vempty { padding: 18px; font-size: 0.8rem; color: var(--color-faint); text-align: center; }
+
+.vg-body { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 10px; }
+.vg-hint { margin: 0; font-size: 0.76rem; line-height: 1.55; color: var(--color-faint); }
 
 .addrow { display: flex; gap: 8px; padding: 12px 18px; flex-wrap: wrap; }
 .addbtn {

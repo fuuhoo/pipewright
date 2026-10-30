@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: '적중 시 중복 다운로드를 건너뛰어 빌드를 크게 가속화',
   vcCachePaths: '캐시 경로(한 줄에 하나씩)',
 
+  // ─── VarsCacheTab · 참조한 변수 그룹 ──────────────────────────
+  vcVarGroups: '참조한 변수 그룹',
+  vcVarGroupsSub: '실행 시 파이프라인 변수 표에 병합 · 이름이 겹치면 프로젝트 변수가 우선',
+  vcVarGroupsHint:
+    '변수 그룹은 재사용 라이브러리에서 가져오며 참조 순서대로 병합됩니다. 시크릿 항목은 볼트 참조로 유지됩니다: 스크립트와 빌드에서는 사용할 수 있지만 배포 경로나 배포 명령에는 렌더링되지 않습니다.',
+  vcVarGroupsAvailable: '사용 가능한 그룹',
+  vcVarGroupsReferenced: '참조됨(병합 순서)',
+  vcVarGroupsEmpty: '라이브러리에 아직 변수 그룹이 없습니다.',
+  vcVarGroupMeta: '{n}개 변수',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: '파이프라인 구성 검증',
   vpReady: '구성 준비 완료',

@@ -11,6 +11,8 @@ export default {
   tabTemplates: '流水線範本',
   tabVariableGroups: '變數組',
   tabCustomNodes: '自訂節點',
+  tabCommands: '指令',
+  newCommand: '+ 新增指令',
 
   // ─── common ────────────────────────────────────────────────────
   retry: '重試',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: '一句話摘要,顯示在卡片上',
   noParamsHint: '暫無參數,點「+ 新增參數」新增。',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: '還沒有指令',
+  emptyCommandsHint: '把常用的 shell 片段(重啟、健康檢查、部署前準備)存成命名指令,部署節點的「部署前指令 / 重啟命令 / 探測命令」可直接引用。執行時按參數渲染。',
+  editCommand: '編輯指令',
+  fieldCommandBody: '指令正文',
+  commandNamePlaceholder: '如 restart-api',
+  commandDescPlaceholder: '這條指令做什麼、適合哪些主機',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: '逐行在 set -e 下執行;支援 {\'{{參數}}\'}。保險庫 secret 不能渲染進部署命令,執行時會被明確拒絕。',
+  commandEmptyBody: '空指令',
+  commandNameRequired: '指令名稱不能為空',
+  commandBodyRequired: '指令正文不能為空',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: '刪除範本「{name}」?此操作不可復原。',
   deletedTemplate: '已刪除範本「{name}」',
@@ -99,6 +114,12 @@ export default {
   updatedNode: '已更新自訂節點「{name}」',
   groupNameRequired: '變數組名稱不能為空',
   nodeNameRequired: '自訂節點名稱不能為空',
+  confirmDeleteCommand: '刪除指令「{name}」?此操作不可復原。',
+  deletedCommand: '已刪除指令「{name}」',
+  createdCommand: '已建立指令「{name}」',
+  updatedCommand: '已更新指令「{name}」',
+  loadCommandsFailed: '載入指令失敗',
+  loadCommandsFailedStatus: '載入指令失敗({status})',
   deleteFailed: '刪除失敗',
   saveFailed: '儲存失敗',
   saveFailedStatus: '儲存失敗({status})',

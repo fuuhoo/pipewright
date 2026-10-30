@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: 'ヒット時に重複ダウンロードをスキップし、ビルドを大幅に高速化',
   vcCachePaths: 'キャッシュパス（1 行に 1 つ）',
 
+  // ─── VarsCacheTab · 参照する変数グループ ──────────────────────
+  vcVarGroups: '参照する変数グループ',
+  vcVarGroupsSub: '実行時にパイプラインの変数表へマージ · 同名の場合はプロジェクト変数が優先',
+  vcVarGroupsHint:
+    '変数グループは再利用ライブラリから取得し、参照順にマージされます。シークレット項目はボールト参照のままです:スクリプトやビルドでは使えますが、デプロイパスやデプロイコマンドにはレンダリングされません。',
+  vcVarGroupsAvailable: '利用可能なグループ',
+  vcVarGroupsReferenced: '参照中(マージ順)',
+  vcVarGroupsEmpty: 'ライブラリに変数グループがまだありません。',
+  vcVarGroupMeta: '{n} 変数',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: 'パイプライン構成の検証',
   vpReady: '構成は準備完了',

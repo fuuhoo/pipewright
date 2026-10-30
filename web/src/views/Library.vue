@@ -43,17 +43,26 @@ import {
   deleteCustomNode,
   type CustomNode,
 } from '../api/customNodes'
+import {
+  listLibraryCommands,
+  createLibraryCommand,
+  updateLibraryCommand,
+  deleteLibraryCommand,
+  type LibraryCommand,
+} from '../api/libraryCommands'
 import { jobTypeLabel } from '../components/pipeline/jobConfigSchema'
 import { isStudioNode } from '../components/pipeline/studioCompile'
 
-type Tab = 'templates' | 'variableGroups' | 'customNodes'
+type Tab = 'templates' | 'variableGroups' | 'customNodes' | 'commands'
 type LoadState = 'idle' | 'loading' | 'error'
 
 const { t } = useI18n()
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
-const tab = ref<Tab>(route.query.tab === 'customNodes' ? 'customNodes' : route.query.tab === 'variableGroups' ? 'variableGroups' : 'templates')
+const TAB_KEYS: Tab[] = ['templates', 'variableGroups', 'customNodes', 'commands']
+const initialTab = TAB_KEYS.find((k) => route.query.tab === k) ?? 'templates'
+const tab = ref<Tab>(initialTab)
 
 const session = useSessionStore()
 // 三类资产的函数轴都看 library.edit;变量组自 0088 起还多一道数据轴(分组归属),由后端
@@ -550,17 +559,120 @@ async function saveCustomNode(): Promise<void> {
   }
 }
 
+// ─── 命名指令(部署节点可引用)─────────────────────────────────────────────────
+const cmdState = ref<LoadState>('idle')
+const cmdError = ref('')
+const commands = ref<LibraryCommand[]>([])
+
+async function loadCommands(): Promise<void> {
+  cmdState.value = 'loading'
+  cmdError.value = ''
+  try {
+    commands.value = await listLibraryCommands()
+    cmdState.value = 'idle'
+  } catch (err: unknown) {
+    cmdState.value = 'error'
+    cmdError.value = err instanceof HttpError
+      ? err.apiError?.message ?? t('library.loadCommandsFailedStatus', { status: err.status })
+      : t('library.loadCommandsFailed')
+  }
+}
+
+async function removeCommand(c: LibraryCommand): Promise<void> {
+  if (!window.confirm(t('library.confirmDeleteCommand', { name: c.name }))) return
+  try {
+    await deleteLibraryCommand(c.id)
+    message.success(t('library.deletedCommand', { name: c.name }))
+    await loadCommands()
+  } catch (err: unknown) {
+    message.error(err instanceof HttpError ? err.apiError?.message ?? t('library.deleteFailed') : t('library.deleteFailed'))
+  }
+}
+
+/** 卡片预览:正文首行(多行折成一行,免得一张卡被一条长命令撑开)。 */
+function commandPreview(c: LibraryCommand): string {
+  const first = c.body.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  return first.length > 120 ? `${first.slice(0, 120)}…` : first
+}
+
+const cmdEditorOpen = ref(false)
+const cmdEditingId = ref<string | null>(null)
+const cmdEditorName = ref('')
+const cmdEditorDescription = ref('')
+const cmdEditorBody = ref('')
+const cmdEditorBanner = ref('')
+const cmdEditorSaving = ref(false)
+
+function openCreateCommand(): void {
+  cmdEditingId.value = null
+  cmdEditorName.value = ''
+  cmdEditorDescription.value = ''
+  cmdEditorBody.value = ''
+  cmdEditorBanner.value = ''
+  cmdEditorOpen.value = true
+}
+
+function openEditCommand(c: LibraryCommand): void {
+  cmdEditingId.value = c.id
+  cmdEditorName.value = c.name
+  cmdEditorDescription.value = c.description
+  cmdEditorBody.value = c.body
+  cmdEditorBanner.value = ''
+  cmdEditorOpen.value = true
+}
+
+async function saveCommand(): Promise<void> {
+  cmdEditorBanner.value = ''
+  const name = cmdEditorName.value.trim()
+  if (!name) {
+    cmdEditorBanner.value = t('library.commandNameRequired')
+    return
+  }
+  if (!cmdEditorBody.value.trim()) {
+    cmdEditorBanner.value = t('library.commandBodyRequired')
+    return
+  }
+  cmdEditorSaving.value = true
+  try {
+    const input = {
+      name,
+      description: cmdEditorDescription.value.trim(),
+      body: cmdEditorBody.value,
+    }
+    if (cmdEditingId.value) {
+      await updateLibraryCommand(cmdEditingId.value, input)
+    } else {
+      await createLibraryCommand(input)
+    }
+    message.success(
+      cmdEditingId.value
+        ? t('library.updatedCommand', { name })
+        : t('library.createdCommand', { name }),
+    )
+    cmdEditorOpen.value = false
+    await loadCommands()
+  } catch (err: unknown) {
+    cmdEditorBanner.value = err instanceof HttpError
+      ? err.apiError?.message ?? t('library.saveFailedStatus', { status: err.status })
+      : t('library.saveFailed')
+  } finally {
+    cmdEditorSaving.value = false
+  }
+}
+
 function switchTab(next: Tab): void {
   tab.value = next
   if (next === 'templates' && templates.value.length === 0 && tplState.value !== 'error') loadTemplates()
   if (next === 'variableGroups' && variableGroups.value.length === 0 && vgState.value !== 'error') loadVariableGroups()
   if (next === 'customNodes' && customNodes.value.length === 0 && cnState.value !== 'error') loadCustomNodes()
+  if (next === 'commands' && commands.value.length === 0 && cmdState.value !== 'error') loadCommands()
 }
 
 onMounted(() => {
   loadTemplates()
   loadVariableGroups()
   loadCustomNodes()
+  loadCommands()
 })
 </script>
 
@@ -588,6 +700,15 @@ onMounted(() => {
         @click="openCreateStudio"
       >
         {{ t('library.newStudioNode') }}
+      </button>
+      <button
+        v-if="tab === 'commands'"
+        class="btn-primary"
+        :disabled="!canEdit"
+        :title="canEdit ? '' : t('library.needEditTip')"
+        @click="openCreateCommand"
+      >
+        {{ t('library.newCommand') }}
       </button>
     </header>
 
@@ -622,6 +743,16 @@ onMounted(() => {
       >
         {{ t('library.tabCustomNodes') }}
         <span class="seg-count">{{ customNodes.length }}</span>
+      </button>
+      <button
+        class="seg-item"
+        role="tab"
+        :aria-selected="tab === 'commands'"
+        :class="{ 'seg-item--active': tab === 'commands' }"
+        @click="switchTab('commands')"
+      >
+        {{ t('library.tabCommands') }}
+        <span class="seg-count">{{ commands.length }}</span>
       </button>
     </div>
 
@@ -759,6 +890,45 @@ onMounted(() => {
             <div v-if="canEdit" class="cn-card-actions">
               <button class="btn-secondary btn-sm" @click="openEditCustomNode(n)">{{ t('library.edit') }}</button>
               <button class="link-danger" @click="removeCustomNode(n)">{{ t('library.delete') }}</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </div>
+
+    <!-- ─── 命名指令 ─── -->
+    <div v-show="tab === 'commands'" class="panel">
+      <div v-if="cmdState === 'error'" class="banner banner--error">
+        <span>{{ cmdError }}</span>
+        <button class="banner-retry" @click="loadCommands">↻ {{ t('library.retry') }}</button>
+      </div>
+
+      <div v-if="cmdState === 'loading'" class="skeleton-grid">
+        <div v-for="i in 3" :key="i" class="skeleton-card" />
+      </div>
+
+      <div
+        v-else-if="cmdState === 'idle' && commands.length === 0"
+        class="empty-state"
+      >
+        <div class="empty-icon">$_</div>
+        <p class="empty-label">{{ t('library.emptyCommandsTitle') }}</p>
+        <p class="empty-hint">{{ t('library.emptyCommandsHint') }}</p>
+        <button class="btn-primary" :disabled="!canEdit" :title="canEdit ? '' : t('library.needEditTip')" @click="openCreateCommand">{{ t('library.newCommand') }}</button>
+      </div>
+
+      <ul v-else class="card-grid" role="list">
+        <li v-for="c in commands" :key="c.id" class="cn-card">
+          <div class="cn-card-head">
+            <h3 class="cn-name">{{ c.name }}</h3>
+          </div>
+          <p class="cn-desc">{{ c.description || t('library.noDescription') }}</p>
+          <pre class="cmd-preview mono">{{ commandPreview(c) || t('library.commandEmptyBody') }}</pre>
+          <div class="cn-card-foot">
+            <span class="cn-time">{{ t('library.updatedAt', { time: new Date(c.updatedAt).toLocaleDateString() }) }}</span>
+            <div v-if="canEdit" class="cn-card-actions">
+              <button class="btn-secondary btn-sm" @click="openEditCommand(c)">{{ t('library.edit') }}</button>
+              <button class="link-danger" @click="removeCommand(c)">{{ t('library.delete') }}</button>
             </div>
           </div>
         </li>
@@ -1045,6 +1215,58 @@ onMounted(() => {
         </footer>
       </div>
     </div>
+    <!-- ─── 指令编辑弹窗 ─── -->
+    <div v-if="cmdEditorOpen" class="modal-scrim" @click.self="cmdEditorOpen = false">
+      <div class="modal" role="dialog" aria-modal="true" :aria-label="t('library.editCommand')">
+        <header class="modal-head">
+          <h2 class="modal-title">{{ cmdEditingId ? t('library.editCommand') : t('library.newCommand') }}</h2>
+          <button class="modal-close" :aria-label="t('library.close')" @click="cmdEditorOpen = false">✕</button>
+        </header>
+
+        <div v-if="cmdEditorBanner" class="banner banner--error">{{ cmdEditorBanner }}</div>
+
+        <div class="field">
+          <label class="field-label" for="cmd-name">{{ t('library.fieldName') }}</label>
+          <input
+            id="cmd-name"
+            v-model="cmdEditorName"
+            class="input"
+            :placeholder="t('library.commandNamePlaceholder')"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label" for="cmd-desc">{{ t('library.fieldDescriptionOptional') }}</label>
+          <input
+            id="cmd-desc"
+            v-model="cmdEditorDescription"
+            class="input"
+            :placeholder="t('library.commandDescPlaceholder')"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label" for="cmd-body">{{ t('library.fieldCommandBody') }}</label>
+          <textarea
+            id="cmd-body"
+            v-model="cmdEditorBody"
+            class="input cmd-body mono"
+            rows="8"
+            :placeholder="t('library.commandBodyPlaceholder')"
+          />
+          <p class="cmd-hint">{{ t('library.commandBodyHint') }}</p>
+        </div>
+
+        <footer class="modal-foot">
+          <button class="btn-secondary" :disabled="cmdEditorSaving" @click="cmdEditorOpen = false">
+            {{ t('library.cancel') }}
+          </button>
+          <button class="btn-primary" :disabled="cmdEditorSaving" @click="saveCommand">
+            {{ cmdEditorSaving ? t('library.saving') : t('library.save') }}
+          </button>
+        </footer>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -1195,6 +1417,32 @@ onMounted(() => {
   color: var(--color-dim);
   line-height: 1.45;
   min-height: 1.2em;
+}
+
+/* 指令卡片:正文只露首行,长命令不把卡片撑开 */
+.cmd-preview {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 3.2em;
+  overflow: hidden;
+}
+.cmd-body {
+  resize: vertical;
+  min-height: 140px;
+}
+.cmd-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-faint);
 }
 
 /* 变量组卡片上的归属标签:多组并排,和服务器页的说法保持一致 */

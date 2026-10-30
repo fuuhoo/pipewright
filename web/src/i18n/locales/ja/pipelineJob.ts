@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     '任意、複数行(set -e で 1 行ずつ実行)。成果物をデプロイディレクトリに配置する前にターゲットで実行し、既存ファイルのバックアップ・サービス停止・キャッシュ削除などに使用。失敗するとそのホストは失敗判定となり、既存ファイルは上書きされません。{\'{{param}}\'} に対応',
 
+  fieldPreDeployCommandRefLabel: 'デプロイ前コマンド(ライブラリから参照)',
+  fieldRestartCommandRefLabel: '再起動 / 切り替えコマンド(ライブラリから参照)',
+  fieldHealthCommandRefLabel: 'プローブコマンド(ライブラリから参照)',
+  fieldCommandRefHint:
+    '再利用ライブラリから名前付きコマンドを選択します。実行時に {\'{{param}}\'} でレンダリングされます。ボールトのシークレットは拒否されます。空のままなら下の本文に直接入力してください。',
+  fieldCommandRefInline: 'コマンドを直接入力',
+  fieldCommandRefMissing: '参照しているコマンドは存在しません(選び直してください)',
+  fieldCommandRefNone: 'ライブラリにコマンドがまだありません。「ライブラリ · コマンド」で作成してください。',
+
   fieldBackupModeLabel: 'デプロイ前バックアップ',
   fieldBackupModeHint: '成果物を配置する前にデプロイディレクトリのコピーを残します。保持数は設定でき、実行詳細から対象ごとに復元できます',
   backupModeOff: 'バックアップしない',

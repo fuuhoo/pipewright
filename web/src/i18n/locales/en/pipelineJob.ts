@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     'Optional, multi-line (set -e, line by line); runs on the host before the artifact lands in the deploy directory — back up the old files, stop the service or clear caches first. A non-zero exit fails that host without overwriting anything; supports {\'{{param}}\'}',
 
+  fieldPreDeployCommandRefLabel: 'Pre-deploy command from library',
+  fieldRestartCommandRefLabel: 'Restart / switch command from library',
+  fieldHealthCommandRefLabel: 'Probe command from library',
+  fieldCommandRefHint:
+    'Pick a named command from the reuse library; it is rendered with {\'{{param}}\'} at run time. Vault secrets are rejected. Leave empty to write the command here.',
+  fieldCommandRefInline: 'Write the command here',
+  fieldCommandRefMissing: 'Referenced command no longer exists (reselect)',
+  fieldCommandRefNone: 'No library commands yet. Create one under Library · Commands.',
+
   fieldBackupModeLabel: 'Back up before deploy',
   fieldBackupModeHint: 'Takes a copy of the deploy directory before the artifact lands; the retention count is configurable and each target can be restored from the run detail view',
   backupModeOff: 'No backup',

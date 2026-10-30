@@ -72,5 +72,6 @@ export default {
   errInvalidVar: 'Der Variablenschlüssel darf nicht leer sein und muss innerhalb seines Geltungsbereichs eindeutig sein; secret-Variablen erfordern eine Vault-Anmeldedaten.',
   errInvalidEnvironment: 'Der Umgebungsname darf nicht leer sein und der Image-Registry-Typ muss harbor/acr/dockerhub/custom sein.',
   errCredentialNotFound: 'Die referenzierte Vault-Anmeldedaten existiert nicht. Bitte erneut auswählen und versuchen.',
+  errVarGroupNotFound: 'Eine referenzierte Variablengruppe existiert nicht mehr. Entfernen Sie sie unter „Variablen & Cache“ und versuchen Sie es erneut.',
   errVaultUnconfigured: 'Im Vault ist kein Master Key konfiguriert, daher können secret-Anmeldedaten nicht referenziert werden.',
 }

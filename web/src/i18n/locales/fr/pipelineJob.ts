@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     'Optionnel, multiligne (set -e, ligne par ligne) ; exécutée sur la cible avant que l’artefact ne soit déposé dans le répertoire de déploiement — sauvegarde des fichiers, arrêt du service ou purge du cache. En cas d’échec l’hôte est marqué en échec, sans écraser les fichiers existants ; accepte {\'{{param}}\'}',
 
+  fieldPreDeployCommandRefLabel: 'Commande avant déploiement depuis la bibliothèque',
+  fieldRestartCommandRefLabel: 'Commande de redémarrage / bascule depuis la bibliothèque',
+  fieldHealthCommandRefLabel: 'Commande de sonde depuis la bibliothèque',
+  fieldCommandRefHint:
+    'Choisissez une commande nommée de la bibliothèque de réutilisation ; elle est rendue avec {\'{{param}}\'} à l’exécution. Les secrets du coffre-fort sont refusés. Laissez vide pour écrire la commande ici.',
+  fieldCommandRefInline: 'Écrire la commande ici',
+  fieldCommandRefMissing: 'La commande référencée n’existe plus (resélectionnez-la)',
+  fieldCommandRefNone: 'Aucune commande dans la bibliothèque pour le moment. Créez-en une dans Bibliothèque · Commandes.',
+
   fieldBackupModeLabel: 'Sauvegarde avant déploiement',
   fieldBackupModeHint: 'Conserve une copie du répertoire de déploiement avant la pose de l’artefact ; le nombre de sauvegardes est réglable et chaque cible peut être restaurée depuis le détail de l’exécution',
   backupModeOff: 'Aucune sauvegarde',

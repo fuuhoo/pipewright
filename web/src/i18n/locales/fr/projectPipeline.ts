@@ -72,5 +72,6 @@ export default {
   errInvalidVar: 'La clé de variable ne peut pas être vide et doit être unique dans sa portée ; les variables secret nécessitent un identifiant du coffre-fort.',
   errInvalidEnvironment: 'Le nom de l’environnement ne peut pas être vide et le type de registre d’images doit être harbor/acr/dockerhub/custom.',
   errCredentialNotFound: 'L’identifiant du coffre-fort référencé n’existe pas. Resélectionnez-le puis réessayez.',
+  errVarGroupNotFound: 'Un groupe de variables référencé n’existe plus. Retirez-le dans « Variables et cache » puis réessayez.',
   errVaultUnconfigured: 'Le coffre-fort n’a pas de master key configurée, les identifiants secret ne peuvent donc pas être référencés.',
 }

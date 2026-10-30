@@ -41,6 +41,7 @@ import {
   type PromotedParam,
 } from './studioCompile'
 import { createCustomNode } from '../../api/customNodes'
+import { listLibraryCommands, type LibraryCommand } from '../../api/libraryCommands'
 import { useSessionStore } from '../../stores/session'
 import JobTypeIcon from './JobTypeIcon.vue'
 import StepBuilder from './StepBuilder.vue'
@@ -213,6 +214,8 @@ const visibleFields = computed<JobField[]>(() => {
   if (!spec.value) return []
   return spec.value.fields.filter((f) => {
     if (f.when && !f.when(typedConfig.value)) return false
+    // 配了复用库指令引用时,同组的手填正文收起(值仍留在 config 里,切回「直接填写」即恢复)。
+    if (f.hiddenBy && (typedConfig.value[f.hiddenBy] ?? '').trim()) return false
     if (viewMode.value === 'steps' && STEP_OWNED_KEYS.has(f.key)) return false
     return true
   })
@@ -317,6 +320,18 @@ const presetEnvs = ref<PresetBuildEnv[]>([])
 const presetProfiles = ref<ConfigProfile[]>([])
 const presetsReady = ref(false)
 
+// 复用库指令(部署前 / 重启 / 探测命令可引用)。与预置目录分开取:名单拿不到不该拖垮整张表单,
+// 只是 commandref 下拉里没有可选项 —— 用户仍可直接填写正文。
+const libraryCommands = ref<LibraryCommand[]>([])
+const libraryCommandsReady = ref(false)
+
+/** 引用的指令已不在名单里(被删 / 无查看权限):照原样列出来让人看见,而不是静默清空引用。 */
+function staleCommandRef(field: JobField): string {
+  const v = (typedConfig.value[field.key] ?? '').trim()
+  if (!v || !libraryCommandsReady.value) return ''
+  return libraryCommands.value.some((c) => c.id === v) ? '' : v
+}
+
 // Initial hydrate (after the computeds above are declared, see watch comment).
 hydrate(props.job)
 
@@ -399,15 +414,23 @@ async function copyHintPath(key: string, path: string): Promise<void> {
 }
 
 onMounted(async () => {
-  try {
-    const [envs, profiles] = await Promise.all([listEnabledBuildEnvs(), listEnabledConfigProfiles('')])
-    presetEnvs.value = envs
-    presetProfiles.value = profiles
+  const [envs, profiles, commands] = await Promise.allSettled([
+    listEnabledBuildEnvs(),
+    listEnabledConfigProfiles(''),
+    listLibraryCommands(),
+  ])
+  if (envs.status === 'fulfilled' && profiles.status === 'fulfilled') {
+    presetEnvs.value = envs.value
+    presetProfiles.value = profiles.value
     presetsReady.value = true
     // 预置到达前 hydrate 过的旧配置,这里补一次反查预填。
     splitOnType(localType.value, currentConfig(), false)
-  } catch {
+  } else {
     presetsReady.value = false
+  }
+  if (commands.status === 'fulfilled') {
+    libraryCommands.value = commands.value
+    libraryCommandsReady.value = true
   }
 })
 
@@ -977,6 +1000,26 @@ async function confirmSave(): Promise<void> {
             {{ opt.label }}
           </option>
         </select>
+
+        <!-- 复用库指令选择:选中即以该指令正文为准(同组手填正文收起);清空即回到手填。 -->
+        <select
+          v-else-if="field.kind === 'commandref'"
+          :value="fieldValue(field.key)"
+          class="drawer-select"
+          :aria-label="field.label"
+          @change="setField(field.key, ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ t('pipelineJob.fieldCommandRefInline') }}</option>
+          <option v-if="staleCommandRef(field)" :value="staleCommandRef(field)">
+            {{ t('pipelineJob.fieldCommandRefMissing') }}
+          </option>
+          <option v-for="c in libraryCommands" :key="c.id" :value="c.id">
+            {{ c.name }}<template v-if="c.description"> · {{ c.description }}</template>
+          </option>
+        </select>
+        <p v-if="field.kind === 'commandref' && libraryCommandsReady && !libraryCommands.length" class="field-hint">
+          {{ t('pipelineJob.fieldCommandRefNone') }}
+        </p>
 
         <!-- credential picker -->
         <select

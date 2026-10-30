@@ -11,6 +11,8 @@ export default {
   tabTemplates: 'Plantillas de pipeline',
   tabVariableGroups: 'Grupos de variables',
   tabCustomNodes: 'Nodos personalizados',
+  tabCommands: 'Comandos',
+  newCommand: '+ Nuevo comando',
 
   // ─── common ────────────────────────────────────────────────────
   retry: 'Reintentar',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: 'Resumen de una línea que se muestra en la tarjeta',
   noParamsHint: 'Aún no hay parámetros. Haz clic en "+ Añadir parámetro" para agregar uno.',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: 'Aún no hay comandos',
+  emptyCommandsHint: 'Guarda fragmentos de shell de uso frecuente (reinicio, comprobación de estado, preparación) como comandos con nombre y referéncialos en los campos «comando previo al despliegue», «reinicio» o «sonda» de un nodo de despliegue. Se renderizan con parámetros en tiempo de ejecución.',
+  editCommand: 'Editar comando',
+  fieldCommandBody: 'Cuerpo del comando',
+  commandNamePlaceholder: 'p. ej. restart-api',
+  commandDescPlaceholder: 'Qué hace este comando y para qué hosts sirve',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: 'Se ejecuta línea a línea bajo set -e; admite {\'{{param}}\'}. Los secretos del vault no pueden renderizarse en comandos de despliegue y se rechazan en tiempo de ejecución.',
+  commandEmptyBody: 'comando vacío',
+  commandNameRequired: 'El nombre del comando no puede estar vacío',
+  commandBodyRequired: 'El cuerpo del comando no puede estar vacío',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: '¿Eliminar la plantilla «{name}»? Esta acción no se puede deshacer.',
   deletedTemplate: 'Plantilla «{name}» eliminada',
@@ -99,6 +114,12 @@ export default {
   updatedNode: 'Nodo personalizado «{name}» actualizado',
   groupNameRequired: 'El nombre del grupo de variables no puede estar vacío',
   nodeNameRequired: 'El nombre del nodo personalizado no puede estar vacío',
+  confirmDeleteCommand: '¿Eliminar el comando «{name}»? Esta acción no se puede deshacer.',
+  deletedCommand: 'Comando «{name}» eliminado',
+  createdCommand: 'Comando «{name}» creado',
+  updatedCommand: 'Comando «{name}» actualizado',
+  loadCommandsFailed: 'No se pudieron cargar los comandos',
+  loadCommandsFailedStatus: 'No se pudieron cargar los comandos ({status})',
   deleteFailed: 'Error al eliminar',
   saveFailed: 'Error al guardar',
   saveFailedStatus: 'Error al guardar ({status})',

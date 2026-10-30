@@ -11,6 +11,8 @@ export default {
   tabTemplates: 'Pipeline-Vorlagen',
   tabVariableGroups: 'Variablengruppen',
   tabCustomNodes: 'Benutzerdefinierte Knoten',
+  tabCommands: 'Befehle',
+  newCommand: '+ Neuer Befehl',
 
   // ─── common ────────────────────────────────────────────────────
   retry: 'Erneut versuchen',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: 'Einzeilige Zusammenfassung, die auf der Karte angezeigt wird',
   noParamsHint: 'Noch keine Parameter. Klicken Sie auf „+ Parameter hinzufügen“, um einen hinzuzufügen.',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: 'Noch keine Befehle',
+  emptyCommandsHint: 'Speichern Sie häufig verwendete Shell-Snippets (Neustart, Health-Check, Vorbereitung) als benannte Befehle und referenzieren Sie sie in den Feldern „Befehl vor der Bereitstellung“, „Neustart“ oder „Prüfbefehl“ eines Bereitstellungsknotens. Sie werden zur Laufzeit mit Parametern gerendert.',
+  editCommand: 'Befehl bearbeiten',
+  fieldCommandBody: 'Befehlstext',
+  commandNamePlaceholder: 'z. B. restart-api',
+  commandDescPlaceholder: 'Was dieser Befehl tut und für welche Hosts er passt',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: 'Wird Zeile für Zeile unter set -e ausgeführt; unterstützt {\'{{param}}\'}. Vault-Secrets können nicht in Bereitstellungsbefehle gerendert werden und werden zur Laufzeit abgelehnt.',
+  commandEmptyBody: 'leerer Befehl',
+  commandNameRequired: 'Der Befehlsname darf nicht leer sein',
+  commandBodyRequired: 'Der Befehlstext darf nicht leer sein',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: 'Vorlage „{name}“ löschen? Diese Aktion kann nicht rückgängig gemacht werden.',
   deletedTemplate: 'Vorlage „{name}“ gelöscht',
@@ -99,6 +114,12 @@ export default {
   updatedNode: 'Benutzerdefinierten Knoten „{name}“ aktualisiert',
   groupNameRequired: 'Der Name der Variablengruppe darf nicht leer sein',
   nodeNameRequired: 'Der Name des benutzerdefinierten Knotens darf nicht leer sein',
+  confirmDeleteCommand: 'Befehl „{name}“ löschen? Dies kann nicht rückgängig gemacht werden.',
+  deletedCommand: 'Befehl „{name}“ gelöscht',
+  createdCommand: 'Befehl „{name}“ erstellt',
+  updatedCommand: 'Befehl „{name}“ aktualisiert',
+  loadCommandsFailed: 'Befehle konnten nicht geladen werden',
+  loadCommandsFailedStatus: 'Befehle konnten nicht geladen werden ({status})',
   deleteFailed: 'Löschen fehlgeschlagen',
   saveFailed: 'Speichern fehlgeschlagen',
   saveFailedStatus: 'Speichern fehlgeschlagen ({status})',

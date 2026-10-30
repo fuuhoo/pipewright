@@ -149,6 +149,15 @@ export default {
   fieldPreDeployCommandHint:
     'Opcional, multilínea (set -e, línea por línea); se ejecuta en el destino antes de colocar el artefacto en el directorio de despliegue: copia de seguridad de los archivos, detener el servicio o limpiar caché. Si falla, ese host queda como fallido sin sobrescribir los archivos anteriores; admite {\'{{param}}\'}',
 
+  fieldPreDeployCommandRefLabel: 'Comando previo al despliegue desde la biblioteca',
+  fieldRestartCommandRefLabel: 'Comando de reinicio / cambio desde la biblioteca',
+  fieldHealthCommandRefLabel: 'Comando de sonda desde la biblioteca',
+  fieldCommandRefHint:
+    'Elige un comando con nombre de la biblioteca de reutilización; se renderiza con {\'{{param}}\'} en tiempo de ejecución. Los secretos del vault se rechazan. Déjalo vacío para escribir el comando aquí.',
+  fieldCommandRefInline: 'Escribir el comando aquí',
+  fieldCommandRefMissing: 'El comando referenciado ya no existe (vuelve a elegirlo)',
+  fieldCommandRefNone: 'Aún no hay comandos en la biblioteca. Crea uno en Biblioteca · Comandos.',
+
   fieldBackupModeLabel: 'Copia de seguridad antes del despliegue',
   fieldBackupModeHint: 'Guarda una copia del directorio de despliegue antes de colocar el artefacto; el número de copias es configurable y cada destino se puede restaurar desde el detalle de la ejecución',
   backupModeOff: 'Sin copia de seguridad',

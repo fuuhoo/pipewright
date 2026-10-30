@@ -11,6 +11,8 @@ export default {
   tabTemplates: 'Pipeline templates',
   tabVariableGroups: 'Variable groups',
   tabCustomNodes: 'Custom nodes',
+  tabCommands: 'Commands',
+  newCommand: '+ New command',
 
   // ─── common ────────────────────────────────────────────────────
   retry: 'Retry',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: 'One-line summary shown on the card',
   noParamsHint: 'No parameters yet. Click "+ Add parameter" to add one.',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: 'No commands yet',
+  emptyCommandsHint: 'Save frequently used shell snippets (restart, health check, preparation) as named commands, then reference them from a deploy node’s pre-deploy / restart / probe fields. They are rendered with parameters at run time.',
+  editCommand: 'Edit command',
+  fieldCommandBody: 'Command body',
+  commandNamePlaceholder: 'e.g. restart-api',
+  commandDescPlaceholder: 'What this command does and which hosts it fits',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: 'Runs line by line under set -e; supports {\'{{param}}\'}. Vault secrets cannot be rendered into deploy commands and are rejected at run time.',
+  commandEmptyBody: 'empty command',
+  commandNameRequired: 'Command name cannot be empty',
+  commandBodyRequired: 'Command body cannot be empty',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: 'Delete template "{name}"? This action cannot be undone.',
   deletedTemplate: 'Deleted template "{name}"',
@@ -99,6 +114,12 @@ export default {
   updatedNode: 'Updated custom node "{name}"',
   groupNameRequired: 'Variable group name cannot be empty',
   nodeNameRequired: 'Custom node name cannot be empty',
+  confirmDeleteCommand: 'Delete command "{name}"? This action cannot be undone.',
+  deletedCommand: 'Deleted command "{name}"',
+  createdCommand: 'Created command "{name}"',
+  updatedCommand: 'Updated command "{name}"',
+  loadCommandsFailed: 'Failed to load commands',
+  loadCommandsFailedStatus: 'Failed to load commands ({status})',
   deleteFailed: 'Delete failed',
   saveFailed: 'Save failed',
   saveFailedStatus: 'Save failed ({status})',

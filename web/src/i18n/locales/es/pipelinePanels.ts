@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: 'Omite descargas redundantes al acertar, acelerando notablemente las compilaciones',
   vcCachePaths: 'Rutas de caché (una por línea)',
 
+  // ─── VarsCacheTab · grupos de variables referenciados ─────────
+  vcVarGroups: 'Grupos de variables referenciados',
+  vcVarGroupsSub: 'Se combinan en la tabla de variables de la pipeline en tiempo de ejecución · las variables del proyecto ganan en caso de conflicto',
+  vcVarGroupsHint:
+    'Los grupos vienen de la biblioteca de reutilización y se combinan en el orden indicado. Las entradas secretas siguen siendo referencias del vault: los scripts y builds pueden usarlas, pero no se renderizan en rutas ni comandos de despliegue.',
+  vcVarGroupsAvailable: 'Grupos disponibles',
+  vcVarGroupsReferenced: 'Referenciados (orden de combinación)',
+  vcVarGroupsEmpty: 'Aún no hay grupos de variables en la biblioteca.',
+  vcVarGroupMeta: '{n} variables',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: 'Validación de la configuración del Pipeline',
   vpReady: 'Configuración lista',

@@ -11,6 +11,8 @@ export default {
   tabTemplates: '파이프라인 템플릿',
   tabVariableGroups: '변수 그룹',
   tabCustomNodes: '사용자 정의 노드',
+  tabCommands: '명령',
+  newCommand: '+ 새 명령',
 
   // ─── common ────────────────────────────────────────────────────
   retry: '다시 시도',
@@ -87,6 +89,19 @@ export default {
   nodeSummaryPlaceholder: '카드에 표시되는 한 줄 요약',
   noParamsHint: '아직 매개변수가 없습니다. "+ 매개변수 추가"를 클릭하여 추가하세요.',
 
+  // ─── command editor ────────────────────────────────────────────
+  emptyCommandsTitle: '아직 명령이 없습니다',
+  emptyCommandsHint: '자주 쓰는 셸 조각(재시작, 헬스 체크, 배포 전 준비)을 이름 있는 명령으로 저장하고, 배포 노드의 "배포 전 명령 / 재시작 명령 / 프로브 명령"에서 참조하세요. 실행 시 매개변수로 렌더링됩니다.',
+  editCommand: '명령 편집',
+  fieldCommandBody: '명령 본문',
+  commandNamePlaceholder: '예: restart-api',
+  commandDescPlaceholder: '이 명령의 용도와 적합한 호스트',
+  commandBodyPlaceholder: 'systemctl restart api\ncurl -fsS http://localhost:8080/healthz',
+  commandBodyHint: 'set -e 로 한 줄씩 실행되며 {\'{{param}}\'} 를 지원합니다. 볼트 시크릿은 배포 명령에 렌더링될 수 없으며 실행 시 거부됩니다.',
+  commandEmptyBody: '빈 명령',
+  commandNameRequired: '명령 이름은 비워 둘 수 없습니다',
+  commandBodyRequired: '명령 본문은 비워 둘 수 없습니다',
+
   // ─── confirms / toasts / errors ────────────────────────────────
   confirmDeleteTemplate: '템플릿 "{name}"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
   deletedTemplate: '템플릿 "{name}"을(를) 삭제했습니다',
@@ -99,6 +114,12 @@ export default {
   updatedNode: '사용자 정의 노드 "{name}"을(를) 업데이트했습니다',
   groupNameRequired: '변수 그룹 이름은 비워 둘 수 없습니다',
   nodeNameRequired: '사용자 정의 노드 이름은 비워 둘 수 없습니다',
+  confirmDeleteCommand: '명령 "{name}"을(를) 삭제할까요? 이 작업은 되돌릴 수 없습니다.',
+  deletedCommand: '명령 "{name}" 삭제됨',
+  createdCommand: '명령 "{name}" 생성됨',
+  updatedCommand: '명령 "{name}" 업데이트됨',
+  loadCommandsFailed: '명령을 불러오지 못했습니다',
+  loadCommandsFailedStatus: '명령을 불러오지 못했습니다({status})',
   deleteFailed: '삭제 실패',
   saveFailed: '저장 실패',
   saveFailedStatus: '저장 실패 ({status})',

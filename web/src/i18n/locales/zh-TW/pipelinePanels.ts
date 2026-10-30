@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: '命中後跳過重複下載,顯著加速建置',
   vcCachePaths: '快取路徑(每行一條)',
 
+  // ─── VarsCacheTab · 引用的復用庫變數組 ─────────────────────────
+  vcVarGroups: '引用復用庫變數組',
+  vcVarGroupsSub: '執行時併入流水線變數表 · 與專案變數同名時專案變數優先',
+  vcVarGroupsHint:
+    '變數組來自復用庫,按引用順序合併。secret 項保持保險庫引用:腳本與建置可以用,但不會渲染進部署路徑或部署命令。',
+  vcVarGroupsAvailable: '可選變數組',
+  vcVarGroupsReferenced: '已引用(合併順序)',
+  vcVarGroupsEmpty: '復用庫裡還沒有變數組。',
+  vcVarGroupMeta: '{n} 變數',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: 'Pipeline 設定驗證',
   vpReady: '設定就緒',

@@ -72,5 +72,6 @@ export default {
   errInvalidVar: '变量键不能为空且同作用域内不可重复;secret 变量须选择保险库凭据。',
   errInvalidEnvironment: '环境名不能为空,镜像仓库类型须为 harbor/acr/dockerhub/custom。',
   errCredentialNotFound: '引用的保险库凭据不存在,请重新选择后重试。',
+  errVarGroupNotFound: '引用的变量组已不存在,请到「变量与缓存」移除这条引用后重试。',
   errVaultUnconfigured: '保险库未配置 master key,无法引用 secret 凭据。',
 }

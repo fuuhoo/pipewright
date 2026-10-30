@@ -17,6 +17,7 @@ import {
   type SaveSettingsInput,
 } from '../api/pipelineSettings'
 import { listCredentials, type Credential } from '../api/credentials'
+import { listVariableGroups, type VariableGroup } from '../api/variableGroups'
 import { listProjects, updateProject, type Project } from '../api/projects'
 import { listServers, type Server } from '../api/servers'
 import { listKubeClusters, type KubeCluster } from '../api/kubeClusters'
@@ -117,6 +118,9 @@ async function loadPipeline(): Promise<void> {
 const settings    = ref<SettingsDTO | null>(null)
 const editBuild    = ref<BuildConfig | null>(null)
 const editEnvs     = ref<Environment[]>([])
+/** 引用的复用库变量组 ID(顺序有语义:同名变量先引用的组优先;项目自己的变量覆盖它们)。 */
+const editVarGroupIds = ref<string[]>([])
+const varGroups    = ref<VariableGroup[]>([])
 const credentials  = ref<Credential[]>([])
 const servers      = ref<Server[]>([])
 const clusters     = ref<KubeCluster[]>([])
@@ -126,22 +130,25 @@ function applySettings(dto: SettingsDTO): void {
   settings.value = dto
   editBuild.value = JSON.parse(JSON.stringify(dto.build)) as BuildConfig
   editEnvs.value  = JSON.parse(JSON.stringify(dto.environments)) as Environment[]
+  editVarGroupIds.value = [...(dto.varGroupIds ?? [])]
 }
 
 async function loadSettings(): Promise<void> {
   try {
-    const [dto, creds, srvs, kcs, chs] = await Promise.all([
+    const [dto, creds, srvs, kcs, chs, groups] = await Promise.all([
       getSettings(projectId.value),
       listCredentials().catch(() => [] as Credential[]),
       listServers().catch(() => [] as Server[]),
       listKubeClusters().catch(() => [] as KubeCluster[]),
       listChannels().catch(() => [] as NotificationChannel[]),
+      listVariableGroups().catch(() => [] as VariableGroup[]),
     ])
     applySettings(dto)
     credentials.value = creds
     servers.value = srvs
     clusters.value = kcs
     channels.value = chs
+    varGroups.value = groups
   } catch {
     // Settings load failure is non-fatal for the canvas; the vars tab shows
     // its own empty state until a successful save. Surfaced on save attempts.
@@ -150,6 +157,10 @@ async function loadSettings(): Promise<void> {
 
 function handleBuildUpdate(build: BuildConfig): void {
   editBuild.value = build
+}
+
+function handleVarGroupIdsUpdate(ids: string[]): void {
+  editVarGroupIds.value = ids
 }
 
 watch(projectId, () => { void loadProject(); void loadPipeline(); void loadSettings() })
@@ -187,6 +198,7 @@ function mapSaveError(err: HttpError): string {
     case 'invalid_var':          return t('projectPipeline.errInvalidVar')
     case 'invalid_environment':  return t('projectPipeline.errInvalidEnvironment')
     case 'credential_not_found': return t('projectPipeline.errCredentialNotFound')
+    case 'variable_group_not_found': return t('projectPipeline.errVarGroupNotFound')
     case 'vault_unconfigured':   return t('projectPipeline.errVaultUnconfigured')
     default:                     return err.apiError?.message ?? t('projectPipeline.errSaveFailedStatus', { status: err.status })
   }
@@ -211,6 +223,7 @@ function buildSettingsPayload(): SaveSettingsInput | null {
       })),
       cache: b.cache,
     },
+    varGroupIds: editVarGroupIds.value,
     environments: editEnvs.value.map((e) => ({
       id: e.id || undefined,
       name: e.name,
@@ -725,8 +738,11 @@ function onRunTriggered(runId: string): void {
             v-if="editBuild"
             :build="editBuild"
             :credentials="credentials"
+            :var-group-ids="editVarGroupIds"
+            :var-groups="varGroups"
             :disabled="saveSubmitting"
             @update="handleBuildUpdate"
+            @update:var-group-ids="handleVarGroupIdsUpdate"
           />
 
           <!-- 本机磁盘上属于这个项目的缓存:怀疑「没拉到最新代码 / 私服还是旧包」时在这里核对并清掉。

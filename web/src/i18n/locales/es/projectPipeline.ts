@@ -72,5 +72,6 @@ export default {
   errInvalidVar: 'La clave de la variable no puede estar vacía y debe ser única dentro de su ámbito; las variables secret requieren una credencial del vault.',
   errInvalidEnvironment: 'El nombre del entorno no puede estar vacío y el tipo de registro de imágenes debe ser harbor/acr/dockerhub/custom.',
   errCredentialNotFound: 'La credencial del vault referenciada no existe. Vuelve a seleccionarla e inténtalo de nuevo.',
+  errVarGroupNotFound: 'Un grupo de variables referenciado ya no existe. Elimínalo en «Variables y caché» e inténtalo de nuevo.',
   errVaultUnconfigured: 'El vault no tiene configurada una master key, por lo que no se pueden referenciar credenciales secret.',
 }

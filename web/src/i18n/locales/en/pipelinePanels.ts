@@ -126,6 +126,16 @@ export default {
   vcEnableCacheDesc: 'Skips redundant downloads on a hit, significantly speeding up builds',
   vcCachePaths: 'Cache paths (one per line)',
 
+  // ─── VarsCacheTab · referenced variable groups ─────────────────
+  vcVarGroups: 'Referenced variable groups',
+  vcVarGroupsSub: 'Merged into the pipeline variable table at run time · project variables win on name clashes',
+  vcVarGroupsHint:
+    'Groups come from the reuse library and are merged in the listed order. Secret entries stay vault references: they can be used by scripts and builds, but cannot be rendered into deploy paths or commands.',
+  vcVarGroupsAvailable: 'Available groups',
+  vcVarGroupsReferenced: 'Referenced (merge order)',
+  vcVarGroupsEmpty: 'No variable groups in the library yet.',
+  vcVarGroupMeta: '{n} variables',
+
   // ─── ValidationPanel ───────────────────────────────────────────
   vpAside: 'Pipeline configuration validation',
   vpReady: 'Configuration ready',

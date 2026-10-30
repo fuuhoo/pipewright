@@ -44,6 +44,8 @@ export type FieldKind =
   | 'cluster'
   /** env 文件选取:只在你浏览器里把本地文件读成正文填进 envText,没有任何上传 */
   | 'envpick'
+  /** 复用库指令选取:选中即引用该指令,执行期以指令正文为准(节点里填的正文被忽略) */
+  | 'commandref'
 
 export interface SelectOption {
   value: string
@@ -89,6 +91,11 @@ export interface JobField {
    * 留着旧值反而让用户切回去时不用重打。
    */
   dropWhenHidden?: boolean
+  /**
+   * 「配了引用就别再露正文」:companion 键(如 preDeployCommandRef)有值时,本格隐藏但**保留旧值**。
+   * 与 dropWhenHidden 的区别:切回「直接填写」时正文还在,不用重打。
+   */
+  hiddenBy?: string
   /**
    * 字段级校验:返回非空 = 该字段的错误文案(显示在控件下方)。
    * 与后端的保存校验同一口径 —— 让用户在抽屉里就看见「项目名不能含 /」,
@@ -653,6 +660,15 @@ const DEPLOY_HEALTH_FIELDS: JobField[] = [
     when: probeIs('http'),
   },
   {
+    key: 'healthCommandRef',
+    get label() { return t('pipelineJob.fieldHealthCommandRefLabel') },
+    kind: 'commandref',
+    get hint() { return t('pipelineJob.fieldCommandRefHint') },
+    when: probeIs('command'),
+    // 探测方式切走时执行侧不再读它:与正文同一口径,别留一个看不见的引用。
+    dropWhenHidden: true,
+  },
+  {
     key: 'healthCommand',
     get label() { return t('pipelineJob.fieldHealthCommandLabel') },
     kind: 'text',
@@ -661,6 +677,7 @@ const DEPLOY_HEALTH_FIELDS: JobField[] = [
     presets: ['test -f /opt/app/current/OK', 'curl -fsS http://localhost:8080/health'],
     get hint() { return t('pipelineJob.fieldHealthCommandHint') },
     when: probeIs('command'),
+    hiddenBy: 'healthCommandRef',
   },
   {
     key: 'healthRetries',
@@ -778,6 +795,14 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     validate: canaryCountFieldError,
   },
   {
+    key: 'preDeployCommandRef',
+    get label() { return t('pipelineJob.fieldPreDeployCommandRefLabel') },
+    kind: 'commandref',
+    get hint() { return t('pipelineJob.fieldCommandRefHint') },
+    when: (c) => c.artifactType !== 'image' && c.artifactType !== 'command',
+    dropWhenHidden: true,
+  },
+  {
     key: 'preDeployCommand',
     get label() { return t('pipelineJob.fieldPreDeployCommandLabel') },
     kind: 'textarea',
@@ -787,6 +812,15 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     get hint() { return t('pipelineJob.fieldPreDeployCommandHint') },
     // 与产物落位同一条链路:镜像档不起文件部署、命令档整条 stageFileOne 都不走,填了没人读 → 隐藏。
     when: (c) => c.artifactType !== 'image' && c.artifactType !== 'command',
+    dropWhenHidden: true,
+    hiddenBy: 'preDeployCommandRef',
+  },
+  {
+    key: 'restartCommandRef',
+    get label() { return t('pipelineJob.fieldRestartCommandRefLabel') },
+    kind: 'commandref',
+    get hint() { return t('pipelineJob.fieldCommandRefHint') },
+    when: (c) => c.artifactType !== 'image',
     dropWhenHidden: true,
   },
   {
@@ -798,6 +832,7 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     presets: ['systemctl restart app', 'nginx -s reload', 'docker restart app'],
     get hint() { return t('pipelineJob.fieldRestartCommandHint') },
     when: (c) => c.artifactType !== 'image',
+    hiddenBy: 'restartCommandRef',
   },
   // ── 部署前备份(产物落位之前打一份,可设保留份数,运行详情可从备份恢复)──
   // 只有 SSH 文件直铺有部署目录可备:镜像/命令型在目标机上没有可打包的东西(后端同口径会拒)。
@@ -957,6 +992,14 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     validate: (c) => composeBodyError(c.composeYaml ?? ''),
   },
   {
+    key: 'preDeployCommandRef',
+    get label() { return t('pipelineJob.fieldPreDeployCommandRefLabel') },
+    kind: 'commandref',
+    get hint() { return t('pipelineJob.fieldCommandRefHint') },
+    when: dockerModeIs(DOCKER_MODE_COMPOSE),
+    dropWhenHidden: true,
+  },
+  {
     key: 'preDeployCommand',
     get label() { return t('pipelineJob.fieldPreDeployCommandLabel') },
     kind: 'textarea',
@@ -967,6 +1010,7 @@ const DEPLOY_DOCKER_FIELDS: JobField[] = [
     // 只有 compose 档会建受管目录并覆盖正文;单容器档走镜像停旧起新,这条指令没有落点。
     when: dockerModeIs(DOCKER_MODE_COMPOSE),
     dropWhenHidden: true,
+    hiddenBy: 'preDeployCommandRef',
   },
   ...DEPLOY_HEALTH_FIELDS,
 ]
