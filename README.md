@@ -88,7 +88,7 @@
 curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh | sh
 
 # 钉版本 / 自定义目录 / Linux 顺带自动装 Docker:
-VERSION=v0.17.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
+VERSION=v0.18.0 INSTALL_DIR=$HOME/.local/bin INSTALL_DOCKER=1 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/fuuhoo/pipewright/master/install.sh)"
 
 # 运行(首次启动引导管理员;master key 用于凭据保险库)
