@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     'Optional, mehrzeilig (set -e, Zeile für Zeile); wird auf dem Ziel ausgeführt, bevor das Artefakt im Deploy-Verzeichnis landet — vorher alte Dateien sichern, Dienst stoppen oder Cache leeren. Bei einem Fehler gilt dieser Host als fehlgeschlagen, ohne alte Dateien zu überschreiben; unterstützt {\'{{param}}\'}',
 
+  fieldBackupModeLabel: 'Sicherung vor der Bereitstellung',
+  fieldBackupModeHint: 'Legt vor dem Ablegen des Artefakts eine Kopie des Deploy-Verzeichnisses an; die Aufbewahrungszahl ist einstellbar, und jedes Ziel lässt sich in der Laufzeitansicht wiederherstellen',
+  backupModeOff: 'Keine Sicherung',
+  backupModeDir: 'Ganzes Deploy-Verzeichnis',
+  backupModeSuffix: 'Nur Dateien mit passender Endung',
+  fieldBackupSuffixesLabel: 'Endungen für die Sicherung',
+  fieldBackupSuffixesHint: 'Komma- oder leerzeichengetrennt, führender Punkt wird ergänzt (z. B. .jar,.war)',
+  fieldBackupKeepLabel: 'Aufbewahren',
+  fieldBackupKeepHint: '1..50, leer = 5; ältere werden nach Zeit entfernt',
+  backupKeepInvalid: 'Die Anzahl muss eine ganze Zahl von 1 bis 50 sein',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Quellcode abrufen',
   typeGitSourceDesc: 'Klont ein Git-Repository in den Build-Workspace',

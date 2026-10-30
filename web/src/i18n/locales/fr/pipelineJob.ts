@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     'Optionnel, multiligne (set -e, ligne par ligne) ; exécutée sur la cible avant que l’artefact ne soit déposé dans le répertoire de déploiement — sauvegarde des fichiers, arrêt du service ou purge du cache. En cas d’échec l’hôte est marqué en échec, sans écraser les fichiers existants ; accepte {\'{{param}}\'}',
 
+  fieldBackupModeLabel: 'Sauvegarde avant déploiement',
+  fieldBackupModeHint: 'Conserve une copie du répertoire de déploiement avant la pose de l’artefact ; le nombre de sauvegardes est réglable et chaque cible peut être restaurée depuis le détail de l’exécution',
+  backupModeOff: 'Aucune sauvegarde',
+  backupModeDir: 'Tout le répertoire de déploiement',
+  backupModeSuffix: 'Seulement les fichiers correspondant aux extensions',
+  fieldBackupSuffixesLabel: 'Extensions à sauvegarder',
+  fieldBackupSuffixesHint: 'Séparées par des virgules ou des espaces, le point initial est ajouté (ex. .jar,.war)',
+  fieldBackupKeepLabel: 'Sauvegardes à conserver',
+  fieldBackupKeepHint: '1..50, vide = 5 ; les plus anciennes sont supprimées par date',
+  backupKeepInvalid: 'Le nombre de sauvegardes doit être un entier de 1 à 50',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Récupérer la source',
   typeGitSourceDesc: 'Clone un dépôt Git dans l’espace de travail de build',

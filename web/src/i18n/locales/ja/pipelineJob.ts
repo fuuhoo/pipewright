@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     '任意、複数行(set -e で 1 行ずつ実行)。成果物をデプロイディレクトリに配置する前にターゲットで実行し、既存ファイルのバックアップ・サービス停止・キャッシュ削除などに使用。失敗するとそのホストは失敗判定となり、既存ファイルは上書きされません。{\'{{param}}\'} に対応',
 
+  fieldBackupModeLabel: 'デプロイ前バックアップ',
+  fieldBackupModeHint: '成果物を配置する前にデプロイディレクトリのコピーを残します。保持数は設定でき、実行詳細から対象ごとに復元できます',
+  backupModeOff: 'バックアップしない',
+  backupModeDir: 'デプロイディレクトリ全体',
+  backupModeSuffix: '拡張子が一致するファイルのみ',
+  fieldBackupSuffixesLabel: 'バックアップする拡張子',
+  fieldBackupSuffixesHint: 'カンマまたは空白区切り、先頭のドットは自動補完(例 .jar,.war)',
+  fieldBackupKeepLabel: '保持数',
+  fieldBackupKeepHint: '1..50、空欄 = 5。超過分は日時順に削除',
+  backupKeepInvalid: '保持数は 1〜50 の整数で入力してください',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'ソース取得',
   typeGitSourceDesc: 'Git リポジトリをビルドワークスペースにクローン',

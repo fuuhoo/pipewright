@@ -23,13 +23,16 @@ const props = withDefaults(
     retrying?: boolean
     // 重试错误(人读);非空时在面板内展示。
     retryError?: string
+    // 当前正在查看备份的目标(serverId);高亮对应卡片的入口按钮。
+    backupServerId?: string
   }>(),
-  { retrying: false, retryError: '' },
+  { retrying: false, retryError: '', backupServerId: '' },
 )
 
 // 「仅重试失败目标」事件:本组件纯展示,不自取 artifactId/config;
 // 由父组件(RunDetail,持有上次部署表单)发起 retryFailedDeploy 并刷新 targets。
-const emit = defineEmits<{ retry: [] }>()
+// 「备份」事件:同样只上报目标,父组件按 (runId, serverId) 拉列表并展开面板。
+const emit = defineEmits<{ retry: []; backups: [target: DeployTarget] }>()
 
 // 当前有几台 failed/rolled_back 目标可重试(rolled_back 亦计入:健康失败已回滚,可再试)。
 const failedCount = computed(
@@ -145,6 +148,22 @@ function counts(targets: DeployTarget[]): { ok: number; bad: number; rolledBack:
           </span>
           <span class="dt-server" :title="tg.serverName">{{ tg.serverName }}</span>
           <span class="dt-duration mono" :aria-label="t('run.durationAria', { dur: durationText(tg) })">{{ durationText(tg) }}</span>
+          <!-- 开了部署前备份的目标才有;点击由父组件展开该机的备份面板。 -->
+          <button
+            v-if="tg.backupMode"
+            type="button"
+            class="dt-backups"
+            :class="{ 'dt-backups--active': backupServerId === tg.serverId }"
+            :title="t('run.backupButtonAria', { name: tg.serverName })"
+            :aria-label="t('run.backupButtonAria', { name: tg.serverName })"
+            @click="emit('backups', tg)"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M3 7a9 3 0 1 0 18 0A9 3 0 1 0 3 7" />
+              <path d="M3 7v10c0 1.7 4 3 9 3s9-1.3 9-3V7" />
+            </svg>
+            {{ t('run.backupButton') }}
+          </button>
         </div>
 
         <p
@@ -336,6 +355,44 @@ function counts(targets: DeployTarget[]): { ok: number; bad: number; rolledBack:
   font-size: 0.74rem;
   color: var(--color-faint);
   flex-shrink: 0;
+}
+
+/* ─── 备份入口(仅开了部署前备份的目标) ────────────────────────────────── */
+.dt-backups {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-dim);
+  background: var(--color-card-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--rounded-md);
+  cursor: pointer;
+  transition: color var(--duration-fast), border-color var(--duration-fast), background-color var(--duration-fast);
+}
+
+.dt-backups:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.dt-backups:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dt-backups--active {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft, var(--color-card-2));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dt-backups { transition: none; }
 }
 
 .dt-message {

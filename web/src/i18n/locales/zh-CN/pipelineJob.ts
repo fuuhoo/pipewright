@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     '可选,多行(set -e 逐行执行);在产物铺进部署目录之前于该机执行,用来先备份旧文件、停服务或清缓存。失败该机即判失败,旧文件不会被覆盖;支持 {\'{{param}}\'} 占位',
 
+  fieldBackupModeLabel: '部署前备份',
+  fieldBackupModeHint: '在产物落位前给部署目录留一份;保留份数可设,运行详情里可按目标恢复',
+  backupModeOff: '不备份',
+  backupModeDir: '整份部署目录',
+  backupModeSuffix: '只备份匹配后缀的文件',
+  fieldBackupSuffixesLabel: '备份后缀',
+  fieldBackupSuffixesHint: '逗号 / 空白分隔,自动补前导点(如 .jar,.war)',
+  fieldBackupKeepLabel: '保留份数',
+  fieldBackupKeepHint: '1..50,留空 = 5;超出按时间裁掉最旧',
+  backupKeepInvalid: '保留份数要填 1..50 的整数',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '拉取源码',
   typeGitSourceDesc: '克隆 Git 仓库到构建工作区',

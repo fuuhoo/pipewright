@@ -35,10 +35,12 @@ import {
   type HealthCheckType,
   type HealthCheckInput,
   type DeployStrategy,
+  type DeployTarget,
   type ApprovalRecord,
 } from '../api/runs'
 import { listServers, type Server } from '../api/servers'
 import { HttpError } from '../api/http'
+import { useSessionStore } from '../stores/session'
 import DiagnosisPanel from '../components/run/DiagnosisPanel.vue'
 import SuccessFailDiff from '../components/run/SuccessFailDiff.vue'
 import RunTerminal from '../components/run/RunTerminal.vue'
@@ -47,6 +49,7 @@ import ArtifactList from '../components/run/ArtifactList.vue'
 import TestReportPanel from '../components/run/TestReportPanel.vue'
 import WorkspaceSnapshotPanel from '../components/run/WorkspaceSnapshotPanel.vue'
 import DeployTargets from '../components/run/DeployTargets.vue'
+import DeployBackups from '../components/run/DeployBackups.vue'
 import RunDagView from '../components/run/RunDagView.vue'
 
 // ─── route ────────────────────────────────────────────────────────────────────
@@ -55,6 +58,7 @@ const { t, locale } = useI18n()
 const route  = useRoute()
 const router = useRouter()
 const runId  = computed(() => route.params.id as string)
+const session = useSessionStore()
 
 // ─── load state ──────────────────────────────────────────────────────────────
 
@@ -365,6 +369,20 @@ async function handleRetryFailed(): Promise<void> {
   } finally {
     retrying.value = false
   }
+}
+
+// ─── 部署前备份:按目标查看 / 覆盖式恢复 ────────────────────────────────────
+// 入口在 DeployTargets 的目标卡上(该次部署开了备份才有)。只记 serverId,
+// 目标对象从 run.targets 派生 —— 部署/重试刷新后自动跟着走,不会指向陈旧对象。
+// 部署目录与重启命令由服务端从该次部署记录取,前端不传命令(见 DeployBackups.vue)。
+const backupServerId = ref('')
+const activeBackupTarget = computed<DeployTarget | null>(
+  () => (run.value?.targets ?? []).find((tg) => tg.serverId === backupServerId.value) ?? null,
+)
+const canOperateRun = computed(() => session.can('run', 'operate'))
+
+function toggleBackups(tg: DeployTarget): void {
+  backupServerId.value = backupServerId.value === tg.serverId ? '' : tg.serverId
 }
 
 // ─── 交互式分批部署:续发 / 中止(P0)─────────────────────────────────────────
@@ -913,7 +931,19 @@ function nodeClass(status: StepStatus): string {
               :targets="run.targets"
               :retrying="retrying"
               :retry-error="retryError"
+              :backup-server-id="backupServerId"
               @retry="handleRetryFailed"
+              @backups="toggleBackups"
+            />
+
+            <!-- 该机开了部署前备份 → 展开备份列表,可覆盖式恢复(部署目录/重启命令服务端取) -->
+            <DeployBackups
+              v-if="activeBackupTarget"
+              :run-id="run.id"
+              :target="activeBackupTarget"
+              :can-operate="canOperateRun"
+              @close="backupServerId = ''"
+              @restored="loadRun({ silent: true })"
             />
 
             <!-- 交互式分批部署:暂停态(有 pending 目标)→ 继续 / 中止(P0)-->
@@ -1270,7 +1300,9 @@ function nodeClass(status: StepStatus): string {
               :targets="run.targets"
               :retrying="retrying"
               :retry-error="retryError"
+              :backup-server-id="backupServerId"
               @retry="handleRetryFailed"
+              @backups="toggleBackups"
             />
             <!-- 兜底:partial_failed 但无 targets(理论上不该出现)— 占位提示,不白屏 -->
             <div v-else class="slot-panel slot-panel--multi" role="region" :aria-label="t('runDetail.multiTargetAria')">
@@ -1288,6 +1320,16 @@ function nodeClass(status: StepStatus): string {
               </div>
             </div>
             <!-- END SLOT: 多机目标扇出 -->
+
+            <!-- 该机开了部署前备份 → 展开备份列表,可覆盖式恢复(部署目录/重启命令服务端取) -->
+            <DeployBackups
+              v-if="activeBackupTarget"
+              :run-id="run.id"
+              :target="activeBackupTarget"
+              :can-operate="canOperateRun"
+              @close="backupServerId = ''"
+              @restored="loadRun({ silent: true })"
+            />
 
           </div>
         </template>

@@ -195,6 +195,29 @@ function deployHostCount(config: Record<string, string>): number {
   return (config.serverIds ?? '').split(',').map((s) => s.trim()).filter(Boolean).length
 }
 
+// 部署前备份的档位:值与后端 deploy.BackupMode* 逐字一致;空 = 不备份(显式一档,
+// 别让下拉框默认停在「整目录」上替人做了一个要占磁盘的决定)。
+const BACKUP_MODE_OPTIONS: SelectOption[] = [
+  { value: '', get label() { return t('pipelineJob.backupModeOff') } },
+  { value: 'dir', get label() { return t('pipelineJob.backupModeDir') } },
+  { value: 'suffix', get label() { return t('pipelineJob.backupModeSuffix') } },
+]
+
+/** 只有 SSH 文件直铺才有可备份的部署目录(镜像/命令型后端会拒,这里也别露出来)。 */
+function fileReleaseDeploy(config: Record<string, string>): boolean {
+  return config.artifactType !== 'image' && config.artifactType !== 'command'
+}
+
+// 保留份数与后端 pipeline.validateBackupConfig 同一口径:1..50,留空 = 默认 5。
+function backupKeepFieldError(config: Record<string, string>): string {
+  if ((config.backupMode ?? '').trim() === '') return ''
+  const raw = (config.backupKeep ?? '').trim()
+  if (raw === '') return ''
+  const n = Number.parseInt(raw, 10)
+  // 后端用 strconv.Atoi:必须整串都是数字,「5abc」不能在前端先放过。
+  return /^\d+$/.test(raw) && n >= 1 && n <= 50 ? '' : t('pipelineJob.backupKeepInvalid')
+}
+
 /** 分批档位的首批台数:留空 = 引擎默认 1 台。 */
 function canaryCountOf(config: Record<string, string>): number {
   const n = Number.parseInt((config.canaryCount ?? '').trim(), 10)
@@ -775,6 +798,39 @@ const DEPLOY_SSH_FIELDS: JobField[] = [
     presets: ['systemctl restart app', 'nginx -s reload', 'docker restart app'],
     get hint() { return t('pipelineJob.fieldRestartCommandHint') },
     when: (c) => c.artifactType !== 'image',
+  },
+  // ── 部署前备份(产物落位之前打一份,可设保留份数,运行详情可从备份恢复)──
+  // 只有 SSH 文件直铺有部署目录可备:镜像/命令型在目标机上没有可打包的东西(后端同口径会拒)。
+  {
+    key: 'backupMode',
+    get label() { return t('pipelineJob.fieldBackupModeLabel') },
+    kind: 'select',
+    options: BACKUP_MODE_OPTIONS,
+    get hint() { return t('pipelineJob.fieldBackupModeHint') },
+    when: fileReleaseDeploy,
+    // 后端见到「镜像/命令型 + 备份方式」会直接拒:改类型时必须把旧值抹掉,别留个看不见的雷。
+    dropWhenHidden: true,
+  },
+  {
+    key: 'backupSuffixes',
+    get label() { return t('pipelineJob.fieldBackupSuffixesLabel') },
+    kind: 'text',
+    monospace: true,
+    placeholder: '.jar, .war',
+    presets: ['.jar', '.war,.jar', '.log'],
+    get hint() { return t('pipelineJob.fieldBackupSuffixesHint') },
+    when: (c) => fileReleaseDeploy(c) && c.backupMode === 'suffix',
+    dropWhenHidden: true,
+  },
+  {
+    key: 'backupKeep',
+    get label() { return t('pipelineJob.fieldBackupKeepLabel') },
+    kind: 'number',
+    placeholder: '5',
+    get hint() { return t('pipelineJob.fieldBackupKeepHint') },
+    when: (c) => fileReleaseDeploy(c) && c.backupMode !== '',
+    dropWhenHidden: true,
+    validate: backupKeepFieldError,
   },
   // 健康门控(原「健康检查」节点迁到这里):探测方式与必填项见 DEPLOY_HEALTH_FIELDS。
   ...DEPLOY_HEALTH_FIELDS,

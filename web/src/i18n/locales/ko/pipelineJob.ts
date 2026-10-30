@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     '선택, 여러 줄(set -e, 한 줄씩 실행). 산출물을 배포 디렉터리에 놓기 전에 대상 머신에서 실행해 기존 파일 백업·서비스 정지·캐시 삭제 등을 합니다. 실패하면 해당 호스트가 실패로 판정되며 기존 파일은 덮어쓰지 않습니다. {\'{{param}}\'} 지원',
 
+  fieldBackupModeLabel: '배포 전 백업',
+  fieldBackupModeHint: '산출물을 놓기 전에 배포 디렉터리를 복사해 둡니다. 보관 개수를 설정할 수 있고 실행 상세에서 대상별로 복원할 수 있습니다',
+  backupModeOff: '백업 안 함',
+  backupModeDir: '배포 디렉터리 전체',
+  backupModeSuffix: '확장자가 일치하는 파일만',
+  fieldBackupSuffixesLabel: '백업할 확장자',
+  fieldBackupSuffixesHint: '쉼표 또는 공백으로 구분, 앞의 점은 자동 보완(예: .jar,.war)',
+  fieldBackupKeepLabel: '보관 개수',
+  fieldBackupKeepHint: '1..50, 비우면 5; 초과분은 시간순으로 삭제',
+  backupKeepInvalid: '보관 개수는 1~50 사이의 정수여야 합니다',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: '소스 가져오기',
   typeGitSourceDesc: 'Git 저장소를 빌드 작업 공간에 복제',

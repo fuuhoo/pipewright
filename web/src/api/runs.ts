@@ -83,6 +83,10 @@ export interface DeployTarget {
   message: string
   startedAt: string          // RFC3339
   finishedAt: string | null  // RFC3339; null while not finished
+  // 该次部署的落点与备份范围(服务端记录):deployPath 用于展示,backupMode 非空才给「备份」入口。
+  // 恢复时这两样由服务端自行读取,前端不回传任何命令。
+  deployPath?: string
+  backupMode?: string        // '' | 'dir' | 'suffix'
 }
 
 // ─── DiagnosisDTO (Story 7-2 frozen contract) ────────────────────────────────
@@ -558,6 +562,51 @@ export function continueDeploy(id: string, input: ContinueDeployInput): Promise<
 
 export function abortDeploy(id: string): Promise<DeployRunResponse> {
   return http.post<DeployRunResponse>(`/api/runs/${id}/deploy/abort`, {})
+}
+
+// ─── 部署前备份的列表与恢复 ───────────────────────────────────────────────────
+//
+// GET  /api/runs/{id}/targets/{serverId}/backups
+//   → { deployPath, mode, backups: [{ id, createdAt, sizeBytes }] }(新→旧;mode 空 = 未开备份)
+// POST /api/runs/{id}/targets/{serverId}/backups/{backupId}/restore
+//   → { ok, backupId, deployPath, restarted, message }:解包/重启失败也是 200(ok=false + 人读原因)。
+// 部署目录与重启命令取自该次部署记录,请求体不带任何命令。
+
+export interface TargetBackup {
+  id: string
+  createdAt: string  // RFC3339
+  sizeBytes: number
+}
+
+export interface DeployBackupList {
+  deployPath: string
+  mode: string       // '' | 'dir' | 'suffix'
+  backups: TargetBackup[]
+}
+
+export interface RestoreBackupResult {
+  ok: boolean
+  backupId: string
+  deployPath: string
+  restarted: boolean
+  message: string
+}
+
+export function listDeployBackups(id: string, serverId: string): Promise<DeployBackupList> {
+  return http.get<DeployBackupList>(
+    `/api/runs/${id}/targets/${encodeURIComponent(serverId)}/backups`,
+  )
+}
+
+export function restoreDeployBackup(
+  id: string,
+  serverId: string,
+  backupId: string,
+): Promise<RestoreBackupResult> {
+  return http.post<RestoreBackupResult>(
+    `/api/runs/${id}/targets/${encodeURIComponent(serverId)}/backups/${encodeURIComponent(backupId)}/restore`,
+    {},
+  )
 }
 
 // ─── SSE subscription ────────────────────────────────────────────────────────

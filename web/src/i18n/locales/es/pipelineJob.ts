@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     'Opcional, multilínea (set -e, línea por línea); se ejecuta en el destino antes de colocar el artefacto en el directorio de despliegue: copia de seguridad de los archivos, detener el servicio o limpiar caché. Si falla, ese host queda como fallido sin sobrescribir los archivos anteriores; admite {\'{{param}}\'}',
 
+  fieldBackupModeLabel: 'Copia de seguridad antes del despliegue',
+  fieldBackupModeHint: 'Guarda una copia del directorio de despliegue antes de colocar el artefacto; el número de copias es configurable y cada destino se puede restaurar desde el detalle de la ejecución',
+  backupModeOff: 'Sin copia de seguridad',
+  backupModeDir: 'Todo el directorio de despliegue',
+  backupModeSuffix: 'Solo los archivos que coincidan con las extensiones',
+  fieldBackupSuffixesLabel: 'Extensiones a respaldar',
+  fieldBackupSuffixesHint: 'Separadas por comas o espacios; el punto inicial se añade solo (p. ej. .jar,.war)',
+  fieldBackupKeepLabel: 'Copias a conservar',
+  fieldBackupKeepHint: '1..50, vacío = 5; las más antiguas se eliminan por fecha',
+  backupKeepInvalid: 'Las copias a conservar deben ser un entero de 1 a 50',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Obtener código fuente',
   typeGitSourceDesc: 'Clona un repositorio Git en el espacio de trabajo de build',

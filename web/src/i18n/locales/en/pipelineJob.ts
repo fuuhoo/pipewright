@@ -149,6 +149,17 @@ export default {
   fieldPreDeployCommandHint:
     'Optional, multi-line (set -e, line by line); runs on the host before the artifact lands in the deploy directory — back up the old files, stop the service or clear caches first. A non-zero exit fails that host without overwriting anything; supports {\'{{param}}\'}',
 
+  fieldBackupModeLabel: 'Back up before deploy',
+  fieldBackupModeHint: 'Takes a copy of the deploy directory before the artifact lands; the retention count is configurable and each target can be restored from the run detail view',
+  backupModeOff: 'No backup',
+  backupModeDir: 'Whole deploy directory',
+  backupModeSuffix: 'Only files matching the suffixes',
+  fieldBackupSuffixesLabel: 'Backup suffixes',
+  fieldBackupSuffixesHint: 'Comma or whitespace separated, a leading dot is added automatically (e.g. .jar,.war)',
+  fieldBackupKeepLabel: 'Keep count',
+  fieldBackupKeepHint: '1..50, blank = 5; older ones are pruned by time',
+  backupKeepInvalid: 'Keep count must be an integer from 1 to 50',
+
   // ─── jobConfigSchema · git_source ──────────────────────────────────────
   typeGitSourceLabel: 'Pull source',
   typeGitSourceDesc: 'Clone a Git repository into the build workspace',
