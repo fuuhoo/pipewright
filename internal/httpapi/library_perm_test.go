@@ -78,6 +78,7 @@ func setupLibraryPerm(t *testing.T) *libPermEnv {
 		WithTemplates(library.NewTemplateService(db, pipes)),
 		WithVariableGroups(library.NewVarGroupService(db, v)),
 		WithCustomNodes(library.NewCustomNodeService(db)),
+		WithLibraryCommands(library.NewCommandService(db)),
 	))
 	t.Cleanup(srv.Close)
 
@@ -103,6 +104,8 @@ var libWrites = []struct{ name, path, body, put string }{
 		`{"name":"vg-1","description":"改过","vars":[{"key":"K","value":"v2","secret":false}]}`},
 	{"自定义节点", "/api/custom-nodes", `{"name":"cn-1","nodeType":"script","summary":"","config":{"commands":"echo hi"}}`,
 		`{"name":"cn-1","nodeType":"script","summary":"改过","config":{"commands":"echo hi"}}`},
+	{"指令", "/api/library-commands", `{"name":"cmd-1","description":"","body":"systemctl restart api"}`,
+		`{"name":"cmd-1","description":"改过","body":"systemctl restart api"}`},
 }
 
 // TestLibraryWriteNeedsEditPoint 逐格钉死:没有 library.edit 的账号对三类资产的任何写方法都 403,
@@ -199,7 +202,7 @@ func TestLibraryWriteDeniedLeavesNoRow(t *testing.T) {
 // 流水线编辑器的节点选择器、模板画廊都靠这几个 GET,按点挡会让它们静默变空。
 func TestLibraryReadStaysLoginOnly(t *testing.T) {
 	env := setupLibraryPerm(t)
-	for _, path := range []string{"/api/templates", "/api/variable-groups", "/api/custom-nodes"} {
+	for _, path := range []string{"/api/templates", "/api/variable-groups", "/api/custom-nodes", "/api/library-commands"} {
 		status, _, raw := getJSON(t, env.clView, env.srv.URL+path, env.csView)
 		if status != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200(%s)", path, status, raw)

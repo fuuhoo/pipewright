@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 
+	"github.com/fuuhoo/pipewright/internal/library"
 	"github.com/fuuhoo/pipewright/internal/mask"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
@@ -20,15 +21,18 @@ import (
 //
 // 同时登记桩 runner 的合成假 secret(run.StubFailureSecret),保证 dev/测试的脱敏链路仍有效。
 type RunSecretSource struct {
-	runs     run.Service
-	projects project.Service
-	settings pipeline.SettingsService
-	vault    vault.Vault
+	runs      run.Service
+	projects  project.Service
+	settings  pipeline.SettingsService
+	varGroups library.VarGroupService
+	vault     vault.Vault
 }
 
 // NewRunSecretSource 构造解析器(任一依赖为 nil 时对应来源跳过,降级为只登记桩 secret)。
-func NewRunSecretSource(runs run.Service, projects project.Service, settings pipeline.SettingsService, v vault.Vault) *RunSecretSource {
-	return &RunSecretSource{runs: runs, projects: projects, settings: settings, vault: v}
+// varGroups 是流水线引用的复用库变量组 —— 组里的 secret 同样要在执行前登记,否则它们的明文
+// 进了脚本日志就没人脱敏。
+func NewRunSecretSource(runs run.Service, projects project.Service, settings pipeline.SettingsService, vg library.VarGroupService, v vault.Vault) *RunSecretSource {
+	return &RunSecretSource{runs: runs, projects: projects, settings: settings, varGroups: vg, vault: v}
 }
 
 // MaskerForRun 返回一个登记了该 run 全部真实凭据明文(+ 桩假 secret)的 Masker。
@@ -103,6 +107,21 @@ func (s *RunSecretSource) registerProjectSecrets(ctx context.Context, m *mask.Ma
 				for _, v := range step.Env {
 					if v.Secret {
 						reveal(v.CredentialID)
+					}
+				}
+			}
+			// ④ 流水线引用的复用库变量组里的 secret:运行时这些变量会并入脚本环境,
+			// 明文同样会进日志,必须一起登记。变量组读不到(已删除)→ 执行期会明确失败,这里静默跳过。
+			if s.varGroups != nil {
+				for _, gid := range st.VarGroupIDs {
+					group, gerr := s.varGroups.Get(ctx, gid)
+					if gerr != nil || group == nil {
+						continue
+					}
+					for _, v := range group.Vars {
+						if v.Secret {
+							reveal(v.CredentialID)
+						}
 					}
 				}
 			}

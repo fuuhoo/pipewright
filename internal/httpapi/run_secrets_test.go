@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuuhoo/pipewright/internal/library"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/fuuhoo/pipewright/internal/run"
@@ -37,7 +38,7 @@ func TestRunSecretSourceMasksRealCredential(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 
-	src := NewRunSecretSource(rsvc, psvc, pipeline.NewSettingsService(st.DB, v), v)
+	src := NewRunSecretSource(rsvc, psvc, pipeline.NewSettingsService(st.DB, v), library.NewVarGroupService(st.DB, v), v)
 	m := src.MaskerForRun(context.Background(), rn.ID)
 
 	// 真实凭据明文出现在(模拟的)失败日志里 → 必须被脱敏。

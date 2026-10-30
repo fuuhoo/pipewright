@@ -223,7 +223,10 @@ func (r Resource) IsZero() bool {
 
 // Settings 是构建/部署配置领域模型(冻结 DTO 外层形状)。
 type Settings struct {
-	Build        BuildConfig
+	Build BuildConfig
+	// VarGroupIDs 是本流水线引用的复用库变量组(按引用顺序)。执行期组内变量并入
+	// 「流水线变量」,同名以项目自己的变量优先。
+	VarGroupIDs  []string
 	Environments []Environment
 	Steps        []PipelineStep
 	UpdatedAt    time.Time
@@ -232,6 +235,7 @@ type Settings struct {
 // SettingsInput 是保存入参(secret 项只传 credentialId,不传明文/掩码)。
 type SettingsInput struct {
 	Build        BuildConfig
+	VarGroupIDs  []string
 	Environments []Environment
 	Steps        []PipelineStep
 }
@@ -336,13 +340,17 @@ func (s *settingsService) Save(ctx context.Context, projectID string, in Setting
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: marshal steps: %w", err)
 	}
+	varGroupJSON, err := json.Marshal(normalizeVarGroupIDs(in.VarGroupIDs))
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: marshal var groups: %w", err)
+	}
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE pipeline_settings
-		 SET build_json = ?, environments_json = ?, steps_json = ?, updated_at = ?
+		 SET build_json = ?, environments_json = ?, steps_json = ?, var_group_ids = ?, updated_at = ?
 		 WHERE project_id = ?`,
-		string(buildJSON), string(envsJSON), string(stepsJSON), nowStr, projectID,
+		string(buildJSON), string(envsJSON), string(stepsJSON), string(varGroupJSON), nowStr, projectID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: update settings: %w", err)
@@ -353,15 +361,16 @@ func (s *settingsService) Save(ctx context.Context, projectID string, in Setting
 // load 读取已存在的配置行并回算掩码。无行 → sql.ErrNoRows(由 Get 转惰性默认)。
 func (s *settingsService) load(ctx context.Context, projectID string) (*Settings, error) {
 	var (
-		buildJSON  string
-		envsJSON   string
-		stepsJSON  string
-		updatedStr string
+		buildJSON    string
+		envsJSON     string
+		stepsJSON    string
+		varGroupJSON string
+		updatedStr   string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT build_json, environments_json, steps_json, updated_at
+		`SELECT build_json, environments_json, steps_json, var_group_ids, updated_at
 		 FROM pipeline_settings WHERE project_id = ?`, projectID,
-	).Scan(&buildJSON, &envsJSON, &stepsJSON, &updatedStr)
+	).Scan(&buildJSON, &envsJSON, &stepsJSON, &varGroupJSON, &updatedStr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
@@ -389,13 +398,19 @@ func (s *settingsService) load(ctx context.Context, projectID string) (*Settings
 			return nil, fmt.Errorf("pipeline: parse steps: %w", err)
 		}
 	}
+	var varGroupIDs []string
+	if strings.TrimSpace(varGroupJSON) != "" {
+		if err := json.Unmarshal([]byte(varGroupJSON), &varGroupIDs); err != nil {
+			return nil, fmt.Errorf("pipeline: parse var groups: %w", err)
+		}
+	}
 
 	updated, err := time.Parse(time.RFC3339, updatedStr)
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: parse updated_at: %w", err)
 	}
 
-	st := &Settings{Build: build, Environments: envs, Steps: steps, UpdatedAt: updated}
+	st := &Settings{Build: build, VarGroupIDs: normalizeVarGroupIDs(varGroupIDs), Environments: envs, Steps: steps, UpdatedAt: updated}
 	normalizeSettingsShape(st)
 	// 回算掩码(读取库内引用对应保险库 masked_value;明文 secret 从不入库)。
 	if err := s.applyMasks(ctx, st); err != nil {
@@ -440,7 +455,7 @@ func (s *settingsService) createDefault(ctx context.Context, projectID string) (
 	if lerr != nil {
 		// 极端情况下行被并发删除:退化为内存默认(避免 500)。
 		if errors.Is(lerr, sql.ErrNoRows) {
-			return &Settings{Build: defaultBuild, Environments: []Environment{}, Steps: []PipelineStep{}, UpdatedAt: now}, nil
+			return &Settings{Build: defaultBuild, VarGroupIDs: []string{}, Environments: []Environment{}, Steps: []PipelineStep{}, UpdatedAt: now}, nil
 		}
 		return nil, lerr
 	}
@@ -885,9 +900,31 @@ func toStoredSteps(in []PipelineStep) []storedStep {
 }
 
 // normalizeSettingsShape 保证从库回读的切片非 nil(JSON 输出 [] 而非 null)。
+// normalizeVarGroupIDs 去掉空白项 / 重复项,并保证返回非 nil 切片(JSON 契约是 [] 不是 null)。
+// 顺序即引用顺序,重复引用同一组没有意义,保留首次出现的位置。
+func normalizeVarGroupIDs(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
 func normalizeSettingsShape(st *Settings) {
 	if st.Build.Vars == nil {
 		st.Build.Vars = []BuildVar{}
+	}
+	if st.VarGroupIDs == nil {
+		st.VarGroupIDs = []string{}
 	}
 	if st.Build.Cache.Paths == nil {
 		st.Build.Cache.Paths = []string{}

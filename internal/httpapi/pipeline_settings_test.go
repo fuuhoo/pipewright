@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuuhoo/pipewright/internal/auth"
+	"github.com/fuuhoo/pipewright/internal/library"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/fuuhoo/pipewright/internal/vault"
@@ -26,7 +27,8 @@ func setupSettingsServer(t *testing.T) (*httptest.Server, *http.Client, string, 
 	psvc := project.New(st.DB, v, stubProber{branch: "main"})
 	setsvc := pipeline.NewSettingsService(st.DB, v)
 	srv := httptest.NewServer(New(testWebFSAuth(), svc,
-		WithVault(v), WithProjects(psvc), WithPipelineSettings(setsvc)))
+		WithVault(v), WithProjects(psvc), WithPipelineSettings(setsvc),
+		WithVariableGroups(library.NewVarGroupService(st.DB, v))))
 	t.Cleanup(srv.Close)
 
 	client := newTestClient(t)
@@ -232,5 +234,83 @@ func TestSettingsRouteDoesNotShadowPipeline(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("/pipeline 应 503(未注入), got %d", resp.StatusCode)
+	}
+}
+
+// createVarGroupHTTP 建一个变量组,返回 id(供设置引用测试复用)。
+func createVarGroupHTTP(t *testing.T, srv *httptest.Server, client *http.Client, csrf, body string) string {
+	t.Helper()
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/variable-groups", csrf, body)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create variable group = %d: %s", resp.StatusCode, raw)
+	}
+	var g map[string]any
+	_ = json.Unmarshal(raw, &g)
+	id, _ := g["id"].(string)
+	if id == "" {
+		t.Fatalf("create variable group: empty id: %s", raw)
+	}
+	return id
+}
+
+// TestSettingsVarGroupIDsRoundTrip 覆盖 varGroupIds 的保存/读取,且变量组本身不被改动。
+func TestSettingsVarGroupIDsRoundTrip(t *testing.T) {
+	srv, client, csrf, projID := setupSettingsServer(t)
+	gid := createVarGroupHTTP(t, srv, client, csrf,
+		`{"name":"发布变量","description":"","vars":[{"key":"DEPLOY_ROOT","value":"/srv/app","secret":false}]}`)
+	base := srv.URL + "/api/projects/" + projID + "/pipeline/settings"
+
+	resp := doJSON(t, client, http.MethodPut, base, csrf,
+		`{"build":{"model":"dockerfile","artifactType":"image"},"varGroupIds":["`+gid+`"],"environments":[]}`)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("save settings = %d: %s", resp.StatusCode, raw)
+	}
+	var saved map[string]any
+	_ = json.Unmarshal(raw, &saved)
+	ids, _ := saved["varGroupIds"].([]any)
+	if len(ids) != 1 || ids[0] != gid {
+		t.Fatalf("save 回包 varGroupIds = %v, want [%s]", saved["varGroupIds"], gid)
+	}
+
+	// 重新 GET:引用已落库。
+	getResp := doJSON(t, client, http.MethodGet, base, csrf, "")
+	defer getResp.Body.Close()
+	getRaw, _ := io.ReadAll(getResp.Body)
+	var got map[string]any
+	_ = json.Unmarshal(getRaw, &got)
+	gotIDs, _ := got["varGroupIds"].([]any)
+	if len(gotIDs) != 1 || gotIDs[0] != gid {
+		t.Fatalf("GET varGroupIds = %v, want [%s]: %s", got["varGroupIds"], gid, getRaw)
+	}
+
+	// 清空引用合法(显式空数组)。
+	clearResp := doJSON(t, client, http.MethodPut, base, csrf,
+		`{"build":{"model":"dockerfile","artifactType":"image"},"varGroupIds":[],"environments":[]}`)
+	defer clearResp.Body.Close()
+	clearRaw, _ := io.ReadAll(clearResp.Body)
+	if clearResp.StatusCode != http.StatusOK {
+		t.Fatalf("clear varGroupIds = %d: %s", clearResp.StatusCode, clearRaw)
+	}
+}
+
+// TestSettingsUnknownVarGroup422 校验引用不存在的变量组 → 422 variable_group_not_found。
+func TestSettingsUnknownVarGroup422(t *testing.T) {
+	srv, client, csrf, projID := setupSettingsServer(t)
+	base := srv.URL + "/api/projects/" + projID + "/pipeline/settings"
+	resp := doJSON(t, client, http.MethodPut, base, csrf,
+		`{"build":{"model":"dockerfile","artifactType":"image"},"varGroupIds":["no-such-group"],"environments":[]}`)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: %s", resp.StatusCode, raw)
+	}
+	var e map[string]map[string]string
+	_ = json.Unmarshal(raw, &e)
+	if e["error"]["code"] != "variable_group_not_found" {
+		t.Fatalf("code = %q, want variable_group_not_found: %s", e["error"]["code"], raw)
 	}
 }

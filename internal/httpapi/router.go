@@ -130,6 +130,7 @@ type options struct {
 	templates          library.TemplateService
 	varGroups          library.VarGroupService
 	customNodes        library.CustomNodeService
+	commands           library.CommandService
 	artifactStore      *artifactstore.Store
 	retention          *retention.Service
 	// snapshots 是工作区目录快照仓储(运行详情「构建目录」面板数据源);nil → 端点 503。
@@ -254,6 +255,13 @@ func WithVariableGroups(s library.VarGroupService) Option {
 // 不传则相关端点返回 503(服务未初始化)。
 func WithCustomNodes(s library.CustomNodeService) Option {
 	return func(o *options) { o.customNodes = s }
+}
+
+// WithLibraryCommands 注入复用库命名指令服务,挂载 /api/library-commands* 路由。
+// GET 过 auth;POST/PUT/DELETE 过 auth + CSRF + 审计。正文是 shell 片段,不含 secret。
+// 不传则相关端点返回 503(服务未初始化)。
+func WithLibraryCommands(s library.CommandService) Option {
+	return func(o *options) { o.commands = s }
 }
 
 // WithVault 注入凭据保险库,挂载 /api/credentials* 路由。
@@ -839,7 +847,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// /pipeline/settings 比 /pipeline 多一段,不会被吞。GET 过 auth;PUT 写方法过 auth + CSRF。
 		ps := o.pipelineSettings
 		ar.Get("/projects/{id}/pipeline/settings", makeGetPipelineSettingsHandler(ps))
-		ar.Put("/projects/{id}/pipeline/settings", makeSavePipelineSettingsHandler(ps))
+		ar.Put("/projects/{id}/pipeline/settings", makeSavePipelineSettingsHandler(ps, o.varGroups))
 
 		// 流水线配置合法性校验(Story 2.6):只读聚合视图 + 认证。
 		// 聚合 spec(2-2)+ settings(2-4)+ trigger(2-3)+ 项目凭据,跑跨 tab 校验。
@@ -1317,6 +1325,15 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/custom-nodes/{id}", makeGetCustomNodeHandler(cn))
 		ar.Put("/custom-nodes/{id}", makeUpdateCustomNodeHandler(cn, aud))
 		ar.Delete("/custom-nodes/{id}", makeDeleteCustomNodeHandler(cn, aud))
+
+		// 命名指令(复用库):部署节点的前 / 重启 / 探测命令可直接引用,正文运行时取。
+		// cmd 为 nil → handler 返回 503。GET 过 auth;POST/PUT/DELETE 为写方法,过 auth + CSRF + 审计。
+		cmd := o.commands
+		ar.Get("/library-commands", makeListCommandsHandler(cmd))
+		ar.Post("/library-commands", makeCreateCommandHandler(cmd, aud))
+		ar.Get("/library-commands/{id}", makeGetCommandHandler(cmd))
+		ar.Put("/library-commands/{id}", makeUpdateCommandHandler(cmd, aud))
+		ar.Delete("/library-commands/{id}", makeDeleteCommandHandler(cmd, aud))
 
 		// 后续 story 在此挂载其他 API 路由。
 	})

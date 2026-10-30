@@ -654,13 +654,30 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 	// deployPath / preDeployCommand / restartCommand 支持 {{param}} 占位:用本次运行参数渲染
 	// (命令型部署据此让「本地端口 / 穿透端口」等随运行参数变化;非配置类部署不写占位 → renderTemplate 零开销直返)。
 	if dp := renderTemplate(cfgString(jb.Config, "deployPath"), params); dp != "" {
+		if names := secretVarNames(dp, settings); names != "" {
+			// 路径会原样落到目标机,加密变量不能从这里走。与清单同口径:停在执行前点名。
+			_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」的部署路径引用了加密变量 %s:路径会原样发到目标机,"+
+				"不能把机密抄进去。请改用非加密变量(或复用库里的非加密变量组)", jb.Name, names))
+			return ErrBuildFailed
+		}
 		cfg["deployPath"] = dp
 	}
-	if pre := renderTemplate(cfgString(jb.Config, deploy.CfgKeyPreDeployCommand), params); pre != "" {
-		cfg[deploy.CfgKeyPreDeployCommand] = pre
+	// 前 / 重启命令可以引用复用库指令;引用优先,正文在运行时取(仍按 {{占位符}} 渲染)。
+	preCmd, perr := b.deployCommandField(ctx, rep, jb,
+		pipeline.ConfigKeyPreDeployCommandRef, deploy.CfgKeyPreDeployCommand, params, settings, "部署前指令")
+	if perr != nil {
+		return perr
 	}
-	if rc := renderTemplate(cfgString(jb.Config, "restartCommand"), params); rc != "" {
-		cfg["restartCommand"] = rc
+	if preCmd != "" {
+		cfg[deploy.CfgKeyPreDeployCommand] = preCmd
+	}
+	restartCmd, rerr := b.deployCommandField(ctx, rep, jb,
+		pipeline.ConfigKeyRestartCommandRef, "restartCommand", params, settings, "重启命令")
+	if rerr != nil {
+		return rerr
+	}
+	if restartCmd != "" {
+		cfg["restartCommand"] = restartCmd
 	}
 	// 镜像产物部署参数(#51)透传:deploy.DeployForStage 经这些键挑镜像产物并组装
 	// `docker run`(artifactType=image 选镜像;containerName/ports/runArgs 驱动容器名与端口/运行参数)。
@@ -750,9 +767,19 @@ func (b *Builder) runDeployJob(ctx context.Context, rep dagrun.StageReporter, jb
 				_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」探测方式 http 但未填探测 URL", jb.Name))
 				return ErrBuildFailed
 			}
+			if names := secretVarNames(url, settings); names != "" {
+				_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」的探测 URL 引用了加密变量 %s:URL 会出现在发布日志里,"+
+					"不能把机密抄进去。请改用非加密变量", jb.Name, names))
+				return ErrBuildFailed
+			}
 			cfg[deploy.CfgKeyHealthURL] = url
 		case pipeline.HealthProbeCommand:
-			command := renderTemplate(cfgString(jb.Config, pipeline.ConfigKeyHealthCommand), params)
+			// 探测命令同样可以引用复用库指令;引用优先,正文运行时取。
+			command, cerr := b.deployCommandField(ctx, rep, jb,
+				pipeline.ConfigKeyHealthCommandRef, pipeline.ConfigKeyHealthCommand, params, settings, "探测命令")
+			if cerr != nil {
+				return cerr
+			}
 			if strings.TrimSpace(command) == "" {
 				_ = rep.Log(ctx, streamStderr, fmt.Sprintf("部署节点「%s」探测方式为命令但未填探测命令", jb.Name))
 				return ErrBuildFailed

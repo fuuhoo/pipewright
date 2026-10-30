@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/fuuhoo/pipewright/internal/library"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/go-chi/chi/v5"
 )
@@ -69,6 +71,7 @@ type pipelineStepDTO struct {
 
 type settingsDTO struct {
 	Build        buildConfigDTO    `json:"build"`
+	VarGroupIDs  []string          `json:"varGroupIds"`
 	Environments []environmentDTO  `json:"environments"`
 	Steps        []pipelineStepDTO `json:"steps"`
 	UpdatedAt    string            `json:"updatedAt"`
@@ -144,6 +147,7 @@ func toSettingsDTO(st *pipeline.Settings) settingsDTO {
 
 	return settingsDTO{
 		Build:        build,
+		VarGroupIDs:  st.VarGroupIDs,
 		Environments: envs,
 		Steps:        steps,
 		UpdatedAt:    st.UpdatedAt.UTC().Format(time.RFC3339),
@@ -191,10 +195,10 @@ func makeGetPipelineSettingsHandler(svc pipeline.SettingsService) http.HandlerFu
 }
 
 // makeSavePipelineSettingsHandler 返回 PUT /api/projects/{id}/pipeline/settings handler。
-// 收 {build, environments};secret 项只传 {key,secret:true,credentialId}(不传明文/掩码)。
-// 服务端规范化 → 校验 → 持久化(只存引用,绝无明文 secret)→ 回读返回(secret 回掩码)。
+// 收 {build, varGroupIds, environments};secret 项只传 {key,secret:true,credentialId}(不传明文/掩码)。
+// 服务端规范化 → 校验(含引用的变量组存在性)→ 持久化(只存引用,绝无明文 secret)→ 回读返回。
 // 校验失败 → 422 定位到项;请求体限 256KB。
-func makeSavePipelineSettingsHandler(svc pipeline.SettingsService) http.HandlerFunc {
+func makeSavePipelineSettingsHandler(svc pipeline.SettingsService, vg library.VarGroupService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "构建/部署配置服务未初始化")
@@ -218,6 +222,7 @@ func makeSavePipelineSettingsHandler(svc pipeline.SettingsService) http.HandlerF
 					Paths   []string `json:"paths"`
 				} `json:"cache"`
 			} `json:"build"`
+			VarGroupIDs  []string `json:"varGroupIds"`
 			Environments []struct {
 				ID              string   `json:"id"`
 				Name            string   `json:"name"`
@@ -284,7 +289,25 @@ func makeSavePipelineSettingsHandler(svc pipeline.SettingsService) http.HandlerF
 			})
 		}
 
-		st, err := svc.Save(r.Context(), id, pipeline.SettingsInput{Build: build, Environments: envs, Steps: steps})
+		// 引用变量组:先确认每条 ID 都还在(引用悬挂时给明确 422,而不是等运行到部署阶段才发现)。
+		// 只校验存在性 —— 变量组是跨项目共享资产,引用它不改变谁能看见 / 谁能改它。
+		if vg != nil {
+			for _, gid := range req.VarGroupIDs {
+				if strings.TrimSpace(gid) == "" {
+					continue
+				}
+				if _, gerr := vg.Get(r.Context(), gid); gerr != nil {
+					if errors.Is(gerr, library.ErrVarGroupNotFound) {
+						writeError(w, http.StatusUnprocessableEntity, "variable_group_not_found", "引用的变量组不存在")
+						return
+					}
+					writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+					return
+				}
+			}
+		}
+
+		st, err := svc.Save(r.Context(), id, pipeline.SettingsInput{Build: build, VarGroupIDs: req.VarGroupIDs, Environments: envs, Steps: steps})
 		if err != nil {
 			writeSettingsError(w, err)
 			return

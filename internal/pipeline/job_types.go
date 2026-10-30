@@ -179,6 +179,16 @@ const (
 	HealthProbeCommand = "command"
 )
 
+// 部署节点的「复用库指令」引用键:值为 library_commands.id,运行时取该指令的正文再按
+// {{占位符}} 渲染(与直接在字段里粘正文的行为一致)。
+// 选了引用就以引用为准 —— 同名字段里残留的文字不再执行,避免两份内容各说各话。
+// 引用指向已删除的指令 → 节点失败并点名,绝不静默当成空命令(那会把「没执行」当成功)。
+const (
+	ConfigKeyPreDeployCommandRef = "preDeployCommandRef"
+	ConfigKeyRestartCommandRef   = "restartCommandRef"
+	ConfigKeyHealthCommandRef    = "healthCommandRef"
+)
+
 // healthConfigKeyLabels 是健康门禁这 6 个键在报错文案里的中文名,顺序就是抽屉里的显示顺序。
 var healthConfigKeyLabels = [...]struct{ key, label string }{
 	{ConfigKeyHealthProbe, "探测方式"},
@@ -442,7 +452,8 @@ func validateHealthProbe(stageName, jobName, jobType string, cfg map[string]any)
 			return issuef(ErrHealthProbeInvalid, "%s:探测方式为 http 但未填探测 URL", where)
 		}
 	case HealthProbeCommand:
-		if ConfigString(cfg, ConfigKeyHealthCommand) == "" {
+		// 指向复用库指令也算「填了」:正文在运行时才取,保存期拿不到它的内容。
+		if ConfigString(cfg, ConfigKeyHealthCommand) == "" && ConfigString(cfg, ConfigKeyHealthCommandRef) == "" {
 			return issuef(ErrHealthProbeInvalid, "%s:探测方式为命令但未填探测命令", where)
 		}
 	default:

@@ -82,6 +82,12 @@ type Builder struct {
 	// nil(关了代码管理区)时该模式的部署节点直接失败并说明原因 —— 绝不静默改用别的正文来源。
 	// 由 main 注入(WithRepoFiles,实现是 *repocache.ReadFile;此处留接口避免 build↔repocache 成环)。
 	repoFiles repoFileReader
+	// varGroups 是复用库变量组:运行开始时把流水线引用的组并进变量表(见 mergeReferencedVarGroups)。
+	// nil → 不合并(行为与旧版一致)。由 main 注入(WithVarGroups)。
+	varGroups varGroupReader
+	// commands 是复用库命名指令:部署节点的前/重启/探测命令可引用它,运行时取正文。
+	// nil → 引用指令的节点直接失败并说明原因(不静默当空命令)。由 main 注入(WithLibraryCommands)。
+	commands commandReader
 	// deployGate 是部署节点「首批后暂停」用的人工确认 hook(nil = 平台未装配审批服务)。
 	// 少了它,选了「首批后暂停」的节点没人能放行其余主机 —— 那台一台都不该发出去(见 runDeployJob)。
 	deployGate DeployPauseGate
@@ -219,6 +225,24 @@ func WithRepoFiles(r repoFileReader) BuilderOption {
 	return func(b *Builder) {
 		if r != nil {
 			b.repoFiles = r
+		}
+	}
+}
+
+// WithVarGroups 注入复用库变量组服务(流水线引用的组在运行时合并进变量表)。
+func WithVarGroups(vg varGroupReader) BuilderOption {
+	return func(b *Builder) {
+		if vg != nil {
+			b.varGroups = vg
+		}
+	}
+}
+
+// WithLibraryCommands 注入复用库命名指令服务(部署节点的命令字段可引用它)。
+func WithLibraryCommands(c commandReader) BuilderOption {
+	return func(b *Builder) {
+		if c != nil {
+			b.commands = c
 		}
 	}
 }
@@ -418,6 +442,11 @@ func (b *Builder) resolve(ctx context.Context, r *run.Run) (*project.Project, *p
 	settings, err := b.settings.Get(ctx, r.ProjectID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("构建配置不可读")
+	}
+	// 流水线引用的复用库变量组在这里并进变量表:下游(脚本环境 / 构建参数 / 部署正文渲染)
+	// 只认 settings.Build.Vars,不必各自再认识「变量组」。
+	if err := b.mergeReferencedVarGroups(ctx, settings); err != nil {
+		return nil, nil, err
 	}
 	return proj, settings, nil
 }

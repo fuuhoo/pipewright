@@ -87,6 +87,10 @@ const (
 	ActionCustomNodeCreate = "custom_node_create"
 	ActionCustomNodeUpdate = "custom_node_update"
 	ActionCustomNodeDelete = "custom_node_delete"
+	// 命名指令(复用库,部署节点可引用)。
+	ActionCommandCreate = "command_create"
+	ActionCommandUpdate = "command_update"
+	ActionCommandDelete = "command_delete"
 	// v6.2 阶段 7:构建环境管理 + 配置资源管理 + 用户管理。
 	ActionBuildEnvCreate = "build_env_create"
 	ActionBuildEnvUpdate = "build_env_update"
@@ -205,6 +209,7 @@ const (
 	TargetTemplate   = "template"
 	TargetVarGroup   = "variable_group"
 	TargetCustomNode = "custom_node"
+	TargetCommand    = "command"
 	// v6.2 阶段 7:新增 target 类型。
 	TargetBuildEnv       = "build_env"
 	TargetConfigProfile  = "config_profile"
