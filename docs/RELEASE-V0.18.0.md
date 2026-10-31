@@ -109,5 +109,6 @@ git diff --name-only v0.17.0..v0.18.0 -- internal/store/migrations
   `ls` 里没有留下 `.db`。
 - 提交拆分：8d0b5ec 按钮样式 → f264326 后端备份/恢复 → e7515cc 前端入口 → 2059ddc dist。
 - **一条流程事实**：`api.github.com` 的匿名额度（60/h）在轮询五条 run 时被打满，
-  Release 资产只能在 12:40 重置后才清点；下次发版先换新 PAT（`~/github/pat.txt` 里那条仍 401），
-  别把「查不到」当成「没发出去」。
+  Release 资产只能在 12:40 重置后才清点；别把「查不到」当成「没发出去」。
+  （v0.19.0 复核：`~/github/pat.txt` 那条 PAT 仍是 401，红任务的日志与 workflow retry 都取不到，
+  重跑只能在网页上点 —— 见 `RELEASE-V0.19.0.md`。）
