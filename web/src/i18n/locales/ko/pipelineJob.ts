@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: '저장소 URL',
   fieldRepoUrlHint: '읽기 전용: 프로젝트에 바인딩된 저장소. 변경은 「프로젝트 · 저장소 설정」에서',
   fieldRepoUrlEmpty: '프로젝트에 바인딩된 저장소가 없습니다',
+  fieldRepoSourceLink: '소스 보기',
+  fieldRepoSourceLinkTitle: '새 탭에서 플랫폼 코드 브라우저 열기(프로젝트 기본 브랜치)',
   fieldBranchLabel: '브랜치 / Ref',
   fieldBranchHint: '읽기 전용: 프로젝트 기본 브랜치. 실제 실행은 이 실행을 트리거한 브랜치 또는 태그를 가져옵니다',
   fieldCredentialIdLabel: '접근 자격 증명',

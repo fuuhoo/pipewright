@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: 'URL du dépôt',
   fieldRepoUrlHint: 'Lecture seule : le dépôt lié au projet. À modifier dans « Projet · Paramètres du dépôt »',
   fieldRepoUrlEmpty: 'Aucun dépôt lié à ce projet',
+  fieldRepoSourceLink: 'Voir le code source',
+  fieldRepoSourceLinkTitle: 'Ouvrir la visionneuse de code de la plateforme dans un nouvel onglet (branche par défaut du projet)',
   fieldBranchLabel: 'Branche / Ref',
   fieldBranchHint: 'Lecture seule : la branche par défaut du projet. Un build récupère la branche ou l’étiquette qui l’a déclenché',
   fieldCredentialIdLabel: 'Identifiant d’accès',

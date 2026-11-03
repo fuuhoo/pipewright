@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: 'URL del repositorio',
   fieldRepoUrlHint: 'Solo lectura: el repositorio vinculado al proyecto. Cámbialo en «Proyecto · Ajustes del repositorio»',
   fieldRepoUrlEmpty: 'Ningún repositorio vinculado a este proyecto',
+  fieldRepoSourceLink: 'Ver código fuente',
+  fieldRepoSourceLinkTitle: 'Abrir el explorador de código de la plataforma en una pestaña nueva (rama predeterminada del proyecto)',
   fieldBranchLabel: 'Rama / Ref',
   fieldBranchHint: 'Solo lectura: la rama predeterminada del proyecto. Una ejecución clona la rama o etiqueta que la desencadenó',
   fieldCredentialIdLabel: 'Credencial de acceso',

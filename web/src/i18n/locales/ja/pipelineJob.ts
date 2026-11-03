@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: 'リポジトリ URL',
   fieldRepoUrlHint: '読み取り専用:プロジェクトに紐づくリポジトリ。変更は「プロジェクト · リポジトリ設定」で',
   fieldRepoUrlEmpty: 'プロジェクトにリポジトリが紐づいていません',
+  fieldRepoSourceLink: 'ソースを見る',
+  fieldRepoSourceLinkTitle: '新しいタブでプラットフォームのコード閲覧ページを開きます(プロジェクトのデフォルトブランチ)',
   fieldBranchLabel: 'ブランチ / Ref',
   fieldBranchHint: '読み取り専用:プロジェクトのデフォルトブランチ。実行時はトリガーしたブランチまたはタグを取得します',
   fieldCredentialIdLabel: 'アクセス認証情報',

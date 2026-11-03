@@ -336,4 +336,13 @@ router.onError((error, to) => {
   if (target) window.location.replace(target)
 })
 
+/**
+ * 项目代码浏览页的地址(给「在新标签打开」这类 `<a href>` 出口用)。
+ * 组件里手拼 `/projects/x/code` 等于把路由表抄第二遍,路径一改就悄悄 404;这里过一遍
+ * router.resolve,与 `router.push({ name: 'project-code' })` 永远同一条解析结果。
+ */
+export function projectCodeHref(projectId: string): string {
+  return router.resolve({ name: 'project-code', params: { id: projectId } }).href
+}
+
 export default router

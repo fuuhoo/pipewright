@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { projectCodeHref } from '../../router'
 import { localizeName } from '../../lib/pipelineLabels'
 import type { PipelineJob, PipelineStage } from '../../api/pipeline'
 import type { Credential } from '../../api/credentials'
@@ -60,6 +61,8 @@ const props = defineProps<{
   environments?: Environment[]
   /** 整条流水线的阶段(含本阶段)—— 部署节点的「产物来源任务」按依赖关系算候选,故需要全图。 */
   allStages?: PipelineStage[]
+  /** 当前项目 ID —— 源节点的「看源码」出口要拼 /projects/{id}/code。缺省即不出这个出口。 */
+  projectId?: string
 }>()
 
 const emit = defineEmits<{
@@ -604,6 +607,10 @@ function readonlyValue(field: JobField): string {
   }
   return raw
 }
+
+// 源节点「看源码」出口的目标地址:走 router.resolve 派生(见 router 里的 projectCodeHref),
+// 不在组件里手拼路径。项目 ID 拿不到时给空串,模板据此不渲染出口。
+const sourceCodeHref = computed(() => (props.projectId ? projectCodeHref(props.projectId) : ''))
 
 /** Default-display value for selects so the first option shows before any edit. */
 function selectValue(field: JobField): string {
@@ -1192,10 +1199,19 @@ async function confirmSave(): Promise<void> {
 
         <!-- 只读回显:这三格(源节点的仓库/分支/凭据)的值来自项目配置,后端读和存都无条件
              覆盖成镜像,克隆时也只认项目配置 —— 摆输入框等于摆一个改了什么都不发生的旋钮。
-             改动入口在项目 · 仓库设置,提示文案里指路。 -->
+             改动入口在项目 · 仓库设置,提示文案里指路。
+             仓库那一格另给一个「看源码」出口:改不了值,但「这次拉的是哪份代码」得能就地查证。 -->
         <div v-else-if="field.kind === 'readonly'" class="readonly-value">
           <code v-if="readonlyValue(field)" :class="{ 'is-mono': field.monospace }">{{ readonlyValue(field) }}</code>
           <span v-else class="readonly-empty">{{ field.emptyLabel || t('pipelineJob.readonlyEmpty') }}</span>
+          <a
+            v-if="field.readonlyLink === 'source-code' && sourceCodeHref && readonlyValue(field)"
+            class="readonly-action"
+            :href="sourceCodeHref"
+            target="_blank"
+            rel="noopener noreferrer"
+            :title="field.linkTitle"
+          >{{ field.linkLabel }}</a>
         </div>
 
         <!-- number / text -->
@@ -1518,6 +1534,26 @@ async function confirmSave(): Promise<void> {
 .readonly-empty {
   color: var(--color-faint);
   font-style: italic;
+}
+/* 只读格右侧出口:贴着壳的右端,不跟值抢位置;值很长时靠 flex-shrink 保住自己不被挤没。
+   边框用 border-strong、字号比旁注大一档 —— 这一格坐在浅色壳里,淡边框 + 小字在浅色主题下
+   几乎与背景糊成一片,而它是个要点下去的东西。 */
+.readonly-action {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--rounded-md, 6px);
+  background: var(--color-surface, transparent);
+  color: var(--color-primary);
+  font-size: 0.78rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.readonly-action:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  text-decoration: underline;
 }
 
 /* 配置资源多选:语言过滤后的复选清单 */

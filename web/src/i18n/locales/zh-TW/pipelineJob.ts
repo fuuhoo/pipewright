@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: '倉庫位址',
   fieldRepoUrlHint: '唯讀:專案繫結的倉庫;要換倉庫請到「專案 · 倉庫設定」',
   fieldRepoUrlEmpty: '專案未繫結倉庫',
+  fieldRepoSourceLink: '檢視原始碼',
+  fieldRepoSourceLinkTitle: '在新分頁開啟平台的程式碼瀏覽頁(依專案預設分支)',
   fieldBranchLabel: '分支 / Ref',
   fieldBranchHint: '唯讀:專案預設分支;實際拉取依觸發這次運行的分支或標籤',
   fieldCredentialIdLabel: '存取憑證',

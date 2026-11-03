@@ -182,33 +182,51 @@ func New(db *sql.DB, opts ...ServiceOption) Service {
 func (s *service) Get(ctx context.Context, projectID string) (*Config, error) {
 	cfg, err := s.load(ctx, projectID)
 	if err == nil {
-		bound, berr := s.projectHasRepo(ctx, projectID)
-		if berr != nil {
-			return nil, berr
-		}
-		if bound {
-			// 存量自愈:纯发布阶段跑过、之后又绑上仓库的项目,画布上没有「+添加源阶段」的入口,
-			// 源阶段只能在读取时补回来,否则这张图永远缺源头且校验一直报 source_stage_missing。
-			restoreSourceStage(&cfg.Spec)
-			// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
-			// 放回去,用户不必先保存一次才看得到。
-			restoreSourceJob(&cfg.Spec)
-			// 旧版本把源卡片种成了「Gitee 源」,而平台并不知道用户用的是哪家 git 平台:读到就收敛成中性名。
-			healLegacySourceJobNames(&cfg.Spec)
-			// 源节点的仓库/分支/凭据 + 摘要:一律回写成项目配置的镜像(画布上只读展示)。
-			s.syncSourceMirror(ctx, projectID, &cfg.Spec)
-		} else {
-			// 只发布项目(未绑定仓库)没有源可拉:旧版本种下的源阶段在这里摘掉,
-			// 画布从部署开始,而不是先摆一张永远拉不到东西的「Git 源」。
-			stripSourceStages(&cfg.Spec)
+		if healErr := s.healSourceView(ctx, projectID, &cfg.Spec); healErr != nil {
+			return nil, healErr
 		}
 		return cfg, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	// 首次访问无配置:惰性生成默认种子。
-	return s.createDefault(ctx, projectID)
+	// 首次访问无配置:惰性生成默认种子。种子那份也得过同一套回写 —— 它落库时不带仓库镜像,
+	// 直接回给前端会让源节点第一屏写着「项目未绑定仓库」,刷新一次才对得上。
+	seeded, err := s.createDefault(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if healErr := s.healSourceView(ctx, projectID, &seeded.Spec); healErr != nil {
+		return nil, healErr
+	}
+	return seeded, nil
+}
+
+// healSourceView 把 spec 收成画布该看到的样子:绑了仓库就补回源阶段/任务、收敛旧命名、
+// 把仓库/分支/凭据回写成项目配置的镜像;没绑仓库就把源阶段摘掉(没有源可拉)。
+// Get 的两条路径(已有配置 / 首次种子)都走这里,不然新项目的源节点第一屏会说谎。
+func (s *service) healSourceView(ctx context.Context, projectID string, spec *Spec) error {
+	bound, err := s.projectHasRepo(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !bound {
+		// 只发布项目(未绑定仓库)没有源可拉:旧版本种下的源阶段在这里摘掉,
+		// 画布从部署开始,而不是先摆一张永远拉不到东西的「Git 源」。
+		stripSourceStages(spec)
+		return nil
+	}
+	// 存量自愈:纯发布阶段跑过、之后又绑上仓库的项目,画布上没有「+添加源阶段」的入口,
+	// 源阶段只能在读取时补回来,否则这张图永远缺源头且校验一直报 source_stage_missing。
+	restoreSourceStage(spec)
+	// 存量自愈:源任务被删掉的流水线(画布上没有补加入口)在读取时就把那张卡片
+	// 放回去,用户不必先保存一次才看得到。
+	restoreSourceJob(spec)
+	// 旧版本把源卡片种成了「Gitee 源」,而平台并不知道用户用的是哪家 git 平台:读到就收敛成中性名。
+	healLegacySourceJobNames(spec)
+	// 源节点的仓库/分支/凭据 + 摘要:一律回写成项目配置的镜像(画布上只读展示)。
+	s.syncSourceMirror(ctx, projectID, spec)
+	return nil
 }
 
 // restoreSourceStage 给绑定了仓库、spec 里却一个源阶段都没有的流水线补回一张(就地改)。

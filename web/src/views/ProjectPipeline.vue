@@ -716,6 +716,7 @@ function onRunTriggered(runId: string): void {
             :clusters="clusters"
             :channels="channels"
             :environments="editEnvs"
+            :project-id="projectId"
             @update="handleCanvasUpdate"
           />
 

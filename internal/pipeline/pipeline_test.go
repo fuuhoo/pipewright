@@ -82,6 +82,24 @@ func TestGetLazyDefaultShape(t *testing.T) {
 	}
 }
 
+// TestGetLazyDefaultCarriesSourceMirror 盯首次种子那条路径:默认 spec 落库时不带仓库镜像,
+// 若 Get 把种子原样回出去,新项目源节点的第一屏就写着「项目未绑定仓库」(刷新一次才对得上),
+// 挂在仓库那一格旁的「看源码」出口也跟着消失。
+func TestGetLazyDefaultCarriesSourceMirror(t *testing.T) {
+	svc, _, projID := newSvc(t)
+	cfg, err := svc.Get(context.Background(), projID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	job := cfg.Spec.Stages[0].Jobs[0]
+	if got, _ := job.Config["repoUrl"].(string); got != "https://gitee.com/acme/shop.git" {
+		t.Fatalf("首次 Get 的源任务应带上项目仓库镜像, got %q", got)
+	}
+	if got, _ := job.Config["branch"].(string); got != "main" {
+		t.Fatalf("首次 Get 的源任务应带上项目默认分支, got %q", got)
+	}
+}
+
 func TestGetProjectNotFound(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	_, err := svc.Get(context.Background(), "nope")

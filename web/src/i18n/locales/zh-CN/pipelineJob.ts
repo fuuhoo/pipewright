@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: '仓库地址',
   fieldRepoUrlHint: '只读:项目绑定的仓库;换仓库请到「项目 · 仓库设置」',
   fieldRepoUrlEmpty: '项目未绑定仓库',
+  fieldRepoSourceLink: '查看源码',
+  fieldRepoSourceLinkTitle: '在新标签打开平台的代码浏览页(按项目默认分支)',
   fieldBranchLabel: '分支 / Ref',
   fieldBranchHint: '只读:项目默认分支;实际拉取按触发这次运行的分支或标签',
   fieldCredentialIdLabel: '访问凭据',

@@ -177,6 +177,8 @@ export default {
   fieldRepoUrlLabel: 'Repository URL',
   fieldRepoUrlHint: 'Read-only: the repository bound to the project. Change it under Project · Repository settings',
   fieldRepoUrlEmpty: 'No repository bound to this project',
+  fieldRepoSourceLink: 'View source',
+  fieldRepoSourceLinkTitle: 'Open the platform code browser for this project in a new tab (project default branch)',
   fieldBranchLabel: 'Branch / Ref',
   fieldBranchHint: 'Read-only: the project default branch. A run clones the branch or tag that triggered it',
   fieldCredentialIdLabel: 'Access credential',

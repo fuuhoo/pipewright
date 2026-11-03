@@ -74,10 +74,21 @@ export interface JobField {
   /** Restrict the credential picker to one credential type */
   credentialType?: CredentialType
   /**
-   * 只读档(`kind: 'readonly'`)怎么取值:`'credential'` = 把存着的凭据 ID 显示成凭据名,
+   * 只读档(`kind: 'readonly'`)取值方式:`'credential'` = 把存着的凭据 ID 显示成凭据名,
    * 名字拿不到才退回 ID。不给只读档以外的字段用。
    */
   readonlyRef?: 'credential'
+  /**
+   * 只读档旁边挂的出口:`'source-code'` = 打开平台内的代码浏览页(新标签)。
+   * 源节点的仓库既改不动、也不该让人去猜「这次拉的到底是哪份代码」,所以在值旁边给出口;
+   * 目标页读的就是这同一条默认分支(后端镜像与代码页都取 projects.default_branch)。
+   * 值取不到(项目未绑仓库)时不渲染 —— 没有仓库就没有源码可看,给个点了报错的按钮不如不给。
+   */
+  readonlyLink?: 'source-code'
+  /** 出口链接文案(只给 `readonlyLink` 用) */
+  linkLabel?: string
+  /** 出口链接的悬浮说明:说清点了会去哪、在新标签打开 */
+  linkTitle?: string
   /** Render with monospace font (paths, commands, image refs) */
   monospace?: boolean
   /** `textarea` 的行数(缺省 4;compose 正文这种整份文件要给它看得下的额度) */
@@ -1210,6 +1221,9 @@ export const JOB_TYPE_SPECS: Record<string, JobTypeSpec> = {
         monospace: true,
         get hint() { return t('pipelineJob.fieldRepoUrlHint') },
         get emptyLabel() { return t('pipelineJob.fieldRepoUrlEmpty') },
+        readonlyLink: 'source-code',
+        get linkLabel() { return t('pipelineJob.fieldRepoSourceLink') },
+        get linkTitle() { return t('pipelineJob.fieldRepoSourceLinkTitle') },
       },
       {
         key: 'branch',

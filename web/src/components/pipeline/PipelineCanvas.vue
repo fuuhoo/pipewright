@@ -35,6 +35,8 @@ const props = defineProps<{
   channels?: NotificationChannel[]
   /** 透传给 JobDrawer:push_image 节点只读回显各环境绑定的镜像仓。 */
   environments?: Environment[]
+  /** 透传给 JobDrawer:源节点的「看源码」出口要拼本项目的历史代码页。 */
+  projectId?: string
 }>()
 
 const emit = defineEmits<{
@@ -536,6 +538,7 @@ function handleDrawerUpdate(patch: Partial<PipelineJob>): void {
       :channels="props.channels"
       :environments="props.environments"
       :all-stages="props.stages"
+      :project-id="props.projectId"
       @close="closeDrawer"
       @update="handleDrawerUpdate"
       @change-type="requestChangeType"

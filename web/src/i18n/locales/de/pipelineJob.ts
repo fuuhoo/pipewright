@@ -176,6 +176,8 @@ export default {
   fieldRepoUrlLabel: 'Repository-URL',
   fieldRepoUrlHint: 'Schreibgeschützt: das mit dem Projekt verknüpfte Repository. Ändern unter „Projekt · Repository-Einstellungen“',
   fieldRepoUrlEmpty: 'Kein Repository mit diesem Projekt verknüpft',
+  fieldRepoSourceLink: 'Quellcode ansehen',
+  fieldRepoSourceLinkTitle: 'Code-Ansicht der Plattform in einem neuen Tab öffnen (Standardbranch des Projekts)',
   fieldBranchLabel: 'Branch / Ref',
   fieldBranchHint: 'Schreibgeschützt: der Standard-Branch des Projekts. Ein Lauf klont den Branch oder Tag, der ihn ausgelöst hat',
   fieldCredentialIdLabel: 'Zugriffsanmeldedaten',
