@@ -95,7 +95,9 @@ describe('JobDrawer + StepBuilder integration', () => {
     const job = builderJob({ image: 'node:20', commands: copyStepLine('frontend/dist', 'out', [], 'entry') })
     const wrapper = mount(JobDrawer, { props: { job, stage } })
     const builder = wrapper.findComponent(StepBuilder)
-    const select = builder.find('select.sb-select')
+    // 复制卡片现在有两个下拉(写法 / 复制方式),按 aria-label 取「复制方式」那一个。
+    expect((builder.find('select[aria-label="复制写法 1"]').element as HTMLSelectElement).value).toBe('advanced')
+    const select = builder.find('select[aria-label="复制方式 1"]')
     expect((select.element as HTMLSelectElement).value).toBe('entry')
 
     await select.setValue('contents')

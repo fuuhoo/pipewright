@@ -24,6 +24,13 @@
  * 填了排除项时,else 分支前额外挂一句 `echo '…排除项未生效'`:cp 没有排除选项,静默整份复制
  * 是最难发现的失败,所以让运行日志自己说清「这镜像没 rsync,排除项被忽略了」。
  *
+ * 两种复制写法(2026-11 起,UI 里分开叫):
+ *   - 高级复制(advanced,老配置唯一形态):上面那套 rsync/cp 兜底单行,支持排除项。
+ *   - 复制(plain):就一行 `mkdir -p 目标 && cp -a 源 目标`。反解析只认
+ *     `cp -a|-R|-r 源 目标`(可含 mkdir 前缀、目标两处同值、参数里没有通配/变量/管道),
+ *     且**编译时原样发 cp** —— 认出用户手写的 cp 是为了让卡片看得懂,不是为了替他换成 rsync。
+ *     带别的旗标、多一个参数、有排除的行一律留作「运行命令」,一个字都不动。
+ *
  * 两种复制方式(2026-10 起):
  *   - contents(默认,老行只有这一种):把「源目录的内容」铺进目标目录 ——
  *     rsync 靠源尾斜杠 `src/`、cp 靠 `src/.`。源写 `./` 时没有目录名可保留,即工作区根内容。
@@ -52,6 +59,14 @@ export type StepKind = 'command' | 'env' | 'workDir' | 'copy' | 'condition'
  */
 export type CopyMode = 'contents' | 'entry'
 
+/**
+ * 复制的「写法」:advanced=单行 rsync 优先、cp 兜底(可排除,老配置唯一形态,缺省即它);
+ * plain=就一行 `mkdir -p 目标 && cp -a 源 目标`(UI 里叫「复制」)。
+ * plain 是识别出来的,不是生成的:反解析只认明确的两参数 cp,编译时**原样发 cp**,
+ * 绝不把用户的 cp 行升级成 rsync 骨架 —— 那会换掉执行器、也让 diff 面目全非。
+ */
+export type CopyStyle = 'advanced' | 'plain'
+
 export interface StepBlock {
   /** 稳定的本地标识(列表 key / 拖拽用),不进 config */
   id: string
@@ -72,6 +87,8 @@ export interface StepBlock {
   copyExcludes?: string
   /** copy:复制方式;缺省(含老配置)=复制目录内容 */
   copyMode?: CopyMode
+  /** copy:写法;缺省(含老配置)=advanced(rsync/cp 兜底骨架)。plain 只有一行 cp,不支持排除项 */
+  copyStyle?: CopyStyle
   /** condition:shell 条件表达式(不成立则跳过后续步骤) */
   condition?: string
 }
@@ -117,6 +134,13 @@ const COPY_EXCLUDE = '--exclude='
 // 必须是常量 —— 反解析按字面吃这一段,带变量的文案切不回来。
 const COPY_WARN = "echo '没有 rsync,复制退回 cp:排除项未生效'; "
 
+// 「复制」(plain)的行骨架:一行 cp,cp 需要目标目录已存在所以前置 mkdir。
+// 反解析只吃这一种两参数形态(源/目标都是单 token、无通配无管道),其余含 cp 的行留作「运行命令」。
+const CP_CONJ = ' && cp '
+const CP_FLAG = '-a'
+/** 认得的 cp 旗标(归档/递归);其余(-i、-v、--link…)不改写,整行退回命令步骤。 */
+const CP_FLAGS = new Set(['-a', '-R', '-r'])
+
 /** 排除项文本 → 列表:空格与逗号都是分隔符(rsync 的 --exclude 本身不含空格)。 */
 export function splitExcludes(text: string): string[] {
   return text.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)
@@ -155,11 +179,26 @@ export function copyStepLine(
 }
 
 /**
+ * 「复制」(plain)步骤编译成一行 cp:`mkdir -p 'dest/' && cp -a 'src' 'dest/'`。
+ * 与 advanced 骨架同源:两种复制方式只差源 token(`src` / `src/.`)。旗标统一发 `-a`
+ * (识别时接受的 `-R`/`-r` 是它的子集);排除项在这里没有落点(cp 不吃 --exclude),
+ * 所以 plain 的卡片不显示那一格。源/目标任一空 → 空串。
+ */
+export function plainCopyLine(src: string, dest: string, mode: CopyMode = 'contents'): string {
+  const s = trimTrailingSlash(src.trim())
+  const d = trimTrailingSlash(dest.trim())
+  if (!s || !d) return ''
+  const destTok = shellQuote(`${d}/`)
+  const cpSrc = mode === 'entry' ? s : `${s}/.`
+  return `${COPY_MKDIR}${destTok}${CP_CONJ}${CP_FLAG} ${shellQuote(cpSrc)} ${destTok}`
+}
+
+/**
  * 把一个步骤编译成 0 条或多条命令行。
  * - command:原样多行(空步骤跳过)
  * - env:`export K=V`(K 合法才发;值做单引号转义)
  * - workDir:`cd DIR`(DIR 做单引号转义)
- * - copy:单行 rsync/cp 兜底(源与目标齐备才发;排除项逐条 `--exclude=`)
+ * - copy:advanced=单行 rsync/cp 兜底,plain=一行 cp(源与目标齐备才发;排除项逐条 `--exclude=`)
  * - condition:`if ! ( <cond> ); then echo …; exit 0; fi`(单行守卫;cond 原样,空步骤跳过)
  */
 export function stepToCommandLines(step: StepBlock): string[] {
@@ -179,11 +218,16 @@ export function stepToCommandLines(step: StepBlock): string[] {
       return [`cd ${shellQuote(dir)}`]
     }
     case 'copy': {
+      const mode = step.copyMode ?? 'contents'
+      if ((step.copyStyle ?? 'advanced') === 'plain') {
+        const line = plainCopyLine(step.copySrc ?? '', step.copyDest ?? '', mode)
+        return line ? [line] : []
+      }
       const line = copyStepLine(
         step.copySrc ?? '',
         step.copyDest ?? '',
         splitExcludes(step.copyExcludes ?? ''),
-        step.copyMode ?? 'contents',
+        mode,
       )
       return line ? [line] : []
     }
@@ -344,8 +388,68 @@ export function parseCopyLine(line: string): {
 }
 
 /**
+ * 读一个 cp 参数:带引号走 readQuotedToken;裸 token 吃到下一个空格,但含 shell 元字符就拒
+ * (通配、变量、重定向、子命令都不是「源 目标」两参数复制,整行留给「运行命令」原样保留)。
+ */
+function readCpArg(t: string, i: number): { value: string; next: number } | null {
+  if (t[i] === "'") return readQuotedToken(t, i)
+  let k = i
+  while (k < t.length && t[k] !== ' ') k += 1
+  const raw = t.slice(i, k)
+  if (!raw || /[$`|&;<>()*?[\]"'\\]/.test(raw)) return null
+  return { value: raw, next: k }
+}
+
+/**
+ * 反解析「复制」(plain):只认两种写法
+ *   `cp -a|-R|-r 源 目标`
+ *   `mkdir -p 目标 && cp -a|-R|-r 源 目标`(mkdir 的目标必须和 cp 的目标同值)
+ * 源以 `/.` 结尾 → contents(铺内容),否则 entry(连名字一起放)。多一个参数、带排除、
+ * 用了别的旗标 → 返回 null,整行退回命令步骤,绝不改写用户的命令。
+ */
+export function parsePlainCpLine(line: string): {
+  src: string
+  dest: string
+  mode: CopyMode
+} | null {
+  const t = line.trim()
+  let i = 0
+  let mkdirDest = ''
+  if (t.startsWith(COPY_MKDIR)) {
+    i = COPY_MKDIR.length
+    const pre = readCpArg(t, i)
+    if (!pre) return null
+    mkdirDest = pre.value
+    i = pre.next
+    if (!t.startsWith(CP_CONJ, i)) return null
+    i += CP_CONJ.length
+  } else if (t.startsWith('cp ')) {
+    i = 3
+  } else {
+    return null
+  }
+  const space = t.indexOf(' ', i)
+  if (space === -1) return null
+  if (!CP_FLAGS.has(t.slice(i, space))) return null
+  i = space + 1
+  const src = readCpArg(t, i)
+  if (!src || t[src.next] !== ' ') return null
+  const dest = readCpArg(t, src.next + 1)
+  // 目标之后不能再有东西(管道、`&&`、注释都算篡改)
+  if (!dest || dest.next !== t.length) return null
+  if (mkdirDest && trimTrailingSlash(mkdirDest) !== trimTrailingSlash(dest.value)) return null
+  const contents = src.value.endsWith('/.')
+  const srcName = contents ? src.value.slice(0, -2) : trimTrailingSlash(src.value)
+  if (!srcName || srcName === '/') return null
+  const destName = trimTrailingSlash(dest.value)
+  if (!destName) return null
+  return { src: srcName, dest: destName, mode: contents ? 'contents' : 'entry' }
+}
+
+/**
  * 把一行命令分类成步骤:
- * - rsync/cp 兜底单行  → copy(源/目标/排除逐项还原)
+ * - rsync/cp 兜底单行  → copy(高级复制;源/目标/排除逐项还原)
+ * - 两参数 `cp` 单行   → copy(复制;原样发 cp,不升级成 rsync 骨架)
  * - `export K=V`  → env(值反转义)
  * - `cd DIR`      → workDir(DIR 反转义)
  * - 其它          → command(原样,有损归类不丢内容)
@@ -362,6 +466,17 @@ export function lineToStep(line: string): StepBlock {
       copyExcludes: copy.excludes.join(' '),
       // contents 是缺省值,不写进对象(老配置读出的步骤形状保持不变)。
       ...(copy.mode === 'entry' ? { copyMode: 'entry' as const } : {}),
+    }
+  }
+  const plain = parsePlainCpLine(trimmed)
+  if (plain) {
+    return {
+      id: nextStepId(),
+      kind: 'copy',
+      copyStyle: 'plain',
+      copySrc: plain.src,
+      copyDest: plain.dest,
+      ...(plain.mode === 'entry' ? { copyMode: 'entry' as const } : {}),
     }
   }
   const cond = COND_LINE.exec(trimmed)
@@ -409,4 +524,14 @@ export const STEP_KIND_META: Record<StepKind, { label: string; accent: string }>
   workDir: { get label() { return t('pipelineJob.stepWorkDirLabel') }, accent: 'amber' },
   copy: { get label() { return t('pipelineJob.stepCopyLabel') }, accent: 'green' },
   condition: { get label() { return t('pipelineJob.stepConditionLabel') }, accent: 'red' },
+}
+
+/** 复制步骤按写法分两类标签:plain=「复制」(一行 cp),advanced=「高级复制」(rsync 骨架,老配置缺省)。 */
+export function copyStyleLabel(style: CopyStyle | undefined): string {
+  return style === 'plain' ? t('pipelineJob.stepCopyPlainLabel') : t('pipelineJob.stepCopyLabel')
+}
+
+/** 卡片标题的类型标签:复制按写法取,其余走 STEP_KIND_META。 */
+export function stepKindLabel(step: StepBlock): string {
+  return step.kind === 'copy' ? copyStyleLabel(step.copyStyle) : STEP_KIND_META[step.kind].label
 }

@@ -7,6 +7,7 @@ import {
   compileSteps,
   conditionGuardLine,
   copyStepLine,
+  plainCopyLine,
   splitExcludes,
   lineToStep,
   parseSteps,
@@ -346,6 +347,88 @@ describe('stepCompile', () => {
         expect(line).toContain("cp -a '.' 'out/'")
         expect(lineToStep(line).copyMode).toBe('entry')
       })
+    })
+  })
+
+  describe('复制 step (plain cp:一行 cp,不升级成 rsync 骨架)', () => {
+    it('编译成一行 cp:目标先 mkdir,源带 /. 是复制内容', () => {
+      expect(plainCopyLine('frontend/dist', 'build/out')).toBe(
+        "mkdir -p 'build/out/' && cp -a 'frontend/dist/.' 'build/out/'",
+      )
+      expect(plainCopyLine('frontend/dist', 'build/out', 'entry')).toBe(
+        "mkdir -p 'build/out/' && cp -a 'frontend/dist' 'build/out/'",
+      )
+      expect(plainCopyLine('src', 'out').includes('\n')).toBe(false)
+      expect(plainCopyLine('src', 'out')).not.toContain('rsync')
+    })
+
+    it('copyStyle=plain 时只发 cp,排除项不参与编译(cp 不吃,卡片里也没那一格)', () => {
+      const [line] = stepToCommandLines(
+        step({ kind: 'copy', copyStyle: 'plain', copySrc: 'src', copyDest: 'out', copyExcludes: 'node_modules' }),
+      )
+      expect(line).toBe("mkdir -p 'out/' && cp -a 'src/.' 'out/'")
+      expect(line).not.toContain('--exclude')
+      expect(line).not.toContain('node_modules')
+    })
+
+    it('认手写的两参数 cp:裸路径、无 mkdir 前缀也算,源不带 /. 读成 entry', () => {
+      const back = lineToStep('cp -a frontend/dist build/out')
+      expect(back.kind).toBe('copy')
+      expect(back.copyStyle).toBe('plain')
+      expect(back.copySrc).toBe('frontend/dist')
+      expect(back.copyDest).toBe('build/out')
+      expect(back.copyMode).toBe('entry')
+    })
+
+    it('认带 mkdir 前缀 + 引号的写法,源以 /. 结尾读成 contents', () => {
+      const back = lineToStep("mkdir -p 'out/' && cp -a 'frontend/dist/.' 'out/'")
+      expect(back.kind).toBe('copy')
+      expect(back.copyStyle).toBe('plain')
+      expect(back.copySrc).toBe('frontend/dist')
+      expect(back.copyDest).toBe('out')
+      expect('copyMode' in back).toBe(false)
+      expect('copyExcludes' in back).toBe(false)
+    })
+
+    it('-R / -r 也认,回写统一成 -a(递归 + 保留属性,是它们的超集)', () => {
+      for (const flag of ['-R', '-r']) {
+        const back = lineToStep(`cp ${flag} app.jar out`)
+        expect(back.copyStyle).toBe('plain')
+        const [line] = stepToCommandLines(back)
+        expect(line).toBe("mkdir -p 'out/' && cp -a 'app.jar' 'out/'")
+      }
+    })
+
+    it('生成的 plain 行原样 round-trip,不会被改写回 rsync 骨架', () => {
+      for (const mode of ['contents', 'entry'] as const) {
+        const line = plainCopyLine("it's/a dir", "o'ut", mode)
+        const back = lineToStep(line)
+        expect(back.copySrc).toBe("it's/a dir")
+        expect(back.copyDest).toBe("o'ut")
+        expect(compileSteps([back]).commands).toBe(line)
+      }
+    })
+
+    it('不像「两参数复制」的 cp 行一律留作运行命令,一个字不改', () => {
+      const notCopy = [
+        'cp -av src out', // 多一个旗标
+        'cp src out', // 没旗标,语义不确定
+        'cp -r src/* out', // 通配
+        'cp -a "$SRC" out', // 变量
+        'cp -a src out && echo done', // 后面还有一句
+        'cp -a src out extra', // 三个参数
+        'sudo cp -a src out', // 前面有东西
+        'mkdir -p other && cp -a src out', // mkdir 的目标与 cp 的目标不同
+        "rsync -a 'src/' 'out/'", // 不是 cp
+      ]
+      for (const line of notCopy) expect(lineToStep(line).kind).toBe('command')
+    })
+
+    it('高级复制的老行仍读成 advanced(不带 copyStyle),两种写法互不干扰', () => {
+      const back = lineToStep(copyStepLine('src', 'out', []))
+      expect(back.kind).toBe('copy')
+      expect('copyStyle' in back).toBe(false)
+      expect(compileSteps([back]).commands).toBe(copyStepLine('src', 'out', []))
     })
   })
 

@@ -10,13 +10,16 @@
  * 「步骤」那部分,把 commands 这一个键回传。产物目录是节点的固定属性(档位=产物时表单里
  * 始终有这一格),不在「加步骤」里。
  */
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   type StepBlock,
   type StepKind,
   type CopyMode,
+  type CopyStyle,
   STEP_KIND_META,
+  copyStyleLabel,
+  stepKindLabel,
   nextStepId,
   parseSteps,
   compileSteps,
@@ -35,7 +38,7 @@ const props = defineProps<{
   language?: string
   /**
    * 该节点实际用的镜像串(父级按 buildEnvId → 目录解析好再传进来)。
-   * 「复制文件」的排除项只有镜像装了 rsync 才生效,而这一格说了算。
+   * 「高级复制」的排除项只有镜像装了 rsync 才生效,而这一格说了算;「复制」是一行 cp,不看它。
    */
   image?: string
 }>()
@@ -48,14 +51,20 @@ const emit = defineEmits<{
 const steps = ref<StepBlock[]>([])
 
 /**
- * 「复制文件」能不能排除,只看镜像里装没装 rsync。编辑态问不了实时(要拉镜像 + `docker run`,
+ * 「高级复制」能不能排除,只看镜像里装没装 rsync。编辑态问不了实时(要拉镜像 + `docker run`,
  * 还只有本机 daemon 准),所以只认那份实测清单:内置目录里的镜像给确定答案,目录外一律
  * 说「运行时决定」—— 绝不替用户猜一个没测过的镜像里有什么。
  */
 const rsyncState = computed(() => rsyncSupportFor(props.image))
 
-/** 「复制文件」提示随复制方式变:内容模式与「文件夹本身」模式说的是两回事。 */
+/** 复制卡片的提示分两套:「复制」是一行 cp、没有排除;「高级复制」讲 rsync 在不在。再按复制方式细分。 */
 function copyHintText(step: StepBlock): string {
+  // 一行 cp 的「复制」不碰 rsync,排除项没有落点 → 说的是另一套话。
+  if ((step.copyStyle ?? 'advanced') === 'plain') {
+    return step.copyMode === 'entry'
+      ? t('pipelineJob.sbCopyPlainHintEntry')
+      : t('pipelineJob.sbCopyPlainHint')
+  }
   const image = (props.image ?? '').trim()
   if (step.copyMode === 'entry') {
     return rsyncState.value === 'no'
@@ -89,8 +98,8 @@ watch(
   { immediate: true },
 )
 
-function blank(kind: StepKind): StepBlock {
-  return { id: nextStepId(), kind }
+function blank(kind: StepKind, copyStyle?: CopyStyle): StepBlock {
+  return { id: nextStepId(), kind, ...(copyStyle ? { copyStyle } : {}) }
 }
 
 /** 编译当前步骤并回传给父级落库。 */
@@ -100,20 +109,93 @@ function flush(): void {
 
 // ─── 增删步骤 ──────────────────────────────────────────────────────────────────
 
+/**
+ * 可插入/追加的步骤类型。复制占两项:「复制」(一行 cp,识别用户手写的 cp,也照那样写回)
+ * 和「高级复制」(rsync 优先 + cp 兜底,支持排除项,老配置的唯一形态)。
+ * `key` 只为 CSS 类名与 v-for key 服务(同一 kind 两条)。
+ */
+interface StepOption {
+  key: string
+  kind: StepKind
+  copyStyle?: CopyStyle
+  label: string
+  desc: string
+}
+
 const addMenuOpen = ref(false)
 
-const addOptions = computed<ReadonlyArray<{ kind: StepKind; label: string; desc: string }>>(() => [
-  { kind: 'command', label: STEP_KIND_META.command.label, desc: t('pipelineJob.sbAddCommandDesc') },
-  { kind: 'env', label: STEP_KIND_META.env.label, desc: t('pipelineJob.sbAddEnvDesc') },
-  { kind: 'workDir', label: STEP_KIND_META.workDir.label, desc: t('pipelineJob.sbAddWorkDirDesc') },
-  { kind: 'copy', label: STEP_KIND_META.copy.label, desc: t('pipelineJob.sbAddCopyDesc') },
-  { kind: 'condition', label: STEP_KIND_META.condition.label, desc: t('pipelineJob.sbAddConditionDesc') },
+const addOptions = computed<ReadonlyArray<StepOption>>(() => [
+  { key: 'command', kind: 'command', label: STEP_KIND_META.command.label, desc: t('pipelineJob.sbAddCommandDesc') },
+  { key: 'env', kind: 'env', label: STEP_KIND_META.env.label, desc: t('pipelineJob.sbAddEnvDesc') },
+  { key: 'workDir', kind: 'workDir', label: STEP_KIND_META.workDir.label, desc: t('pipelineJob.sbAddWorkDirDesc') },
+  {
+    key: 'copyPlain',
+    kind: 'copy',
+    copyStyle: 'plain',
+    label: copyStyleLabel('plain'),
+    desc: t('pipelineJob.sbAddCopyPlainDesc'),
+  },
+  {
+    key: 'copyAdvanced',
+    kind: 'copy',
+    copyStyle: 'advanced',
+    label: copyStyleLabel('advanced'),
+    desc: t('pipelineJob.sbAddCopyDesc'),
+  },
+  { key: 'condition', kind: 'condition', label: STEP_KIND_META.condition.label, desc: t('pipelineJob.sbAddConditionDesc') },
 ])
 
-function addStep(kind: StepKind): void {
-  steps.value = [...steps.value, blank(kind)]
+function addStep(opt: StepOption): void {
+  steps.value = [...steps.value, blank(opt.kind, opt.copyStyle)]
   addMenuOpen.value = false
   flush()
+}
+
+/**
+ * 步骤之间(含最前面)的「+」:点开是一张和「加步骤」同样的类型菜单,选完就地插入并聚焦
+ * 它的第一个输入 —— 省掉「先加到末尾再拖到中间」。
+ * 新步骤是空的,编译成空串,所以 flush 回传的 commands 和点开之前一模一样:父级把同一份
+ * config 透传回来时会被自激守卫跳过,不会把这个还没填的空步骤反解析丢掉。
+ */
+const insertMenuIndex = ref<number | null>(null)
+
+function toggleInsertMenu(index: number): void {
+  insertMenuIndex.value = insertMenuIndex.value === index ? null : index
+}
+
+function insertFromMenu(index: number, opt: StepOption): void {
+  const step = blank(opt.kind, opt.copyStyle)
+  const arr = [...steps.value]
+  arr.splice(index, 0, step)
+  steps.value = arr
+  insertMenuIndex.value = null
+  flush()
+  focusFirstField(step.id)
+}
+
+/**
+ * 每种步骤的第一个输入按 step.id 登记(命令 textarea / env 的键 / 目录 / 复制的源 / 条件)。
+ * 插入后要把焦点交给它,得等这一步真的渲染出来。
+ */
+const firstFieldEls = new Map<string, HTMLElement>()
+
+function registerFirstField(id: string, el: Element | null): void {
+  if (el) firstFieldEls.set(id, el as HTMLElement)
+  else firstFieldEls.delete(id)
+}
+
+function focusFirstField(id: string): void {
+  void nextTick(() => {
+    const el = firstFieldEls.get(id)
+    if (el && el !== document.activeElement) el.focus()
+  })
+}
+
+/** 分隔条在卡片上方,所以第 0 条说「最前面」,其余按「第 N 步之后」报它插在哪。 */
+function insertAria(index: number): string {
+  return index === 0
+    ? t('pipelineJob.sbInsertTopAria')
+    : t('pipelineJob.sbInsertAfterAria', { n: index })
 }
 
 function removeStep(id: string): void {
@@ -134,6 +216,12 @@ function patchStep(id: string, patch: Partial<StepBlock>): void {
 /** 切换复制方式:立刻回传(下拉选择没有 blur 可等)。contents 是缺省值,写回对象也无妨。 */
 function setCopyMode(step: StepBlock, mode: CopyMode): void {
   patchStep(step.id, { copyMode: mode })
+  flush()
+}
+
+/** 切换复制写法:「复制」(一行 cp)↔「高级复制」(rsync 骨架)。切回 cp 要清掉排除项 —— cp 不吃,留着等于骗用户。 */
+function setCopyStyle(step: StepBlock, style: CopyStyle): void {
+  patchStep(step.id, style === 'plain' ? { copyStyle: style, copyExcludes: '' } : { copyStyle: style })
   flush()
 }
 
@@ -192,171 +280,261 @@ const stepCount = computed(() => steps.value.length)
     <CommandTemplateChips :language="props.language" @pick="appendTemplate" />
 
     <ol class="sb-list">
-      <li
-        v-for="(step, index) in steps"
-        :key="step.id"
-        class="sb-step"
-        :class="[
-          `sb-step--${step.kind}`,
-          { 'sb-step--dragging': dragIndex === index, 'sb-step--over': overIndex === index && dragIndex !== index },
-        ]"
-        draggable="true"
-        @dragstart="onDragStart(index)"
-        @dragover="onDragOver(index, $event)"
-        @drop="onDrop(index)"
-        @dragend="onDragEnd"
-      >
-        <div class="sb-step-bar">
-          <span class="sb-grip" aria-hidden="true" :title="t('pipelineJob.sbDragSort')">
-            <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
-              <circle cx="2.5" cy="2" r="1.3" /><circle cx="7.5" cy="2" r="1.3" />
-              <circle cx="2.5" cy="7" r="1.3" /><circle cx="7.5" cy="7" r="1.3" />
-              <circle cx="2.5" cy="12" r="1.3" /><circle cx="7.5" cy="12" r="1.3" />
-            </svg>
-          </span>
-          <span class="sb-kind">{{ STEP_KIND_META[step.kind].label }}</span>
-          <span class="sb-order">{{ index + 1 }}</span>
-          <span class="sb-step-actions">
+      <template v-for="(step, index) in steps" :key="step.id">
+        <!-- 每条卡片上方的分隔条 = 插到这一步之前;最后一条卡片下面另有收尾条。
+             平时不占空间也不显形,悬停在相邻卡片上(或键盘走到那里)才浮出来。 -->
+        <li class="sb-insert" :class="{ 'sb-insert--open': insertMenuIndex === index }">
+          <button
+            class="sb-insert-btn"
+            :aria-label="insertAria(index)"
+            :title="insertAria(index)"
+            aria-haspopup="menu"
+            :aria-expanded="insertMenuIndex === index"
+            @click="toggleInsertMenu(index)"
+          >
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            <span class="sb-insert-label">{{ t('pipelineJob.sbInsertLabel') }}</span>
+          </button>
+          <div
+            v-if="insertMenuIndex === index"
+            class="sb-insert-menu"
+            role="menu"
+            :aria-label="t('pipelineJob.sbInsertMenuLabel')"
+          >
             <button
-              class="sb-move"
-              :disabled="index === 0"
-              :aria-label="t('pipelineJob.sbMoveUp', { n: index + 1 })"
-              @click="move(index, -1)"
+              v-for="opt in addOptions"
+              :key="opt.key"
+              class="sb-add-item"
+              :class="`sb-add-item--${opt.key}`"
+              role="menuitem"
+              @click="insertFromMenu(index, opt)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
+              <span class="sb-add-dot" aria-hidden="true"></span>
+              <span class="sb-add-body">
+                <span class="sb-add-name">{{ opt.label }}</span>
+                <span class="sb-add-desc">{{ opt.desc }}</span>
+              </span>
             </button>
-            <button
-              class="sb-move"
-              :disabled="index === steps.length - 1"
-              :aria-label="t('pipelineJob.sbMoveDown', { n: index + 1 })"
-              @click="move(index, 1)"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-            </button>
-            <button
-              class="sb-del"
-              :aria-label="t('pipelineJob.sbDelStep', { n: index + 1 })"
-              @click="removeStep(step.id)"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          </span>
-        </div>
-
-        <!-- 运行命令 -->
-        <textarea
-          v-if="step.kind === 'command'"
-          :value="step.command ?? ''"
-          class="sb-input sb-textarea is-mono"
-          rows="2"
-          placeholder="npm ci&#10;npm run build"
-          :aria-label="t('pipelineJob.sbCommandAria', { n: index + 1 })"
-          @input="patchStep(step.id, { command: ($event.target as HTMLTextAreaElement).value })"
-          @blur="flush"
-        ></textarea>
-
-        <!-- 设环境变量 -->
-        <div v-else-if="step.kind === 'env'" class="sb-env">
-          <input
-            :value="step.envKey ?? ''"
-            class="sb-input is-mono"
-            type="text"
-            placeholder="KEY"
-            :aria-label="t('pipelineJob.sbEnvKeyAria', { n: index + 1 })"
-            @input="patchStep(step.id, { envKey: ($event.target as HTMLInputElement).value })"
-            @blur="flush"
-          />
-          <span class="sb-eq" aria-hidden="true">=</span>
-          <input
-            :value="step.envValue ?? ''"
-            class="sb-input is-mono"
-            type="text"
-            placeholder="value"
-            :aria-label="t('pipelineJob.sbEnvValueAria', { n: index + 1 })"
-            @input="patchStep(step.id, { envValue: ($event.target as HTMLInputElement).value })"
-            @blur="flush"
-          />
-        </div>
-
-        <!-- 切目录 -->
-        <input
-          v-else-if="step.kind === 'workDir'"
-          :value="step.dir ?? ''"
-          class="sb-input is-mono"
-          type="text"
-          placeholder="frontend"
-          :aria-label="t('pipelineJob.sbDirAria', { n: index + 1 })"
-          @input="patchStep(step.id, { dir: ($event.target as HTMLInputElement).value })"
-          @blur="flush"
-        />
-
-        <!-- 复制文件:源 → 目标目录,rsync 优先(能排除),没装则 cp 兜底 -->
-        <div v-else-if="step.kind === 'copy'" class="sb-copy">
-          <!-- 复制方式:老语义是「复制目录内容」;需要在目标里保留同名文件夹/复制单个文件时切到「本身」。 -->
-          <div class="sb-copy-mode">
-            <span class="sb-copy-mode-label">{{ t('pipelineJob.sbCopyModeLabel') }}</span>
-            <select
-              class="sb-input sb-select"
-              :value="step.copyMode ?? 'contents'"
-              :aria-label="t('pipelineJob.sbCopyModeAria', { n: index + 1 })"
-              @change="setCopyMode(step, ($event.target as HTMLSelectElement).value as CopyMode)"
-            >
-              <option value="contents">{{ t('pipelineJob.sbCopyModeContents') }}</option>
-              <option value="entry">{{ t('pipelineJob.sbCopyModeEntry') }}</option>
-            </select>
           </div>
-          <div class="sb-copy-path">
+        </li>
+        <li
+          class="sb-step"
+          :class="[
+            `sb-step--${step.kind}`,
+            { 'sb-step--dragging': dragIndex === index, 'sb-step--over': overIndex === index && dragIndex !== index },
+          ]"
+          draggable="true"
+          @dragstart="onDragStart(index)"
+          @dragover="onDragOver(index, $event)"
+          @drop="onDrop(index)"
+          @dragend="onDragEnd"
+        >
+          <div class="sb-step-bar">
+            <span class="sb-grip" aria-hidden="true" :title="t('pipelineJob.sbDragSort')">
+              <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                <circle cx="2.5" cy="2" r="1.3" /><circle cx="7.5" cy="2" r="1.3" />
+                <circle cx="2.5" cy="7" r="1.3" /><circle cx="7.5" cy="7" r="1.3" />
+                <circle cx="2.5" cy="12" r="1.3" /><circle cx="7.5" cy="12" r="1.3" />
+              </svg>
+            </span>
+            <span class="sb-kind">{{ stepKindLabel(step) }}</span>
+            <span class="sb-order">{{ index + 1 }}</span>
+            <span class="sb-step-actions">
+              <button
+                class="sb-move"
+                :disabled="index === 0"
+                :aria-label="t('pipelineJob.sbMoveUp', { n: index + 1 })"
+                @click="move(index, -1)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
+              </button>
+              <button
+                class="sb-move"
+                :disabled="index === steps.length - 1"
+                :aria-label="t('pipelineJob.sbMoveDown', { n: index + 1 })"
+                @click="move(index, 1)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+              </button>
+              <button
+                class="sb-del"
+                :aria-label="t('pipelineJob.sbDelStep', { n: index + 1 })"
+                @click="removeStep(step.id)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </span>
+          </div>
+
+          <!-- 运行命令 -->
+          <textarea
+            v-if="step.kind === 'command'"
+            :ref="(el) => registerFirstField(step.id, el as Element | null)"
+            :value="step.command ?? ''"
+            class="sb-input sb-textarea is-mono"
+            rows="2"
+            placeholder="npm ci&#10;npm run build"
+            :aria-label="t('pipelineJob.sbCommandAria', { n: index + 1 })"
+            @input="patchStep(step.id, { command: ($event.target as HTMLTextAreaElement).value })"
+            @blur="flush"
+          ></textarea>
+
+          <!-- 设环境变量 -->
+          <div v-else-if="step.kind === 'env'" class="sb-env">
             <input
-              :value="step.copySrc ?? ''"
+              :ref="(el) => registerFirstField(step.id, el as Element | null)"
+              :value="step.envKey ?? ''"
               class="sb-input is-mono"
               type="text"
-              placeholder="frontend/dist"
-              :aria-label="t('pipelineJob.sbCopySrcAria', { n: index + 1 })"
-              @input="patchStep(step.id, { copySrc: ($event.target as HTMLInputElement).value })"
+              placeholder="KEY"
+              :aria-label="t('pipelineJob.sbEnvKeyAria', { n: index + 1 })"
+              @input="patchStep(step.id, { envKey: ($event.target as HTMLInputElement).value })"
               @blur="flush"
             />
-            <span class="sb-arrow" aria-hidden="true">→</span>
+            <span class="sb-eq" aria-hidden="true">=</span>
             <input
-              :value="step.copyDest ?? ''"
+              :value="step.envValue ?? ''"
               class="sb-input is-mono"
               type="text"
-              placeholder="build/out"
-              :aria-label="t('pipelineJob.sbCopyDestAria', { n: index + 1 })"
-              @input="patchStep(step.id, { copyDest: ($event.target as HTMLInputElement).value })"
+              placeholder="value"
+              :aria-label="t('pipelineJob.sbEnvValueAria', { n: index + 1 })"
+              @input="patchStep(step.id, { envValue: ($event.target as HTMLInputElement).value })"
               @blur="flush"
             />
           </div>
-          <!-- 排除项独立成行,但光靠 placeholder 认不出它是干什么的,所以前面钉一个可见标签。 -->
-          <div class="sb-copy-excl">
-            <span class="sb-copy-excl-label">{{ t('pipelineJob.sbCopyExclLabel') }}</span>
-            <input
-              :value="step.copyExcludes ?? ''"
-              class="sb-input is-mono"
-              type="text"
-              placeholder="node_modules .git *.map"
-              :aria-label="t('pipelineJob.sbCopyExclAria', { n: index + 1 })"
-              @input="patchStep(step.id, { copyExcludes: ($event.target as HTMLInputElement).value })"
-              @blur="flush"
-            />
-          </div>
-          <p class="sb-copy-hint" :class="{ 'sb-copy-hint--warn': rsyncState === 'no' }">{{ copyHintText(step) }}</p>
-        </div>
 
-        <!-- 条件守卫 -->
-        <div v-else-if="step.kind === 'condition'" class="sb-cond">
+          <!-- 切目录 -->
           <input
-            :value="step.condition ?? ''"
+            v-else-if="step.kind === 'workDir'"
+            :ref="(el) => registerFirstField(step.id, el as Element | null)"
+            :value="step.dir ?? ''"
             class="sb-input is-mono"
             type="text"
-            placeholder='[ "$BRANCH" = "main" ]'
-            :aria-label="t('pipelineJob.sbCondAria', { n: index + 1 })"
-            @input="patchStep(step.id, { condition: ($event.target as HTMLInputElement).value })"
+            placeholder="frontend"
+            :aria-label="t('pipelineJob.sbDirAria', { n: index + 1 })"
+            @input="patchStep(step.id, { dir: ($event.target as HTMLInputElement).value })"
             @blur="flush"
           />
-          <p class="sb-cond-hint">
-            {{ t('pipelineJob.sbCondHintPre') }}<strong>{{ t('pipelineJob.sbCondHintStrong') }}</strong>{{ t('pipelineJob.sbCondHintPost') }}
-            <code>[ -f package.json ]</code>
-          </p>
+
+          <!-- 复制:写法(一行 cp / rsync 骨架)与复制方式(铺内容 / 连名一起拷)两格并排,再源 → 目标。 -->
+          <div v-else-if="step.kind === 'copy'" class="sb-copy">
+            <div class="sb-copy-modes">
+              <div class="sb-copy-mode">
+                <span class="sb-copy-mode-label">{{ t('pipelineJob.sbCopyStyleLabel') }}</span>
+                <select
+                  class="sb-input sb-select"
+                  :value="step.copyStyle ?? 'advanced'"
+                  :aria-label="t('pipelineJob.sbCopyStyleAria', { n: index + 1 })"
+                  @change="setCopyStyle(step, ($event.target as HTMLSelectElement).value as CopyStyle)"
+                >
+                  <option value="plain">{{ copyStyleLabel('plain') }}</option>
+                  <option value="advanced">{{ copyStyleLabel('advanced') }}</option>
+                </select>
+              </div>
+              <div class="sb-copy-mode">
+                <span class="sb-copy-mode-label">{{ t('pipelineJob.sbCopyModeLabel') }}</span>
+                <select
+                  class="sb-input sb-select"
+                  :value="step.copyMode ?? 'contents'"
+                  :aria-label="t('pipelineJob.sbCopyModeAria', { n: index + 1 })"
+                  @change="setCopyMode(step, ($event.target as HTMLSelectElement).value as CopyMode)"
+                >
+                  <option value="contents">{{ t('pipelineJob.sbCopyModeContents') }}</option>
+                  <option value="entry">{{ t('pipelineJob.sbCopyModeEntry') }}</option>
+                </select>
+              </div>
+            </div>
+            <div class="sb-copy-path">
+              <input
+                :ref="(el) => registerFirstField(step.id, el as Element | null)"
+                :value="step.copySrc ?? ''"
+                class="sb-input is-mono"
+                type="text"
+                placeholder="frontend/dist"
+                :aria-label="t('pipelineJob.sbCopySrcAria', { n: index + 1 })"
+                @input="patchStep(step.id, { copySrc: ($event.target as HTMLInputElement).value })"
+                @blur="flush"
+              />
+              <span class="sb-arrow" aria-hidden="true">→</span>
+              <input
+                :value="step.copyDest ?? ''"
+                class="sb-input is-mono"
+                type="text"
+                placeholder="build/out"
+                :aria-label="t('pipelineJob.sbCopyDestAria', { n: index + 1 })"
+                @input="patchStep(step.id, { copyDest: ($event.target as HTMLInputElement).value })"
+                @blur="flush"
+              />
+            </div>
+            <!-- 排除项独立成行,但光靠 placeholder 认不出它是干什么的,所以前面钉一个可见标签。
+                 只有「高级复制」有这一格:cp 没有排除选项,给「复制」留着这格等于骗人。 -->
+            <div v-if="(step.copyStyle ?? 'advanced') !== 'plain'" class="sb-copy-excl">
+              <span class="sb-copy-excl-label">{{ t('pipelineJob.sbCopyExclLabel') }}</span>
+              <input
+                :value="step.copyExcludes ?? ''"
+                class="sb-input is-mono"
+                type="text"
+                placeholder="node_modules .git *.map"
+                :aria-label="t('pipelineJob.sbCopyExclAria', { n: index + 1 })"
+                @input="patchStep(step.id, { copyExcludes: ($event.target as HTMLInputElement).value })"
+                @blur="flush"
+              />
+            </div>
+            <p class="sb-copy-hint" :class="{ 'sb-copy-hint--warn': rsyncState === 'no' && (step.copyStyle ?? 'advanced') !== 'plain' }">{{ copyHintText(step) }}</p>
+          </div>
+
+          <!-- 条件守卫 -->
+          <div v-else-if="step.kind === 'condition'" class="sb-cond">
+            <input
+              :ref="(el) => registerFirstField(step.id, el as Element | null)"
+              :value="step.condition ?? ''"
+              class="sb-input is-mono"
+              type="text"
+              placeholder='[ "$BRANCH" = "main" ]'
+              :aria-label="t('pipelineJob.sbCondAria', { n: index + 1 })"
+              @input="patchStep(step.id, { condition: ($event.target as HTMLInputElement).value })"
+              @blur="flush"
+            />
+            <p class="sb-cond-hint">
+              {{ t('pipelineJob.sbCondHintPre') }}<strong>{{ t('pipelineJob.sbCondHintStrong') }}</strong>{{ t('pipelineJob.sbCondHintPost') }}
+              <code>[ -f package.json ]</code>
+            </p>
+          </div>
+        </li>
+      </template>
+      <!-- 收尾条:列表末尾的「+」,和每张卡片上方那条同一条语义(只是插到最后);菜单朝上开,不吃出抽屉。 -->
+      <li v-if="steps.length > 0" class="sb-insert sb-insert--tail" :class="{ 'sb-insert--open': insertMenuIndex === steps.length }">
+        <button
+          class="sb-insert-btn"
+          :aria-label="insertAria(steps.length)"
+          :title="insertAria(steps.length)"
+          aria-haspopup="menu"
+          :aria-expanded="insertMenuIndex === steps.length"
+          @click="toggleInsertMenu(steps.length)"
+        >
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          <span class="sb-insert-label">{{ t('pipelineJob.sbInsertLabel') }}</span>
+        </button>
+        <div
+          v-if="insertMenuIndex === steps.length"
+          class="sb-insert-menu"
+          role="menu"
+          :aria-label="t('pipelineJob.sbInsertMenuLabel')"
+        >
+          <button
+            v-for="opt in addOptions"
+            :key="opt.key"
+            class="sb-add-item"
+            :class="`sb-add-item--${opt.key}`"
+            role="menuitem"
+            @click="insertFromMenu(steps.length, opt)"
+          >
+            <span class="sb-add-dot" aria-hidden="true"></span>
+            <span class="sb-add-body">
+              <span class="sb-add-name">{{ opt.label }}</span>
+              <span class="sb-add-desc">{{ opt.desc }}</span>
+            </span>
+          </button>
         </div>
       </li>
     </ol>
@@ -376,11 +554,11 @@ const stepCount = computed(() => steps.value.length)
       <div v-if="addMenuOpen" class="sb-add-menu" role="menu">
         <button
           v-for="opt in addOptions"
-          :key="opt.kind"
+          :key="opt.key"
           class="sb-add-item"
-          :class="`sb-add-item--${opt.kind}`"
+          :class="`sb-add-item--${opt.key}`"
           role="menuitem"
-          @click="addStep(opt.kind)"
+          @click="addStep(opt)"
         >
           <span class="sb-add-dot" aria-hidden="true"></span>
           <span class="sb-add-body">
@@ -433,6 +611,8 @@ const stepCount = computed(() => steps.value.length)
   padding: 0;
   display: flex;
   flex-direction: column;
+  /* 8px 是卡片本来的间距:插入条盒子高度 0,一条缝隙 = 上下各一个 8px = 16px,
+     刚好等于 16px 的「+」芯片 —— 芯片只在悬停时显形,平时列表一点额外空间都不吃。 */
   gap: 8px;
 }
 
@@ -463,6 +643,76 @@ const stepCount = computed(() => steps.value.length)
   box-shadow: 0 0 0 2px var(--color-primary-soft);
   transform: translateY(1px);
 }
+
+/* 步骤之间的「+」分隔条:盒子高度 0(列表因此完全不因它变长),16px 的芯片居中骑在
+   16px 的缝隙上,刚好不压到卡片描边。芯片默认**不显形也不接受点击**,只有鼠标走到相邻
+   卡片(上/下各一条一起显形)、键盘 Tab 到那里、或它自己的类型菜单开着才浮现 ——
+   常显的话每条缝隙都是一枚按钮,列表会被噪音铺满。
+   z-index 必需:卡片是 position: relative,不抬一层的话芯片和菜单都会被卡片背景盖掉。 */
+.sb-insert {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 0;
+}
+
+/* 缝隙本身是一块透明的悬停区(16px 正好铺满缝隙,不吃进卡片)。没有它的话,鼠标从卡片
+   移向芯片的那一瞬间两边都不算 hover → 芯片隐身 → 永远点不到,来回抖动。 */
+.sb-insert::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 16px;
+}
+
+.sb-insert-btn {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-dim);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: color var(--duration-fast), border-color var(--duration-fast),
+    background var(--duration-fast), opacity var(--duration-fast);
+}
+
+/* 相邻卡片悬停/聚焦 → 这条缝隙上下的两个芯片一起显形(芯片自身也在 hover 路径里,
+   所以显形后可以直接点;`:has` 负责「鼠标在下方那张卡片上」这一半)。 */
+.sb-step:hover + .sb-insert .sb-insert-btn,
+.sb-step:focus-within + .sb-insert .sb-insert-btn,
+.sb-insert:has(+ .sb-step:hover) .sb-insert-btn,
+.sb-insert:has(+ .sb-step:focus-within) .sb-insert-btn,
+.sb-insert:hover .sb-insert-btn,
+/* 菜单开着时必须留住,否则鼠标一移进菜单(它已经不在卡片上了)整张面板就消失。 */
+.sb-insert--open .sb-insert-btn,
+.sb-insert-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sb-insert-btn:hover,
+.sb-insert-btn:focus-visible,
+.sb-insert--open .sb-insert-btn {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+/* 类型菜单的浮层几何见文件末尾(要排在 .sb-add-menu/.sb-insert-menu 共享外观规则之后)。 */
 
 .sb-step-bar {
   display: flex;
@@ -595,6 +845,17 @@ const stepCount = computed(() => steps.value.length)
   gap: 6px;
 }
 
+/* 「写法」和「复制方式」两个下拉并排:各占一半,窄了才换行,卡片不因此长高。 */
+.sb-copy-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sb-copy-modes .sb-copy-mode {
+  flex: 1 1 200px;
+}
+
 .sb-copy-path {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -724,7 +985,8 @@ const stepCount = computed(() => steps.value.length)
   outline-offset: 2px;
 }
 
-.sb-add-menu {
+.sb-add-menu,
+.sb-insert-menu {
   margin-top: 6px;
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -733,6 +995,22 @@ const stepCount = computed(() => steps.value.length)
   background: var(--color-inset);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--rounded);
+}
+
+/* 缝隙里的类型菜单:绝对浮层 —— 不吃列表高度,盖住相邻卡片(不透明 + 投影才看得出是浮上来的);
+   宽度贴着列表,不会被抽屉裁掉。收尾条那一条朝上开,免得盖住下面的「加步骤」。 */
+.sb-insert-menu {
+  position: absolute;
+  z-index: 3;
+  top: 4px;
+  left: 0;
+  right: 0;
+  box-shadow: var(--shadow);
+}
+
+.sb-insert--tail .sb-insert-menu {
+  top: auto;
+  bottom: 10px;
 }
 
 .sb-add-item {
@@ -761,7 +1039,8 @@ const stepCount = computed(() => steps.value.length)
 .sb-add-item--command { --item-accent: var(--color-primary); }
 .sb-add-item--env { --item-accent: var(--color-cyan); }
 .sb-add-item--workDir { --item-accent: var(--color-amber); }
-.sb-add-item--copy { --item-accent: var(--color-green); }
+.sb-add-item--copyPlain { --item-accent: var(--color-green); }
+.sb-add-item--copyAdvanced { --item-accent: var(--color-green); }
 .sb-add-item--condition { --item-accent: var(--color-red); }
 
 .sb-add-dot {
