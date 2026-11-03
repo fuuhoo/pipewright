@@ -1,6 +1,10 @@
 package httpapi
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 // 一段贴近真实 `docker inspect <name>` 的输出片段(JSON 数组,仅保留我们关心的字段 + 少量噪声字段)。
 const sampleInspectJSON = `[
@@ -95,6 +99,17 @@ func TestParseContainerInspect_SelectedFields(t *testing.T) {
 		t.Errorf("RestartPolicy = %q, 期望 unless-stopped", dto.RestartPolicy)
 	}
 
+	// 运行中且从没重启过:退出码 0、无 OOM、docker 的零时间被折成空串(前端不必认魔法年份)。
+	if dto.ExitCode != 0 || dto.OOMKilled || dto.RestartCount != 0 {
+		t.Errorf("上次退出字段不该有值: exit=%d oom=%v restarts=%d", dto.ExitCode, dto.OOMKilled, dto.RestartCount)
+	}
+	if dto.FinishedAt != "" || dto.StartedAt != "" || dto.StateError != "" {
+		t.Errorf("时间/错误应为空: finished=%q started=%q err=%q", dto.FinishedAt, dto.StartedAt, dto.StateError)
+	}
+	if dto.RestartMaxRetry != 0 {
+		t.Errorf("RestartMaxRetry = %d, 非 on-failure 策略下不该有值", dto.RestartMaxRetry)
+	}
+
 	// 环境变量原样保留(含密钥值 —— 后端不特殊处理,展示给已登录管理员)。
 	if len(dto.Env) != 3 {
 		t.Fatalf("Env 长度 = %d, 期望 3", len(dto.Env))
@@ -170,5 +185,118 @@ func TestParseContainerInspect_Errors(t *testing.T) {
 	}
 	if _, err := parseContainerInspect("not-json"); err == nil {
 		t.Errorf("非法 JSON 应返回错误")
+	}
+}
+
+// 崩溃重启的容器正在退避(restarting):这是「上次为什么死」的现场,四个字段都得原样递到前端。
+func TestParseContainerInspect_LastExitEvidence(t *testing.T) {
+	// 真实抓取:--memory=64m 下吃内存被杀,重启策略 always,退避期间 inspect 的形状。
+	raw := `[{"RestartCount":7,
+	  "State":{"Status":"restarting","Running":true,"OOMKilled":true,"ExitCode":137,
+	    "Error":"oom 了","StartedAt":"2026-11-02T13:07:29.886973246Z","FinishedAt":"2026-11-02T13:07:30.103425418Z"},
+	  "HostConfig":{"RestartPolicy":{"Name":"always","MaximumRetryCount":0}},
+	  "Config":{"Image":"ruby:3.3-alpine","Cmd":["ruby","-e","loop{}"]}}]`
+	dto, err := parseContainerInspect(raw)
+	if err != nil {
+		t.Fatalf("parseContainerInspect 失败: %v", err)
+	}
+	if dto.ExitCode != 137 {
+		t.Errorf("ExitCode = %d, 期望 137", dto.ExitCode)
+	}
+	if !dto.OOMKilled {
+		t.Errorf("OOMKilled = false, 期望 true")
+	}
+	if dto.StateError != "oom 了" {
+		t.Errorf("StateError = %q, 期望 'oom 了'", dto.StateError)
+	}
+	if dto.FinishedAt != "2026-11-02T13:07:30.103425418Z" {
+		t.Errorf("FinishedAt = %q", dto.FinishedAt)
+	}
+	if dto.StartedAt != "2026-11-02T13:07:29.886973246Z" {
+		t.Errorf("StartedAt = %q", dto.StartedAt)
+	}
+	if dto.RestartCount != 7 {
+		t.Errorf("RestartCount = %d, 期望 7", dto.RestartCount)
+	}
+}
+
+// 被重新拉起之后 docker 会抹掉死因现场:退出码归 0、OOM 标记归 false,但上次退出时刻与累计重启次数留着。
+// 前端正是靠这个组合来判断「正在跑,上次为什么死的已经查不到了」。
+func TestParseContainerInspect_RunningClearsEvidence(t *testing.T) {
+	raw := `[{"RestartCount":8,
+	  "State":{"Status":"running","Running":true,"OOMKilled":false,"ExitCode":0,"Error":"",
+	    "StartedAt":"2026-11-02T13:07:49.577385498Z","FinishedAt":"2026-11-02T13:07:36.734320485Z"}}]`
+	dto, err := parseContainerInspect(raw)
+	if err != nil {
+		t.Fatalf("parseContainerInspect 失败: %v", err)
+	}
+	if dto.ExitCode != 0 || dto.OOMKilled || dto.StateError != "" {
+		t.Errorf("运行中不该带死因: exit=%d oom=%v err=%q", dto.ExitCode, dto.OOMKilled, dto.StateError)
+	}
+	if dto.RestartCount != 8 {
+		t.Errorf("RestartCount = %d, 期望 8(docker 不会在重启后清零它)", dto.RestartCount)
+	}
+	if dto.FinishedAt != "2026-11-02T13:07:36.734320485Z" {
+		t.Errorf("FinishedAt = %q, 期望保留上次退出时刻", dto.FinishedAt)
+	}
+}
+
+// 最大重试次数只对 on-failure 有意义:其它策略下即便原始 JSON 里有残留值也归零,
+// 否则前端会把「不适用」渲染成「只重试 0 次」。
+func TestParseContainerInspect_MaxRetryOnlyForOnFailure(t *testing.T) {
+	onFailure := `[{"HostConfig":{"RestartPolicy":{"Name":"on-failure","MaximumRetryCount":5}},"State":{"Status":"exited","ExitCode":1}}]`
+	dto, err := parseContainerInspect(onFailure)
+	if err != nil {
+		t.Fatalf("parseContainerInspect 失败: %v", err)
+	}
+	if dto.RestartMaxRetry != 5 {
+		t.Errorf("RestartMaxRetry = %d, 期望 5", dto.RestartMaxRetry)
+	}
+	if dto.ExitCode != 1 {
+		t.Errorf("ExitCode = %d, 期望 1", dto.ExitCode)
+	}
+
+	always := `[{"HostConfig":{"RestartPolicy":{"Name":"always","MaximumRetryCount":5}},"State":{"Status":"running"}}]`
+	dto2, err := parseContainerInspect(always)
+	if err != nil {
+		t.Fatalf("parseContainerInspect 失败: %v", err)
+	}
+	if dto2.RestartMaxRetry != 0 {
+		t.Errorf("RestartMaxRetry = %d, always 策略下期望 0(不适用)", dto2.RestartMaxRetry)
+	}
+}
+
+// 从没启动过的容器:docker 用 0001-01-01 表示「没发生过」,映射后应是空串。
+func TestParseContainerInspect_ZeroTimes(t *testing.T) {
+	raw := `[{"State":{"Status":"created","StartedAt":"0001-01-01T00:00:00Z","FinishedAt":"0001-01-01T00:00:00Z"}}]`
+	dto, err := parseContainerInspect(raw)
+	if err != nil {
+		t.Fatalf("parseContainerInspect 失败: %v", err)
+	}
+	if dto.StartedAt != "" || dto.FinishedAt != "" {
+		t.Errorf("零时间应折成空串: started=%q finished=%q", dto.StartedAt, dto.FinishedAt)
+	}
+}
+
+// .State.Error 可能是一大段堆栈:截断只为展示,且按字切,不能把中文切成半个。
+func TestParseContainerInspect_StateErrorClipped(t *testing.T) {
+	long := strings.Repeat("崩", 600)
+	raw := `[{"State":{"Status":"exited","ExitCode":2,"Error":"` + long + `"}}]`
+	dto, err := parseContainerInspect(raw)
+	if err != nil {
+		t.Fatalf("parseContainerInspect 失败: %v", err)
+	}
+	r := []rune(dto.StateError)
+	if len(r) != 513 {
+		t.Fatalf("StateError 长度 = %d, 期望 512 字 + 省略号", len(r))
+	}
+	if string(r[:512]) != strings.Repeat("崩", 512) {
+		t.Errorf("前 512 字不该被改动")
+	}
+	if r[512] != '…' {
+		t.Errorf("结尾应是省略号, 实为 %q", string(r[512]))
+	}
+	if !utf8.ValidString(dto.StateError) {
+		t.Errorf("截断后出现非法 UTF-8")
 	}
 }

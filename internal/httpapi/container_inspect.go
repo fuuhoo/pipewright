@@ -23,6 +23,13 @@ import (
 //     绝不拼 shell 字符串。
 //   - inspect 失败 / 容器不存在 / 解析失败 → 200 + reachable:false + 人读 error,**不 500**。
 //   - env 值可能含密钥:展示给已登录管理员,但**绝不记日志**(本 handler 不打印任何 inspect 输出)。
+//
+// 「上次退出」字段的取值时机(本地 Docker 29.4 实测,决定了前端怎么解释这些数):
+//   - 容器处于 exited / restarting(退避等待下一次拉起)时,.State 完整保留死因:
+//     ExitCode(137/143/…)、OOMKilled、Error、FinishedAt。
+//   - 一旦被重新拉起进入 running,.ExitCode 归 0、.OOMKilled 归 false、.Error 清空 —— 死因现场被 docker 抹掉,
+//     但 .FinishedAt(上次退出时刻)与顶层 .RestartCount(累计重启次数)仍然留着。
+//   - 从没跑过的 created 容器:两个时间都是 0001-01-01(cleanInspectTime 折成空串),退出码 0,重启次数 0。
 
 // containerMountDTO 是单条挂载(精选 .Mounts 字段)。
 type containerMountDTO struct {
@@ -47,30 +54,49 @@ type containerPortDTO struct {
 }
 
 // containerInspectDTO 是响应体(冻结契约)。reachable=false 时仅 error 有意义。
+//
+// 「上次退出」一组(exitCode / oomKilled / stateError / startedAt / finishedAt / restartCount)
+// 是反复重启的容器唯一能拿到的死因证据 —— 容器一重启,上一世的日志就没了,但 docker 一直留着这些字段。
+// exitCode 与 restartCount 不带 omitempty:0 本身就是信息(正常退出 / 从没重启过)。
 type containerInspectDTO struct {
-	ServerID      string                `json:"serverId"`
-	ContainerID   string                `json:"containerId"`
-	Reachable     bool                  `json:"reachable"`
-	Error         string                `json:"error,omitempty"`
-	Image         string                `json:"image,omitempty"`
-	Command       string                `json:"command,omitempty"`
-	CreatedAt     string                `json:"createdAt,omitempty"`
-	State         string                `json:"state,omitempty"`
-	RestartPolicy string                `json:"restartPolicy,omitempty"`
-	Env           []string              `json:"env"`
-	Mounts        []containerMountDTO   `json:"mounts"`
-	Networks      []containerNetworkDTO `json:"networks"`
-	Ports         []containerPortDTO    `json:"ports"`
-	Labels        map[string]string     `json:"labels"`
+	ServerID      string `json:"serverId"`
+	ContainerID   string `json:"containerId"`
+	Reachable     bool   `json:"reachable"`
+	Error         string `json:"error,omitempty"`
+	Image         string `json:"image,omitempty"`
+	Command       string `json:"command,omitempty"`
+	CreatedAt     string `json:"createdAt,omitempty"`
+	State         string `json:"state,omitempty"`
+	RestartPolicy string `json:"restartPolicy,omitempty"`
+	ExitCode      int    `json:"exitCode"`
+	OOMKilled     bool   `json:"oomKilled"`
+	StateError    string `json:"stateError,omitempty"`
+	StartedAt     string `json:"startedAt,omitempty"`
+	FinishedAt    string `json:"finishedAt,omitempty"`
+	RestartCount  int    `json:"restartCount"`
+	// RestartMaxRetry 只在策略为 on-failure 时有意义(docker 只对这一种存最大次数);
+	// 0 = 不限次数,所以不能用 omitempty 把「不限」和「不适用」混为一谈。
+	RestartMaxRetry int                   `json:"restartMaxRetry"`
+	Env             []string              `json:"env"`
+	Mounts          []containerMountDTO   `json:"mounts"`
+	Networks        []containerNetworkDTO `json:"networks"`
+	Ports           []containerPortDTO    `json:"ports"`
+	Labels          map[string]string     `json:"labels"`
 }
 
 // dockerInspectRaw 仅声明我们关心的字段,映射 `docker inspect` 数组元素;其余字段被忽略。
 type dockerInspectRaw struct {
-	Created string   `json:"Created"`
-	Path    string   `json:"Path"`
-	Args    []string `json:"Args"`
-	State   struct {
-		Status string `json:"Status"`
+	Created      string   `json:"Created"`
+	RestartCount int      `json:"RestartCount"`
+	Path         string   `json:"Path"`
+	Args         []string `json:"Args"`
+	State        struct {
+		Status     string `json:"Status"`
+		ExitCode   int    `json:"ExitCode"`
+		OOMKilled  bool   `json:"OOMKilled"`
+		Err        string `json:"Error"`
+		StartedAt  string `json:"StartedAt"`
+		FinishedAt string `json:"FinishedAt"`
 	} `json:"State"`
 	Config struct {
 		Image  string            `json:"Image"`
@@ -80,7 +106,8 @@ type dockerInspectRaw struct {
 	} `json:"Config"`
 	HostConfig struct {
 		RestartPolicy struct {
-			Name string `json:"Name"`
+			Name              string `json:"Name"`
+			MaximumRetryCount int    `json:"MaximumRetryCount"`
 		} `json:"RestartPolicy"`
 	} `json:"HostConfig"`
 	Mounts []struct {
@@ -122,11 +149,22 @@ func mapContainerInspect(raw dockerInspectRaw) containerInspectDTO {
 		CreatedAt:     raw.Created,
 		State:         raw.State.Status,
 		RestartPolicy: raw.HostConfig.RestartPolicy.Name,
+		ExitCode:      raw.State.ExitCode,
+		OOMKilled:     raw.State.OOMKilled,
+		StateError:    clipInspectError(raw.State.Err),
+		StartedAt:     cleanInspectTime(raw.State.StartedAt),
+		FinishedAt:    cleanInspectTime(raw.State.FinishedAt),
+		RestartCount:  raw.RestartCount,
 		Env:           []string{},
 		Mounts:        []containerMountDTO{},
 		Networks:      []containerNetworkDTO{},
 		Ports:         []containerPortDTO{},
 		Labels:        map[string]string{},
+	}
+
+	// 只有 on-failure 会用到最大重试次数;其它策略下 docker 一律回 0,照抄会被读成「重试 0 次」。
+	if dto.RestartPolicy == "on-failure" {
+		dto.RestartMaxRetry = raw.HostConfig.RestartPolicy.MaximumRetryCount
 	}
 
 	if len(raw.Config.Env) > 0 {
@@ -181,6 +219,25 @@ func mapContainerInspect(raw dockerInspectRaw) containerInspectDTO {
 	}
 
 	return dto
+}
+
+// cleanInspectTime 把 docker 的「零时间」(0001-01-01T00:00:00Z,表示从未发生过)折成空串,
+// 前端就能用「有没有值」直接判断,不必自己认那个魔法年份。
+func cleanInspectTime(v string) string {
+	if strings.HasPrefix(strings.TrimSpace(v), "0001-01-01") {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+// clipInspectError 收起 .State.Error:它能长到一大段堆栈,展示只需要开头。
+// 按 rune 截(不是按字节),免得把中文切成半个字。
+func clipInspectError(v string) string {
+	r := []rune(strings.TrimSpace(v))
+	if len(r) <= 512 {
+		return string(r)
+	}
+	return string(r[:512]) + "…"
 }
 
 // inspectCommand 取容器命令的可读表示:优先 .Config.Cmd(空格拼接),否则回退 .Path + .Args。

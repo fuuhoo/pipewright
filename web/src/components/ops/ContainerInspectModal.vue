@@ -3,17 +3,22 @@
 
   挂载即拉 GET /api/servers/{id}/containers/{name}/inspect,分区展示容器精选元信息:
     · 基本信息(镜像 / 命令 / 状态 / 重启策略 / 创建时间)
+    · 上次退出(退出码 + 含义 / OOM 标记 / docker 侧错误 / 上次退出时刻 / 累计重启次数)
     · 环境变量(等宽字体列表 —— 值可能含密钥,仅展示给已登录管理员,不复制到剪贴板按钮)
     · 挂载 / 网络 / 端口 / 标签
+
+  「上次退出」只在容器至少死过一次时出现,规则见 lib/containerExit.ts:容器一被重新拉起,docker 就把
+  退出码/OOM 标记清零,所以崩溃重启时要趁状态是 restarting/exited 的那几秒点「重新读取」抢现场。
 
   优雅降级:加载中骨架;请求层失败(404/503 等)→ 错误条;后端 reachable:false(容器不存在/
   连接失败)→ 人读 error 条而非崩溃。scrim z-index 500(盖住主题切换按钮,与现有弹窗一致)。
 -->
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getContainerInspect, type ContainerInspect } from '../../api/containers'
 import { HttpError } from '../../api/http'
+import { exitMeaning, lastExitView } from '../../lib/containerExit'
 
 const props = defineProps<{
   serverId: string
@@ -22,7 +27,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const loading = ref(true)
 /** 请求层错误(网络/404/503 等);与后端 reachable:false 区分。 */
 const requestError = ref('')
@@ -41,6 +46,27 @@ async function load(): Promise<void> {
         : t('opsContainer.inspect.loadFailed')
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 「重新读取」只换详情,不整屏回到骨架 —— 崩溃重启的容器要趁它处于 restarting 的那几秒抓死因,
+ * 一屏骨架会让人不敢点。失败也只在这一栏下面说,已经看到的其它分区留着。
+ */
+const refreshing = ref(false)
+const refreshError = ref('')
+
+async function refresh(): Promise<void> {
+  if (refreshing.value) return
+  refreshing.value = true
+  refreshError.value = ''
+  try {
+    data.value = await getContainerInspect(props.serverId, props.containerName)
+  } catch (e) {
+    refreshError.value =
+      e instanceof HttpError ? e.message || t('opsContainer.inspect.reloadFailed') : t('opsContainer.inspect.reloadFailed')
+  } finally {
+    refreshing.value = false
   }
 }
 
@@ -64,6 +90,43 @@ function portLabel(p: ContainerInspect['ports'][number]): string {
     return `${host} → ${p.containerPort}`
   }
   return `${p.containerPort}${t('opsContainer.inspect.unpublished')}`
+}
+
+const exitView = computed(() => (data.value ? lastExitView(data.value) : 'none'))
+
+/** 退出码翻译:137+OOMKilled=内存超限、143=SIGTERM、128+n=信号、1..127=应用自己退出。 */
+const exitMeaningText = computed(() => {
+  if (!data.value) return ''
+  const m = exitMeaning(data.value.exitCode, data.value.oomKilled)
+  switch (m.key) {
+    case 'oom':
+      return t('opsContainer.inspect.exitOom')
+    case 'sigkill':
+      return t('opsContainer.inspect.exitSigkill')
+    case 'sigterm':
+      return t('opsContainer.inspect.exitSigterm')
+    case 'signal':
+      return t('opsContainer.inspect.exitSignal', { signal: m.signal })
+    case 'app':
+      return t('opsContainer.inspect.exitApp', { code: m.code })
+    default:
+      return t('opsContainer.inspect.exitNormal')
+  }
+})
+
+/** docker 给的 UTC 时间:按界面语言显示成本地时刻,原始串留在 title 里备查。 */
+function formatTime(iso?: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(locale.value, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 </script>
 
@@ -117,9 +180,61 @@ function portLabel(p: ContainerInspect['ports'][number]): string {
               </dd>
               <dt>{{ t('opsContainer.inspect.restartPolicy') }}</dt>
               <dd class="mono">{{ data.restartPolicy || '—' }}</dd>
+              <template v-if="data.restartPolicy === 'on-failure'">
+                <dt>{{ t('opsContainer.inspect.restartMaxRetry') }}</dt>
+                <dd class="mono">{{
+                  data.restartMaxRetry > 0 ? data.restartMaxRetry : t('opsContainer.inspect.maxRetryUnlimited')
+                }}</dd>
+              </template>
               <dt>{{ t('opsContainer.inspect.createdAt') }}</dt>
               <dd class="mono">{{ data.createdAt || '—' }}</dd>
             </dl>
+          </section>
+
+          <!-- 上次退出:反复重启的容器看不到旧日志,这一栏抢的是 docker 还没清零的那份现场 -->
+          <section v-if="data && exitView !== 'none'" class="ci-section">
+            <h4 class="ci-section-title">
+              {{ t('opsContainer.inspect.lastExit') }}
+              <button
+                type="button"
+                class="ci-reload"
+                :disabled="refreshing"
+                @click="refresh"
+              >
+                {{ refreshing ? t('opsContainer.inspect.reloading') : t('opsContainer.inspect.reload') }}
+              </button>
+            </h4>
+
+            <p v-if="exitView === 'cleared'" class="ci-note">
+              {{ t('opsContainer.inspect.exitClearedNote', { count: data.restartCount }) }}
+            </p>
+
+            <dl class="ci-kv">
+              <template v-if="exitView === 'evidence'">
+                <dt>{{ t('opsContainer.inspect.exitCode') }}</dt>
+                <dd class="mono">
+                  <span class="ci-exit-code">{{ data.exitCode }}</span>
+                  <span
+                    class="ci-exit-meaning"
+                    :class="data.exitCode === 0 ? 'ci-exit-meaning--ok' : 'ci-exit-meaning--bad'"
+                    >{{ exitMeaningText }}</span
+                  >
+                  <span v-if="data.oomKilled" class="ci-exit-oom">{{ t('opsContainer.inspect.oomBadge') }}</span>
+                </dd>
+              </template>
+              <template v-if="data.stateError">
+                <dt>{{ t('opsContainer.inspect.stateError') }}</dt>
+                <dd class="mono ci-error">{{ data.stateError }}</dd>
+              </template>
+              <dt>{{ t('opsContainer.inspect.finishedAt') }}</dt>
+              <dd class="mono" :title="data.finishedAt">{{ formatTime(data.finishedAt) }}</dd>
+              <dt>{{ t('opsContainer.inspect.startedAt') }}</dt>
+              <dd class="mono" :title="data.startedAt">{{ formatTime(data.startedAt) }}</dd>
+              <dt>{{ t('opsContainer.inspect.restartCount') }}</dt>
+              <dd class="mono">{{ data.restartCount }}</dd>
+            </dl>
+
+            <p v-if="refreshError" class="ci-banner ci-banner--error" role="alert">{{ refreshError }}</p>
           </section>
 
           <!-- 环境变量 -->
@@ -455,6 +570,92 @@ function portLabel(p: ContainerInspect['ports'][number]): string {
   padding: 8px 2px;
   font-size: 13px;
   color: var(--color-text-muted, #9ca3af);
+}
+
+/* ─── 上次退出 ────────────────────────────────────────────────────────────── */
+.ci-reload {
+  margin-left: auto;
+  padding: 2px 9px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-muted, #6b7280);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.ci-reload:hover:not(:disabled) {
+  background: var(--color-inset, #f3f4f6);
+  color: var(--color-text, #111827);
+}
+
+.ci-reload:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ci-reload:focus-visible {
+  outline: 2px solid var(--color-accent, #4f46e5);
+  outline-offset: 1px;
+}
+
+.ci-note {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-amber-line, #fcd34d);
+  background: var(--color-amber-soft, #fffbeb);
+  color: var(--color-warn, #92400e);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.ci-exit-code {
+  display: inline-block;
+  min-width: 34px;
+  font-weight: 650;
+  color: var(--color-text, #111827);
+}
+
+.ci-exit-meaning {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ci-exit-meaning--bad {
+  background: var(--color-red-soft, #fee2e2);
+  color: var(--color-red, #b91c1c);
+}
+
+.ci-exit-meaning--ok {
+  background: var(--color-green-soft, #dcfce7);
+  color: var(--color-green, #15803d);
+}
+
+.ci-exit-oom {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--color-red-line, #fecaca);
+  border-radius: 5px;
+  background: var(--color-red-soft, #fee2e2);
+  color: var(--color-red, #b91c1c);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.ci-error {
+  color: var(--color-red, #b91c1c);
+  white-space: pre-wrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

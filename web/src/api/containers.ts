@@ -456,6 +456,21 @@ export interface ContainerInspect {
   createdAt?: string
   state?: string
   restartPolicy?: string
+  /**
+   * 上一次退出的现场。注意 docker 的脾气:容器一被重新拉起,exitCode 归 0、oomKilled 归 false、
+   * stateError 清空,只有 finishedAt / restartCount 留着(实测见 lib/containerExit.ts)。
+   */
+  exitCode: number
+  oomKilled: boolean
+  stateError?: string
+  /** 本次启动时刻(空 = 从没启动过)。 */
+  startedAt?: string
+  /** 上一次退出时刻(空 = 从没退出过;运行中时这一栏仍然保留)。 */
+  finishedAt?: string
+  /** 自动重启累计次数,重启后不会被清零。 */
+  restartCount: number
+  /** 仅 restartPolicy=on-failure 有意义;0 = 不限次数。其它策略下恒为 0,不要用。 */
+  restartMaxRetry: number
   env: string[]
   mounts: ContainerMount[]
   networks: ContainerNetwork[]
