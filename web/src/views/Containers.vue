@@ -8,6 +8,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { streamAllContainers, type ServerContainers, type ContainerInfo } from '../api/containers'
+import { getServerViewPrefs, putServerViewPrefs } from '../api/account'
 import { listServers, serviceAction, type Server, type ServiceAction } from '../api/servers'
 import { listGroups, type Group } from '../api/groups'
 import { GROUP_ALL, groupLabel, groupOptions, matchesGroup } from '../lib/groupFilter'
@@ -31,6 +32,13 @@ import {
   preferredFirst,
   type ServerScope,
 } from '../lib/containerScope'
+import {
+  moveHostId,
+  rankHosts,
+  togglePinned,
+  type DropEdge,
+  type HostPrefs,
+} from '../lib/serverViewOrder'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import AppButton from '../components/ui/AppButton.vue'
@@ -96,14 +104,93 @@ function hostGroupTag(serverId: string): string {
 
 const POLL_MS = 60_000
 let timer: ReturnType<typeof setInterval> | null = null
+/** 偏好是「点完就算」的写,合并着发:连点三张图钉不该打三个 PUT。 */
+const PREFS_SAVE_DEBOUNCE_MS = 350
+let prefsTimer: ReturnType<typeof setTimeout> | null = null
+
+// ─── 我的顺序(置顶 + 拖动)──────────────────────────────────────────────────
+// 每个人一份,存在 /api/account/server-view:这是界面习惯,不是机器属性,所以既不参与
+// 权限判定,也不该做成所有人都跟着动的全局字段。取不到就当没设置过 —— 排序坏不能连累数据。
+const hostPrefs = ref<HostPrefs>({ pinned: [], order: [] })
+/** 拖出来的手动顺序(置顶不算):有它才有「恢复默认排序」可点。 */
+const hasHostOrder = computed(() => hostPrefs.value.order.length > 0)
+
+async function loadHostPrefs(): Promise<void> {
+  try {
+    hostPrefs.value = await getServerViewPrefs()
+  } catch {
+    // 安静回落默认排序,不弹错:这一屏的主角是容器,进页面先报一句「偏好没读到」是噪音。
+  }
+}
+
+/**
+ * 保存 = 整份覆盖(PUT),合并着写:连点几张图钉不该发五个请求。
+ * 不回读后端那一份 —— 发出去的就是界面本意,让在飞的那次覆盖掉更新的点击反而是倒退。
+ */
+async function flushPrefs(): Promise<void> {
+  prefsTimer = null
+  try {
+    await putServerViewPrefs({ pinned: [...hostPrefs.value.pinned], order: [...hostPrefs.value.order] })
+  } catch (err) {
+    toast.error(t('containers.prefsSaveFailed'), { detail: humanizeLoadError(err) })
+  }
+}
+
+function persistPrefs(): void {
+  if (prefsTimer) clearTimeout(prefsTimer)
+  prefsTimer = setTimeout(() => void flushPrefs(), PREFS_SAVE_DEBOUNCE_MS)
+}
+
+function isPinnedHost(serverId: string): boolean {
+  return hostPrefs.value.pinned.includes(serverId)
+}
+
+function togglePinHost(serverId: string): void {
+  hostPrefs.value = {
+    pinned: togglePinned(hostPrefs.value.pinned, serverId),
+    order: [...hostPrefs.value.order],
+  }
+  persistPrefs()
+}
+
+/**
+ * 落点写的是整份主机名单的顺序(不是屏上那几张卡):搜索/分组正收窄时拖动,底下的全集也跟着排好,
+ * 筛子一撤顺序还在。
+ */
+function reorderHost(movingId: string, targetId: string, edge: DropEdge): void {
+  const all = orderedGroups.value.map((g) => g.serverId)
+  const next = moveHostId(all, movingId, targetId, edge)
+  if (next.join('\u0000') === all.join('\u0000')) return
+  hostPrefs.value = { pinned: [...hostPrefs.value.pinned], order: next }
+  persistPrefs()
+}
+
+/** 键盘排序:跟屏上那一张换位置(用户看的是这一屏,「上移一格」就得按这一屏算)。 */
+function nudgeHost(serverId: string, delta: number): void {
+  const shown = displayGroups.value.map((g) => g.serverId)
+  const at = shown.indexOf(serverId)
+  const swapWith = shown[at + delta]
+  if (at < 0 || swapWith === undefined) return
+  reorderHost(serverId, swapWith, delta < 0 ? 'before' : 'after')
+}
+
+function resetHostOrder(): void {
+  hostPrefs.value = { pinned: [...hostPrefs.value.pinned], order: [] }
+  persistPrefs()
+}
 
 // ─── 服务器切换 ───────────────────────────────────────────────────────────────
 // 聚合是一屏摊开所有机器,机器一多就要滚动找,所以给一个「全部 / 只看这台 / 仅看可用的」范围。
 // 范围只切展示与统计口径,不改权限:候选永远来自后端已收敛过的聚合结果。
 const serverScope = ref<ServerScope>(SERVER_ALL)
 
-/** 在线的在前、离线的沉底(与服务器状态页同一口径);切换范围不改变这个顺序。 */
-const orderedGroups = computed(() => reachableFirst(groups.value))
+/** 在线的在前、离线的沉底(与服务器状态页同一口径):这是没人动过手时的底。 */
+const baseGroups = computed(() => reachableFirst(groups.value))
+/**
+ * 置顶和拖出来的顺序盖在这个底上(无偏好时 rankHosts 原样返回)。
+ * 注意偏离:一旦排过序,离线机器就不再被每轮刷新自动沉底 —— 人要的正是「别自己挪」。
+ */
+const orderedGroups = computed(() => rankHosts(baseGroups.value, hostPrefs.value))
 /** 分组先收窄,后面「只看这台 / 仅看可用的」都只在这一档里解析(两个筛选叠起来才是直觉)。 */
 const groupScopedServers = computed(() =>
   orderedGroups.value.filter((g) => matchesGroup(hostGroupIds(g.serverId), groupFilter.value)),
@@ -534,10 +621,16 @@ async function load(): Promise<void> {
 
 onMounted(() => {
   void load()
+  void loadHostPrefs()
   timer = setInterval(() => void load(), POLL_MS)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  // 离开时还有没发出去的偏好就立刻补一发:刚点完置顶就切走,不该静默丢掉。
+  if (prefsTimer) {
+    clearTimeout(prefsTimer)
+    void flushPrefs()
+  }
 })
 </script>
 
@@ -720,6 +813,16 @@ onUnmounted(() => {
             />
             <button v-if="searchText" class="search-box__clear" :title="t('containers.searchClear')" @click="searchText = ''">✕</button>
           </div>
+          <!-- 拖过序就再也回不到「在线的在前、离线的沉底」了,所以给一个反悔的出口(置顶保留) -->
+          <button
+            v-if="viewMode === HOST_VIEW && hasHostOrder"
+            class="order-reset"
+            type="button"
+            :title="t('containers.resetOrderTitle')"
+            @click="resetHostOrder"
+          >
+            {{ t('containers.resetOrder') }}
+          </button>
           <!-- 机器 / 栈 一多,逐个点折叠太累:一档开关按当前范围整体收起/放开 -->
           <button
             v-if="foldableKeys.length > 1"
@@ -792,7 +895,11 @@ onUnmounted(() => {
           :selected-set="selected"
           :folded-set="folded"
           :tab-focus="tabFocusFor(g.serverId)"
+          :pinned="isPinnedHost(g.serverId)"
           @toggle-fold="toggleFold(g.serverId)"
+          @toggle-pin="togglePinHost(g.serverId)"
+          @reorder-host="(movingId, edge) => reorderHost(movingId, g.serverId, edge)"
+          @nudge-host="(delta) => nudgeHost(g.serverId, delta)"
           @toggle-select="(name) => toggleSelect(g.serverId, name)"
           @view-container="(name) => focusContainerTab(g.serverId, name)"
           @changed="load"
@@ -1002,7 +1109,9 @@ onUnmounted(() => {
   outline: none;
   color: var(--color-primary);
 }
-.fold-all {
+/* 「恢复默认排序」和折叠键同一档外形:都是范围工具栏里的轻量开关 */
+.fold-all,
+.order-reset {
   flex-shrink: 0;
   font-size: var(--text-label);
   font-weight: 600;
@@ -1015,7 +1124,8 @@ onUnmounted(() => {
   white-space: nowrap;
   transition: all var(--duration-fast) var(--ease-out-expo);
 }
-.fold-all:hover {
+.fold-all:hover,
+.order-reset:hover {
   color: var(--color-text);
   border-color: var(--color-text);
 }

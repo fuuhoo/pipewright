@@ -13,6 +13,8 @@
  * DELETE /api/account/identities/:id   → 204  (needs CSRF;404 = 不是你的绑定)
  * POST   /api/account/profile          → { displayName, email }  本地档案(需 CSRF)
  *   两列都可省略,但至少给一个;后端回的是**归一化后**的值(空白折叠 + 按字符截断)。
+ * GET    /api/account/server-view      → ServerViewPrefs        容器页主机卡片的个人偏好
+ * PUT    /api/account/server-view      → ServerViewPrefs        整份覆盖(需 CSRF)
  */
 
 import { http } from './http'
@@ -112,4 +114,25 @@ export interface Profile {
 
 export async function updateProfile(input: ProfileInput): Promise<Profile> {
   return http.post<Profile>('/api/account/profile', input)
+}
+
+/**
+ * 容器页主机卡片的个人偏好:置顶哪些、按什么顺序排。
+ *
+ * 存的是服务器 ID 数组,顺序说话 —— 前端拿它决定卡片先后(见 views/Containers.vue)。
+ * 没设置过的人 GET 到两个空数组(不是 404),所以首屏就落在默认排序上。
+ * PUT 是整份覆盖:幂等、并发下后写胜出,对「一个人的界面习惯」这个场景够用,也比补丁式协议少一层状态。
+ * 报错口径:400 请求体不合法、403 缺 CSRF、409 会话未绑定账号(旧会话,重登即可)。
+ */
+export interface ServerViewPrefs {
+  pinned: string[]
+  order: string[]
+}
+
+export async function getServerViewPrefs(): Promise<ServerViewPrefs> {
+  return http.get<ServerViewPrefs>('/api/account/server-view')
+}
+
+export async function putServerViewPrefs(prefs: ServerViewPrefs): Promise<ServerViewPrefs> {
+  return http.put<ServerViewPrefs>('/api/account/server-view', prefs)
 }

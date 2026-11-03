@@ -7,6 +7,13 @@ export default {
     runningCount: '{running}/{total} 运行',
     foldPanel: '收起这台服务器',
     unfoldPanel: '展开这台服务器',
+    // 排序：图钉置顶 + 握把拖动（每用户一份偏好）
+    pinTitle: '置顶这台服务器',
+    unpinTitle: '取消置顶',
+    pinAria: '置顶 {name}',
+    unpinAria: '取消置顶 {name}',
+    dragHostTitle: '拖动调整这张卡片的顺序',
+    dragHostAria: '拖动排序 {name}；键盘聚焦后用上下方向键移动',
     // tab 标签
     tabContainers: '容器',
     tabImages: '镜像',

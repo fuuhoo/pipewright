@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} 執行中',
     foldPanel: '收起這台伺服器',
     unfoldPanel: '展開這台伺服器',
+    // 排序：圖釘置頂 + 握把拖動（每位使用者一份偏好）
+    pinTitle: '置頂這台伺服器',
+    unpinTitle: '取消置頂',
+    pinAria: '置頂 {name}',
+    unpinAria: '取消置頂 {name}',
+    dragHostTitle: '拖動調整這張卡片的順序',
+    dragHostAria: '拖動排序 {name}；鍵盤聚焦後用上下方向鍵移動',
     tabContainers: '容器',
     tabImages: '映像',
     tabStacks: 'Stacks',

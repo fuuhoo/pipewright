@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: '這一檔裡沒有容器',
   stackBucketEmpty: '範圍內的容器都還在,只是沒有一條 Stack 裡有這一狀態的容器。切回「全部」就能看到它們。',
   viewContainer: '到「容器」分頁檢視 {name}',
+  resetOrder: '恢復預設順序',
+  resetOrderTitle: '清掉拖出來的手動順序,回到「在線的在前、離線的沉底」。置頂的那幾張仍然釘在最上面。',
+  prefsSaveFailed: '排序偏好沒儲存成功',
 }

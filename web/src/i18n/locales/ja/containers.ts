@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: 'この状態のコンテナはありません',
   stackBucketEmpty: '対象範囲内のコンテナはすべて残っていますが、この状態のコンテナを含むStackはありません。「すべて」に戻すと確認できます。',
   viewContainer: 'コンテナタブで {name} を開く',
+  resetOrder: '順序をリセット',
+  resetOrderTitle: 'ドラッグで作った順序を消し、「接続中を先頭、切断中を末尾」に戻します。ピン留めしたカードはそのまま先頭に留まります。',
+  prefsSaveFailed: '表示順序の設定を保存できませんでした',
 }

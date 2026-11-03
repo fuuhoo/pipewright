@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} running',
     foldPanel: 'Collapse this server',
     unfoldPanel: 'Expand this server',
+    // Ordering: pin to the top + drag by the grip (one preference set per user)
+    pinTitle: 'Pin this server',
+    unpinTitle: 'Unpin',
+    pinAria: 'Pin {name}',
+    unpinAria: 'Unpin {name}',
+    dragHostTitle: 'Drag to reorder this card',
+    dragHostAria: 'Drag to reorder {name}; with keyboard focus, use the up and down arrows to move it',
     tabContainers: 'Containers',
     tabImages: 'Images',
     tabStacks: 'Stacks',

@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} 실행 중',
     foldPanel: '이 서버 접기',
     unfoldPanel: '이 서버 펼치기',
+    // 정렬: 고정 핀과 드래그 순서 변경(사용자별 설정)
+    pinTitle: '이 서버를 상단 고정',
+    unpinTitle: '고정 해제',
+    pinAria: '{name} 상단 고정',
+    unpinAria: '{name} 고정 해제',
+    dragHostTitle: '드래그해서 이 카드의 순서 변경',
+    dragHostAria: '드래그로 {name} 정렬. 포커스 상태에서는 위/아래 화살표로 이동',
     tabContainers: '컨테이너',
     tabImages: '이미지',
     tabStacks: 'Stacks',

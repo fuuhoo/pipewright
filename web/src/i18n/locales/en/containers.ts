@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: 'No containers in this state',
   stackBucketEmpty: 'The containers in range are all still there — no stack has one in this state. Switch back to “All” to see them.',
   viewContainer: 'Open {name} in the Containers tab',
+  resetOrder: 'Reset order',
+  resetOrderTitle: 'Clear the order you dragged out and go back to “reachable first, offline sinks”. Pinned cards stay pinned.',
+  prefsSaveFailed: 'Could not save your ordering preference',
 }

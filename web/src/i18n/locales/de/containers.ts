@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: 'Kein Container in diesem Zustand',
   stackBucketEmpty: 'Die Container in diesem Bereich sind alle noch da — nur hat kein Stack einen in diesem Zustand. Wechsle zurück auf „Alle“, um sie zu sehen.',
   viewContainer: '{name} im Tab „Container“ öffnen',
+  resetOrder: 'Standardreihenfolge',
+  resetOrderTitle: 'Verwirft die gezogene Reihenfolge zurück auf „erreichbar zuerst, offline nach unten“. Angeheftete Karten bleiben oben.',
+  prefsSaveFailed: 'Sortier-Einstellung konnte nicht gespeichert werden',
 }

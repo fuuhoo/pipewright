@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} en cours',
     foldPanel: 'Réduire ce serveur',
     unfoldPanel: 'Déployer ce serveur',
+    // Ordre : épingler en tête + glisser par la poignée (un réglage par utilisateur)
+    pinTitle: 'Épingler ce serveur',
+    unpinTitle: 'Détacher l’épingle',
+    pinAria: 'Épingler {name}',
+    unpinAria: 'Détacher {name}',
+    dragHostTitle: 'Glissez pour réordonner cette carte',
+    dragHostAria: 'Glissez pour réordonner {name} ; au clavier, utilisez les flèches haut/bas pour le déplacer',
     tabContainers: 'Conteneurs',
     tabImages: 'Images',
     tabStacks: 'Stacks',

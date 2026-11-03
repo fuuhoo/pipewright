@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: 'Aucun conteneur dans cet état',
   stackBucketEmpty: 'Les conteneurs du périmètre sont toujours là, mais aucun stack n’en a un dans cet état. Revenez à « Tous » pour les voir.',
   viewContainer: 'Ouvrir {name} dans l’onglet « Conteneurs »',
+  resetOrder: 'Ordre par défaut',
+  resetOrderTitle: 'Abandonne l’ordre que vous avez glissé et revient à « les joignables d’abord, les hors-ligne en bas ». Les cartes épinglées restent en tête.',
+  prefsSaveFailed: 'Échec de l’enregistrement de votre ordre',
 }

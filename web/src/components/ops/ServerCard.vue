@@ -43,7 +43,7 @@ import { HttpError } from '../../api/http'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { NIcon } from 'naive-ui'
-import { BrandDocker, AlertTriangle, ChevronDown, ChevronRight } from '@vicons/tabler'
+import { BrandDocker, AlertTriangle, ChevronDown, ChevronRight, GripVertical, Pinned } from '@vicons/tabler'
 import {
   stateBucket,
   stateMeta,
@@ -55,6 +55,7 @@ import {
   type StateBucket,
 } from '../../lib/containerState'
 import { matchesContainer, paginate, queryTokens, type HostFields } from '../../lib/containerListFilter'
+import type { DropEdge } from '../../lib/serverViewOrder'
 
 const props = defineProps<{
   group: ServerContainers
@@ -82,6 +83,8 @@ const props = defineProps<{
    * 0 = 没有在聚焦。用编号而不是布尔,是因为同一台连着跳两次时值没变,watcher 就不会再触发。
    */
   tabFocus?: number
+  /** 这一台是否被我置顶(每用户偏好,存在 /api/account/server-view)。只决定图钉长什么样,排序由页面算。 */
+  pinned?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'changed'): void
@@ -92,6 +95,11 @@ const emit = defineEmits<{
   (e: 'diagnose', c: ContainerInfo): void
   (e: 'inspect', c: ContainerInfo): void
   (e: 'toggle-select', name: string): void
+  (e: 'toggle-pin'): void
+  /** 拖到这张卡上松手:movingId = 被拖那台的 serverId,edge = 排在目标前面还是后面。 */
+  (e: 'reorder-host', movingId: string, edge: DropEdge): void
+  /** 键盘排序:delta = -1 上移一格、+1 下移一格。 */
+  (e: 'nudge-host', delta: number): void
 }>()
 
 const toast = useToast()
@@ -109,6 +117,82 @@ const folded = computed(() => props.foldedSet.has(props.group.serverId))
 const runtimeLabel = computed(() =>
   props.group.runtime ? props.group.runtime.charAt(0).toUpperCase() + props.group.runtime.slice(1) : '',
 )
+
+// ─── 拖动排序(纵向改这几张卡的先后)──────────────────────────────────────────
+// 只从卡头那枚握把发起拖动:卡片正文全是按钮、输入框和可选中文字,整张 draggable 会跟它们抢拖拽源,
+// 还会让人选不动镜像名/容器名那种长字符串。落点则整张都收,毕竟目标就是「排到这张前/后」。
+// 上下半决定落在目标前面还是后面:卡片高度差几十倍(折叠的一张 vs 摊开几十行的一张),
+// 只认「落在它上面」的话,想插到下一张前面就得等那张被折叠才点得准。
+
+const HOST_DRAG_MIME = 'application/x-pipewright-host'
+
+const rootEl = ref<HTMLElement | null>(null)
+const isDragSource = ref(false)
+const dropEdge = ref<'' | DropEdge>('')
+
+function onGripDragStart(e: DragEvent): void {
+  isDragSource.value = true
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData(HOST_DRAG_MIME, props.group.serverId)
+    // 拖动默认只带握把那 14px 的小图标,看不出在拖哪台 —— 换成整张卡的快照。
+    // 此刻 panel--dragging 还没生效(Vue 下一帧才改 class),快照是不带压暗的原样。
+    const el = rootEl.value
+    if (el) {
+      const box = el.getBoundingClientRect()
+      e.dataTransfer.setDragImage(el, e.clientX - box.left, e.clientY - box.top)
+    }
+  }
+}
+
+function onGripDragEnd(): void {
+  isDragSource.value = false
+  dropEdge.value = ''
+}
+
+/** 别的拖动(选中的文字、镜像名)不带这个 MIME,据此把自己排除在落点之外。 */
+function isHostDrag(e: DragEvent): boolean {
+  return e.dataTransfer?.types.includes(HOST_DRAG_MIME) === true
+}
+
+function edgeAt(e: DragEvent): DropEdge {
+  const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  return e.clientY - box.top < box.height / 2 ? 'before' : 'after'
+}
+
+function onHostDragEnter(e: DragEvent): void {
+  if (!isHostDrag(e) || isDragSource.value) return
+  dropEdge.value = edgeAt(e)
+}
+
+function onHostDragOver(e: DragEvent): void {
+  if (!isHostDrag(e) || isDragSource.value) return
+  dropEdge.value = edgeAt(e)
+}
+
+function onHostDragLeave(e: DragEvent): void {
+  const root = e.currentTarget as HTMLElement | null
+  const next = e.relatedTarget as Node | null
+  if (!root || !next || !root.contains(next)) dropEdge.value = ''
+}
+
+function onHostDrop(e: DragEvent): void {
+  const movingId = e.dataTransfer?.getData(HOST_DRAG_MIME) ?? ''
+  dropEdge.value = ''
+  if (!isHostDrag(e) || !movingId || movingId === props.group.serverId) return
+  emit('reorder-host', movingId, edgeAt(e))
+}
+
+/** 握把被键盘聚焦时,上下方向键挪一格 —— 拖动只服务鼠标,这一条让不用鼠标的人也排得动。 */
+function onGripKeydown(e: KeyboardEvent): void {
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    emit('nudge-host', -1)
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    emit('nudge-host', 1)
+  }
+}
 
 // ─── 容器 ─────────────────────────────────────────────────────────────────────
 const busy = ref<Set<string>>(new Set())
@@ -741,14 +825,56 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 </script>
 
 <template>
-  <article class="panel" :class="{ 'panel--folded': folded }">
+  <article
+    ref="rootEl"
+    class="panel"
+    :class="{
+      'panel--folded': folded,
+      'panel--pinned': pinned,
+      'panel--dragging': isDragSource,
+      'panel--drop-before': dropEdge === 'before',
+      'panel--drop-after': dropEdge === 'after',
+    }"
+    @dragenter.prevent="onHostDragEnter"
+    @dragover.prevent="onHostDragOver"
+    @dragleave="onHostDragLeave"
+    @drop.prevent="onHostDrop"
+  >
     <header class="panel__head">
       <div class="panel__id">
+        <span
+          class="panel__grip"
+          draggable="true"
+          role="button"
+          tabindex="0"
+          :aria-label="t('opsServer.card.dragHostAria', { name })"
+          :title="t('opsServer.card.dragHostTitle')"
+          @dragstart="onGripDragStart"
+          @dragend="onGripDragEnd"
+          @keydown="onGripKeydown"
+        >
+          <NIcon :size="14">
+            <GripVertical />
+          </NIcon>
+        </span>
         <h2 class="panel__name">{{ name }}</h2>
         <span v-if="ownerGroup" class="panel__group" :title="ownerGroup">{{ ownerGroup }}</span>
         <span class="panel__host mono">{{ host }}</span>
       </div>
       <div class="panel__meta">
+        <button
+          class="pin"
+          :class="{ 'pin--on': pinned }"
+          type="button"
+          :aria-pressed="pinned"
+          :aria-label="pinned ? t('opsServer.card.unpinAria', { name }) : t('opsServer.card.pinAria', { name })"
+          :title="pinned ? t('opsServer.card.unpinTitle') : t('opsServer.card.pinTitle')"
+          @click="emit('toggle-pin')"
+        >
+          <NIcon :size="15">
+            <Pinned />
+          </NIcon>
+        </button>
         <span
           class="rt-badge"
           :class="{
@@ -1138,6 +1264,7 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 
 <style scoped>
 .panel {
+  position: relative;
   background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: var(--rounded-lg, 12px);
@@ -1214,6 +1341,92 @@ async function doRemoveImage(img: ImageInfo): Promise<void> {
 .fold:hover {
   color: var(--color-text);
   border-color: var(--color-text);
+}
+
+/* ——— 排序控件:握把 + 图钉 ——— */
+/* 握把常驻(悬停才显形的话没人会发现列表能排序),字色取 --color-dim:和同一张卡上的折叠键齐平,深底上仍读得出。 */
+.panel__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 18px;
+  height: 26px;
+  margin-left: -6px;
+  flex-shrink: 0;
+  border-radius: var(--rounded-sm);
+  color: var(--color-dim);
+  cursor: grab;
+  transition: color var(--duration-fast) var(--ease-out-expo), background var(--duration-fast) var(--ease-out-expo);
+}
+.panel__grip:hover {
+  color: var(--color-text);
+  background: var(--color-inset);
+}
+.panel__grip:active {
+  cursor: grabbing;
+}
+.panel__grip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  color: var(--color-text);
+}
+
+/* 图钉和折叠键同一档尺寸、同一档底色字色(都用 --color-dim,和 .fold 齐平 —— 深底上 --color-faint 太暗,
+   一枚要点开的控件不该比它旁边的键更难看见);置顶态用品牌色实心。 */
+.pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--rounded-sm);
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-dim);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+.pin:hover {
+  color: var(--color-text);
+  border-color: var(--color-text);
+}
+.pin--on {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+/* 钉住的那张左侧一道品牌色竖条(box-shadow 不占位,不会让卡片宽度跳一下)。 */
+.panel--pinned {
+  box-shadow: var(--shadow), inset 3px 0 0 var(--color-primary);
+}
+
+/* ——— 拖动中的三段状态 ——— */
+/* 正在被我拖着的那张:压暗表示「它已经不在原位了」。 */
+.panel--dragging {
+  opacity: 0.45;
+}
+/* 落点:整张描边 + 上下沿那根粗线,线的位置就是说「松手排到这张前 / 后」。 */
+.panel--drop-before,
+.panel--drop-after {
+  border-color: var(--color-primary);
+}
+.panel--drop-before::before,
+.panel--drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-primary);
+  z-index: 1;
+}
+.panel--drop-before::before {
+  top: 0;
+}
+.panel--drop-after::after {
+  bottom: 0;
 }
 /* 折叠后正文为空,标题下那条分隔线会贴在卡片底边,去掉。 */
 .panel--folded .panel__head {

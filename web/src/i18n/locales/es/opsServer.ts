@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} en ejecución',
     foldPanel: 'Contraer este servidor',
     unfoldPanel: 'Expandir este servidor',
+    // Orden: fijar arriba + arrastrar por el asa (una preferencia por usuario)
+    pinTitle: 'Fijar este servidor arriba',
+    unpinTitle: 'Dejar de fijar',
+    pinAria: 'Fijar {name}',
+    unpinAria: 'Dejar de fijar {name}',
+    dragHostTitle: 'Arrastra para reordenar esta tarjeta',
+    dragHostAria: 'Arrastra para reordenar {name}; con el foco del teclado, usa las flechas arriba/abajo',
     tabContainers: 'Contenedores',
     tabImages: 'Imágenes',
     tabStacks: 'Stacks',

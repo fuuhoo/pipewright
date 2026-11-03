@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: '이 상태의 컨테이너가 없습니다',
   stackBucketEmpty: '범위의 컨테이너는 모두 남아 있지만, 이 상태의 컨테이너를 가진 Stack이 없습니다. 「전체」로 돌아가면 확인할 수 있습니다.',
   viewContainer: '컨테이너 탭에서 {name} 열기',
+  resetOrder: '기본 순서로',
+  resetOrderTitle: '드래그로 만든 순서를 지우고 「연결된 것 먼저, 끊긴 것 나중에」로 돌아갑니다. 고정된 카드는 그대로 맨 위에 남습니다.',
+  prefsSaveFailed: '정렬 설정을 저장하지 못했습니다',
 }

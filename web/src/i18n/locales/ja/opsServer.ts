@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} 実行中',
     foldPanel: 'このサーバーを折りたたむ',
     unfoldPanel: 'このサーバーを展開する',
+    // 順序：ピン留めとドラッグによる並べ替え（ユーザーごとの設定）
+    pinTitle: 'このサーバーをピン留め',
+    unpinTitle: 'ピン留めを外す',
+    pinAria: '{name} をピン留め',
+    unpinAria: '{name} のピン留めを外す',
+    dragHostTitle: 'ドラッグしてこのカードの並び順を変える',
+    dragHostAria: 'ドラッグで {name} を並べ替え。フォーカス中は上矢印/下矢印で移動',
     tabContainers: 'コンテナ',
     tabImages: 'イメージ',
     tabStacks: 'Stacks',

@@ -48,6 +48,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/role"
 	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/fuuhoo/pipewright/internal/runner"
+	"github.com/fuuhoo/pipewright/internal/serverpref"
 	"github.com/fuuhoo/pipewright/internal/servicecatalog"
 	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/fuuhoo/pipewright/internal/trigger"
@@ -133,6 +134,9 @@ type options struct {
 	commands           library.CommandService
 	artifactStore      *artifactstore.Store
 	retention          *retention.Service
+	// serverPrefs 是容器页主机卡片的每用户偏好(置顶 + 手动顺序,internal/serverpref)。
+	// nil → /api/account/server-view 返回 503;它只按会话 user_id 读写,不参与权限判定。
+	serverPrefs *serverpref.Service
 	// snapshots 是工作区目录快照仓储(运行详情「构建目录」面板数据源);nil → 端点 503。
 	// 快照跟着运行记录一起保留,没有独立窗口,所以这里不需要 TTL。
 	snapshots    *buildsnap.Store
@@ -490,6 +494,13 @@ func WithNotifications(s notify.Service) Option {
 // 不传则相关端点返回 503。
 func WithRetention(s *retention.Service) Option {
 	return func(o *options) { o.retention = s }
+}
+
+// WithServerPrefs 注入容器页主机卡片的每用户偏好服务,挂载 /api/account/server-view 路由
+// (GET auth;PUT auth + CSRF)。只作用于本人:读写都按会话里的 user_id 定位,没有别人的视图
+// 可看,也没有可越权的资产,因此不写审计(界面习惯不是资产变更)。不传则端点返回 503。
+func WithServerPrefs(s *serverpref.Service) Option {
+	return func(o *options) { o.serverPrefs = s }
 }
 
 // WithProxy 注入自动 HTTPS + 域名反向代理服务(R1),挂载 /api/proxy/routes* 路由
@@ -941,6 +952,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Post("/account/profile", makeUpdateProfileHandler(o.usersSvc, aud))
 		ar.Get("/account/sessions", makeListSessionsHandler(ac))
 		ar.Delete("/account/sessions/{id}", makeRevokeSessionHandler(ac, aud))
+
+		// 容器页主机卡片的每用户视图偏好(置顶 + 手动顺序)。GET 过 auth;PUT 为写方法,过 auth + CSRF。
+		// 按会话 user_id 定位,天然只作用于本人;没设置过的人读到空偏好,不是 404。
+		ar.Get("/account/server-view", makeGetServerViewPrefsHandler(o.serverPrefs))
+		ar.Put("/account/server-view", makePutServerViewPrefsHandler(o.serverPrefs))
 
 		// 可配置 AI 提供商(Story 7.1)。aiSvc 为 nil 时 handler 返回 503。
 		// GET 过 auth;PUT/test 为写方法,过 auth + CSRF。apiKey 加密入库、响应仅掩码。

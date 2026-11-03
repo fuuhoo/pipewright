@@ -6,6 +6,13 @@ export default {
     runningCount: '{running}/{total} laufend',
     foldPanel: 'Diesen Server einklappen',
     unfoldPanel: 'Diesen Server ausklappen',
+    // Reihenfolge: oben anheften + am Griff ziehen (je Nutzer eine Einstellung)
+    pinTitle: 'Diesen Server oben anheften',
+    unpinTitle: 'Anheftung lösen',
+    pinAria: '{name} oben anheften',
+    unpinAria: 'Anheftung von {name} lösen',
+    dragHostTitle: 'An dieser Karte die Reihenfolge ziehen',
+    dragHostAria: '{name} per Drag & Drop sortieren; mit Tastaturfokus über die Pfeiltasten oben/unten verschieben',
     tabContainers: 'Container',
     tabImages: 'Images',
     tabStacks: 'Stacks',

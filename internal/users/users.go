@@ -688,7 +688,7 @@ func (s *Service) FillProfileIfEmpty(id, displayName, email string) error {
 //     (内置管理员行本来就由 HTTP 层的 isBootstrapAdminRow 挡在门外,这条是给手工
 //     改过库、或从旧备份恢复出来的实例兜底。)
 //
-// 事务里清四张表:sessions.user_id、resource_group_members.user_id 与 api_tokens.user_id 都没有外键,
+// 事务里逐张清掉引用表:sessions.user_id、resource_group_members.user_id 与 api_tokens.user_id 都没有外键,
 // 不显式删就会留下「账号已不存在但会话还能用」的活会话(这是安全边界,不是整洁问题)
 // 和名册脏行;user_identities 虽然有 ON DELETE CASCADE,MySQL 与 SQLite 的外键开关
 // 时机不同,这里照 role.Delete 的先例再显式删一次,保证两个方言清得一样干净。
@@ -773,6 +773,8 @@ func (s *Service) Delete(id string) error {
 		`DELETE FROM api_tokens WHERE user_id = ?`,
 		// 角色挂靠行没有外键,不删就留下指向已消失账号的脏行。
 		`DELETE FROM user_roles WHERE user_id = ?`,
+		// 主机视图偏好(置顶 + 顺序)同样没外键:它是这个人的界面习惯,人没了就该跟着没。
+		`DELETE FROM server_view_prefs WHERE user_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return fmt.Errorf("users: clear references: %w", err)

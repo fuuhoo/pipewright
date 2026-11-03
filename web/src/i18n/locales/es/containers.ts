@@ -87,4 +87,7 @@ export default {
   stackBucketEmptyTitle: 'Ningún contenedor en este estado',
   stackBucketEmpty: 'Los contenedores del ámbito siguen ahí; ningún stack tiene uno en este estado. Vuelve a «Todos» para verlos.',
   viewContainer: 'Abrir {name} en la pestaña «Contenedores»',
+  resetOrder: 'Orden predeterminado',
+  resetOrderTitle: 'Descarta el orden que arrastraste y vuelve a «los alcanzables primero, los caídos al final». Las tarjetas fijadas siguen arriba.',
+  prefsSaveFailed: 'No se pudo guardar tu preferencia de orden',
 }
