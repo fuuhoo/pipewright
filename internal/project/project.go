@@ -12,12 +12,14 @@ package project
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/fuuhoo/pipewright/internal/access"
+	"github.com/fuuhoo/pipewright/internal/pipeline"
 	"github.com/fuuhoo/pipewright/internal/store"
 	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/google/uuid"
@@ -88,8 +90,17 @@ type Project struct {
 	ServiceID string
 	// ServiceName 是冗余只读展示名(join services),便于列表与卡片直接渲染;非持久列。
 	ServiceName string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// LastRunStatus 是该项目最近一条 pipeline_runs 的状态(queued/running/waiting_approval/
+	// success/failed/partial_failed/rolled_back);'' = 尚无运行。非持久列,由列表与单条查询
+	// 各带一个标量子查询取回 —— 卡片过去恒定显示「尚无运行」,因为这个字段从来没被填过。
+	LastRunStatus string
+	// TargetServerIDs 是库内流水线里「发机器」类部署节点勾选的目标主机 id(去重、按声明顺序)。
+	// 非持久列:落点在 pipeline_configs.spec_json 里,由本包解析后交给展示层换成机器名。
+	// 注意这是**配置口径**:没跑过也显示;而流水线即代码的项目运行期可能改用仓库里的
+	// .pipewright.yml,那份不在这里(为一张卡片去克隆仓库不值得)。
+	TargetServerIDs []string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // CreateInput 是创建项目的入参。
@@ -399,9 +410,7 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 	}
 
 	offset := (page - 1) * pageSize
-	listSQL := `SELECT p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
-	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
-	        COALESCE(s.name, ''), p.created_at, p.updated_at
+	listSQL := `SELECT ` + projectSelectCols + `
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
 		 LEFT JOIN services s ON s.id = p.service_id`
@@ -427,14 +436,26 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("project: iterate: %w", err)
 	}
+	// 显式关掉再发第二条查询:sqlite 侧连接数有限,游标没关就批量读 spec 会自己把自己堵死。
+	_ = rows.Close()
+
+	ids := make([]string, 0, len(out))
+	for i := range out {
+		ids = append(ids, out[i].ID)
+	}
+	byProject, err := s.targetServerIDsByProject(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].TargetServerIDs = byProject[out[i].ID]
+	}
 	return &ListResult{Items: out, Page: page, PageSize: pageSize, Total: total}, nil
 }
 
 func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
-		        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
-		        COALESCE(s.name, ''), p.created_at, p.updated_at
+		`SELECT `+projectSelectCols+`
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
 		 LEFT JOIN services s ON s.id = p.service_id
@@ -447,6 +468,11 @@ func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 		}
 		return nil, err
 	}
+	byProject, err := s.targetServerIDsByProject(ctx, []string{p.ID})
+	if err != nil {
+		return nil, err
+	}
+	p.TargetServerIDs = byProject[p.ID]
 	return p, nil
 }
 
@@ -629,19 +655,80 @@ type scanner interface {
 }
 
 // scanProject 把一行扫描为 Project(永不读任何密文/明文列)。
+// projectSelectCols 是 ListPaged 与 Get 共用的列清单 —— 两处必须逐字一致,scanProject 按位置扫。
+// 最后一列是「最近一条运行的状态」标量子查询:排序口径与 run 包选基线一致
+// (created_at 倒序、id 兜底),同一秒内多条运行时只有 created_at 分不出先后。
+// 无运行的项目子查询返回 NULL,扫成空串 = 卡片显示「尚无运行」。
+const projectSelectCols = `p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
+	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
+	        COALESCE(s.name, ''), p.created_at, p.updated_at,
+	        (SELECT r.status FROM pipeline_runs r WHERE r.project_id = p.id
+	          ORDER BY r.created_at DESC, r.id DESC LIMIT 1)`
+
+// targetServerIDsByProject 批量读这几个项目的流水线配置,解析出部署节点勾选的主机 id。
+//
+// 为什么在本包查 pipeline_configs:项目卡片要的是「这项目发到哪几台」,而 pipeline.Service.Get
+// 在没配置的行上会**惰性种一条默认流水线** —— 打开项目页就写库,读路径不能带这种副作用
+// (与本包直接查 pipeline_runs 做删除守卫同一套自包含读法)。spec 解析交给 pipeline 包自己
+// (SpecDeployServerIDs),键名与类型清单不在这儿另立一套。
+// 配置缺失 / JSON 非法 → 该项目没有落点(空),不拖垮整页:摘要读不懂时宁可留空也不报错。
+func (s *service) targetServerIDsByProject(ctx context.Context, ids []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT project_id, spec_json FROM pipeline_configs WHERE project_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("project: load specs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			projectID string
+			specJSON  string
+		)
+		if err := rows.Scan(&projectID, &specJSON); err != nil {
+			return nil, fmt.Errorf("project: scan spec: %w", err)
+		}
+		if strings.TrimSpace(specJSON) == "" {
+			continue
+		}
+		var spec pipeline.Spec
+		if err := json.Unmarshal([]byte(specJSON), &spec); err != nil {
+			continue // 存量脏数据不该让项目页 500
+		}
+		if got := pipeline.SpecDeployServerIDs(spec); len(got) > 0 {
+			out[projectID] = got
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("project: iterate specs: %w", err)
+	}
+	return out, nil
+}
+
 func scanProject(sc scanner) (*Project, error) {
 	var p Project
 	var createdStr, updatedStr string
 	var pacInt, prStatusInt int
+	var lastRun sql.NullString
 	if err := sc.Scan(
 		&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.CredentialID,
 		&p.CredentialName, &pacInt, &prStatusInt, &p.GroupID, &p.ServiceID,
-		&p.ServiceName, &createdStr, &updatedStr,
+		&p.ServiceName, &createdStr, &updatedStr, &lastRun,
 	); err != nil {
 		return nil, err
 	}
 	p.PacEnabled = pacInt != 0
 	p.PRStatusEnabled = prStatusInt != 0
+	p.LastRunStatus = lastRun.String
 	created, err := time.Parse(time.RFC3339, createdStr)
 	if err != nil {
 		return nil, fmt.Errorf("project: parse created_at: %w", err)

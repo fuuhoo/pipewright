@@ -540,3 +540,32 @@ func TestValidateDeployK8sRejectsServerIDs(t *testing.T) {
 		t.Fatalf("err = %v, want ErrK8sDeployInvalid", err)
 	}
 }
+
+// 项目卡「目标服务器」读的是配置里的落点汇总:跨阶段跨 job、按声明顺序去重,
+// 且 K8s 节点不算(它发到哪些机器由集群清单决定,节点本身不勾主机)。
+func TestSpecDeployServerIDsAggregatesInOrder(t *testing.T) {
+	spec := Spec{Stages: []Stage{
+		{ID: "s1", Jobs: []Job{
+			{ID: "j1", Type: "deploy_ssh", Config: map[string]any{ConfigKeyServerIDs: "b,a"}},
+			{ID: "j2", Type: "build", Config: map[string]any{ConfigKeyServerIDs: "zzz"}},
+			{ID: "j3", Type: JobTypeDeployK8s, Config: map[string]any{ConfigKeyServerIDs: "k8s-only"}},
+		}},
+		{ID: "s2", Jobs: []Job{
+			{ID: "j4", Type: "deploy_frontend", Config: map[string]any{ConfigKeyServerID: "a"}},
+			{ID: "j5", Type: JobTypeDeployDocker, Config: map[string]any{ConfigKeyServerIDs: "c,b"}},
+		}},
+	}}
+	got := SpecDeployServerIDs(spec)
+	want := []string{"b", "a", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v(按声明顺序去重,忽略 script 类与 K8s 节点)", got, want)
+		}
+	}
+	if len(SpecDeployServerIDs(Spec{})) != 0 {
+		t.Fatalf("空流水线应为无落点")
+	}
+}

@@ -76,14 +76,21 @@ const groupFilter = ref<string>(GROUP_ALL)
 // 归属服务筛选:纯展示维度,和服务端无关(项目列表本来全量取回,这里本地筛)。
 const serviceFilter = ref<string>(SERVICE_ALL)
 
+// 状态档位用规范词(后端给什么就筛什么);早前列的是中文标签,
+// 和 lastRunStatus 的 snake_case 永远对不上,选任何一档都是空列表。
+const STATUS_VALUES: RunStatus[] = [
+  'success',
+  'failed',
+  'running',
+  'waiting_approval',
+  'partial_failed',
+  'rolled_back',
+  'queued',
+]
+
 const STATUS_OPTIONS = computed<Array<{ value: RunStatus | 'all'; label: string }>>(() => [
-  { value: 'all',     label: t('projects.statusAll') },
-  { value: '成功',     label: runStatusLabel('成功') },
-  { value: '失败',     label: runStatusLabel('失败') },
-  { value: '进行中',   label: runStatusLabel('进行中') },
-  { value: '部分失败', label: runStatusLabel('部分失败') },
-  { value: '已回滚',   label: runStatusLabel('已回滚') },
-  { value: '排队中',   label: runStatusLabel('排队中') },
+  { value: 'all', label: t('projects.statusAll') },
+  ...STATUS_VALUES.map((value) => ({ value, label: runStatusLabel(value) })),
 ])
 
 const filteredProjects = computed(() => {

@@ -792,10 +792,11 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 项目接入与列表(Story 2.1)。p 为 nil 时 handler 返回 503。
 		// test-clone 须在 {id} 路由之前注册,否则被 /projects/{id} 吞掉。
 		p := o.projects
-		ar.Get("/projects", makeListProjectsHandler(p, o.access))
+		// 卡片摘要里的「目标服务器」要把落点 id 换成机器名,所以借 o.servers(同 /servers 那份)。
+		ar.Get("/projects", makeListProjectsHandler(p, o.servers, o.access))
 		ar.Post("/projects", makeCreateProjectHandler(p, o.access, aud, authn))
 		ar.Post("/projects/test-clone", makeTestCloneHandler(p))
-		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, o.access, aud, authn))
+		ar.Patch("/projects/{id}", makeUpdateProjectHandler(p, o.servers, o.access, aud, authn))
 		ar.Delete("/projects/{id}", makeDeleteProjectHandler(p, aud, authn))
 		// 复制单个项目:配置整套搬走、历史一条不带(internal/projectcopy)。
 		// 挂在 /projects/{id}/ 下是为了让 accessGuard 认出源项目并按写方法判 ActOperate。

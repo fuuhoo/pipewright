@@ -35,16 +35,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-// Status pill config — fixed six-word vocabulary, no substitutes
+// Status pill config — 文案与色调都复用运行页那套全局口径(runStatus.* + 同一组语义色)。
 type StatusConfig = { dot: string; bg: string; border: string; text: string; pulse: boolean }
 
 const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
-  '成功':   { dot: 'var(--color-green)',  bg: 'var(--color-green-soft)',  border: 'transparent',            text: 'var(--color-green)',  pulse: false },
-  '失败':   { dot: 'var(--color-red)',    bg: 'var(--color-red-soft)',    border: 'var(--color-red-line)',   text: 'var(--color-red)',    pulse: false },
-  '进行中': { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'transparent',            text: 'var(--color-amber)',  pulse: true  },
-  '部分失败': { dot: 'var(--color-red)',  bg: 'var(--color-red-soft)',    border: 'var(--color-red-line)',   text: 'var(--color-red)',    pulse: false },
-  '已回滚': { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'var(--color-amber-line)', text: 'var(--color-amber)',  pulse: false },
-  '排队中': { dot: 'var(--color-faint)',  bg: 'var(--color-card-2)',      border: 'var(--color-border-strong)', text: 'var(--color-dim)', pulse: false },
+  success:          { dot: 'var(--color-green)',  bg: 'var(--color-green-soft)',  border: 'transparent',              text: 'var(--color-green)',  pulse: false },
+  failed:           { dot: 'var(--color-red)',    bg: 'var(--color-red-soft)',    border: 'var(--color-red-line)',     text: 'var(--color-red)',    pulse: false },
+  partial_failed:   { dot: 'var(--color-red)',    bg: 'var(--color-red-soft)',    border: 'var(--color-red-line)',     text: 'var(--color-red)',    pulse: false },
+  running:          { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'transparent',              text: 'var(--color-amber)',  pulse: true  },
+  waiting_approval: { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'var(--color-amber-line)',   text: 'var(--color-amber)',  pulse: true  },
+  rolled_back:      { dot: 'var(--color-amber)',  bg: 'var(--color-amber-soft)',  border: 'var(--color-amber-line)',   text: 'var(--color-amber)',  pulse: false },
+  queued:           { dot: 'var(--color-faint)',  bg: 'var(--color-card-2)',      border: 'var(--color-border-strong)', text: 'var(--color-dim)',   pulse: false },
 }
 
 function relativeTime(isoStr: string): string {

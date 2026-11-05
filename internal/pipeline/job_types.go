@@ -277,9 +277,7 @@ func DeployServerIDs(cfg map[string]any) []string {
 // 策略串认不出则被引擎静默折成 rolling,日志还照抄所选档位;而单机时分批/蓝绿与一次性
 // 行为完全等价 —— 表单给了一个不会改变任何事的选项。保存期判掉,比事后猜便宜得多。
 func validateDeployTargets(stageName, jobName, jobType string, cfg map[string]any) error {
-	switch strings.TrimSpace(jobType) {
-	case "deploy_ssh", "deploy_frontend", JobTypeDeployDocker:
-	default:
+	if !JobTypeUsesServerTargets(jobType) {
 		return nil
 	}
 	where := fmt.Sprintf("阶段「%s」任务「%s」", stageName, jobName)
@@ -404,6 +402,44 @@ var deployJobTypes = map[string]bool{
 
 // IsDeployJobType 报告 job 类型是否按部署路径执行(目标机 SSH 发布 + 可选健康门控)。
 func IsDeployJobType(jobType string) bool { return deployJobTypes[strings.TrimSpace(jobType)] }
+
+// serverTargetJobTypes 是「落点写在 config.serverIds 里」的那几类部署节点 —— 比 deployJobTypes
+// 少一个 deploy_k8s:K8s 发布直连集群 API server,发到哪些机器由清单里的负载决定,节点本身不勾主机。
+// 保存期校验与项目卡片的「目标服务器」摘要共用这份清单,两处各写一遍迟早会走岔。
+var serverTargetJobTypes = map[string]bool{
+	"deploy_ssh":      true,
+	"deploy_frontend": true,
+	"deploy_docker":   true,
+}
+
+// JobTypeUsesServerTargets 报告该类型是否用 serverIds 表达「发到哪几台」。
+func JobTypeUsesServerTargets(jobType string) bool {
+	return serverTargetJobTypes[strings.TrimSpace(jobType)]
+}
+
+// SpecDeployServerIDs 按阶段与任务的声明顺序收集流水线勾选的目标主机 id(去重、保序)。
+//
+// 读的是**库内配置**:开了「流水线即代码」的项目运行期可能改用仓库里的 .pipewright.yml,
+// 那份不在这里 —— 摘要不该为了一张卡去克隆仓库。没有部署节点 / spec 为空 → nil。
+func SpecDeployServerIDs(spec Spec) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, st := range spec.Stages {
+		for _, jb := range st.Jobs {
+			if !JobTypeUsesServerTargets(jb.Type) {
+				continue
+			}
+			for _, id := range DeployServerIDs(jb.Config) {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
 
 // retiredJobTypes 是已撤销的节点类型 → 改配指引(唯一出处;前端 picker 与执行侧都据此收敛)。
 var retiredJobTypes = map[string]string{

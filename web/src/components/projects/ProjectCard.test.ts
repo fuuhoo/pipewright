@@ -96,12 +96,15 @@ describe('ProjectCard', () => {
     expect(metaRow(idle, 0).text()).toContain('尚无运行')
     expect(idle.find('.status-pill').exists()).toBe(false)
 
-    const ok = mountCard({ project: project({ lastRunStatus: '成功' }) })
+    const ok = mountCard({ project: project({ lastRunStatus: 'success' }) })
     expect(ok.get('.status-pill').text()).toContain('成功')
     expect(metaRow(ok, 0).text()).toContain('上次运行')
 
-    const running = mountCard({ project: project({ lastRunStatus: '进行中' }) })
+    const running = mountCard({ project: project({ lastRunStatus: 'running' }) })
     expect(running.find('.status-dot--pulse').exists()).toBe(true)
+
+    const waiting = mountCard({ project: project({ lastRunStatus: 'waiting_approval' }) })
+    expect(waiting.get('.status-pill').text()).toContain('待审批')
   })
 
   it('归属服务行:未归属也照实说,点它报出要改哪张卡', async () => {

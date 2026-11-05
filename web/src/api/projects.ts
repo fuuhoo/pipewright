@@ -8,19 +8,17 @@
  * DELETE /api/projects/{id}             → 204       (needs CSRF)
  *
  * credentialName is read-only display; credentialId is the reference.
- * lastRunStatus / targetServers may be null/[] until future stories fill them.
+ * lastRunStatus reflects the project's most recent pipeline run (null = never ran);
+ * targetServers lists the hosts checked on the pipeline's deploy nodes (config, not history).
  * The API never returns credential plaintext — only credentialName (masked display).
  */
 
 import { http } from './http'
+import type { RunStatus } from './runs'
 
-export type RunStatus =
-  | '成功'
-  | '失败'
-  | '进行中'
-  | '部分失败'
-  | '已回滚'
-  | '排队中'
+// 运行状态只有一套词:项目卡的「上次运行」和运行页用的是同一个联合类型。
+// 早前这里自造过一份中文词,后端给的却是这套 snake_case —— 两边对不上,筛选恒空。
+export type { RunStatus }
 
 export interface Project {
   id: string
@@ -55,9 +53,9 @@ export interface Project {
    */
   serviceId: string
   serviceName: string
-  /** null until pipeline runs exist (Story 2.x). */
+  /** 该项目最近一次运行的状态;null = 从未跑过。 */
   lastRunStatus: RunStatus | null
-  /** Empty until servers are bound (Story 2.x). */
+  /** 流水线部署节点勾选的主机展示名(配置口径,没跑过也有);无落点 = []。 */
   targetServers: string[]
   createdAt: string
   updatedAt: string

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,11 +12,11 @@ import (
 	"github.com/fuuhoo/pipewright/internal/audit"
 	"github.com/fuuhoo/pipewright/internal/auth"
 	"github.com/fuuhoo/pipewright/internal/project"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/go-chi/chi/v5"
 )
 
 // projectDTO 是项目对外响应体(冻结契约;camelCase;无明文/无密文)。
-// lastRunStatus / targetServers 本期为占位(null / []),数据由后续 story 填。
 type projectDTO struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -30,16 +31,61 @@ type projectDTO struct {
 	GroupID string `json:"groupId"`
 	// ServiceID 是归属服务(纯展示 / 筛选,不参与权限);ServiceName 是后端 join 好的展示名,
 	// 前端直接渲染,不用再拿 /api/services 映射一次;serviceId 为空表示未归属。
-	ServiceID     string   `json:"serviceId"`
-	ServiceName   string   `json:"serviceName"`
-	LastRunStatus *string  `json:"lastRunStatus"`
+	ServiceID   string `json:"serviceId"`
+	ServiceName string `json:"serviceName"`
+	// LastRunStatus 是该项目最近一条运行的状态(queued/running/waiting_approval/success/
+	// failed/partial_failed/rolled_back);从未跑过 → null,前端据此显示「尚无运行」。
+	LastRunStatus *string `json:"lastRunStatus"`
+	// TargetServers 是库内流水线里部署节点勾选的主机展示名(按声明顺序、已去重)。
+	// 口径是**配置**不是历史:没跑过也显示;机器已删或不在本次可见分组里的 id 不列。
 	TargetServers []string `json:"targetServers"`
 	CreatedAt     string   `json:"createdAt"`
 	UpdatedAt     string   `json:"updatedAt"`
 }
 
-// toProjectDTO 把领域 Project 转为契约 DTO。
-func toProjectDTO(p *project.Project) projectDTO {
+// serverNamesByID 取本次请求可见范围内的主机 id→展示名,供卡片把落点换成机器名。
+// 服务缺席 / 查询失败 → 空图(卡片退回「未绑定」),摘要读不懂时不拖垮整个列表响应。
+func serverNamesByID(ctx context.Context, sv target.Service, visible access.ListFilter) map[string]string {
+	out := map[string]string{}
+	if sv == nil {
+		return out
+	}
+	servers, err := sv.ListScoped(ctx, target.ListFilter{Visible: visible})
+	if err != nil {
+		return out
+	}
+	for _, s := range servers {
+		if s != nil {
+			out[s.ID] = s.Name
+		}
+	}
+	return out
+}
+
+// bestEffortServerNames 给写操作的响应补机器名:可见性算不出来就退回空图,
+// 不让一次已经成功的 PATCH 因为「读不出分组」变成 500。
+func bestEffortServerNames(r *http.Request, servers target.Service, acc *access.Service) map[string]string {
+	visible, err := visibleGroups(r, acc)
+	if err != nil {
+		return nil
+	}
+	return serverNamesByID(r.Context(), servers, visible)
+}
+
+// toProjectDTO 把领域 Project 转为契约 DTO。serverNames 缺席的落点 id 直接不列
+// (机器已删 / 不在可见分组):宁可少报一台,也不把别人名下的机器名报出去。
+func toProjectDTO(p *project.Project, serverNames map[string]string) projectDTO {
+	var lastRun *string
+	if p.LastRunStatus != "" {
+		v := p.LastRunStatus
+		lastRun = &v
+	}
+	targets := make([]string, 0, len(p.TargetServerIDs))
+	for _, id := range p.TargetServerIDs {
+		if name, ok := serverNames[id]; ok && name != "" {
+			targets = append(targets, name)
+		}
+	}
 	return projectDTO{
 		ID:              p.ID,
 		Name:            p.Name,
@@ -52,8 +98,8 @@ func toProjectDTO(p *project.Project) projectDTO {
 		GroupID:         p.GroupID,
 		ServiceID:       p.ServiceID,
 		ServiceName:     p.ServiceName,
-		LastRunStatus:   nil,        // 本期占位:尚无运行
-		TargetServers:   []string{}, // 本期占位:空集合
+		LastRunStatus:   lastRun,
+		TargetServers:   targets,
 		CreatedAt:       p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:       p.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -105,7 +151,7 @@ func atoiDefault(s string, def int) int {
 
 // makeListProjectsHandler 返回 GET /api/projects handler。
 // 列表按分组可见性收敛:普通用户只看到未归组 + 公开组 + 自己所在私有组的项目。
-func makeListProjectsHandler(svc project.Service, acc *access.Service) http.HandlerFunc {
+func makeListProjectsHandler(svc project.Service, servers target.Service, acc *access.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "项目服务未初始化")
@@ -125,8 +171,9 @@ func makeListProjectsHandler(svc project.Service, acc *access.Service) http.Hand
 			return
 		}
 		out := make([]projectDTO, 0, len(res.Items))
+		serverNames := serverNamesByID(r.Context(), servers, visible)
 		for i := range res.Items {
-			out = append(out, toProjectDTO(&res.Items[i]))
+			out = append(out, toProjectDTO(&res.Items[i], serverNames))
 		}
 		// 分页元信息经响应头暴露(不破坏数组契约;前端可选读取)。
 		w.Header().Set("X-Total-Count", strconv.Itoa(res.Total))
@@ -205,13 +252,13 @@ func makeCreateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch, "groupId": p.GroupID},
 			IP:         clientIP(r),
 		})
-		writeJSON(w, http.StatusCreated, toProjectDTO(p))
+		writeJSON(w, http.StatusCreated, toProjectDTO(p, nil))
 	}
 }
 
 // makeUpdateProjectHandler 返回 PATCH /api/projects/{id} handler。
 // 更新成功后追加 project_update 审计;改归属时额外追加 project_reassign(记录新旧组)。
-func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
+func makeUpdateProjectHandler(svc project.Service, servers target.Service, acc *access.Service, aud audit.Recorder, ac auth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "项目服务未初始化")
@@ -290,7 +337,7 @@ func makeUpdateProjectHandler(svc project.Service, acc *access.Service, aud audi
 				IP:         clientIP(r),
 			})
 		}
-		writeJSON(w, http.StatusOK, toProjectDTO(p))
+		writeJSON(w, http.StatusOK, toProjectDTO(p, bestEffortServerNames(r, servers, acc)))
 	}
 }
 
