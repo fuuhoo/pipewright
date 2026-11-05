@@ -186,6 +186,10 @@ export default {
   jumpToLatest: '最新のログへ移動',
   jumpToBottom: '最下部へ移動',
   showEarlier: 'それ以前の {n} 行を表示',
+  lineCountOf: '{loaded} 行読み込み / 全 {total} 行',
+  loadingEarlier: '以前のログを取得中…',
+  downloadAllLog: '全ログをダウンロード',
+  downloadAllLogTitle: 'この実行の完全なログをダウンロード(プレーンテキスト、バックエンドが1行ずつストリーム出力。プレビュー範囲に依存しません)',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'このコミットのコード変更',
@@ -248,7 +252,8 @@ export default {
   snapSiblingsMore: '、ほか {n} 件は未取得',
   snapSearchAria: 'キーワードでエントリを絞り込む',
   snapSearchPlaceholder: 'パスで絞り込み(例:dist、jar)',
-  snapEntryCount: '全 {total} 件中 {shown} 件を表示',
+  snapEntryCount: '{total} 件中 {shown} 件が該当',
+  snapEntryTotal: '全 {total} 件',
   snapTruncated: '取得上限に達したため、一覧は完全ではありません',
   snapDropped: 'ほか {n} 件は未取得',
   snapNoMatch: '一致するエントリがありません。別のキーワードをお試しください',
@@ -260,6 +265,10 @@ export default {
   snapCollapseAria: 'ディレクトリ {path} を折りたたむ',
   snapChildren: '{n} 件',
   snapNoChildren: '子項目なし(未取得の可能性)',
+  snapOpen: '一覧を見る',
+  snapLoading: 'ディレクトリ一覧を読み込み中…',
+  snapRetry: '再試行',
+  snapMissHint: '宣言した成果物 {n} 件が取得できませんでした',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'その他のステップ',

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -285,5 +286,241 @@ func TestSSERejectsInvalidSinceSeq(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("非法 sinceSeq 应 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestRunLogsTailWindow 验证 ?tail / ?beforeSeq 尾部窗口:只回最近 N 行、升序、
+// firstSeq/hasEarlier 说清「上面还有没有」,以及非法 tail 回 400。
+func TestRunLogsTailWindow(t *testing.T) {
+	srv, client, csrf, projID, rsvc := setupLogsServer(t)
+	r, _ := rsvc.Create(context.Background(), projID, run.Trigger{Type: run.TriggerManual})
+	waitRunStatus(t, client, srv, csrf, r.ID, run.StatusFailed)
+
+	// 失败 run 的行数不多,补几行才测得出「翻页」;终态 run 不会再被 worker 碰,seq 安全续号。
+	const extra = 7
+	total, err := rsvc.GetLogs(context.Background(), r.ID, 0)
+	if err != nil {
+		t.Fatalf("全量读日志: %v", err)
+	}
+	before := len(total)
+	for i := 0; i < extra; i++ {
+		if _, aerr := rsvc.AppendLog(context.Background(), r.ID, "stdout", 1, "补的一行"); aerr != nil {
+			t.Fatalf("补日志行: %v", aerr)
+		}
+	}
+	wantTotal := before + extra
+
+	var dto struct {
+		Lines      []logLineDTO `json:"lines"`
+		NextSeq    int          `json:"nextSeq"`
+		Complete   bool         `json:"complete"`
+		FirstSeq   *int         `json:"firstSeq"`
+		HasEarlier *bool        `json:"hasEarlier"`
+		Total      *int         `json:"total"`
+	}
+	get := func(query string) {
+		t.Helper()
+		resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/logs"+query, csrf, "")
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("tail logs status = %d: %s", resp.StatusCode, raw)
+		}
+		if derr := json.Unmarshal(raw, &dto); derr != nil {
+			t.Fatalf("decode tail logs: %v: %s", derr, raw)
+		}
+	}
+
+	get("?tail=3")
+	if len(dto.Lines) != 3 {
+		t.Fatalf("tail=3 应回 3 行, got %d", len(dto.Lines))
+	}
+	if dto.FirstSeq == nil || *dto.FirstSeq != wantTotal-2 {
+		t.Fatalf("firstSeq 应为 %d, got %+v", wantTotal-2, dto.FirstSeq)
+	}
+	if dto.HasEarlier == nil || !*dto.HasEarlier {
+		t.Fatalf("上面还有更早, hasEarlier 应为 true, got %+v", dto.HasEarlier)
+	}
+	if dto.NextSeq != wantTotal+1 {
+		t.Fatalf("nextSeq 应为末行+1=%d, got %d", wantTotal+1, dto.NextSeq)
+	}
+	// total 是整条日志的行数:窗口只搬 3 行时它必须仍是全量,前端的「已加载 x / 共 N」才不谎报。
+	if dto.Total == nil || *dto.Total != wantTotal {
+		t.Fatalf("total 应为 %d, got %+v", wantTotal, dto.Total)
+	}
+	if !dto.Complete {
+		t.Fatalf("终态 run 的 complete 应为 true")
+	}
+	for i, l := range dto.Lines {
+		if l.Seq != wantTotal-2+i {
+			t.Fatalf("尾部窗口应升序连续, line[%d].seq=%d", i, l.Seq)
+		}
+	}
+
+	// 往上翻一页:拿上一页 firstSeq 当 beforeSeq,应接在它前面。
+	prev := *dto.FirstSeq
+	get("?tail=3&beforeSeq=" + strconv.Itoa(prev))
+	if len(dto.Lines) != 3 || dto.Lines[2].Seq != prev-1 || dto.Lines[0].Seq != prev-3 {
+		t.Fatalf("beforeSeq=%d 应回 seq %d..%d, got %+v", prev, prev-3, prev-1, dto.Lines)
+	}
+
+	// 窗口开得比总行数还大 → 全量、firstSeq=1、没有更早。
+	get("?tail=99999")
+	if len(dto.Lines) != wantTotal {
+		t.Fatalf("tail 超过总行数应回全量 %d 行, got %d", wantTotal, len(dto.Lines))
+	}
+	if dto.FirstSeq == nil || *dto.FirstSeq != 1 || dto.HasEarlier == nil || *dto.HasEarlier {
+		t.Fatalf("全量时 firstSeq=1 / hasEarlier=false, got %+v/%+v", dto.FirstSeq, dto.HasEarlier)
+	}
+	if dto.Total == nil || *dto.Total != wantTotal {
+		t.Fatalf("窗口盖住全量时 total 仍是 %d, got %+v", wantTotal, dto.Total)
+	}
+
+	// ?step=<序号>:选中某个步骤时也只搬该步骤的一屏(否则前端得把整条日志下载完再筛)。
+	// 挑一个还没被写过的序号,自己写 3 行,断言就只回这 3 行 —— total 也必须跟着步骤口径。
+	const stepWanted = 42
+	for i := 0; i < 3; i++ {
+		if _, aerr := rsvc.AppendLog(context.Background(), r.ID, "stdout", stepWanted, "该步骤的一行"); aerr != nil {
+			t.Fatalf("补步骤日志: %v", aerr)
+		}
+	}
+	get("?tail=99999&step=" + strconv.Itoa(stepWanted))
+	if len(dto.Lines) != 3 {
+		t.Fatalf("step=%d 应只回该步骤 3 行, got %d", stepWanted, len(dto.Lines))
+	}
+	for _, l := range dto.Lines {
+		if l.StepOrdinal != stepWanted {
+			t.Fatalf("步骤筛选串味了: %+v", l)
+		}
+	}
+	if dto.Total == nil || *dto.Total != 3 {
+		t.Fatalf("step 模式下 total 应是该步骤的 3 行, got %+v", dto.Total)
+	}
+
+	// 步骤序号 0 起,所以 ?step=0 是有效筛选,不能和「不过滤」混用同一个值。
+	get("?tail=99999&step=0")
+	for _, l := range dto.Lines {
+		if l.StepOrdinal != 0 {
+			t.Fatalf("step=0 应只回序号 0 的行, got %+v", l)
+		}
+	}
+
+	// step 只与 tail 同时有意义:全量模式下带上它 → 400,而不是静默忽略。
+	stepNoTail := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/logs?step=1", csrf, "")
+	rawNoTail, _ := io.ReadAll(stepNoTail.Body)
+	_ = stepNoTail.Body.Close()
+	if stepNoTail.StatusCode != http.StatusBadRequest {
+		t.Fatalf("step 无 tail 应 400, got %d: %s", stepNoTail.StatusCode, rawNoTail)
+	}
+	badStep := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/logs?tail=3&step=-1", csrf, "")
+	rawBadStep, _ := io.ReadAll(badStep.Body)
+	_ = badStep.Body.Close()
+	if badStep.StatusCode != http.StatusBadRequest {
+		t.Fatalf("step=-1 应 400, got %d: %s", badStep.StatusCode, rawBadStep)
+	}
+
+	// 全量模式(?sinceSeq)不回这三个字段 —— 它没截前面,给了反而像"算过但没有"。
+	fullDTO := struct {
+		FirstSeq   *int  `json:"firstSeq"`
+		HasEarlier *bool `json:"hasEarlier"`
+		Total      *int  `json:"total"`
+	}{}
+	fullResp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/logs?sinceSeq=0", csrf, "")
+	fullRaw, _ := io.ReadAll(fullResp.Body)
+	_ = fullResp.Body.Close()
+	if err := json.Unmarshal(fullRaw, &fullDTO); err != nil {
+		t.Fatalf("decode 全量 logs: %v", err)
+	}
+	if fullDTO.FirstSeq != nil || fullDTO.HasEarlier != nil || fullDTO.Total != nil {
+		t.Fatalf("全量模式不该带 firstSeq/hasEarlier/total: %+v", fullDTO)
+	}
+
+	// tail 非正整数 → 400(不能静默退化成全量,那正是这次要治的卡顿)。
+	bad := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/logs?tail=0", csrf, "")
+	rawBad, _ := io.ReadAll(bad.Body)
+	_ = bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("tail=0 应 400, got %d: %s", bad.StatusCode, rawBad)
+	}
+	if !strings.Contains(string(rawBad), "invalid_tail") {
+		t.Fatalf("应返回 invalid_tail: %s", rawBad)
+	}
+}
+
+// TestRunLogsDownload 验证 GET /api/runs/{id}/logs/download:attachment .txt 逐行流式、
+// seq/ts/stream/text 制表符分隔、脱敏不回明文,以及 run 不存在 → 404。
+func TestRunLogsDownload(t *testing.T) {
+	srv, client, csrf, projID, rsvc := setupLogsServer(t)
+	r, _ := rsvc.Create(context.Background(), projID, run.Trigger{Type: run.TriggerManual})
+	waitRunStatus(t, client, srv, csrf, r.ID, run.StatusFailed)
+
+	lines, err := rsvc.GetLogs(context.Background(), r.ID, 0)
+	if err != nil || len(lines) == 0 {
+		t.Fatalf("准备日志行: %v (len=%d)", err, len(lines))
+	}
+
+	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+r.ID+"/logs/download", csrf, "")
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download status = %d: %s", resp.StatusCode, raw)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, `attachment; filename="run-`+r.ID+`-logs.txt"`) {
+		t.Fatalf("Content-Disposition 应为附件 .txt, got %q", cd)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("Content-Type 应为 text/plain, got %q", ct)
+	}
+	if strings.Contains(string(raw), run.StubFailureSecret) {
+		t.Fatalf("下载内容含明文假 secret(脱敏失败)")
+	}
+
+	body := strings.TrimSuffix(string(raw), "\n")
+	got := strings.Split(body, "\n")
+	if len(got) != len(lines) {
+		t.Fatalf("下载应有 %d 行, got %d", len(lines), len(got))
+	}
+	sawMasked := false
+	for i, row := range got {
+		cols := strings.Split(row, "\t")
+		if len(cols) != 4 {
+			t.Fatalf("第 %d 行应 4 列, got %q", i+1, row)
+		}
+		if cols[0] != strconv.Itoa(lines[i].Seq) {
+			t.Fatalf("第 %d 行 seq 应 %d, got %q", i+1, lines[i].Seq, cols[0])
+		}
+		if cols[2] != lines[i].Stream {
+			t.Fatalf("第 %d 行 stream 应 %q, got %q", i+1, lines[i].Stream, cols[2])
+		}
+		if _, terr := time.Parse(time.RFC3339, cols[1]); terr != nil {
+			t.Fatalf("第 %d 行 ts 应为 RFC3339, got %q", i+1, cols[1])
+		}
+		if strings.Contains(cols[3], mask.Placeholder) {
+			sawMasked = true
+		}
+	}
+	if !sawMasked {
+		t.Fatalf("应有一行被替换为 %s", mask.Placeholder)
+	}
+
+	missing := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/nope/logs/download", csrf, "")
+	rawMissing, _ := io.ReadAll(missing.Body)
+	_ = missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在 run 下载应 404, got %d: %s", missing.StatusCode, rawMissing)
+	}
+}
+
+// TestRunLogsDownloadRequiresAuth 验证下载端点和 logs 一样吃认证(它是同一份数据的全文出口)。
+func TestRunLogsDownloadRequiresAuth(t *testing.T) {
+	srv, _, _, _, _ := setupLogsServer(t)
+	anon := newTestClient(t)
+	resp, err := anon.Get(srv.URL + "/api/runs/x/logs/download")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未认证下载应 401, got %d", resp.StatusCode)
 	}
 }

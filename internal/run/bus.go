@@ -40,6 +40,12 @@ type LogLine struct {
 	Text        string    // 单行已脱敏日志文本(无尾换行)
 }
 
+// LogTail 是一次尾部窗口读取的结果(见 Service.GetLogsTail)。
+type LogTail struct {
+	Lines []LogLine // 本页行,按 seq 升序
+	Total int       // 该 run 的日志总行数(前端用它写「已加载 x / 共 N 行」)
+}
+
 // bus 是进程内内存事件总线:worker 发布运行/步骤变更,SSE handler 订阅。
 // SSE 据此推送,从而无需轮询 DB(避免 SetMaxOpenConns(1) 下长连接占用唯一连接)。
 type bus struct {

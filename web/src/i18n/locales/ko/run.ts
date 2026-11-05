@@ -186,6 +186,10 @@ export default {
   jumpToLatest: '최신 로그로 이동',
   jumpToBottom: '맨 아래로 이동',
   showEarlier: '이전 {n} 행 표시',
+  lineCountOf: '{loaded} 행 불러옴 / 전체 {total} 행',
+  loadingEarlier: '이전 로그 불러오는 중…',
+  downloadAllLog: '전체 로그 다운로드',
+  downloadAllLogTitle: '이 실행의 전체 로그를 다운로드(평문, 백엔드가 한 줄씩 스트리밍하며 미리보기 창 크기와 무관)',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: '이 커밋의 코드 변경',
@@ -248,7 +252,8 @@ export default {
   snapSiblingsMore: ', {n}개 항목은 미수집',
   snapSearchAria: '키워드로 항목 필터',
   snapSearchPlaceholder: '경로로 필터(예: dist, jar)',
-  snapEntryCount: '전체 {total}개 중 {shown}개 표시',
+  snapEntryCount: '전체 {total}개 중 {shown}개 일치',
+  snapEntryTotal: '전체 {total}개',
   snapTruncated: '수집 상한에 도달해 목록이 완전하지 않습니다',
   snapDropped: '{n}개 항목은 미수집',
   snapNoMatch: '일치하는 항목이 없습니다. 다른 키워드를 시도해 보세요',
@@ -260,6 +265,10 @@ export default {
   snapCollapseAria: '디렉터리 {path} 접기',
   snapChildren: '{n}개 항목',
   snapNoChildren: '하위 항목 없음(미수집)',
+  snapOpen: '목록 보기',
+  snapLoading: '디렉터리 목록 불러오는 중…',
+  snapRetry: '다시 시도',
+  snapMissHint: '선언된 산출물 {n}개가 매칭되지 않음',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: '기타 단계',

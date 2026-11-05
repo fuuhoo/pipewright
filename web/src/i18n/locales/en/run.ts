@@ -186,6 +186,10 @@ export default {
   jumpToLatest: 'Jump to latest log',
   jumpToBottom: 'Jump to bottom',
   showEarlier: 'Show {n} earlier lines',
+  lineCountOf: '{loaded} loaded / {total} lines',
+  loadingEarlier: 'Fetching earlier lines…',
+  downloadAllLog: 'Download full log',
+  downloadAllLogTitle: 'Download the complete log for this run (plain text, streamed line by line — not limited by the preview window)',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Code changes in this commit',
@@ -248,7 +252,8 @@ export default {
   snapSiblingsMore: ' plus {n} more not listed',
   snapSearchAria: 'Filter entries by keyword',
   snapSearchPlaceholder: 'Filter paths, e.g. dist, jar',
-  snapEntryCount: '{total} entries, showing {shown}',
+  snapEntryCount: '{shown} of {total} entries match',
+  snapEntryTotal: '{total} entries',
   snapTruncated: 'Entry limit reached — the listing is incomplete',
   snapDropped: '{n} more not listed',
   snapNoMatch: 'No entries match — try another keyword',
@@ -260,6 +265,10 @@ export default {
   snapCollapseAria: 'Collapse directory {path}',
   snapChildren: '{n} items',
   snapNoChildren: 'No children (or none captured)',
+  snapOpen: 'View listing',
+  snapLoading: 'Loading the directory listing…',
+  snapRetry: 'Retry',
+  snapMissHint: '{n} declared artifact path(s) matched nothing',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Other steps',

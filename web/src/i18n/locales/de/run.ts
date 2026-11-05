@@ -186,6 +186,10 @@ export default {
   jumpToLatest: 'Zum neuesten Log springen',
   jumpToBottom: 'Zum Ende springen',
   showEarlier: 'Frühere {n} Zeilen anzeigen',
+  lineCountOf: '{loaded} geladen / {total} Zeilen',
+  loadingEarlier: 'Frühere Zeilen werden geladen …',
+  downloadAllLog: 'Vollständiges Protokoll herunterladen',
+  downloadAllLogTitle: 'Das vollständige Protokoll dieses Laufs herunterladen (Klartext, zeilenweise streamend — unabhängig vom Vorschaufenster)',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Code-Änderungen in diesem Commit',
@@ -248,7 +252,8 @@ export default {
   snapSiblingsMore: ', {n} weitere nicht erfasst',
   snapSearchAria: 'Einträge nach Stichwort filtern',
   snapSearchPlaceholder: 'Pfade filtern, z. B. dist oder jar',
-  snapEntryCount: '{shown} von {total} Einträgen angezeigt',
+  snapEntryCount: '{shown} von {total} Einträgen passen',
+  snapEntryTotal: '{total} Einträge',
   snapTruncated: 'Erfassungslimit erreicht — die Liste ist unvollständig',
   snapDropped: '{n} weitere nicht erfasst',
   snapNoMatch: 'Keine Einträge passen — anderes Stichwort versuchen',
@@ -260,6 +265,10 @@ export default {
   snapCollapseAria: 'Verzeichnis {path} einklappen',
   snapChildren: '{n} Einträge',
   snapNoChildren: 'Keine Einträge (nicht erfasst)',
+  snapOpen: 'Liste anzeigen',
+  snapLoading: 'Verzeichnisliste wird geladen …',
+  snapRetry: 'Erneut versuchen',
+  snapMissHint: '{n} deklarierte Artefaktpfad(e) ohne Treffer',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Weitere Schritte',

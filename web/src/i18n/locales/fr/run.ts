@@ -186,6 +186,10 @@ export default {
   jumpToLatest: 'Aller au journal le plus récent',
   jumpToBottom: 'Aller en bas',
   showEarlier: 'Afficher {n} lignes précédentes',
+  lineCountOf: '{loaded} chargées / {total} lignes',
+  loadingEarlier: 'Chargement des lignes plus anciennes…',
+  downloadAllLog: 'Télécharger tout le journal',
+  downloadAllLogTitle: 'Télécharger le journal complet de cette exécution (texte brut, diffusé ligne par ligne, sans dépendre de la fenêtre d’aperçu)',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Modifications de code de ce commit',
@@ -248,7 +252,8 @@ export default {
   snapSiblingsMore: ', {n} autres non capturés',
   snapSearchAria: 'Filtrer les entrées par mot-clé',
   snapSearchPlaceholder: 'Filtrer les chemins, p. ex. dist ou jar',
-  snapEntryCount: '{shown} entrées sur {total}',
+  snapEntryCount: '{shown} sur {total} entrées correspondent',
+  snapEntryTotal: '{total} entrées',
   snapTruncated: 'Limite de capture atteinte — la liste est incomplète',
   snapDropped: '{n} autres non capturés',
   snapNoMatch: 'Aucune entrée ne correspond — essayez un autre mot-clé',
@@ -260,6 +265,10 @@ export default {
   snapCollapseAria: 'Replier le répertoire {path}',
   snapChildren: '{n} entrées',
   snapNoChildren: 'Aucune entrée (non capturée)',
+  snapOpen: 'Voir la liste',
+  snapLoading: 'Chargement de la liste du répertoire…',
+  snapRetry: 'Réessayer',
+  snapMissHint: '{n} chemin(s) d’artefact déclaré(s) sans correspondance',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Autres étapes',

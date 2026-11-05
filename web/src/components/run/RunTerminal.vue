@@ -2,16 +2,22 @@
   RunTerminal.vue — Story 3-6: 纯黑实时日志终端
 
   逐行渲染运行日志的只读终端组件。两种使用方式由 `live` 决定:
-    · live=true  (running/queued) → 订阅 SSE:建连先回放历史 log,再实时 tail。
-    · live=false (终态)          → 仅历史回放,一次性 getRunLogs 拉全量,只读。
+    · live=true  (running/queued) → 订阅 SSE:先取尾部一屏播种,再从游标实时 tail。
+    · live=false (终态)          → 仅历史回放,只读。
 
   关键行为:
+    · **默认只搬尾部一屏**:开页用 ?tail=<LOG_TAIL_WINDOW> 要最近这么多行,「显示更早」
+      再按页往上要(?tail&beforeSeq=)。整条日志一次进内存是把卡顿从后端搬回浏览器 ——
+      一条 1.3 万行的日志,光渲染就够把主线程钉住。要全文请走右上角「下载全部日志」
+      (后端逐行流式落成 .txt,同样不占浏览器内存)。
+    · **选中某个步骤时**改为整条拉一次:服务端尾部窗口不分步骤,若仍只搬全局尾部,
+      早期步骤会"看着是空的"。单步行数远小于整条,这条路径的正确性优先于省流量。
     · seq 去重 + 升序:SSE 回放历史与实时行可能重叠,统一以 seq 为主键(纯逻辑见
-      lib/runLogBuffer.ts:追加 O(1)、乱序才二分插)。
+      lib/runLogBuffer.ts:追加 O(1)、乱序才二分插;往上翻页的前缀行走 prepend)。
     · **逐行不重算**:SSE 是一行一个事件,直接照单处理会让每行重建一次全表。入队后
       按帧合并(rAF),一帧最多重算/重渲染一次。
-    · **只挂尾部窗口**:默认只渲染最近 LOG_TAIL_WINDOW 行,更早的靠「显示更早」逐批
-      展开;否则一条 13553 行的日志就是 4 万个 DOM 节点,打开即卡。
+    · **只挂尾部渲染窗口**:即使已加载的行变多,也只渲染最近 LOG_TAIL_WINDOW +
+      已展开的那些;否则一条 13553 行的日志就是 4 万个 DOM 节点,打开即卡。
     · 自动滚底:新行到达滚到底;但用户手动上滚(离开底部)时暂停自动滚——
       这是终端的常见行为;用户滚回底部自动恢复。滚动用 scrollTop 写入,
       不触发布局抖动。
@@ -27,7 +33,8 @@
 import { ref, computed, shallowRef, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  getRunLogs,
+  getRunLogsTail,
+  runLogsDownloadUrl,
   subscribeRunEvents,
   type RunLogLine,
 } from '../../api/runs'
@@ -35,6 +42,7 @@ import {
   createRunLogBuffer,
   logWindowFor,
   LOG_ANIMATE_MAX,
+  LOG_TAIL_WINDOW,
   LOG_WINDOW_STEP,
 } from '../../lib/runLogBuffer'
 
@@ -57,6 +65,11 @@ const buffer = createRunLogBuffer()
 const revision = shallowRef(0)
 // 用户点「显示更早」累计多展开的行数。
 const revealed = ref(0)
+// 服务端告诉我们的「上面还有」:更早的行数不止窗口没展开的那些,而是根本没搬进浏览器。
+const hasEarlier = ref(false)
+// 整条日志的总行数(尾部窗口模式才回传);0 = 不知道。
+const serverTotal = ref(0)
+const loadingEarlier = ref(false)
 // 本帧新增的 seq:只有它们做淡入,回放整屏时不能上千个动画一起跑。
 const NO_FRESH: ReadonlySet<number> = new Set()
 const freshSeqs = shallowRef<ReadonlySet<number>>(NO_FRESH)
@@ -96,6 +109,9 @@ function resetBuffer(): void {
   dropQueued()
   buffer.clear()
   revealed.value = 0
+  hasEarlier.value = false
+  serverTotal.value = 0
+  loadingEarlier.value = false
   freshSeqs.value = NO_FRESH
   revision.value++
 }
@@ -120,50 +136,49 @@ async function bootstrap(): Promise<void> {
   loadState.value = 'loading'
   loadError.value = ''
 
-  if (props.live) {
-    // Live mode: REST seed once, then SSE only for the tail (sinceSeq = 种子游标)。
-    // 否则历史日志要下两遍(播种一遍 + SSE 建连回放一遍);播种失败时游标留 0,
-    // 退化成服务端全量回放,seq 去重兜住重叠。
-    let nextSeq = 0
-    try {
-      const initial = await getRunLogs(props.runId, 0)
-      ingest(initial.lines)
-      nextSeq = initial.nextSeq
-    } catch {
-      // Non-fatal: SSE replay will still deliver history. Swallow silently.
-    }
-    loadState.value = 'streaming'
-    cleanupSse = subscribeRunEvents(props.runId, {
-      // status/step are owned by the parent view; here we only consume logs.
-      onStatus() {},
-      onStep() {},
-      onLog(line) {
-        ingest([line])
-      },
-    }, { sinceSeq: nextSeq })
-  } else {
-    // Terminal mode: one-shot full historical replay, read-only.
-    try {
-      let sinceSeq = 0
-      // Drain pages until complete (logs endpoint paginates large logs).
-      // Guard against a non-advancing cursor to avoid an infinite loop.
-      for (let guard = 0; guard < 10_000; guard++) {
-        const page = await getRunLogs(props.runId, sinceSeq)
-        ingest(page.lines)
-        if (page.complete || page.nextSeq <= sinceSeq) break
-        if (page.lines.length === 0) break
-        sinceSeq = page.nextSeq
-      }
-      // 历史回放是一次到位的终态:把攒着的这批立刻落进缓冲,别多等一帧。
-      if (flushHandle) flushPending()
-      loadState.value = 'done'
-      scheduleAutoScroll()
-    } catch (err) {
-      dropQueued()
-      loadError.value = err instanceof Error ? err.message : t('run.logLoadFailed')
-      loadState.value = 'error'
-    }
+  // 两种取法都只要一屏:没选步骤 = 整条日志的尾部;选了步骤 = 那一步的尾部(?step)。
+  // 服务端按步骤筛完才回窗口,所以早期步骤不再被"全局尾部"筛成空的,也不用把整条搬下来。
+  const step = props.filterOrdinal ?? null
+  let cursor = 0
+  let seedFailed = false
+
+  try {
+    const page = await getRunLogsTail(props.runId, LOG_TAIL_WINDOW, 0, step)
+    ingest(page.lines)
+    cursor = page.nextSeq
+    hasEarlier.value = page.hasEarlier ?? false
+    serverTotal.value = page.total ?? page.lines.length
+    // 历史回放是一次到位的:把攒着的这批立刻落进缓冲,别多等一帧。
+    if (flushHandle) flushPending()
+  } catch (err) {
+    dropQueued()
+    loadError.value = err instanceof Error ? err.message : t('run.logLoadFailed')
+    seedFailed = true
   }
+
+  if (props.live) {
+    // 播种失败在实时模式**不致命**:游标留 0,SSE 建连会自己回放历史,seq 去重兜住重叠。
+    loadState.value = 'streaming'
+    openSse(cursor)
+    return
+  }
+  if (seedFailed) {
+    loadState.value = 'error'
+    return
+  }
+  loadState.value = 'done'
+  scheduleAutoScroll()
+}
+
+function openSse(cursor: number): void {
+  cleanupSse = subscribeRunEvents(props.runId, {
+    // status/step 由父视图负责;这里只消费日志。
+    onStatus() {},
+    onStep() {},
+    onLog(line) {
+      ingest([line])
+    },
+  }, { sinceSeq: cursor })
 }
 
 onMounted(bootstrap)
@@ -172,9 +187,11 @@ onUnmounted(() => {
   dropQueued()
 })
 
-// Re-bootstrap if the run flips identity or live⇄terminal (status transition).
+// Re-bootstrap if the run flips identity, live⇄terminal (status transition), or the
+// 换运行 / live⇄终态 / 换选中步骤都要重取:缓冲里装的就是「这一步的最近一屏」,
+// 步骤变了那一屏也变了 —— 在客户端从同一份缓冲里筛是筛不出没下载的那些行的。
 watch(
-  () => [props.runId, props.live] as const,
+  () => [props.runId, props.live, props.filterOrdinal ?? -1] as const,
   () => {
     stopSse()
     void bootstrap()
@@ -235,19 +252,67 @@ const shown = computed(() => {
 
 const hasLines = computed(() => shown.value.total > 0)
 const showFollowButton = computed(() => !stickToBottom.value && hasLines.value)
-const earlierBatch = computed(() => Math.min(LOG_WINDOW_STEP, shown.value.hiddenEarlier))
 
-// 往上展开一批历史。加了行,scrollHeight 会变长,若不锚定视窗就会跳到刚出现的旧行上;
-// 所以记下展开前的高度和位置,渲染完把多出来的高度补回 scrollTop,读的那一行原地不动。
-function revealEarlier(): void {
+// 「显示更早」能给的行数 = 已加载但没挂出来的 + 服务端还没搬下来的。两段合起来才算,
+// 否则按钮会说"再显示 1500 行"而实际只压着 37 行。
+const notFetched = computed(() =>
+  hasEarlier.value ? Math.max(0, serverTotal.value - shown.value.total) : 0,
+)
+const earlierBatch = computed(() =>
+  Math.min(LOG_WINDOW_STEP, shown.value.hiddenEarlier + notFetched.value),
+)
+const canShowEarlier = computed(() => earlierBatch.value > 0)
+
+// 行数是「已加载 / 共」两个数:窗口模式下 shown.total 只是搬进浏览器的那部分,
+// 直接报它等于把"共 13553 行"谎报成"1500 行"。
+const countLabel = computed(() => {
+  const loaded = shown.value.total
+  const total = hasEarlier.value ? Math.max(serverTotal.value, loaded) : loaded
+  return total > loaded ? t('run.lineCountOf', { loaded, total }) : t('run.lineCount', { n: loaded })
+})
+
+// 往上翻一页历史:先展开本地窗口里已经压着的行;本地见底了才向服务端要更早的一页。
+// 加了行 scrollHeight 会变长,若不锚定视窗就会跳到刚出现的旧行上;所以记下展开前的高度
+// 和位置,渲染完把多出来的高度补回 scrollTop,读的那一行原地不动。
+async function revealEarlier(): Promise<void> {
   const el = scrollEl.value
   const prevHeight = el ? el.scrollHeight : 0
   const prevTop = el ? el.scrollTop : 0
-  revealed.value += LOG_WINDOW_STEP
-  void nextTick(() => {
-    if (!el) return
-    el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
-  })
+  const anchor = () => {
+    void nextTick(() => {
+      if (!el) return
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+    })
+  }
+
+  if (shown.value.hiddenEarlier > 0) {
+    revealed.value += LOG_WINDOW_STEP
+    anchor()
+    return
+  }
+  if (!hasEarlier.value || loadingEarlier.value) return
+
+  loadingEarlier.value = true
+  try {
+    // 游标用缓冲里最小的 seq(已加载的最早一行),而不是本地窗口 —— 窗口只管渲染。
+    const step = props.filterOrdinal ?? null
+    const page = await getRunLogsTail(props.runId, LOG_WINDOW_STEP, buffer.firstSeq, step)
+    // 按步骤翻页时 seq 本来就不连续(别的步骤的行夹在中间),不能拿连续性当断口判。
+    const added = buffer.prepend(page.lines, { contiguous: step == null })
+    if (added.length > 0) {
+      // 新接上的这批必须同时多展开这么多行,否则窗口仍贴尾渲染,翻上来的页看不见。
+      revealed.value += added.length
+      revision.value++
+    }
+    hasEarlier.value = page.hasEarlier ?? false
+    if (typeof page.total === 'number') serverTotal.value = page.total
+  } catch {
+    // 翻不动就停在原地:上面确实可能有,但这次没拿到 —— 按钮留着,用户可再点一次。
+    hasEarlier.value = false
+  } finally {
+    loadingEarlier.value = false
+    anchor()
+  }
 }
 
 // seq 每 run 唯一,直接当 v-for 的 key。
@@ -274,7 +339,20 @@ function lineKey(line: { seq: number }): number {
         <span class="term-live-dot" aria-hidden="true" />
         LIVE
       </span>
-      <span class="term-count mono" v-if="hasLines">{{ t('run.lineCount', { n: shown.total }) }}</span>
+      <span class="term-count mono" v-if="hasLines">{{ countLabel }}</span>
+      <!-- 全文下载交给后端逐行流式:窗口只搬了一屏,但"下载全部"不该受窗口大小限制。 -->
+      <a
+        v-if="hasLines"
+        class="term-dl mono"
+        :href="runLogsDownloadUrl(props.runId)"
+        download
+        :title="t('run.downloadAllLogTitle')"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16" />
+        </svg>
+        {{ t('run.downloadAllLog') }}
+      </a>
     </div>
 
     <!-- Log surface — 封顶 56vh,框内纵向滚动;实时 tail 框内贴底跟随 -->
@@ -309,12 +387,13 @@ function lineKey(line: { seq: number }): number {
       <!-- Lines:先给「显示更早」的口子,再挂尾部窗口 -->
       <template v-else>
         <button
-          v-if="shown.hiddenEarlier > 0"
+          v-if="canShowEarlier"
           class="term-earlier mono"
           type="button"
+          :disabled="loadingEarlier"
           @click="revealEarlier"
         >
-          {{ t('run.showEarlier', { n: earlierBatch }) }}
+          {{ loadingEarlier ? t('run.loadingEarlier') : t('run.showEarlier', { n: earlierBatch }) }}
         </button>
 
         <ol class="term-lines" :aria-label="t('run.totalLinesAria', { n: shown.total })">

@@ -875,7 +875,13 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		ar.Get("/runs/{id}", makeGetRunHandler(rs))
 		ar.Get("/runs/{id}/events", makeRunEventsHandler(rs, o.runSub))
 		// 历史日志拉取 / 分页(Story 3.6):只读 + 认证;sinceSeq 分页;complete=终态。
+		// ?tail=<n> 走尾部窗口模式(详情页默认只取最近一屏)。
 		ar.Get("/runs/{id}/logs", makeRunLogsHandler(rs))
+		// 全部日志下载:逐行流式落成 .txt,不进内存堆聚全量。
+		// 权限照 /runs/{id}/… 的既有口径来:resolveGuardTarget 只认「api / runs / {id}」前三段,
+		// 深一段的 GET 自动落 act_view —— 与产物下载 /runs/{id}/artifacts/{aid}/download 同理,
+		// 不需要额外接线。
+		ar.Get("/runs/{id}/logs/download", makeRunLogsDownloadHandler(rs))
 		// 构建产物契约(Story 3.4 / FR-6):只读 + 认证;按 (type, reference) 供 Epic 4 消费。
 		ar.Get("/runs/{id}/artifacts", makeRunArtifactsHandler(rs))
 		// 工作区目录快照(每个构建节点执行完时的现场目录清单):只读 + 认证。快照未启用 → 503。

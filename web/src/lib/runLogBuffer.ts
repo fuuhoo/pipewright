@@ -48,8 +48,19 @@ export function splitRunLogText(text: string): RunLogSeg[] {
 export interface RunLogBuffer {
   /** 收一批行:按 seq 去重、升序维护,返回其中**真正新增**的行(已带分段)。 */
   add(incoming: readonly RunLogLine[]): RenderedRunLogLine[]
+  /**
+   * 往**头部**接一页更早的行(服务端尾部窗口往上翻页用)。
+   * 默认只接「紧贴在当前最小 seq 之上、且自身连续」的一段:中间少了行就停在洞之上 ——
+   * 把两段拼成一条看不见的缝,比少展开一屏更糟,读者不会知道日志断过。
+   * `contiguous: false` 是给**按步骤翻页**的:一个步骤的行会被别的步骤隔断(并行阶段),
+   * 那种"少了几行"不是断口,是本来就不属于这一步。
+   * 空缓冲时等价于 `add`(没有头部可接,不该让调用方以为翻页失败)。返回真正接上的行。
+   */
+  prepend(incoming: readonly RunLogLine[], opts?: { contiguous?: boolean }): RenderedRunLogLine[]
   /** 升序快照。返回内部数组本身(只读;原地增长,靠调用方的变更戳驱动重算)。 */
   all(): RenderedRunLogLine[]
+  /** 当前最小 seq;空缓冲为 0(前端据此决定往上翻页的游标)。 */
+  readonly firstSeq: number
   readonly size: number
   clear(): void
 }
@@ -57,6 +68,10 @@ export interface RunLogBuffer {
 export function createRunLogBuffer(): RunLogBuffer {
   const seen = new Set<number>()
   const items: RenderedRunLogLine[] = []
+
+  function render(line: RunLogLine): RenderedRunLogLine {
+    return { ...line, segs: splitRunLogText(line.text) }
+  }
 
   /** 乱序行的落点:二分找第一个 seq 更大的位置插进去。 */
   function insertAscending(entry: RenderedRunLogLine): void {
@@ -78,7 +93,7 @@ export function createRunLogBuffer(): RunLogBuffer {
     for (const line of incoming) {
       if (seen.has(line.seq)) continue
       seen.add(line.seq)
-      const entry: RenderedRunLogLine = { ...line, segs: splitRunLogText(line.text) }
+      const entry = render(line)
       const tail = items[items.length - 1]
       if (!tail || line.seq > tail.seq) {
         items.push(entry)
@@ -92,9 +107,41 @@ export function createRunLogBuffer(): RunLogBuffer {
     return appended
   }
 
+  function prepend(incoming: readonly RunLogLine[], opts?: { contiguous?: boolean }): RenderedRunLogLine[] {
+    if (incoming.length === 0) return []
+    const first = items[0]?.seq
+    // 缓冲空时没有"头部"可接,这就是普通追加 —— 别让调用方以为翻页失败了。
+    if (first === undefined) return add(incoming)
+    const contiguous = opts?.contiguous ?? true
+    // 从**最靠近已加载头部**的那行往下接:这样一次同时校验了「页首贴得上」与「页内不跳行」。
+    const rows = [...incoming].sort((a, b) => b.seq - a.seq)
+    const page: RenderedRunLogLine[] = []
+    let next = first
+    for (const line of rows) {
+      // 比头部更晚(或收过)的行归 `add` 管,不是往前接。
+      if (line.seq >= next) continue
+      if (contiguous) {
+        if (line.seq !== next - 1) break // 中间少了行:停在洞之上,不把两段拼成一条假连续
+        next = line.seq
+      } else if (seen.has(line.seq)) {
+        continue
+      }
+      seen.add(line.seq)
+      page.unshift(render(line))
+    }
+    if (page.length === 0) return []
+    // 整页一次 splice:头部插入无法增量 push,但一页的量有界(= 窗口步长)。
+    items.splice(0, 0, ...page)
+    return page
+  }
+
   return {
     add,
+    prepend,
     all: () => items,
+    get firstSeq() {
+      return items[0]?.seq ?? 0
+    },
     get size() {
       return items.length
     },

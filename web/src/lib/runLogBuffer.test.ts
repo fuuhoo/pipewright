@@ -101,6 +101,81 @@ describe('splitRunLogText', () => {
   })
 })
 
+// ─── 往前翻页:prepend ───────────────────────────────────────────────────────
+describe('createRunLogBuffer.prepend', () => {
+  function seeded(): ReturnType<typeof createRunLogBuffer> {
+    const buf = createRunLogBuffer()
+    buf.add([line(6), line(7), line(8), line(9), line(10)])
+    return buf
+  }
+  const seqsOf = (buf: ReturnType<typeof createRunLogBuffer>) => buf.all().map((l) => l.seq)
+
+  it('更早的一页接到头部,顺序仍是升序', () => {
+    const buf = seeded()
+    const page = buf.prepend([line(3), line(4), line(5)])
+    expect(page.map((l) => l.seq)).toEqual([3, 4, 5])
+    expect(seqsOf(buf)).toEqual([3, 4, 5, 6, 7, 8, 9, 10])
+    expect(buf.firstSeq).toBe(3)
+  })
+
+  it('已经收过的行不再挂第二遍', () => {
+    const buf = seeded()
+    expect(buf.prepend([line(1), line(2), line(3), line(4), line(5)]).map((l) => l.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(seqsOf(buf)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(buf.prepend([line(2), line(3)]).length).toBe(0)
+  })
+
+  it('页里跳了一行:停在洞之上,不把两段拼成假连续', () => {
+    const buf = seeded()
+    // 头部从 6 开始,这页缺 4 → 只接得上 5
+    expect(buf.prepend([line(3), line(5)]).map((l) => l.seq)).toEqual([5])
+    expect(seqsOf(buf)).toEqual([5, 6, 7, 8, 9, 10])
+  })
+
+  it('和头部不挨着的一页整段拒收(游标错了也不能硬拼)', () => {
+    const buf = seeded()
+    // 5 才是该接的那一行,给的是 1..4 → 中间断在 5
+    expect(buf.prepend([line(1), line(2), line(3), line(4)]).length).toBe(0)
+    expect(buf.size).toBe(5)
+  })
+
+  it('晚于头部的行不归 prepend 管(那是实时 tail 的活)', () => {
+    const buf = seeded()
+    expect(buf.prepend([line(5), line(11)]).map((l) => l.seq)).toEqual([5])
+    expect(seqsOf(buf)).toEqual([5, 6, 7, 8, 9, 10])
+  })
+
+  it('空缓冲时等价于追加,不能让「显示更早」假装失败', () => {
+    const buf = createRunLogBuffer()
+    buf.prepend([line(2), line(1)])
+    expect(seqsOf(buf)).toEqual([1, 2])
+  })
+
+  it('contiguous:false(按步骤翻页):seq 隔断也整段接上', () => {
+    const buf = seeded()
+    // 这一步只有偶数行:头部是 6,往上是 4、2 —— 缺的 5/3 属于别的步骤,不是断口。
+    const page = buf.prepend([line(4), line(2)], { contiguous: false })
+    expect(page.map((l) => l.seq)).toEqual([2, 4])
+    expect(seqsOf(buf)).toEqual([2, 4, 6, 7, 8, 9, 10])
+    expect(buf.firstSeq).toBe(2)
+  })
+
+  it('contiguous:false 仍去重,且不吃比头部更晚的行', () => {
+    const buf = seeded()
+    buf.prepend([line(4), line(2)], { contiguous: false })
+    expect(buf.prepend([line(2), line(4)], { contiguous: false }).length).toBe(0)
+    expect(buf.prepend([line(11)], { contiguous: false }).length).toBe(0)
+    expect(seqsOf(buf)).toEqual([2, 4, 6, 7, 8, 9, 10])
+  })
+
+  it('firstSeq:空缓冲是 0,有行时是最小 seq', () => {
+    const buf = createRunLogBuffer()
+    expect(buf.firstSeq).toBe(0)
+    buf.add([line(4), line(3)])
+    expect(buf.firstSeq).toBe(3)
+  })
+})
+
 // ─── 尾部窗口 ────────────────────────────────────────────────────────────────
 describe('logWindowFor', () => {
   it('日志不足窗口时全量渲染(小日志行为与以前一致)', () => {

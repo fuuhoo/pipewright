@@ -350,16 +350,44 @@ export interface RunLogLine {
 // Returns lines after `sinceSeq` (ascending). `nextSeq` = last seq + 1 (resume
 // cursor); `complete` = run has reached a terminal state (stop polling). 404
 // run_not_found if the run does not exist.
+//
+// 另有尾部窗口模式 ?tail=<n>[&beforeSeq=<seq>]:只回**最近** n 行(仍升序),并给出
+// firstSeq / hasEarlier —— 运行详情页用它先搬一屏,「显示更早」再用 beforeSeq 往上翻页。
+// 全量拉一次几万行会把主线程卡在渲染上,那是要避免的事。
 
 export interface RunLogsResponse {
   lines: RunLogLine[]
   nextSeq: number
   complete: boolean
+  firstSeq?: number   // 仅尾部窗口模式:本页首行的 seq
+  hasEarlier?: boolean // 仅尾部窗口模式:上面还有没有更早的行
+  total?: number      // 仅尾部窗口模式:该 run 的日志总行数(「已加载 x / 共 N 行」)
 }
 
 export function getRunLogs(id: string, sinceSeq = 0): Promise<RunLogsResponse> {
   const qs = sinceSeq > 0 ? `?sinceSeq=${sinceSeq}` : ''
   return http.get<RunLogsResponse>(`/api/runs/${id}/logs${qs}`)
+}
+
+// getRunLogsTail 取尾部窗口:最近 `tail` 行;beforeSeq>0 时只要 seq<beforeSeq 的那一页。
+// step 是步骤序号(从 0 起,所以 0 是有效筛选值):选中某个步骤时让它替我们只搬这一步的一屏,
+// 而不是把整条日志下载完再在前端筛 —— 后者对长跑就是一张几十 MB 的网。
+export function getRunLogsTail(
+  id: string,
+  tail: number,
+  beforeSeq = 0,
+  step?: number | null,
+): Promise<RunLogsResponse> {
+  const qs = new URLSearchParams({ tail: String(tail) })
+  if (beforeSeq > 0) qs.set('beforeSeq', String(beforeSeq))
+  if (step != null) qs.set('step', String(step))
+  return http.get<RunLogsResponse>(`/api/runs/${id}/logs?${qs.toString()}`)
+}
+
+// runLogsDownloadUrl 是「下载全部日志」的地址:后端逐行流式落成 .txt,不走浏览器内存聚合。
+// 与产物下载同口径(会话 Cookie 认证 + <a download>)。
+export function runLogsDownloadUrl(id: string): string {
+  return `/api/runs/${id}/logs/download`
 }
 
 // ─── Run artifacts (Story 3-4 frozen contract — FR-6) ─────────────────────────

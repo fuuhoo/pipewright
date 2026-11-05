@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -454,10 +455,15 @@ type logLineDTO struct {
 }
 
 // runLogsDTO 是 GET /api/runs/{id}/logs 响应体(冻结)。
+// firstSeq/hasEarlier/total 只在尾部窗口(?tail)模式下有意义:全量模式(?sinceSeq)不截前面,
+// 省略首行序号反而会让前端误判成 0,所以按指针给"没算"与"算出来是 1"两种语义。
 type runLogsDTO struct {
-	Lines    []logLineDTO `json:"lines"`
-	NextSeq  int          `json:"nextSeq"`
-	Complete bool         `json:"complete"`
+	Lines      []logLineDTO `json:"lines"`
+	NextSeq    int          `json:"nextSeq"`
+	Complete   bool         `json:"complete"`
+	FirstSeq   *int         `json:"firstSeq,omitempty"`
+	HasEarlier *bool        `json:"hasEarlier,omitempty"`
+	Total      *int         `json:"total,omitempty"` // 该 run 日志总行数(尾部窗口模式才回)
 }
 
 func toLogLineDTO(l run.LogLine) logLineDTO {
@@ -479,6 +485,8 @@ func logPayload(_ string, l run.LogLine) string {
 // makeRunLogsHandler 返回 GET /api/runs/{id}/logs handler(认证;非 SSE 历史拉取 / 分页)。
 // 查询 ?sinceSeq=<int>(默认 0)→ 返回该 seq 之后的行(升序);nextSeq=末行 seq+1;
 // complete=run 是否已终态(前端据此停止轮询)。run 不存在 → 404 run_not_found。
+// 另有尾部窗口模式 ?tail=<n>(可配 ?beforeSeq=<seq>):只回**最近** n 行,给首行序号与
+// 「前面还有没有」—— 运行详情页据此不再把几万行日志一次搬进内存。
 func makeRunLogsHandler(svc run.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -494,8 +502,10 @@ func makeRunLogsHandler(svc run.Service) http.HandlerFunc {
 			return
 		}
 
+		q := r.URL.Query()
+		tailRaw := q.Get("tail")
 		sinceSeq := 0
-		if v := r.URL.Query().Get("sinceSeq"); v != "" {
+		if v := q.Get("sinceSeq"); v != "" {
 			n, perr := strconv.Atoi(v)
 			if perr != nil || n < 0 {
 				writeError(w, http.StatusBadRequest, "invalid_since_seq", "sinceSeq 必须为不小于 0 的整数")
@@ -504,7 +514,47 @@ func makeRunLogsHandler(svc run.Service) http.HandlerFunc {
 			sinceSeq = n
 		}
 
-		lines, err := svc.GetLogs(r.Context(), id, sinceSeq)
+		var lines []run.LogLine
+		isTail := tailRaw != ""
+		// step 是步骤筛选(序号 0 起,所以 -1 才表示「不过滤」)。只有尾部窗口模式实现了它:
+		// 全量模式本来就一行不落,再叠一层过滤只会让响应和请求对不上。
+		step := -1
+		if v := q.Get("step"); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n < 0 {
+				writeError(w, http.StatusBadRequest, "invalid_step", "step 必须为不小于 0 的整数")
+				return
+			}
+			if !isTail {
+				writeError(w, http.StatusBadRequest, "step_requires_tail", "step 只与 tail 一起用")
+				return
+			}
+			step = n
+		}
+		var tail run.LogTail
+		if isTail {
+			n, perr := strconv.Atoi(tailRaw)
+			if perr != nil || n <= 0 {
+				writeError(w, http.StatusBadRequest, "invalid_tail", "tail 必须为正整数")
+				return
+			}
+			if n > logTailMax {
+				n = logTailMax
+			}
+			beforeSeq := 0
+			if v := q.Get("beforeSeq"); v != "" {
+				b, bperr := strconv.Atoi(v)
+				if bperr != nil || b < 0 {
+					writeError(w, http.StatusBadRequest, "invalid_before_seq", "beforeSeq 必须为不小于 0 的整数")
+					return
+				}
+				beforeSeq = b
+			}
+			tail, err = svc.GetLogsTail(r.Context(), id, beforeSeq, n, step)
+			lines = tail.Lines
+		} else {
+			lines, err = svc.GetLogs(r.Context(), id, sinceSeq)
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return
@@ -521,6 +571,52 @@ func makeRunLogsHandler(svc run.Service) http.HandlerFunc {
 		if n := len(lines); n > 0 {
 			dto.NextSeq = lines[n-1].Seq + 1
 		}
+		if isTail {
+			firstSeq, hasEarlier, total := 0, false, tail.Total
+			if len(lines) > 0 {
+				firstSeq = lines[0].Seq
+				hasEarlier = firstSeq > 1
+			}
+			dto.FirstSeq = &firstSeq
+			dto.HasEarlier = &hasEarlier
+			dto.Total = &total
+		}
 		writeJSON(w, http.StatusOK, dto)
+	}
+}
+
+// logTailMax 封顶单次尾部窗口行数:前端默认只要几百行,给一个够用的上界防住手搓 URL。
+const logTailMax = 5000
+
+// makeRunLogsDownloadHandler 返回 GET /api/runs/{id}/logs/download handler。
+//
+// 整条日志逐行流式落成 .txt(seq/ts/stream/text 制表符分隔,text 入表前已脱敏),
+// 供运行详情页「下载全部日志」直接用 <a download> 打开 —— 走流式是因为一次长跑日志
+// 可能几万行,把它先聚成切片再写出去等于把卡顿从浏览器搬回服务端。
+func makeRunLogsDownloadHandler(svc run.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeError(w, http.StatusServiceUnavailable, "internal", "运行服务未初始化")
+			return
+		}
+		id := chi.URLParam(r, "id")
+		if _, err := svc.Get(r.Context(), id); err != nil {
+			writeRunError(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeFilename("run-"+id+"-logs.txt")+`"`)
+
+		// 64KB 缓冲:攒够一块再落 socket,几万行也不至于逐行系统调用。
+		bw := bufio.NewWriterSize(w, 64*1024)
+		// 读挂/客户端断开都发生在响应头之后,只能就地截断这份 .txt —— 不假装能补救。
+		_ = svc.StreamLogs(r.Context(), id, func(l run.LogLine) error {
+			_, werr := fmt.Fprintf(bw, "%d\t%s\t%s\t%s\n",
+				l.Seq, l.Ts.UTC().Format(time.RFC3339), l.Stream, l.Text)
+			return werr
+		})
+		_ = bw.Flush()
 	}
 }

@@ -69,6 +69,15 @@ type Service interface {
 	// GetLogs 取某次运行 sinceSeq 之后的日志行(升序;sinceSeq<=0 取全部)。
 	// 不全量驻留:调用方按需分页(NFR-4)。run 不存在不报错(返回空切片);由 HTTP 层据 run 存在性决定 404。
 	GetLogs(ctx context.Context, runID string, sinceSeq int) ([]LogLine, error)
+	// GetLogsTail 取某次运行**最近** limit 行(仍按 seq 升序返回);beforeSeq>0 时只取 seq<beforeSeq
+	// 的行,即「往更早翻一页」。limit<=0 = 全部(同 GetLogs 语义,交给调用方判)。
+	// step>=0 只要那一个步骤的行(步骤序号 0 起,所以不能用 0 当「不过滤」);-1 = 全部步骤。
+	// 一页就够:运行详情默认只要尾部窗口,整条日志由「显示更早」逐页往上要。
+	// 回读的 LogTail 带总行数(与 step 过滤同口径)—— 只搬一页时"共几行"不能再靠本地切片长度谎报。
+	GetLogsTail(ctx context.Context, runID string, beforeSeq, limit, step int) (LogTail, error)
+	// StreamLogs 按 seq 升序把整条日志逐行交给 fn(fn 返回 error 即中止读取)。
+	// 导出用:不进内存堆全量 —— 一条长跑日志可能几万行。
+	StreamLogs(ctx context.Context, runID string, fn func(LogLine) error) error
 
 	// AddArtifact 持久化一条运行产物到 run_artifacts(Story 3.4 / FR-6)。
 	// type 须为冻结枚举(image|jar|dist|archive),否则 ErrInvalidArtifactType;
@@ -673,31 +682,117 @@ func (s *service) GetLogs(ctx context.Context, runID string, sinceSeq int) ([]Lo
 		sinceSeq = 0
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT seq, ts, stream, step_ordinal, text
-		 FROM run_logs WHERE run_id = ? AND seq > ? ORDER BY seq ASC`, runID, sinceSeq)
+		`SELECT `+logSelectCols+` FROM run_logs WHERE run_id = ? AND seq > ? ORDER BY seq ASC`, runID, sinceSeq)
 	if err != nil {
 		return nil, fmt.Errorf("run: load logs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	out := []LogLine{}
+	if err := scanLogRows(rows, func(l LogLine) error {
+		out = append(out, l)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// logSelectCols 是 run_logs 的列清单(三处读法共用:分页、尾部窗口、导出)。
+const logSelectCols = `seq, ts, stream, step_ordinal, text`
+
+// scanLogRows 逐行扫 run_logs 并交给 fn;fn 返回 error 即中止(导出中途断开的路径)。
+// 时间戳解析不动就留零值:一行坏时间不该让整条日志读不出来。
+func scanLogRows(rows *sql.Rows, fn func(LogLine) error) error {
 	for rows.Next() {
 		var (
 			l     LogLine
 			tsStr string
 		)
 		if err := rows.Scan(&l.Seq, &tsStr, &l.Stream, &l.StepOrdinal, &l.Text); err != nil {
-			return nil, fmt.Errorf("run: scan log: %w", err)
+			return fmt.Errorf("run: scan log: %w", err)
 		}
 		if t, perr := time.Parse(time.RFC3339, tsStr); perr == nil {
 			l.Ts = t.UTC()
 		}
-		out = append(out, l)
+		if err := fn(l); err != nil {
+			return err
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("run: iterate logs: %w", err)
+		return fmt.Errorf("run: iterate logs: %w", err)
 	}
-	return out, nil
+	return nil
+}
+
+// GetLogsTail 取**最近** limit 行,仍按 seq 升序返回(终端要的是「末尾那一屏」)。
+// beforeSeq>0 时只要 seq<beforeSeq 的行 —— 「显示更早」往上翻一页。
+// limit<=0 = 不设上限(与 GetLogs 同口径,由调用方收敛)。step>=0 只看那一个步骤(序号 0 起)。
+// run 不存在 → 空切片。
+func (s *service) GetLogsTail(ctx context.Context, runID string, beforeSeq, limit, step int) (LogTail, error) {
+	if beforeSeq < 0 {
+		beforeSeq = 0
+	}
+	// 倒着取、正着给:要「最后 N 行」只能 ORDER BY seq DESC LIMIT N,再把这一页翻回来。
+	query := `SELECT ` + logSelectCols + ` FROM run_logs WHERE run_id = ?`
+	args := []any{runID}
+	if step >= 0 {
+		query += ` AND step_ordinal = ?`
+		args = append(args, step)
+	}
+	if beforeSeq > 0 {
+		query += ` AND seq < ?`
+		args = append(args, beforeSeq)
+	}
+	query += ` ORDER BY seq DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return LogTail{}, fmt.Errorf("run: load log tail: %w", err)
+	}
+
+	out := []LogLine{}
+	if err := scanLogRows(rows, func(l LogLine) error {
+		out = append(out, l)
+		return nil
+	}); err != nil {
+		_ = rows.Close()
+		return LogTail{}, err
+	}
+	// 总数是第二条查询:单连接(SetMaxOpenConns(1))下必须先把游标关掉再发,否则两条语句抢同一条
+	// 连接 → database is locked。这里不依赖 defer,显式关闭并带出口径。
+	if cerr := rows.Close(); cerr != nil {
+		return LogTail{}, fmt.Errorf("run: close log tail: %w", cerr)
+	}
+	var total int
+	countQuery := `SELECT COUNT(1) FROM run_logs WHERE run_id = ?`
+	countArgs := []any{runID}
+	if step >= 0 {
+		countQuery += ` AND step_ordinal = ?`
+		countArgs = append(countArgs, step)
+	}
+	if err := s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return LogTail{}, fmt.Errorf("run: count logs: %w", err)
+	}
+
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return LogTail{Lines: out, Total: total}, nil
+}
+
+// StreamLogs 按 seq 升序把整条日志逐行交给 fn,不进内存堆全量(导出一口气几万行时)。
+func (s *service) StreamLogs(ctx context.Context, runID string, fn func(LogLine) error) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+logSelectCols+` FROM run_logs WHERE run_id = ? ORDER BY seq ASC`, runID)
+	if err != nil {
+		return fmt.Errorf("run: stream logs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanLogRows(rows, fn)
 }
 
 // transition 校验并持久化运行状态转移:CAS 式更新(WHERE status=from),

@@ -186,6 +186,10 @@ export default {
   jumpToLatest: 'Ir al registro más reciente',
   jumpToBottom: 'Ir al final',
   showEarlier: 'Mostrar {n} líneas anteriores',
+  lineCountOf: '{loaded} cargadas / {total} líneas',
+  loadingEarlier: 'Obteniendo líneas anteriores…',
+  downloadAllLog: 'Descargar registro completo',
+  downloadAllLogTitle: 'Descargar el registro completo de esta ejecución (texto plano, transmitido línea a línea, sin límite de la vista previa)',
 
   // ─── SuccessFailDiff ────────────────────────────────────────────
   diffRegion: 'Cambios de código en esta confirmación',
@@ -248,7 +252,8 @@ export default {
   snapSiblingsMore: ', {n} elementos más sin capturar',
   snapSearchAria: 'Filtrar entradas por palabra clave',
   snapSearchPlaceholder: 'Filtrar rutas, p. ej. dist o jar',
-  snapEntryCount: 'Se muestran {shown} de {total} entradas',
+  snapEntryCount: '{shown} de {total} entradas coinciden',
+  snapEntryTotal: '{total} entradas',
   snapTruncated: 'Se alcanzó el límite de captura; la lista está incompleta',
   snapDropped: '{n} elementos más sin capturar',
   snapNoMatch: 'Ninguna entrada coincide; pruebe otra palabra clave',
@@ -260,6 +265,10 @@ export default {
   snapCollapseAria: 'Contraer el directorio {path}',
   snapChildren: '{n} elementos',
   snapNoChildren: 'Sin elementos (no capturados)',
+  snapOpen: 'Ver listado',
+  snapLoading: 'Cargando el listado de directorios…',
+  snapRetry: 'Reintentar',
+  snapMissHint: '{n} ruta(s) de artefacto declaradas sin coincidencias',
 
   // ─── runDag.ts ──────────────────────────────────────────────────
   otherSteps: 'Otros pasos',
