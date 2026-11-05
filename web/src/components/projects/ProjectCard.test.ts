@@ -18,6 +18,7 @@ function project(over: Partial<Project> = {}): Project {
     serviceId: '',
     serviceName: '',
     lastRunStatus: null,
+    lastRunAt: null,
     targetServers: [],
     updatedAt: new Date().toISOString(),
     ...over,
@@ -105,6 +106,24 @@ describe('ProjectCard', () => {
 
     const waiting = mountCard({ project: project({ lastRunStatus: 'waiting_approval' }) })
     expect(waiting.get('.status-pill').text()).toContain('待审批')
+  })
+
+  it('上次运行:时间 + 成功/失败一同展示,题面给绝对时间', () => {
+    const at = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const ok = mountCard({ project: project({ lastRunStatus: 'success', lastRunAt: at }) })
+    const row = metaRow(ok, 0).get('.meta-value')
+    expect(row.text()).toContain(' · ')
+    expect(row.text()).toContain('成功')
+    expect(row.attributes('title')).toBe(at)
+
+    const failed = mountCard({ project: project({ lastRunStatus: 'failed', lastRunAt: at }) })
+    expect(metaRow(failed, 0).text()).toContain('失败')
+    expect(metaRow(failed, 0).text()).toContain(' · ')
+
+    // 没给时间也不崩:只显示状态词,和老后端回包兼容
+    const bare = mountCard({ project: project({ lastRunStatus: 'failed', lastRunAt: null }) })
+    expect(metaRow(bare, 0).text()).toContain('失败')
+    expect(metaRow(bare, 0).text()).not.toContain(' · ')
   })
 
   it('归属服务行:未归属也照实说,点它报出要改哪张卡', async () => {

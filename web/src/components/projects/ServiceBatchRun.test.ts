@@ -25,6 +25,7 @@ function project(over: Partial<Project> = {}): Project {
     serviceId: 's-1',
     serviceName: '订单中心',
     lastRunStatus: null,
+    lastRunAt: null,
     targetServers: [],
     updatedAt: new Date().toISOString(),
     ...over,

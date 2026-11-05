@@ -66,6 +66,7 @@ export function projectFixture(over: Record<string, unknown> = {}): Record<strin
     credentialId: 'c-git',
     credentialName: 'gitee-token · ghp_••••a91f',
     lastRunStatus: '成功',
+    lastRunAt: '2026-11-05T02:00:00Z',
     targetServers: [],
     createdAt: '2026-05-01T08:00:00Z',
     updatedAt: '2026-05-28T08:00:00Z',

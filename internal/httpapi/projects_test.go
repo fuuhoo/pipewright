@@ -223,6 +223,14 @@ func TestProjectListRunAndTargetSummary(t *testing.T) {
 	if seeded["lastRunStatus"] != "failed" {
 		t.Fatalf("lastRunStatus = %v, want failed(最近一条)", seeded["lastRunStatus"])
 	}
+	// 最近一条的触发时刻(base 点那条 failed):卡片拼「上次运行时间 · 状态」用它。
+	wantAt := base.UTC().Format(time.RFC3339)
+	if seeded["lastRunAt"] != wantAt {
+		t.Fatalf("lastRunAt = %v, want %v(最近一条的 created_at)", seeded["lastRunAt"], wantAt)
+	}
+	if shop["lastRunAt"] != nil {
+		t.Fatalf("新建项目 lastRunAt 应为 null, got %v", shop["lastRunAt"])
+	}
 	got, _ := seeded["targetServers"].([]any)
 	want := []string{"web-2", "web-1"}
 	if len(got) != len(want) {

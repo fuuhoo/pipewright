@@ -92,8 +92,11 @@ type Project struct {
 	ServiceName string
 	// LastRunStatus 是该项目最近一条 pipeline_runs 的状态(queued/running/waiting_approval/
 	// success/failed/partial_failed/rolled_back);'' = 尚无运行。非持久列,由列表与单条查询
-	// 各带一个标量子查询取回 —— 卡片过去恒定显示「尚无运行」,因为这个字段从来没被填过。
+	// join 同一条运行取回 —— 卡片过去恒定显示「尚无运行」,因为这个字段从来没被填过。
 	LastRunStatus string
+	// LastRunAt 是同一条最近运行的触发时刻(created_at);nil = 尚无运行。与 LastRunStatus
+	// 同一行,展示时拼成「上次运行时间 · 状态」,排序口径与取基线一致(created_at 倒序、id 兜底)。
+	LastRunAt *time.Time
 	// TargetServerIDs 是库内流水线里「发机器」类部署节点勾选的目标主机 id(去重、按声明顺序)。
 	// 非持久列:落点在 pipeline_configs.spec_json 里,由本包解析后交给展示层换成机器名。
 	// 注意这是**配置口径**:没跑过也显示;而流水线即代码的项目运行期可能改用仓库里的
@@ -413,7 +416,8 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 	listSQL := `SELECT ` + projectSelectCols + `
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
-		 LEFT JOIN services s ON s.id = p.service_id`
+		 LEFT JOIN services s ON s.id = p.service_id
+		 ` + projectFromJoin
 	if where != "" {
 		listSQL += " WHERE " + where
 	}
@@ -459,6 +463,7 @@ func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 		 FROM projects p
 		 LEFT JOIN credentials c ON c.id = p.credential_id
 		 LEFT JOIN services s ON s.id = p.service_id
+		 `+projectFromJoin+`
 		 WHERE p.id = ?`, id,
 	)
 	p, err := scanProject(row)
@@ -655,15 +660,16 @@ type scanner interface {
 }
 
 // scanProject 把一行扫描为 Project(永不读任何密文/明文列)。
-// projectSelectCols 是 ListPaged 与 Get 共用的列清单 —— 两处必须逐字一致,scanProject 按位置扫。
-// 最后一列是「最近一条运行的状态」标量子查询:排序口径与 run 包选基线一致
+// projectSelectCols 与 projectFromJoin 是 ListPaged 与 Get 共用的片段 —— 两处必须逐字一致,scanProject 按位置扫。
+// 末两列是「最近一条运行的状态/触发时刻」join(lr):排序口径与 run 包选基线一致
 // (created_at 倒序、id 兜底),同一秒内多条运行时只有 created_at 分不出先后。
-// 无运行的项目子查询返回 NULL,扫成空串 = 卡片显示「尚无运行」。
+// 无运行的项目 join 出 NULL,扫成空串/nil = 卡片显示「尚无运行」。
 const projectSelectCols = `p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
 	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
-	        COALESCE(s.name, ''), p.created_at, p.updated_at,
-	        (SELECT r.status FROM pipeline_runs r WHERE r.project_id = p.id
-	          ORDER BY r.created_at DESC, r.id DESC LIMIT 1)`
+	        COALESCE(s.name, ''), p.created_at, p.updated_at, lr.status, lr.created_at`
+
+// projectFromJoin 取出「最近一条运行」整行:先按排序锁定 id 再 join,状态与时间必是同一条。
+const projectFromJoin = `LEFT JOIN pipeline_runs lr ON lr.id = (SELECT r.id FROM pipeline_runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1)`
 
 // targetServerIDsByProject 批量读这几个项目的流水线配置,解析出部署节点勾选的主机 id。
 //
@@ -718,17 +724,24 @@ func scanProject(sc scanner) (*Project, error) {
 	var p Project
 	var createdStr, updatedStr string
 	var pacInt, prStatusInt int
-	var lastRun sql.NullString
+	var lastRun, lastRunAt sql.NullString
 	if err := sc.Scan(
 		&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.CredentialID,
 		&p.CredentialName, &pacInt, &prStatusInt, &p.GroupID, &p.ServiceID,
-		&p.ServiceName, &createdStr, &updatedStr, &lastRun,
+		&p.ServiceName, &createdStr, &updatedStr, &lastRun, &lastRunAt,
 	); err != nil {
 		return nil, err
 	}
 	p.PacEnabled = pacInt != 0
 	p.PRStatusEnabled = prStatusInt != 0
 	p.LastRunStatus = lastRun.String
+	if lastRunAt.Valid && lastRunAt.String != "" {
+		at, err := time.Parse(time.RFC3339, lastRunAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("project: parse last run created_at: %w", err)
+		}
+		p.LastRunAt = &at
+	}
 	created, err := time.Parse(time.RFC3339, createdStr)
 	if err != nil {
 		return nil, fmt.Errorf("project: parse created_at: %w", err)

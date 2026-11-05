@@ -121,7 +121,7 @@ function relativeTime(isoStr: string): string {
     <!-- Divider -->
     <div class="card-divider" aria-hidden="true" />
 
-    <!-- Last run: empty placeholder or status -->
+    <!-- Last run: 「上次运行时间 · 状态」;没跑过说尚无运行 -->
     <div class="card-meta-row">
       <span class="meta-label">{{ t('projects.lastRun') }}</span>
       <span
@@ -131,8 +131,9 @@ function relativeTime(isoStr: string): string {
       <span
         v-else
         class="meta-value"
+        :title="project.lastRunAt || undefined"
         :style="{ color: STATUS_CONFIG[project.lastRunStatus].text }"
-      >{{ runStatusLabel(project.lastRunStatus) }}</span>
+      >{{ project.lastRunAt ? relativeTime(project.lastRunAt) + ' · ' : '' }}{{ runStatusLabel(project.lastRunStatus) }}</span>
     </div>
 
     <!-- Target servers: empty placeholder or list -->

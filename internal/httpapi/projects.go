@@ -36,6 +36,9 @@ type projectDTO struct {
 	// LastRunStatus 是该项目最近一条运行的状态(queued/running/waiting_approval/success/
 	// failed/partial_failed/rolled_back);从未跑过 → null,前端据此显示「尚无运行」。
 	LastRunStatus *string `json:"lastRunStatus"`
+	// LastRunAt 是同一条最近运行的触发时刻(RFC3339 UTC);从未跑过 → null。
+	// 卡片把两者拼成「上次运行时间 · 状态」。
+	LastRunAt *string `json:"lastRunAt"`
 	// TargetServers 是库内流水线里部署节点勾选的主机展示名(按声明顺序、已去重)。
 	// 口径是**配置**不是历史:没跑过也显示;机器已删或不在本次可见分组里的 id 不列。
 	TargetServers []string `json:"targetServers"`
@@ -80,6 +83,11 @@ func toProjectDTO(p *project.Project, serverNames map[string]string) projectDTO 
 		v := p.LastRunStatus
 		lastRun = &v
 	}
+	var lastRunAt *string
+	if p.LastRunAt != nil && !p.LastRunAt.IsZero() {
+		v := p.LastRunAt.UTC().Format(time.RFC3339)
+		lastRunAt = &v
+	}
 	targets := make([]string, 0, len(p.TargetServerIDs))
 	for _, id := range p.TargetServerIDs {
 		if name, ok := serverNames[id]; ok && name != "" {
@@ -99,6 +107,7 @@ func toProjectDTO(p *project.Project, serverNames map[string]string) projectDTO 
 		ServiceID:       p.ServiceID,
 		ServiceName:     p.ServiceName,
 		LastRunStatus:   lastRun,
+		LastRunAt:       lastRunAt,
 		TargetServers:   targets,
 		CreatedAt:       p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:       p.UpdatedAt.UTC().Format(time.RFC3339),

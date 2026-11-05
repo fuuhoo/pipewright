@@ -34,6 +34,7 @@ function project(id: string, name: string, groupId = ''): Project {
     pacEnabled: false,
     prStatusEnabled: false,
     lastRunStatus: null,
+    lastRunAt: null,
     targetServers: [],
     createdAt: '',
     updatedAt: '',
