@@ -439,6 +439,7 @@ export interface WorkspaceSnapshotDTO {
   reason: SnapshotReason // 一份只记一个,按出问题优先:failed > artifact_miss > success
   declared: DeclaredPathDTO[]
   entries: SnapshotEntryDTO[]
+  entryCount: number // 清单条数:?meta=1 时 entries 为空,只有这个数
   truncated: boolean // 撞总条数上限:清单不完整
   createdAt: string // RFC3339
 }
@@ -449,6 +450,13 @@ export interface RunSnapshotsResponse {
 
 export function getRunSnapshots(id: string): Promise<RunSnapshotsResponse> {
   return http.get<RunSnapshotsResponse>(`/api/runs/${id}/snapshots`)
+}
+
+// getRunSnapshotsMeta 只取「清单」:每份快照的节点/缘由/声明路径判定 + 条数,不含目录条目。
+// 运行详情页的触发条用它(一份目录清单可达 3000 条),点开弹窗才再取全量。
+// 503/404 语义与全量读法一致,前端可以同一套口径判。
+export function getRunSnapshotsMeta(id: string): Promise<RunSnapshotsResponse> {
+  return http.get<RunSnapshotsResponse>(`/api/runs/${id}/snapshots?meta=1`)
 }
 
 // ─── Test report + quality gate (Epic 8 · Story 8-6 — FR-8-6) ────────────────

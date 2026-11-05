@@ -35,15 +35,16 @@ type declaredPathDTO struct {
 
 // workspaceSnapshotDTO 是一份快照(绑定到一个 job 节点)。
 type workspaceSnapshotDTO struct {
-	ID        string             `json:"id"`
-	Stage     string             `json:"stage"`
-	JobID     string             `json:"jobId"`
-	JobName   string             `json:"jobName"`
-	Reason    string             `json:"reason"` // failed | artifact_miss | success
-	Declared  []declaredPathDTO  `json:"declared"`
-	Entries   []snapshotEntryDTO `json:"entries"`
-	Truncated bool               `json:"truncated"` // 撞总条数上限,清单不完整
-	CreatedAt string             `json:"createdAt"`
+	ID         string             `json:"id"`
+	Stage      string             `json:"stage"`
+	JobID      string             `json:"jobId"`
+	JobName    string             `json:"jobName"`
+	Reason     string             `json:"reason"` // failed | artifact_miss | success
+	Declared   []declaredPathDTO  `json:"declared"`
+	Entries    []snapshotEntryDTO `json:"entries"`
+	EntryCount int                `json:"entryCount"` // 清单条数:?meta=1 只给这个数,不给 Entries
+	Truncated  bool               `json:"truncated"`  // 撞总条数上限,清单不完整
+	CreatedAt  string             `json:"createdAt"`
 }
 
 // runSnapshotsDTO 是 GET /api/runs/{id}/snapshots 响应体。
@@ -76,7 +77,7 @@ func toSnapshotDTOs(snaps []buildsnap.Snapshot) []workspaceSnapshotDTO {
 		}
 		out = append(out, workspaceSnapshotDTO{
 			ID: s.ID, Stage: s.Stage, JobID: s.JobID, JobName: s.JobName, Reason: s.Reason,
-			Declared: declared, Entries: entries, Truncated: s.Truncated,
+			Declared: declared, Entries: entries, EntryCount: s.EntryCount, Truncated: s.Truncated,
 			CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -85,6 +86,8 @@ func toSnapshotDTOs(snaps []buildsnap.Snapshot) []workspaceSnapshotDTO {
 
 // makeRunSnapshotsHandler 返回 GET /api/runs/{id}/snapshots handler(认证 + 分组收口中间件;只读)。
 // store 为 nil(PIPEWRIGHT_SNAPSHOT=0)→ 503;run 不存在 → 404(与 /artifacts 同口径)。
+// ?meta=1 走轻量清单:同样返回每份快照的节点/缘由/声明路径判定,但**不含目录清单**(entries 恒空),
+// 只给 entryCount —— 运行详情页的触发条用它,点开弹窗才按默认口径再取全量。
 func makeRunSnapshotsHandler(svc run.Service, store *buildsnap.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -100,7 +103,13 @@ func makeRunSnapshotsHandler(svc run.Service, store *buildsnap.Store) http.Handl
 			writeRunError(w, err)
 			return
 		}
-		snaps, err := store.ListByRun(r.Context(), id)
+		var snaps []buildsnap.Snapshot
+		var err error
+		if r.URL.Query().Get("meta") != "" {
+			snaps, err = store.ListMetaByRun(r.Context(), id)
+		} else {
+			snaps, err = store.ListByRun(r.Context(), id)
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 			return

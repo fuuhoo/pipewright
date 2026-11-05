@@ -5,6 +5,10 @@
   面板回答的是那句"我是不是把产物目录配错了":失败时看命令实际产出在哪,未命中时看声明路径
   往上最近的存在目录里到底有什么,成功时看那次构建到底产出了什么。
 
+  **默认只占一条触发条**:开页只问 ?meta=1 的轻量清单(哪几个节点留了现场、为什么留、
+  产物路径命中没有、各有多少条),点开弹窗才取全量目录清单。原因是数据量:一份清单上限
+  3000 条、单份可达 180KB,而运行详情页有多个构建节点 —— 全摊在页面上就是把卡顿留在前端。
+
   自取数据(container):快照不在冻结的 run-detail DTO 内,经 GET /api/runs/{id}/snapshots 拉取。
   无快照 → 不渲染(不占视觉);仓储未启用(503)→ 同样不渲染。判定与截断口径全在
   lib/workspaceSnapshot.ts(有单测),本组件只管渲染。
@@ -13,19 +17,20 @@
   另有「全部展开 / 折叠」兜底 —— 手点过的展开态优先于自动口径。
 
   保留口径跟着运行记录:设置页「运行数据保留」裁掉那条 run 时快照一并清掉,这里没有独立窗口,
-  所以顶注只说明这一点,不再报"只保留 N 小时"。
+  所以弹窗副标题只说明这一点,不再报"只保留 N 小时"。
 -->
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRunSnapshots } from '../../api/runs'
+import AppModal from '../ui/AppModal.vue'
+import AppButton from '../ui/AppButton.vue'
+import { getRunSnapshots, getRunSnapshotsMeta } from '../../api/runs'
 import type { DeclaredPathDTO, RunSnapshotsResponse, WorkspaceSnapshotDTO } from '../../api/runs'
 import { HttpError } from '../../api/http'
 import { formatBytes } from '../../lib/serverFs'
 import {
   allDirPaths,
   buildEntryTree,
-  countNodes,
   declaredStatusKey,
   flattenVisible,
   isExpanded,
@@ -43,24 +48,34 @@ const props = defineProps<{
   runId: string
 }>()
 
-const snapshots = ref<WorkspaceSnapshotDTO[]>([])
+// meta = 触发条要的轻量清单;full = 弹窗里的完整快照(含目录条目)。
+const meta = ref<WorkspaceSnapshotDTO[]>([])
 const loaded = ref(false)
 const error = ref<string | null>(null)
+
+const open = ref(false)
+const full = ref<WorkspaceSnapshotDTO[]>([])
+const fullLoading = ref(false)
+const fullError = ref<string | null>(null)
+
+// 404(运行不存在)与 503(快照仓储未启用,PIPEWRIGHT_SNAPSHOT=0)等价于"这里没有东西",
+// 静默;其它错误给一行提示 —— 不能把加载失败谎报成"没有快照"。
+function treatAsAbsent(err: unknown): boolean {
+  return err instanceof HttpError && (err.status === 404 || err.status === 503)
+}
 
 async function load(id: string): Promise<void> {
   loaded.value = false
   error.value = null
+  meta.value = []
+  open.value = false
+  full.value = []
+  fullError.value = null
   try {
-    const res: RunSnapshotsResponse = await getRunSnapshots(id)
-    snapshots.value = res.snapshots ?? []
+    const res: RunSnapshotsResponse = await getRunSnapshotsMeta(id)
+    meta.value = res.snapshots ?? []
   } catch (err: unknown) {
-    // 404(运行不存在)与 503(快照仓储未启用,PIPEWRIGHT_SNAPSHOT=0)等价于"这里没有东西",
-    // 静默;其它错误给一行提示 —— 不能把加载失败谎报成"没有快照"。
-    if (err instanceof HttpError && (err.status === 404 || err.status === 503)) {
-      snapshots.value = []
-    } else {
-      error.value = t('run.snapLoadFailed')
-    }
+    if (!treatAsAbsent(err)) error.value = t('run.snapLoadFailed')
   } finally {
     loaded.value = true
   }
@@ -68,7 +83,32 @@ async function load(id: string): Promise<void> {
 
 watch(() => props.runId, (id) => { if (id) void load(id) }, { immediate: true })
 
-const hasSnapshots = computed(() => snapshots.value.length > 0)
+// 点开才取全量:这一份才是真正的大数据(目录清单)。
+async function openModal(): Promise<void> {
+  open.value = true
+  if (full.value.length > 0 || fullLoading.value) return
+  fullLoading.value = true
+  fullError.value = null
+  try {
+    const res: RunSnapshotsResponse = await getRunSnapshots(props.runId)
+    full.value = res.snapshots ?? []
+  } catch (err: unknown) {
+    if (treatAsAbsent(err)) {
+      full.value = []
+    } else {
+      fullError.value = t('run.snapLoadFailed')
+    }
+  } finally {
+    fullLoading.value = false
+  }
+}
+
+const hasSnapshots = computed(() => meta.value.length > 0)
+
+// 触发条上最值得先说的一句:有几个节点声明的产物没收到东西(那才是要点进来看的理由)。
+const missCount = computed(() =>
+  meta.value.reduce((n, s) => n + s.declared.filter((d) => d.status !== 'ok').length, 0),
+)
 
 // 一个节点一份快照(顺序即后端返回顺序,按采集时间升序),逐块成组展示,标题用「阶段 · 节点」。
 function titleOf(s: WorkspaceSnapshotDTO): string {
@@ -102,24 +142,30 @@ function toggleDir(id: string, node: SnapNode, queryActive: boolean): void {
   expandMap.value = { ...expandMap.value, [id]: next }
 }
 
-function setAllDirs(id: string, roots: SnapNode[], open: boolean): void {
+function setAllDirs(id: string, roots: SnapNode[], expand: boolean): void {
   const next: ExpandOverrides = {}
-  for (const p of allDirPaths(roots)) next[p] = open
+  for (const p of allDirPaths(roots)) next[p] = expand
   expandMap.value = { ...expandMap.value, [id]: next }
 }
 
+// 只有弹窗打开时才有全量数据可渲染;meta 参与不了这里(它不带目录条目)。
 const views = computed(() =>
-  snapshots.value.map((s) => {
+  full.value.map((s) => {
     const missed = missedDeclared(s.declared)
     const hit = s.declared.filter((d) => d.status === 'ok')
     const query = (queries.value[s.id] ?? '').trim()
     const roots = buildEntryTree(s.entries, query)
+    // 命中数和下面「共 N 条」同源(都数清单条目)。别用树里的节点数:那含补出来的中间目录,
+    // 会出现「命中 2734 / 共 2602 条」这种比总数还大的话。
+    const q = query.toLowerCase()
+    const hits = q === '' ? 0 : new Set(s.entries.filter((e) => e.path && e.path.toLowerCase().includes(q)).map((e) => e.path)).size
     return {
       snap: s,
       title: titleOf(s),
       missed,
       hit,
       query,
+      hits,
       roots,
       tree: flattenVisible(roots, overridesOf(s.id), query !== ''),
     }
@@ -143,23 +189,43 @@ function siblingsText(d: DeclaredPathDTO): string {
 </script>
 
 <template>
+  <!-- 触发条:一页只占这一行。清单不进 DOM,直到点开弹窗。 -->
   <section
     v-if="(loaded && hasSnapshots) || error"
-    class="snapshots"
+    class="sn-bar"
     role="region"
     :aria-label="t('run.snapRegion')"
   >
-    <header class="sn-head">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      </svg>
-      <h3 class="sn-title">{{ t('run.snapTitle') }}</h3>
-      <span v-if="hasSnapshots" class="sn-count mono">{{ snapshots.length }}</span>
-      <span v-if="hasSnapshots" class="sn-retention">{{ t('run.snapRetention') }}</span>
-    </header>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+    <h3 class="sn-title">{{ t('run.snapTitle') }}</h3>
+    <span v-if="hasSnapshots" class="sn-count mono">{{ meta.length }}</span>
+    <span v-if="error" class="sn-error" role="alert">{{ error }}</span>
+    <span v-else-if="missCount > 0" class="sn-miss">{{ t('run.snapMissHint', { n: missCount }) }}</span>
+    <!-- 同一个位置两种操作:取数失败时它是「重试」,有清单时是「查看清单」。
+         别禁用失败态的按钮 —— 那正是用户唯一能把这块救回来的入口。 -->
+    <button
+      type="button"
+      class="sn-open"
+      @click="error ? void load(props.runId) : openModal()"
+    >
+      {{ error ? t('run.snapRetry') : t('run.snapOpen') }}
+    </button>
+  </section>
 
-    <p v-if="error" class="sn-error" role="alert">{{ error }}</p>
-
+  <AppModal
+    v-if="open"
+    :title="t('run.snapTitle')"
+    :subtitle="t('run.snapRetention')"
+    width="xl"
+    @close="open = false"
+  >
+    <p v-if="fullLoading" class="sn-state" role="status">{{ t('run.snapLoading') }}</p>
+    <p v-else-if="fullError" class="sn-state sn-state--err" role="alert">
+      {{ fullError }}
+      <button type="button" class="sn-open" @click="void openModal()">{{ t('run.snapRetry') }}</button>
+    </p>
     <template v-else>
       <article v-for="v in views" :key="v.snap.id" class="snap">
         <div class="snap-head">
@@ -200,8 +266,13 @@ function siblingsText(d: DeclaredPathDTO): string {
               :placeholder="t('run.snapSearchPlaceholder')"
               @input="setQuery(v.snap.id, ($event.target as HTMLInputElement).value)"
             />
+            <!-- 两个口径都数清单条目:不筛选时报清单大小,筛选后报命中数。
+                 树里的节点含补齐的中间目录,拿它当数会说出「命中 2734 / 共 2602」这种话。 -->
             <span class="entries-count mono">
-              {{ t('run.snapEntryCount', { shown: countNodes(v.roots), total: v.snap.entries.length }) }}
+              <template v-if="v.query">
+                {{ t('run.snapEntryCount', { shown: v.hits, total: v.snap.entries.length }) }}
+              </template>
+              <template v-else>{{ t('run.snapEntryTotal', { total: v.snap.entries.length }) }}</template>
             </span>
             <span class="entries-tools">
               <button type="button" class="entries-tool" :disabled="v.roots.length === 0" @click="setAllDirs(v.snap.id, v.roots, true)">
@@ -263,24 +334,24 @@ function siblingsText(d: DeclaredPathDTO): string {
         </div>
       </article>
     </template>
-  </section>
+
+    <template #actions>
+      <AppButton @click="open = false">{{ t('common.close') }}</AppButton>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-.snapshots {
-  border: 1px solid var(--color-border);
-  border-radius: var(--rounded);
-  background: var(--color-card);
-  overflow: hidden;
-}
-
-.sn-head {
+/* 触发条:和运行页其它小区块同一套外壳,但只有一行高。 */
+.sn-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 16px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded);
   background: var(--color-inset);
-  border-bottom: 1px solid var(--color-border);
   color: var(--color-dim);
 }
 
@@ -298,22 +369,65 @@ function siblingsText(d: DeclaredPathDTO): string {
   color: var(--color-dim);
 }
 
-.sn-retention {
-  margin-left: auto;
+/* 未命中是这块要回答的问题,触发条上就给一句「有几处产物没收到」当点开理由。 */
+.sn-miss {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 0.72rem;
-  color: var(--color-faint);
+  color: var(--color-amber);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sn-open {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 3px 10px;
+  border-radius: var(--rounded-sm, 4px);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-card-2);
+  color: var(--color-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sn-open:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
 }
 
 .sn-error {
+  min-width: 0;
+  font-size: 0.74rem;
+  color: var(--color-red, #c0392b);
+  overflow-wrap: anywhere;
+}
+
+/* 弹窗里的取数中/取数失败提示:全量清单才是大头,这两句只替它占位。 */
+.sn-state {
   margin: 0;
-  padding: 12px 16px;
+  padding: 10px 0;
   font-size: 0.8rem;
+  color: var(--color-faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sn-state .sn-open {
+  margin-left: 0;
+}
+
+.sn-state--err {
   color: var(--color-red, #c0392b);
 }
 
 .snap {
   border-top: 1px solid var(--color-border);
-  padding: 12px 16px 14px;
+  padding: 12px 0 2px;
 }
 
 .snap:first-of-type {
@@ -356,10 +470,6 @@ function siblingsText(d: DeclaredPathDTO): string {
 }
 
 .snap-name {
-  /* 右栏只有约 265px 宽,「声明的产物未命中时采集」这类标签本身就近一行宽,
-     标题若与它同行会被挤成一字一行 —— 所以标题固定独占一行。 */
-  order: 3;
-  flex: 1 1 100%;
   min-width: 0;
   font-size: 0.82rem;
   font-weight: 600;
@@ -369,7 +479,6 @@ function siblingsText(d: DeclaredPathDTO): string {
 }
 
 .snap-time {
-  order: 2;
   margin-left: auto;
   font-size: 0.72rem;
   color: var(--color-faint);
@@ -448,8 +557,8 @@ function siblingsText(d: DeclaredPathDTO): string {
 }
 
 .entries-search {
-  /* 右栏窄时宁可让「共 N 条」换行,也不能把搜索框挤到 placeholder 都显示不全。 */
-  flex: 1 1 200px;
+  /* 弹窗有 960px 可用宽,搜索框给足宽度才看得清长路径;但仍允许收缩,窄视口下不溢出。 */
+  flex: 1 1 260px;
   min-width: 0;
   font-size: 0.78rem;
   padding: 5px 8px;
@@ -492,7 +601,8 @@ function siblingsText(d: DeclaredPathDTO): string {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 320px;
+  /* 弹窗里清单是主角:给它半屏高,内部滚动,行多了也不会把整份弹窗拉成一条长轴。 */
+  max-height: clamp(240px, 45vh, 560px);
   overflow: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--rounded-sm, 4px);

@@ -203,23 +203,6 @@ export function allDirPaths(roots: SnapNode[]): string[] {
   return out
 }
 
-/**
- * 树里的节点总数。搜索后即为命中数,面板用它说「显示 N 条」——
- * 不能用可见行数:那个数会随用户展开/折叠跳动,和「清单到底有多少条」不是一回事。
- */
-export function countNodes(roots: SnapNode[]): number {
-  let n = 0
-  const walk = (list: SnapNode[]): void => {
-    for (const k of list) {
-      n += 1
-      walk(k.children)
-    }
-  }
-  walk(roots)
-  return n
-}
-
-
 /** 声明路径里"没命中"的那些(路径配错正是这块要解决的问题,必须顶在最前)。 */
 export function missedDeclared(declared: DeclaredPathDTO[]): DeclaredPathDTO[] {
   return declared.filter((d) => d.status !== 'ok')

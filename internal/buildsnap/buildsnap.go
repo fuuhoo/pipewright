@@ -87,16 +87,19 @@ type Declared struct {
 
 // Snapshot 一次采集:哪个 run / 阶段 / 节点、为什么采、声明路径判定、工作区清单。
 type Snapshot struct {
-	ID        string
-	RunID     string
-	Stage     string
-	JobID     string
-	JobName   string
-	Reason    string
-	Declared  []Declared
-	Entries   []Entry
-	Truncated bool
-	CreatedAt time.Time
+	ID       string
+	RunID    string
+	Stage    string
+	JobID    string
+	JobName  string
+	Reason   string
+	Declared []Declared
+	Entries  []Entry
+	// EntryCount 是清单条数(表里的 entry_count 列)。轻量读法 ListMetaByRun 不搬 Entries,
+	// 靠它报"这份有多大";全量读法里它等于 len(Entries)。
+	EntryCount int
+	Truncated  bool
+	CreatedAt  time.Time
 }
 
 // HasMiss 报告声明清单里是否存在没收到东西的路径(ok 之外都算)。

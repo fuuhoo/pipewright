@@ -7,7 +7,6 @@ import {
   allDeclaredHit,
   allDirPaths,
   buildEntryTree,
-  countNodes,
   declaredStatusKey,
   flattenVisible,
   isExpanded,
@@ -206,23 +205,6 @@ describe('allDirPaths', () => {
   it('收全部目录(含嵌套),不含文件 —— 供「展开全部 / 折叠全部」', () => {
     const roots = buildEntryTree([entry('a/'), entry('a/b/'), entry('a/b/c.txt'), entry('z.txt')])
     expect(allDirPaths(roots)).toEqual(['a/', 'a/b/'])
-  })
-})
-
-describe('countNodes', () => {
-  const list = [entry('a/'), entry('a/b/'), entry('a/b/c.txt'), entry('z.txt')]
-
-  it('节点总数 = 目录 + 文件都算一层', () => {
-    expect(countNodes(buildEntryTree(list))).toBe(4)
-  })
-
-  it('搜索后即为命中数(与展开/折叠无关,面板计数的口径)', () => {
-    expect(countNodes(buildEntryTree(list, 'b/c'))).toBe(3) // a/ → a/b/ → a/b/c.txt
-  })
-
-  it('空清单 / 搜不到都是 0', () => {
-    expect(countNodes([])).toBe(0)
-    expect(countNodes(buildEntryTree(list, 'nope'))).toBe(0)
   })
 })
 

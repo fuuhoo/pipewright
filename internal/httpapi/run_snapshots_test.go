@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,5 +187,103 @@ func TestRunSnapshotsUnavailable(t *testing.T) {
 	_ = json.Unmarshal(raw, &e)
 	if e.Error.Code != "snapshots_unavailable" {
 		t.Fatalf("错误码应为 snapshots_unavailable, got %q: %s", e.Error.Code, raw)
+	}
+}
+
+// TestRunSnapshotsMetaMode 验证 ?meta=1:同一份数据,但**不搬目录清单**,只给 entryCount。
+// 触发条靠它把「有几份现场、多大、产物命中没有」说清,而不用把每份可达 180KB 的清单
+// 在运行详情页刚打开时就灌进浏览器 —— 那正是这次要治的卡顿。
+func TestRunSnapshotsMetaMode(t *testing.T) {
+	srv, client, csrf, projID, rsvc, st := setupSnapshotServer(t, true)
+	runID := newTestRun(t, rsvc, projID)
+
+	entries := make([]buildsnap.Entry, 0, 200)
+	for i := 0; i < 200; i++ {
+		entries = append(entries, buildsnap.Entry{Path: "node_modules/pkg-" + strconv.Itoa(i) + "/", Size: int64(i)})
+	}
+	if err := st.Save(context.Background(), buildsnap.Snapshot{
+		RunID:    runID,
+		Stage:    "构建",
+		JobID:    "job-1",
+		JobName:  "前端构建",
+		Reason:   buildsnap.ReasonFailed,
+		Declared: []buildsnap.Declared{{Path: "dist", Status: buildsnap.StatusOK}},
+		Entries:  entries,
+	}); err != nil {
+		t.Fatalf("Save snapshot: %v", err)
+	}
+
+	getSnapshots := func(query string) ([]byte, runSnapshotsDTO) {
+		t.Helper()
+		resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+runID+"/snapshots"+query, csrf, "")
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("snapshots%s status = %d: %s", query, resp.StatusCode, raw)
+		}
+		var body runSnapshotsDTO
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode snapshots%s: %v", query, err)
+		}
+		return raw, body
+	}
+
+	fullRaw, full := getSnapshots("")
+	metaRaw, meta := getSnapshots("?meta=1")
+
+	if len(full.Snapshots) != 1 || len(meta.Snapshots) != 1 {
+		t.Fatalf("两种读法都应有 1 份快照: full=%d meta=%d", len(full.Snapshots), len(meta.Snapshots))
+	}
+	f, m := full.Snapshots[0], meta.Snapshots[0]
+	if len(f.Entries) != 200 {
+		t.Fatalf("全量应带 200 条清单, got %d", len(f.Entries))
+	}
+	if len(m.Entries) != 0 {
+		t.Fatalf("?meta=1 不该带清单: %#v", m.Entries)
+	}
+	if f.EntryCount != 200 || m.EntryCount != 200 {
+		t.Fatalf("两种读法的 entryCount 都应是 200, got %d / %d", f.EntryCount, m.EntryCount)
+	}
+	// 触发条要用的字段一个都不能少(否则弹窗外的信息就退化成"有 N 份")。
+	if m.ID != f.ID || m.Stage != f.Stage || m.JobID != f.JobID || m.JobName != f.JobName ||
+		m.Reason != f.Reason || m.Truncated != f.Truncated || m.CreatedAt != f.CreatedAt {
+		t.Fatalf("轻量清单与全量字段漂移: meta=%#v full=%#v", m, f)
+	}
+	if len(m.Declared) != 1 || m.Declared[0].Path != "dist" || m.Declared[0].Status != buildsnap.StatusOK {
+		t.Fatalf("?meta=1 应保留声明路径判定: %#v", m.Declared)
+	}
+	if len(metaRaw) >= len(fullRaw) {
+		t.Fatalf("?meta=1 响应应明显小于全量: meta=%d full=%d", len(metaRaw), len(fullRaw))
+	}
+	if strings.Contains(string(metaRaw), "node_modules") {
+		t.Fatalf("?meta=1 响应里漏进了目录清单: %s", metaRaw)
+	}
+
+	// 空快照的 ?meta=1 同样是空数组,并且 503 口径不受参数影响。
+	emptyRunID := newTestRun(t, rsvc, projID)
+	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+emptyRunID+"/snapshots?meta=1", csrf, "")
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || strings.TrimRight(string(raw), "\n") != `{"snapshots":[]}` {
+		t.Fatalf("无快照时 ?meta=1 应回空数组, got %d %s", resp.StatusCode, raw)
+	}
+
+	missing := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/nope/snapshots?meta=1", csrf, "")
+	rawMissing, _ := io.ReadAll(missing.Body)
+	_ = missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound || !strings.Contains(string(rawMissing), "run_not_found") {
+		t.Fatalf("?meta=1 遇不存在 run 应 404 run_not_found, got %d %s", missing.StatusCode, rawMissing)
+	}
+}
+
+// TestRunSnapshotsMetaUnavailable 验证快照未启用(PIPEWRIGHT_SNAPSHOT=0)时 ?meta=1 也回 503,
+// 不能因为走轻量分支就假装"这里没有快照"。
+func TestRunSnapshotsMetaUnavailable(t *testing.T) {
+	srv, client, csrf, projID, rsvc, _ := setupSnapshotServer(t, false)
+	runID := newTestRun(t, rsvc, projID)
+	resp := doJSON(t, client, http.MethodGet, srv.URL+"/api/runs/"+runID+"/snapshots?meta=1", csrf, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("未启用时 ?meta=1 应 503, got %d", resp.StatusCode)
 	}
 }

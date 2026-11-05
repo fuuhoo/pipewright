@@ -182,3 +182,81 @@ func TestListOrderStable(t *testing.T) {
 		t.Fatalf("顺序错:%+v", out)
 	}
 }
+
+// TestListMetaByRunSkipsEntries 钉住轻量读法:不搬 entries_json,但条数、声明判定、
+// 排序口径都与全量读法一致 —— 触发条要的正是「有几份、多大、产物命中没有」。
+func TestListMetaByRunSkipsEntries(t *testing.T) {
+	db := storetest.OpenDB(t)
+	runID := seedRun(t, db)
+	st := New(db, Limits{})
+	ctx := context.Background()
+
+	seed := []Snapshot{
+		{RunID: runID, Stage: "构建", JobID: "job-1", JobName: "后端构建", Reason: ReasonSuccess,
+			Declared: []Declared{{Path: "target/app.jar", Status: StatusOK}},
+			Entries:  []Entry{{Path: "target/"}, {Path: "target/app.jar", Size: 99}, {Path: "pom.xml"}}},
+		{RunID: runID, Stage: "构建", JobID: "job-2", JobName: "前端构建", Reason: ReasonArtifactMiss,
+			Declared:  []Declared{{Path: "dist/app.js", Status: StatusMissing, Parent: ".", Siblings: []string{"pom.xml"}, SiblingsMore: 3}},
+			Entries:   []Entry{{Path: "src/"}},
+			Truncated: true},
+	}
+	for _, s := range seed {
+		if err := st.Save(ctx, s); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+
+	meta, err := st.ListMetaByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListMetaByRun: %v", err)
+	}
+	if len(meta) != 2 {
+		t.Fatalf("清单应有 2 份, got %d", len(meta))
+	}
+	if meta[0].Entries == nil || len(meta[0].Entries) != 0 {
+		t.Fatalf("轻量读法不该带清单:%+v", meta[0].Entries)
+	}
+	// 两份同秒写入,排序靠 id 破并列(见 TestListOrderStable)—— 按节点认,不按位置认。
+	byJob := map[string]Snapshot{}
+	for _, m := range meta {
+		byJob[m.JobID] = m
+	}
+	backend, frontend := byJob["job-1"], byJob["job-2"]
+	if backend.EntryCount != 3 || frontend.EntryCount != 1 {
+		t.Fatalf("entryCount 应为 3 / 1, got %d / %d", backend.EntryCount, frontend.EntryCount)
+	}
+	if frontend.Reason != ReasonArtifactMiss || !frontend.Truncated ||
+		frontend.Declared[0].Status != StatusMissing || frontend.Declared[0].SiblingsMore != 3 {
+		t.Fatalf("清单丢了触发条要用的字段:%+v", frontend)
+	}
+	if backend.Declared[0].Status != StatusOK {
+		t.Fatalf("命中判定应保留:%+v", backend.Declared)
+	}
+
+	// 与全量读法逐字段对齐(除 Entries),排序同口径 —— 弹窗取全量时才不会看到另一套顺序。
+	full, err := st.ListByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListByRun: %v", err)
+	}
+	if len(full) != 2 {
+		t.Fatalf("全量应有 2 份, got %d", len(full))
+	}
+	for i := range meta {
+		if meta[i].ID != full[i].ID {
+			t.Fatalf("第 %d 份排序不一致:meta=%s full=%s", i, meta[i].ID, full[i].ID)
+		}
+		if meta[i].EntryCount != len(full[i].Entries) {
+			t.Fatalf("第 %d 份 entryCount=%d 与实际清单条数 %d 不符", i, meta[i].EntryCount, len(full[i].Entries))
+		}
+	}
+
+	// 未知 run 同样给空切片(与 ListByRun 同口径,HTTP 层才敢只按 404/空数组二分)。
+	none, err := st.ListMetaByRun(ctx, "no-such-run")
+	if err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("未知 run 清单应为空切片:%+v err=%v", none, err)
+	}
+	var nilStore *Store
+	if out, nerr := nilStore.ListMetaByRun(ctx, "x"); nerr != nil || len(out) != 0 {
+		t.Fatalf("nil Store.ListMetaByRun 应为空:%v err=%v", out, nerr)
+	}
+}

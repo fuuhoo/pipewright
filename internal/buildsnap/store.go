@@ -70,11 +70,28 @@ func (s *Store) Save(ctx context.Context, snap Snapshot) error {
 // ListByRun 取某次运行的全部快照(按 created_at 升序,id 破同秒并列 —— 与 run_artifacts 同口径)。
 // 无快照 → 空切片;run 不存在不报错(HTTP 层据 run 存在性决定 404)。
 func (s *Store) ListByRun(ctx context.Context, runID string) ([]Snapshot, error) {
+	return s.listByRun(ctx, runID, true)
+}
+
+// ListMetaByRun 只取快照的**清单**:同 ListByRun 的排序与字段,唯独不读 entries_json。
+//
+// 运行详情页默认只要知道"哪几个节点留了现场、为什么留、产物路径命中没有",而一份清单可能
+// 有几千条(单份可达 180KB)—— 那些是点开弹窗才需要的东西。清单里的 declared 留着:
+// 它是触发条上"产物目录配错了"这句提示的依据,本身只有几条。
+func (s *Store) ListMetaByRun(ctx context.Context, runID string) ([]Snapshot, error) {
+	return s.listByRun(ctx, runID, false)
+}
+
+func (s *Store) listByRun(ctx context.Context, runID string, withEntries bool) ([]Snapshot, error) {
 	if s == nil || s.db == nil {
 		return []Snapshot{}, nil
 	}
+	cols := `id, run_id, stage, job_id, job_name, reason, declared_json, entry_count, truncated, created_at`
+	if withEntries {
+		cols = `id, run_id, stage, job_id, job_name, reason, declared_json, entries_json, entry_count, truncated, created_at`
+	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, run_id, stage, job_id, job_name, reason, declared_json, entries_json, truncated, created_at
+		`SELECT `+cols+`
 		 FROM run_workspace_snapshots WHERE run_id = ? ORDER BY created_at ASC, id ASC`, runID)
 	if err != nil {
 		return nil, err
@@ -84,18 +101,31 @@ func (s *Store) ListByRun(ctx context.Context, runID string) ([]Snapshot, error)
 	var out []Snapshot
 	for rows.Next() {
 		var (
-			snap                    Snapshot
-			declaredRaw, entriesRaw string
-			truncated               int
-			createdRaw              string
+			snap        Snapshot
+			declaredRaw string
+			entriesRaw  string
+			entryCount  int
+			truncated   int
+			createdRaw  string
+			scanArgs    []any
 		)
-		if serr := rows.Scan(&snap.ID, &snap.RunID, &snap.Stage, &snap.JobID, &snap.JobName,
-			&snap.Reason, &declaredRaw, &entriesRaw, &truncated, &createdRaw); serr != nil {
+		scanArgs = append(scanArgs, &snap.ID, &snap.RunID, &snap.Stage, &snap.JobID, &snap.JobName,
+			&snap.Reason, &declaredRaw)
+		if withEntries {
+			scanArgs = append(scanArgs, &entriesRaw)
+		}
+		scanArgs = append(scanArgs, &entryCount, &truncated, &createdRaw)
+		if serr := rows.Scan(scanArgs...); serr != nil {
 			return nil, serr
 		}
+		snap.EntryCount = entryCount
 		snap.Truncated = truncated != 0
 		snap.Declared = decodeJSON[Declared](declaredRaw)
-		snap.Entries = decodeJSON[Entry](entriesRaw)
+		if withEntries {
+			snap.Entries = decodeJSON[Entry](entriesRaw)
+		} else {
+			snap.Entries = []Entry{}
+		}
 		if t, terr := time.Parse(time.RFC3339, createdRaw); terr == nil {
 			snap.CreatedAt = t.UTC()
 		}
