@@ -8,8 +8,8 @@
  * DELETE /api/projects/{id}             → 204       (needs CSRF)
  *
  * credentialName is read-only display; credentialId is the reference.
- * lastRunStatus/lastRunAt reflect the project's most recent pipeline run
- * (status + triggered time; null = never ran);
+ * lastRunStatus/lastRunAt/lastRunId reflect the project's most recent pipeline run
+ * (status + triggered time + run id for detail jump; null = never ran);
  * targetServers lists the hosts checked on the pipeline's deploy nodes (config, not history).
  * The API never returns credential plaintext — only credentialName (masked display).
  */
@@ -58,6 +58,8 @@ export interface Project {
   lastRunStatus: RunStatus | null
   /** 同一条最近运行的触发时刻(RFC3339);null = 从未跑过。卡片拼「时间 · 状态」用它。 */
   lastRunAt: string | null
+  /** 同一条最近运行的 id;null = 从未跑过。卡片点击「上次运行」直达这条运行的详情。 */
+  lastRunId: string | null
   /** 流水线部署节点勾选的主机展示名(配置口径,没跑过也有);无落点 = []。 */
   targetServers: string[]
   createdAt: string

@@ -30,6 +30,7 @@ export default {
   runStatusAria: '実行ステータス:{status}',
   lastRun: '前回の実行',
   noRun: '実行履歴なし',
+  lastRunDetailAria: 'プロジェクト {name} の前回の実行を見る',
   targetServers: 'ターゲットサーバー',
   notBound: '未バインド',
   credential: 'リポジトリ認証情報',

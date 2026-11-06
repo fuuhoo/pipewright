@@ -30,6 +30,7 @@ export default {
   runStatusAria: 'Statut de l’exécution : {status}',
   lastRun: 'Dernière exécution',
   noRun: 'Aucune exécution',
+  lastRunDetailAria: 'Voir la dernière exécution de {name}',
   targetServers: 'Serveurs cibles',
   notBound: 'Non lié',
   credential: 'Identifiant du dépôt',

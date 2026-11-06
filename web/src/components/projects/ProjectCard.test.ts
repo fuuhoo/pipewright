@@ -19,6 +19,7 @@ function project(over: Partial<Project> = {}): Project {
     serviceName: '',
     lastRunStatus: null,
     lastRunAt: null,
+    lastRunId: null,
     targetServers: [],
     updatedAt: new Date().toISOString(),
     ...over,
@@ -124,6 +125,24 @@ describe('ProjectCard', () => {
     const bare = mountCard({ project: project({ lastRunStatus: 'failed', lastRunAt: null }) })
     expect(metaRow(bare, 0).text()).toContain('失败')
     expect(metaRow(bare, 0).text()).not.toContain(' · ')
+  })
+
+  it('上次运行可点:点它报出看哪张卡,没 run.view 权限只读不跳', async () => {
+    const at = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const p = project({ lastRunStatus: 'failed', lastRunAt: at, lastRunId: 'run-42' })
+    const ok = mountCard({ project: p, canViewRuns: true })
+    const link = metaRow(ok, 0).get('.last-run-link')
+    expect(link.text()).toContain('失败')
+    await link.trigger('click')
+    expect(ok.emitted('runDetail')?.[0]).toEqual([p])
+
+    const locked = mountCard({ project: p, canViewRuns: false })
+    expect(locked.find('.last-run-link').exists()).toBe(false)
+    expect(metaRow(locked, 0).text()).toContain('失败')
+
+    // 没 run id(老回包/后端缺字段)也不渲染成按钮
+    const bare = mountCard({ project: project({ lastRunStatus: 'failed', lastRunAt: at, lastRunId: null }) })
+    expect(bare.find('.last-run-link').exists()).toBe(false)
   })
 
   it('归属服务行:未归属也照实说,点它报出要改哪张卡', async () => {

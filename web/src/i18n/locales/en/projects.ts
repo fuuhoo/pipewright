@@ -30,6 +30,7 @@ export default {
   runStatusAria: 'Run status: {status}',
   lastRun: 'Last run',
   noRun: 'No runs yet',
+  lastRunDetailAria: 'View the last run for project {name}',
   targetServers: 'Target servers',
   notBound: 'Not bound',
   credential: 'Repository credential',

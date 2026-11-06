@@ -30,6 +30,7 @@ export default {
   runStatusAria: '執行狀態:{status}',
   lastRun: '上次執行',
   noRun: '尚無執行',
+  lastRunDetailAria: '檢視專案 {name} 的上次執行',
   targetServers: '目標伺服器',
   notBound: '未綁定',
   credential: '倉庫憑證',

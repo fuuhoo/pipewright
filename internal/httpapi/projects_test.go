@@ -193,7 +193,7 @@ func TestProjectListRunAndTargetSummary(t *testing.T) {
 
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	seedDiffRun(t, st.DB, projID, "main", "c1", "success", base.Add(-time.Hour))
-	seedDiffRun(t, st.DB, projID, "main", "c2", "failed", base)
+	wantRunID := seedDiffRun(t, st.DB, projID, "main", "c2", "failed", base)
 
 	listResp := doJSON(t, client, http.MethodGet, srv.URL+"/api/projects", "", "")
 	defer listResp.Body.Close()
@@ -230,6 +230,13 @@ func TestProjectListRunAndTargetSummary(t *testing.T) {
 	}
 	if shop["lastRunAt"] != nil {
 		t.Fatalf("新建项目 lastRunAt 应为 null, got %v", shop["lastRunAt"])
+	}
+	// 同一条运行的 id:卡片点击「上次运行」直达这条运行的详情。
+	if seeded["lastRunId"] != wantRunID {
+		t.Fatalf("lastRunId = %v, want %v(最近一条的 id)", seeded["lastRunId"], wantRunID)
+	}
+	if shop["lastRunId"] != nil {
+		t.Fatalf("新建项目 lastRunId 应为 null, got %v", shop["lastRunId"])
 	}
 	got, _ := seeded["targetServers"].([]any)
 	want := []string{"web-2", "web-1"}

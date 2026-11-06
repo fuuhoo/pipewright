@@ -30,6 +30,7 @@ export default {
   runStatusAria: '运行状态:{status}',
   lastRun: '上次运行',
   noRun: '尚无运行',
+  lastRunDetailAria: '查看项目 {name} 的这次运行',
   targetServers: '目标服务器',
   notBound: '未绑定',
   credential: '仓库凭据',

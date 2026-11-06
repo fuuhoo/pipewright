@@ -30,6 +30,7 @@ export default {
   runStatusAria: '실행 상태: {status}',
   lastRun: '마지막 실행',
   noRun: '실행 기록 없음',
+  lastRunDetailAria: '프로젝트 {name}의 마지막 실행 보기',
   targetServers: '대상 서버',
   notBound: '미연결',
   credential: '저장소 자격 증명',

@@ -18,6 +18,7 @@ function project(id: string, groupId = '', over: Partial<Project> = {}): Project
     groupId,
     lastRunStatus: null,
     lastRunAt: null,
+    lastRunId: null,
     targetServers: [],
     updatedAt: '',
     ...over,

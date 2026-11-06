@@ -56,6 +56,11 @@ function goToRuns(projectId: string): void {
   void router.push({ name: 'runs', query: { projectId } })
 }
 
+// 卡片「上次运行」点击:直达那条运行的详情页。
+function goToRunDetail(runId: string): void {
+  void router.push({ name: 'run-detail', params: { id: runId } })
+}
+
 // ─── load state ──────────────────────────────────────────────────────────────
 
 type LoadState = 'idle' | 'loading' | 'error'
@@ -264,6 +269,10 @@ function openCardPipeline(project: Project): void {
 
 function openCardRuns(project: Project): void {
   goToRuns(project.id)
+}
+
+function openCardRunDetail(project: Project): void {
+  if (project.lastRunId) goToRunDetail(project.lastRunId)
 }
 
 // ─── credentials for dropdown ─────────────────────────────────────────────────
@@ -1339,6 +1348,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
           :can-view-runs="canViewRuns"
           @run="openTriggerModal"
           @runs="openCardRuns"
+          @run-detail="openCardRunDetail"
           @rename="openRenameModal"
           @repo="openRepoModal"
           @code="openCardCode"
@@ -1418,6 +1428,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
                 :can-view-runs="canViewRuns"
                 @run="openTriggerModal"
                 @runs="openCardRuns"
+                @run-detail="openCardRunDetail"
                 @rename="openRenameModal"
                 @repo="openRepoModal"
                 @code="openCardCode"

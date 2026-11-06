@@ -23,6 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   run: [project: Project]
   runs: [project: Project]
+  runDetail: [project: Project]
   rename: [project: Project]
   repo: [project: Project]
   code: [project: Project]
@@ -121,13 +122,21 @@ function relativeTime(isoStr: string): string {
     <!-- Divider -->
     <div class="card-divider" aria-hidden="true" />
 
-    <!-- Last run: 「上次运行时间 · 状态」;没跑过说尚无运行 -->
+    <!-- Last run: 「上次运行时间 · 状态」,点它直达那条运行的详情(没 run.view 权限只读不跳) -->
     <div class="card-meta-row">
       <span class="meta-label">{{ t('projects.lastRun') }}</span>
       <span
         v-if="!project.lastRunStatus"
         class="meta-empty"
       >{{ t('projects.noRun') }}</span>
+      <button
+        v-else-if="canViewRuns && project.lastRunId"
+        class="meta-value last-run-link"
+        :title="project.lastRunAt || undefined"
+        :aria-label="t('projects.lastRunDetailAria', { name: project.name })"
+        :style="{ color: STATUS_CONFIG[project.lastRunStatus].text }"
+        @click="emit('runDetail', project)"
+      >{{ project.lastRunAt ? relativeTime(project.lastRunAt) + ' · ' : '' }}{{ runStatusLabel(project.lastRunStatus) }}</button>
       <span
         v-else
         class="meta-value"
@@ -520,6 +529,19 @@ function relativeTime(isoStr: string): string {
   margin: 0 0 0 auto;
   font: inherit;
   color: var(--color-primary);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* 上次运行可点:颜色沿用状态色(inline),只补按钮的去装饰与下划线提示。 */
+.last-run-link {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 0 auto;
+  font: inherit;
   text-decoration: underline dotted;
   text-underline-offset: 2px;
   cursor: pointer;

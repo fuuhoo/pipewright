@@ -33,6 +33,7 @@ function project(over: Partial<Project> = {}): Project {
     groupId: '',
     lastRunStatus: null,
     lastRunAt: null,
+    lastRunId: null,
     targetServers: [],
     updatedAt: new Date().toISOString(),
     ...over,
