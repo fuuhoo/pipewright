@@ -31,13 +31,20 @@
  *     且**编译时原样发 cp** —— 认出用户手写的 cp 是为了让卡片看得懂,不是为了替他换成 rsync。
  *     带别的旗标、多一个参数、有排除的行一律留作「运行命令」,一个字都不动。
  *
+ * 「重命名」(rename)步骤编译成**单行** `mv 源 目标`:源/目标都原样保留(含尾斜杠),
+ * 语义就是 mv —— 目标不存在即改名/移动,目标已存在且是目录时源被移进该目录。
+ * 反解析只认 `mv 源 目标` 两 token(无旗标、后面没有别的命令),其余 mv 行留作「运行命令」。
+ *
  * 两种复制方式(2026-10 起):
  *   - contents(默认,老行只有这一种):把「源目录的内容」铺进目标目录 ——
  *     rsync 靠源尾斜杠 `src/`、cp 靠 `src/.`。源写 `./` 时没有目录名可保留,即工作区根内容。
- *   - entry:把「源文件夹/文件本身」放进目标目录并保留名称 —— rsync 源不带尾斜杠、cp 直接
- *     `cp -a src dest/`,于是 `frontend/dist → out` 得到 `out/dist`,单个文件也能复制。
- * 两种方式的行骨架只差源 token(带不带 `/`、`/.`),反解析据此区分;老配置一律读回 contents,
- * 行为不变。
+ *   - entry:把「源文件夹本身」放进目标目录并保留名称 —— rsync 源不带尾斜杠、目标补 `/` 并
+ *     `mkdir -p`,于是 `frontend/dist → out` 得到 `out/dist`。文件夹和文件不再共用一格:
+ *     文件请用下面的 file 方式,免得目标自动补 `/` 被当成目录。
+ *   - file:把「源文件」复制到目标路径 —— 目标**原样使用**(`cp -a src dest`):目标不存在
+ *     就是新文件名,已存在的目录才放进去保留原名。目标自己以 `/` 结尾才按目录处理(自动 mkdir)。
+ *     绝不替用户补 `/`:补了就只有「放进目录」一种意思,复制文件到新文件名就做不到了。
+ * 三种方式的行骨架按源/目标 token 区分;老配置(只有 contents / entry)行为不变。
  *
  * 编译(steps → config):把有序步骤列表展开成 `commands` 多行串。产物目录不属于步骤,
  * 它是节点的固定属性(`artifactPath`,档位=产物时表单里始终有这一格),由调用方单独持有;
@@ -52,12 +59,15 @@
 
 import { t } from '../../i18n'
 
-export type StepKind = 'command' | 'env' | 'workDir' | 'copy' | 'condition'
+export type StepKind = 'command' | 'env' | 'workDir' | 'copy' | 'rename' | 'condition'
 
 /**
- * 复制方式:contents=复制目录内容(老语义,默认);entry=把文件夹/文件本身放进目标目录(保留名称)。
+ * 复制方式:
+ *   - contents:复制目录内容(老语义,默认)。
+ *   - entry:复制文件夹本身,放进目标目录并保留名称(目标自动创建)。
+ *   - file:复制文件到目标路径 —— 目标不存在就是新文件名,不自动补 `/`、不 mkdir。
  */
-export type CopyMode = 'contents' | 'entry'
+export type CopyMode = 'contents' | 'entry' | 'file'
 
 /**
  * 复制的「写法」:advanced=单行 rsync 优先、cp 兜底(可排除,老配置唯一形态,缺省即它);
@@ -89,6 +99,10 @@ export interface StepBlock {
   copyMode?: CopyMode
   /** copy:写法;缺省(含老配置)=advanced(rsync/cp 兜底骨架)。plain 只有一行 cp,不支持排除项 */
   copyStyle?: CopyStyle
+  /** rename:源路径(文件或目录) */
+  renameSrc?: string
+  /** rename:目标路径(新名称,或已存在的目录) */
+  renameDest?: string
   /** condition:shell 条件表达式(不成立则跳过后续步骤) */
   condition?: string
 }
@@ -123,6 +137,9 @@ export function conditionGuardLine(cond: string): string {
 
 // 复制步骤的单行骨架(逐段拼,反解析按同样字面切回去;改动须两侧同步)。
 const COPY_HEAD = 'if command -v rsync >/dev/null 2>&1; then mkdir -p '
+// entry 且目标不带尾斜杠:目标按 cp/rsync 的标准语义解释(不存在 = 新名字,存在且是目录 = 放进去),
+// 所以不能 mkdir、更不能给目标补 `/` —— 补了就只剩「放进目录」一种意思。
+const COPY_HEAD_ENTRY = 'if command -v rsync >/dev/null 2>&1; then rsync -a '
 const COPY_RSYNC = ' && rsync -a '
 const COPY_ELSE = '; else '
 const COPY_MKDIR = 'mkdir -p '
@@ -138,6 +155,8 @@ const COPY_WARN = "echo '没有 rsync,复制退回 cp:排除项未生效'; "
 // 反解析只吃这一种两参数形态(源/目标都是单 token、无通配无管道),其余含 cp 的行留作「运行命令」。
 const CP_CONJ = ' && cp '
 const CP_FLAG = '-a'
+/** 独立成行的 cp(entry 目标不带斜杠、无 mkdir 前缀)。 */
+const CP_PREFIX = 'cp -a '
 /** 认得的 cp 旗标(归档/递归);其余(-i、-v、--link…)不改写,整行退回命令步骤。 */
 const CP_FLAGS = new Set(['-a', '-R', '-r'])
 
@@ -152,11 +171,16 @@ function trimTrailingSlash(p: string): string {
 }
 
 /**
- * 把复制步骤编译成单行。两种方式的骨架相同,只差源 token:
- *   - contents:`rsync 'src/' 'dest/'` / `cp -a 'src/.' 'dest/'`(复制目录内容)
- *   - entry:   `rsync 'src' 'dest/'` / `cp -a 'src' 'dest/'`(复制文件夹/文件本身,保留名称)
- * 两条分支都先 `mkdir -p 'dest/'`,语义一致。有排除项时兜底分支先 echo 一句告警
- * (cp 不吃排除,日志必须说清那几项没生效)。源/目标尾斜杠会被归一;任一空 → 返回空串。
+ * 把复制步骤编译成单行。
+ *   - contents:目标永远是目录 → `mkdir -p 'dest/'`,源 token 带 `/`(rsync)或 `/.`(cp),
+ *     复制的是目录内容。
+ *   - entry:复制文件夹本身 → 源 token 不带尾斜杠,`mkdir -p 'dest/'` 后放进目录(保留名称)。
+ *   - file:复制文件 → 目标**原样使用**:
+ *       · 目标不以 `/` 结尾 → `rsync/cp -a 'src' 'dest'`,标准语义:目标不存在就是新文件名,
+ *         已存在且是目录才放进去。绝不 mkdir、绝不补 `/`。
+ *       · 目标自己以 `/` 结尾 → 用户明确要放进目录:`mkdir -p 'dest/'` 后复制进去。
+ * 有排除项时兜底分支先 echo 一句告警(cp 不吃排除,日志必须说清那几项没生效)。
+ * 源尾斜杠归一;file 的目标保留原样(尾斜杠是语义);任一空 → 返回空串。
  */
 export function copyStepLine(
   src: string,
@@ -165,13 +189,20 @@ export function copyStepLine(
   mode: CopyMode = 'contents',
 ): string {
   const s = trimTrailingSlash(src.trim())
-  const d = trimTrailingSlash(dest.trim())
+  const rawDest = dest.trim()
+  const d = trimTrailingSlash(rawDest)
   if (!s || !d) return ''
-  const destTok = shellQuote(`${d}/`)
   const excludeTok = excludes.map((e) => `${COPY_EXCLUDE}${shellQuote(e)} `).join('')
   const warn = excludes.length ? COPY_WARN : ''
-  const rsyncSrc = mode === 'entry' ? s : `${s}/`
-  const cpSrc = mode === 'entry' ? s : `${s}/.`
+  if (mode === 'file' && !rawDest.endsWith('/')) {
+    return (
+      `${COPY_HEAD_ENTRY}${excludeTok}${shellQuote(s)} ${shellQuote(rawDest)}` +
+      `${COPY_ELSE}${warn}${CP_PREFIX}${shellQuote(s)} ${shellQuote(rawDest)}${COPY_TAIL}`
+    )
+  }
+  const destTok = shellQuote(`${d}/`)
+  const rsyncSrc = mode === 'contents' ? `${s}/` : s
+  const cpSrc = mode === 'contents' ? `${s}/.` : s
   return (
     `${COPY_HEAD}${destTok}${COPY_RSYNC}${excludeTok}${shellQuote(rsyncSrc)} ${destTok}` +
     `${COPY_ELSE}${warn}${COPY_MKDIR}${destTok}${COPY_CP}${shellQuote(cpSrc)} ${destTok}${COPY_TAIL}`
@@ -179,18 +210,34 @@ export function copyStepLine(
 }
 
 /**
- * 「复制」(plain)步骤编译成一行 cp:`mkdir -p 'dest/' && cp -a 'src' 'dest/'`。
- * 与 advanced 骨架同源:两种复制方式只差源 token(`src` / `src/.`)。旗标统一发 `-a`
- * (识别时接受的 `-R`/`-r` 是它的子集);排除项在这里没有落点(cp 不吃 --exclude),
- * 所以 plain 的卡片不显示那一格。源/目标任一空 → 空串。
+ * 「复制」(plain)步骤编译:
+ *   - contents / entry(或目标带 `/`):`mkdir -p 'dest/' && cp -a 'src' 'dest/'`
+ *     (cp 不吃排除,没有那一格)。
+ *   - file 且目标不带 `/`:`cp -a 'src' 'dest'` —— 目标就是新文件名,不前置 mkdir、不补 `/`。
+ * 旗标统一发 `-a`(识别时接受的 `-R`/`-r` 是它的子集)。源/目标任一空 → 空串。
  */
 export function plainCopyLine(src: string, dest: string, mode: CopyMode = 'contents'): string {
   const s = trimTrailingSlash(src.trim())
-  const d = trimTrailingSlash(dest.trim())
+  const rawDest = dest.trim()
+  const d = trimTrailingSlash(rawDest)
   if (!s || !d) return ''
+  if (mode === 'file' && !rawDest.endsWith('/')) {
+    return `${CP_PREFIX}${shellQuote(s)} ${shellQuote(rawDest)}`
+  }
   const destTok = shellQuote(`${d}/`)
-  const cpSrc = mode === 'entry' ? s : `${s}/.`
+  const cpSrc = mode === 'contents' ? `${s}/.` : s
   return `${COPY_MKDIR}${destTok}${CP_CONJ}${CP_FLAG} ${shellQuote(cpSrc)} ${destTok}`
+}
+
+/**
+ * 「重命名」步骤编译成一行 `mv '源' '目标'`。路径不做归一(尾斜杠会改变 mv 语义:
+ * 带斜杠的目标必须已存在且是目录),只去首尾空白;任一空 → 返回空串。
+ */
+export function renameLine(src: string, dest: string): string {
+  const s = src.trim()
+  const d = dest.trim()
+  if (!s || !d || !trimTrailingSlash(s) || !trimTrailingSlash(d)) return ''
+  return `mv ${shellQuote(s)} ${shellQuote(d)}`
 }
 
 /**
@@ -199,6 +246,7 @@ export function plainCopyLine(src: string, dest: string, mode: CopyMode = 'conte
  * - env:`export K=V`(K 合法才发;值做单引号转义)
  * - workDir:`cd DIR`(DIR 做单引号转义)
  * - copy:advanced=单行 rsync/cp 兜底,plain=一行 cp(源与目标齐备才发;排除项逐条 `--exclude=`)
+ * - rename:一行 `mv '源' '目标'`(源与目标齐备才发)
  * - condition:`if ! ( <cond> ); then echo …; exit 0; fi`(单行守卫;cond 原样,空步骤跳过)
  */
 export function stepToCommandLines(step: StepBlock): string[] {
@@ -229,6 +277,10 @@ export function stepToCommandLines(step: StepBlock): string[] {
         splitExcludes(step.copyExcludes ?? ''),
         mode,
       )
+      return line ? [line] : []
+    }
+    case 'rename': {
+      const line = renameLine(step.renameSrc ?? '', step.renameDest ?? '')
       return line ? [line] : []
     }
     case 'condition': {
@@ -330,9 +382,11 @@ function readQuotedToken(s: string, i: number): { value: string; next: number } 
 }
 
 /**
- * 反解析复制步骤:严格按 copyStepLine 的字面骨架逐段吃,并校验两条分支路径一致
- * (mkdir / rsync / cp 三处目标同值;contents 的 `src/` 对 `src/.`,entry 两边同为 `src`)。
- * 源 token 是否带尾斜杠就是两种方式的区别 —— 老行永远带,读回 contents,行为不变。
+ * 反解析复制步骤:严格按 copyStepLine 的字面骨架逐段吃。
+ *   - 无 mkdir 前缀(`then rsync -a 'src' 'dest'; else cp -a 'src' 'dest'; fi`)→ 只可能是
+ *     file(复制文件),目标不带尾斜杠、原样使用。
+ *   - 带 mkdir 前缀:源带尾斜杠 = contents;源不带 = entry(复制文件夹本身),且目标保留
+ *     尾斜杠 —— 这样重新编译出来的仍是「放进目录」,不会悄悄变成「目标就是新名字」。
  * 用户手改过任何一个字面段 → 返回 null,整行退回「运行命令」原样保留(绝不丢内容)。
  */
 export function parseCopyLine(line: string): {
@@ -342,8 +396,15 @@ export function parseCopyLine(line: string): {
   mode: CopyMode
 } | null {
   const t = line.trim()
-  if (!t.startsWith(COPY_HEAD)) return null
-  let i = COPY_HEAD.length
+  let i: number
+  let destMkdir: { value: string } | null = null
+  if (t.startsWith(COPY_HEAD_ENTRY)) {
+    i = COPY_HEAD_ENTRY.length
+  } else if (t.startsWith(COPY_HEAD)) {
+    i = COPY_HEAD.length
+  } else {
+    return null
+  }
   const skip = (lit: string): boolean => {
     if (!t.startsWith(lit, i)) return false
     i += lit.length
@@ -355,8 +416,10 @@ export function parseCopyLine(line: string): {
     i = tok.next
     return tok
   }
-  const destMkdir = take()
-  if (!destMkdir || !skip(COPY_RSYNC)) return null
+  if (t.startsWith(COPY_HEAD)) {
+    destMkdir = take()
+    if (!destMkdir || !skip(COPY_RSYNC)) return null
+  }
   const excludes: string[] = []
   while (skip(COPY_EXCLUDE)) {
     const e = take()
@@ -371,11 +434,23 @@ export function parseCopyLine(line: string): {
   const srcName = mode === 'contents' ? rsyncSrc.value.slice(0, -1) : rsyncSrc.value
   if (!srcName) return null
   const rsyncDest = take()
-  if (!rsyncDest || rsyncDest.value !== destMkdir.value || !skip(COPY_ELSE)) return null
+  if (!rsyncDest || !skip(COPY_ELSE)) return null
   // 兜底告警段:生成器只在有排除项时才写它。老配置里没有这一段(可选吃掉),
   // 而「没有排除项却有告警」只可能是手插的 —— 归成 copy 会把它重生成丢掉,所以退回 command。
   const warned = skip(COPY_WARN)
   if (warned && excludes.length === 0) return null
+  // 无 mkdir 骨架:目标原样(不带尾斜杠),兜底分支没有 mkdir。
+  if (!destMkdir) {
+    // 无 mkdir 形态只代表 entry(源不带尾斜杠);源带斜杠却缺 mkdir 是手写的 contents 变体,
+    // 重编译会多出 mkdir,不算原样,退回命令。
+    if (mode !== 'entry' || rsyncDest.value.endsWith('/') || !skip(CP_PREFIX)) return null
+    const cpSrc = take()
+    if (!cpSrc || cpSrc.value !== srcName || !skip(' ')) return null
+    const cpDest = take()
+    if (!cpDest || cpDest.value !== rsyncDest.value || !t.startsWith(COPY_TAIL, i)) return null
+    return { src: srcName, dest: rsyncDest.value, excludes, mode: 'file' }
+  }
+  if (rsyncDest.value !== destMkdir.value) return null
   if (!skip(COPY_MKDIR)) return null
   const destAgain = take()
   if (!destAgain || destAgain.value !== destMkdir.value || !skip(COPY_CP)) return null
@@ -384,14 +459,21 @@ export function parseCopyLine(line: string): {
   if (!cpSrc || cpSrc.value !== expectCpSrc || !skip(' ')) return null
   const cpDest = take()
   if (!cpDest || cpDest.value !== destMkdir.value || !t.startsWith(COPY_TAIL, i)) return null
-  return { src: srcName, dest: destMkdir.value.replace(/\/+$/, ''), excludes, mode }
+  // entry 的老骨架一定带 `dest/`:保留尾斜杠,重编译才能原样回去。
+  if (mode === 'entry' && !destMkdir.value.endsWith('/')) return null
+  return {
+    src: srcName,
+    dest: mode === 'entry' ? destMkdir.value : destMkdir.value.replace(/\/+$/, ''),
+    excludes,
+    mode,
+  }
 }
 
 /**
- * 读一个 cp 参数:带引号走 readQuotedToken;裸 token 吃到下一个空格,但含 shell 元字符就拒
- * (通配、变量、重定向、子命令都不是「源 目标」两参数复制,整行留给「运行命令」原样保留)。
+ * 读一个路径参数(cp / mv):带引号走 readQuotedToken;裸 token 吃到下一个空格,但含 shell 元字符就拒
+ * (通配、变量、重定向、子命令都不是「源 目标」两参数,整行留给「运行命令」原样保留)。
  */
-function readCpArg(t: string, i: number): { value: string; next: number } | null {
+function readPathArg(t: string, i: number): { value: string; next: number } | null {
   if (t[i] === "'") return readQuotedToken(t, i)
   let k = i
   while (k < t.length && t[k] !== ' ') k += 1
@@ -404,8 +486,10 @@ function readCpArg(t: string, i: number): { value: string; next: number } | null
  * 反解析「复制」(plain):只认两种写法
  *   `cp -a|-R|-r 源 目标`
  *   `mkdir -p 目标 && cp -a|-R|-r 源 目标`(mkdir 的目标必须和 cp 的目标同值)
- * 源以 `/.` 结尾 → contents(铺内容),否则 entry(连名字一起放)。多一个参数、带排除、
- * 用了别的旗标 → 返回 null,整行退回命令步骤,绝不改写用户的命令。
+ * 源以 `/.` 结尾 → contents(铺内容);有 mkdir 前缀 → entry(复制文件夹本身,放进目录);
+ * 没有 mkdir 前缀 → file(复制文件,目标就是新名字)。目标原样保留:带 `/` 说明是「放进目录」,
+ * 不带就是「新名字」——重编译据此选择要不要 mkdir/补斜杠。
+ * 多一个参数、带排除、用了别的旗标 → 返回 null,整行退回命令步骤,绝不改写用户的命令。
  */
 export function parsePlainCpLine(line: string): {
   src: string
@@ -417,7 +501,7 @@ export function parsePlainCpLine(line: string): {
   let mkdirDest = ''
   if (t.startsWith(COPY_MKDIR)) {
     i = COPY_MKDIR.length
-    const pre = readCpArg(t, i)
+    const pre = readPathArg(t, i)
     if (!pre) return null
     mkdirDest = pre.value
     i = pre.next
@@ -432,9 +516,9 @@ export function parsePlainCpLine(line: string): {
   if (space === -1) return null
   if (!CP_FLAGS.has(t.slice(i, space))) return null
   i = space + 1
-  const src = readCpArg(t, i)
+  const src = readPathArg(t, i)
   if (!src || t[src.next] !== ' ') return null
-  const dest = readCpArg(t, src.next + 1)
+  const dest = readPathArg(t, src.next + 1)
   // 目标之后不能再有东西(管道、`&&`、注释都算篡改)
   if (!dest || dest.next !== t.length) return null
   if (mkdirDest && trimTrailingSlash(mkdirDest) !== trimTrailingSlash(dest.value)) return null
@@ -443,13 +527,33 @@ export function parsePlainCpLine(line: string): {
   if (!srcName || srcName === '/') return null
   const destName = trimTrailingSlash(dest.value)
   if (!destName) return null
-  return { src: srcName, dest: destName, mode: contents ? 'contents' : 'entry' }
+  if (contents) return { src: srcName, dest: destName, mode: 'contents' }
+  // 有 mkdir 前缀 = 想放进目录(folder);没有 = 目标就是文件路径。
+  return { src: srcName, dest: dest.value, mode: mkdirDest ? 'entry' : 'file' }
+}
+
+/**
+ * 反解析「重命名」:只认 `mv 源 目标` 两个路径参数。带旗标(`-f` 等)、多一个参数、
+ * 后面还挂着别的命令 → 返回 null,整行退回命令步骤,一字不改。路径原样保留(含尾斜杠),
+ * 因为尾斜杠会改变 mv 语义;只指向根(全斜杠)的路径不是改名,同样退回命令。
+ */
+export function parseRenameLine(line: string): { src: string; dest: string } | null {
+  const t = line.trim()
+  if (!t.startsWith('mv ')) return null
+  const src = readPathArg(t, 3)
+  if (!src || t[src.next] !== ' ') return null
+  const dest = readPathArg(t, src.next + 1)
+  if (!dest || dest.next !== t.length) return null
+  if (src.value.startsWith('-') || dest.value.startsWith('-')) return null
+  if (!trimTrailingSlash(src.value) || !trimTrailingSlash(dest.value)) return null
+  return { src: src.value, dest: dest.value }
 }
 
 /**
  * 把一行命令分类成步骤:
  * - rsync/cp 兜底单行  → copy(高级复制;源/目标/排除逐项还原)
  * - 两参数 `cp` 单行   → copy(复制;原样发 cp,不升级成 rsync 骨架)
+ * - 两参数 `mv` 单行   → rename(重命名/移动)
  * - `export K=V`  → env(值反转义)
  * - `cd DIR`      → workDir(DIR 反转义)
  * - 其它          → command(原样,有损归类不丢内容)
@@ -465,7 +569,7 @@ export function lineToStep(line: string): StepBlock {
       copyDest: copy.dest,
       copyExcludes: copy.excludes.join(' '),
       // contents 是缺省值,不写进对象(老配置读出的步骤形状保持不变)。
-      ...(copy.mode === 'entry' ? { copyMode: 'entry' as const } : {}),
+      ...(copy.mode !== 'contents' ? { copyMode: copy.mode } : {}),
     }
   }
   const plain = parsePlainCpLine(trimmed)
@@ -476,8 +580,12 @@ export function lineToStep(line: string): StepBlock {
       copyStyle: 'plain',
       copySrc: plain.src,
       copyDest: plain.dest,
-      ...(plain.mode === 'entry' ? { copyMode: 'entry' as const } : {}),
+      ...(plain.mode !== 'contents' ? { copyMode: plain.mode } : {}),
     }
+  }
+  const rename = parseRenameLine(trimmed)
+  if (rename) {
+    return { id: nextStepId(), kind: 'rename', renameSrc: rename.src, renameDest: rename.dest }
   }
   const cond = COND_LINE.exec(trimmed)
   if (cond) {
@@ -523,6 +631,7 @@ export const STEP_KIND_META: Record<StepKind, { label: string; accent: string }>
   env: { get label() { return t('pipelineJob.stepEnvLabel') }, accent: 'cyan' },
   workDir: { get label() { return t('pipelineJob.stepWorkDirLabel') }, accent: 'amber' },
   copy: { get label() { return t('pipelineJob.stepCopyLabel') }, accent: 'green' },
+  rename: { get label() { return t('pipelineJob.stepRenameLabel') }, accent: 'logblue' },
   condition: { get label() { return t('pipelineJob.stepConditionLabel') }, accent: 'red' },
 }
 

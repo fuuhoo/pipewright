@@ -56,6 +56,7 @@ describe('StepBuilder 步骤间插入', () => {
         ['切目录', '切换后续命令工作目录'],
         ['复制', '一行 cp 拷贝(不支持排除)'],
         ['高级复制', 'rsync 优先,可排除(没装 rsync 时退回 cp)'],
+        ['重命名', '移动/改名为目标(mv 源 目标)'],
         ['条件守卫', '不成立则跳过后续步骤'],
       ])
       // 菜单还没点选项 → 列表没变、也没回传
@@ -142,6 +143,45 @@ describe('StepBuilder 步骤间插入', () => {
     try {
       expect(wrapper.findAll('.sb-step').length).toBe(1)
       expect(wrapper.findAll('.sb-insert').length).toBe(2)
+    } finally {
+      host.remove()
+    }
+  })
+})
+
+describe('StepBuilder 重命名', () => {
+  it('插入重命名卡片,填源/目标后回传一行 mv', async () => {
+    const { wrapper, host } = mountBuilder()
+    try {
+      const menu = await openInsertMenu(wrapper, 1)
+      const renameItem = menu.findAll('.sb-add-item').find((i) => i.find('.sb-add-name').text() === '重命名')!
+      await renameItem.trigger('click')
+      await nextTick()
+
+      const card = wrapper.findAll('.sb-step')[1]
+      expect(card.find('.sb-kind').text()).toBe('重命名')
+      const inputs = card.findAll('.sb-rename input')
+      await inputs[0].setValue('dist')
+      await inputs[0].trigger('blur')
+      await inputs[1].setValue('release')
+      await inputs[1].trigger('blur')
+
+      expect(wrapper.emitted('update')?.at(-1)?.[0]).toEqual({
+        commands: "echo one\nmv 'dist' 'release'\necho two\necho three",
+      })
+    } finally {
+      host.remove()
+    }
+  })
+
+  it('mv 行读回重命名卡片而不是运行命令', () => {
+    const { wrapper, host } = mountBuilder({ commands: "mv 'dist' 'release'" })
+    try {
+      expect(wrapper.findAll('.sb-step').length).toBe(1)
+      expect(wrapper.find('.sb-kind').text()).toBe('重命名')
+      const inputs = wrapper.findAll('.sb-rename input')
+      expect((inputs[0].element as HTMLInputElement).value).toBe('dist')
+      expect((inputs[1].element as HTMLInputElement).value).toBe('release')
     } finally {
       host.remove()
     }

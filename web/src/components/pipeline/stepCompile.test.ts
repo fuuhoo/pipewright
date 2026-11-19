@@ -8,6 +8,7 @@ import {
   conditionGuardLine,
   copyStepLine,
   plainCopyLine,
+  renameLine,
   splitExcludes,
   lineToStep,
   parseSteps,
@@ -304,28 +305,29 @@ describe('stepCompile', () => {
       expect(lineToStep(tampered).kind).toBe('command')
     })
 
-    describe('复制方式:entry(文件夹/文件本身)', () => {
-      it('entry 编译成源 token 不带斜杠:rsync 与 cp -a 都把 src 本身放进目标', () => {
+    describe('复制方式:entry(复制文件夹本身)', () => {
+      it('entry 把文件夹本身放进目标目录:mkdir + 目标补 `/`', () => {
         expect(copyStepLine('frontend/dist', 'build/out', [], 'entry')).toBe(
           "if command -v rsync >/dev/null 2>&1; then mkdir -p 'build/out/' && rsync -a 'frontend/dist' 'build/out/';" +
             " else mkdir -p 'build/out/' && cp -a 'frontend/dist' 'build/out/'; fi",
         )
       })
 
-      it('entry 用步骤编译时同样带 copyMode(文件源也能复制,不再是 app.jar/)', () => {
+      it('entry 用步骤编译时同样带 copyMode(目标目录保留原名)', () => {
         const [line] = stepToCommandLines(
-          step({ kind: 'copy', copySrc: 'app.jar', copyDest: 'out', copyMode: 'entry' }),
+          step({ kind: 'copy', copySrc: 'dist', copyDest: 'out', copyMode: 'entry' }),
         )
-        expect(line).toContain("rsync -a 'app.jar' 'out/'")
-        expect(line).toContain("cp -a 'app.jar' 'out/'")
+        expect(line).toContain("rsync -a 'dist' 'out/'")
+        expect(line).toContain("cp -a 'dist' 'out/'")
+        expect(line).toContain("mkdir -p 'out/'")
       })
 
-      it('entry 带排除项时兜底分支照样告警,且 round-trip 保 copyMode', () => {
+      it('entry 带排除项时兜底分支照样告警,且 round-trip 保 copyMode(dest 带 /)', () => {
         const back = lineToStep(copyStepLine("it's/dist", 'o/ut', ['node_modules'], 'entry'))
         expect(back.kind).toBe('copy')
         expect(back.copyMode).toBe('entry')
         expect(back.copySrc).toBe("it's/dist")
-        expect(back.copyDest).toBe('o/ut')
+        expect(back.copyDest).toBe('o/ut/')
         expect(back.copyExcludes).toBe('node_modules')
       })
 
@@ -340,12 +342,56 @@ describe('stepCompile', () => {
         const tampered = generated.replace("cp -a 'src' 'out/'", "cp -a 'src/.' 'out/'")
         expect(lineToStep(tampered).kind).toBe('command')
       })
+    })
 
-      it('entry 里源写 ./ 只剩「.」,仍能编译(等于复制当前目录内容,不是目录名)', () => {
-        const line = copyStepLine('./', 'out', [], 'entry')
-        expect(line).toContain("rsync -a '.' 'out/'")
-        expect(line).toContain("cp -a '.' 'out/'")
-        expect(lineToStep(line).copyMode).toBe('entry')
+    describe('复制方式:file(复制文件,目标不补 `/`)', () => {
+      it('file 目标原样使用:不 mkdir、不补 `/`(目标不存在就是新文件名)', () => {
+        expect(copyStepLine('app.jar', 'out/app-v1.jar', [], 'file')).toBe(
+          "if command -v rsync >/dev/null 2>&1; then rsync -a 'app.jar' 'out/app-v1.jar';" +
+            " else cp -a 'app.jar' 'out/app-v1.jar'; fi",
+        )
+      })
+
+      it('file 用步骤编译时同样带 copyMode', () => {
+        const [line] = stepToCommandLines(
+          step({ kind: 'copy', copySrc: 'app.jar', copyDest: 'out', copyMode: 'file' }),
+        )
+        expect(line).toContain("rsync -a 'app.jar' 'out'")
+        expect(line).toContain("cp -a 'app.jar' 'out'")
+        expect(line).not.toContain('mkdir')
+      })
+
+      it('file 目标自己以 / 结尾 = 要放进目录:才 mkdir 并保留斜杠', () => {
+        expect(copyStepLine('app.jar', 'out/', [], 'file')).toBe(
+          "if command -v rsync >/dev/null 2>&1; then mkdir -p 'out/' && rsync -a 'app.jar' 'out/';" +
+            " else mkdir -p 'out/' && cp -a 'app.jar' 'out/'; fi",
+        )
+      })
+
+      it('无 mkdir file 行 round-trip 一字不差,读回 copyMode=file', () => {
+        const line = copyStepLine('dist', 'release', ['node_modules'], 'file')
+        const back = lineToStep(line)
+        expect(back.kind).toBe('copy')
+        expect(back.copyMode).toBe('file')
+        expect(compileSteps([back]).commands).toBe(line)
+      })
+
+      it('file 里源写 ./ 只剩「.」,仍能编译', () => {
+        const line = copyStepLine('./', 'out', [], 'file')
+        expect(line).toContain("rsync -a '.' 'out'")
+        expect(line).toContain("cp -a '.' 'out'")
+        expect(lineToStep(line).copyMode).toBe('file')
+      })
+
+      it('老配置的 entry 行(mkdir + dest/)仍读回 entry,重编译原样回去', () => {
+        const legacy =
+          "if command -v rsync >/dev/null 2>&1; then mkdir -p 'out/' && rsync -a 'dist' 'out/';" +
+          " else mkdir -p 'out/' && cp -a 'dist' 'out/'; fi"
+        const back = lineToStep(legacy)
+        expect(back.kind).toBe('copy')
+        expect(back.copyMode).toBe('entry')
+        expect(back.copyDest).toBe('out/')
+        expect(compileSteps([back]).commands).toBe(legacy)
       })
     })
   })
@@ -355,8 +401,14 @@ describe('stepCompile', () => {
       expect(plainCopyLine('frontend/dist', 'build/out')).toBe(
         "mkdir -p 'build/out/' && cp -a 'frontend/dist/.' 'build/out/'",
       )
+      // entry = 复制文件夹本身:放进目标目录,保留原名。
       expect(plainCopyLine('frontend/dist', 'build/out', 'entry')).toBe(
         "mkdir -p 'build/out/' && cp -a 'frontend/dist' 'build/out/'",
+      )
+      // file = 复制文件:目标就是路径,不补斜杠、不 mkdir;自己写 / 才按目录处理。
+      expect(plainCopyLine('app.jar', 'out/app-v1.jar', 'file')).toBe("cp -a 'app.jar' 'out/app-v1.jar'")
+      expect(plainCopyLine('app.jar', 'out/', 'file')).toBe(
+        "mkdir -p 'out/' && cp -a 'app.jar' 'out/'",
       )
       expect(plainCopyLine('src', 'out').includes('\n')).toBe(false)
       expect(plainCopyLine('src', 'out')).not.toContain('rsync')
@@ -371,13 +423,21 @@ describe('stepCompile', () => {
       expect(line).not.toContain('node_modules')
     })
 
-    it('认手写的两参数 cp:裸路径、无 mkdir 前缀也算,源不带 /. 读成 entry', () => {
+    it('认手写的两参数 cp:裸路径、无 mkdir 前缀读成 file(目标就是文件名)', () => {
       const back = lineToStep('cp -a frontend/dist build/out')
       expect(back.kind).toBe('copy')
       expect(back.copyStyle).toBe('plain')
       expect(back.copySrc).toBe('frontend/dist')
       expect(back.copyDest).toBe('build/out')
+      expect(back.copyMode).toBe('file')
+      expect(compileSteps([back]).commands).toBe("cp -a 'frontend/dist' 'build/out'")
+    })
+
+    it('带 mkdir 前缀、源不带 /. → entry(复制文件夹本身)', () => {
+      const back = lineToStep("mkdir -p 'out/' && cp -a 'dist' 'out/'")
+      expect(back.kind).toBe('copy')
       expect(back.copyMode).toBe('entry')
+      expect(back.copyDest).toBe('out/')
     })
 
     it('认带 mkdir 前缀 + 引号的写法,源以 /. 结尾读成 contents', () => {
@@ -395,18 +455,24 @@ describe('stepCompile', () => {
         const back = lineToStep(`cp ${flag} app.jar out`)
         expect(back.copyStyle).toBe('plain')
         const [line] = stepToCommandLines(back)
-        expect(line).toBe("mkdir -p 'out/' && cp -a 'app.jar' 'out/'")
+        expect(line).toBe("cp -a 'app.jar' 'out'")
       }
     })
 
     it('生成的 plain 行原样 round-trip,不会被改写回 rsync 骨架', () => {
-      for (const mode of ['contents', 'entry'] as const) {
+      for (const mode of ['contents', 'file'] as const) {
         const line = plainCopyLine("it's/a dir", "o'ut", mode)
         const back = lineToStep(line)
         expect(back.copySrc).toBe("it's/a dir")
         expect(back.copyDest).toBe("o'ut")
         expect(compileSteps([back]).commands).toBe(line)
       }
+      // entry 的目标自带 /(放进目录),读回时也保留它。
+      const entryLine = plainCopyLine("it's/a dir", "o'ut/", 'entry')
+      const entryBack = lineToStep(entryLine)
+      expect(entryBack.copyMode).toBe('entry')
+      expect(entryBack.copyDest).toBe("o'ut/")
+      expect(compileSteps([entryBack]).commands).toBe(entryLine)
     })
 
     it('不像「两参数复制」的 cp 行一律留作运行命令,一个字不改', () => {
@@ -432,6 +498,59 @@ describe('stepCompile', () => {
     })
   })
 
+  describe('rename step (一行 mv)', () => {
+    it('compiles to one mv line with quoted paths', () => {
+      expect(renameLine('dist', 'release')).toBe("mv 'dist' 'release'")
+      expect(
+        stepToCommandLines(step({ kind: 'rename', renameSrc: 'app.jar', renameDest: 'app-v1.jar' })),
+      ).toEqual(["mv 'app.jar' 'app-v1.jar'"])
+    })
+
+    it('drops a step missing src or dest; 只指向根也不算改名', () => {
+      expect(stepToCommandLines(step({ kind: 'rename', renameSrc: '', renameDest: 'x' }))).toEqual([])
+      expect(stepToCommandLines(step({ kind: 'rename', renameSrc: 'x', renameDest: '  ' }))).toEqual([])
+      expect(renameLine('/', 'b')).toBe('')
+      expect(renameLine('a', '/')).toBe('')
+    })
+
+    it('路径尾斜杠原样保留 —— 带斜杠的目标改变 mv 语义', () => {
+      expect(renameLine('a', 'b/')).toBe("mv 'a' 'b/'")
+      const back = lineToStep(renameLine('a', 'b/'))
+      expect(back.kind).toBe('rename')
+      expect(back.renameDest).toBe('b/')
+    })
+
+    it('round-trips paths with single quotes', () => {
+      const line = renameLine("it's/a", "o'ut")
+      const back = lineToStep(line)
+      expect(back.kind).toBe('rename')
+      expect(back.renameSrc).toBe("it's/a")
+      expect(back.renameDest).toBe("o'ut")
+      expect(compileSteps([back]).commands).toBe(line)
+    })
+
+    it('认手写的两参数 mv(裸路径)', () => {
+      const back = lineToStep('mv dist release')
+      expect(back.kind).toBe('rename')
+      expect(back.renameSrc).toBe('dist')
+      expect(back.renameDest).toBe('release')
+      expect(compileSteps([back]).commands).toBe("mv 'dist' 'release'")
+    })
+
+    it('不像「两参数 mv」的行一律留作运行命令,一个字不改', () => {
+      const notRename = [
+        'mv -f dist release', // 旗标
+        'mv dist', // 缺目标
+        'mv dist release extra', // 三个参数
+        'mv dist release && echo done', // 后面还有一句
+        'sudo mv dist release', // 前面有东西
+        'mv "$SRC" release', // 变量
+        'mv dist/* release', // 通配
+      ]
+      for (const line of notRename) expect(lineToStep(line).kind).toBe('command')
+    })
+  })
+
   describe('configUsesTemplate', () => {
     it('detects commandTemplate / params', () => {
       expect(configUsesTemplate({ commandTemplate: 'cd {{dir}}' })).toBe(true)
@@ -445,6 +564,13 @@ describe('stepCompile', () => {
   })
 
   it('STEP_KIND_META covers every kind', () => {
-    expect(Object.keys(STEP_KIND_META).sort()).toEqual(['command', 'condition', 'copy', 'env', 'workDir'])
+    expect(Object.keys(STEP_KIND_META).sort()).toEqual([
+      'command',
+      'condition',
+      'copy',
+      'env',
+      'rename',
+      'workDir',
+    ])
   })
 })

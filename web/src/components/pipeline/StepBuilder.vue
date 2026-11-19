@@ -59,13 +59,20 @@ const rsyncState = computed(() => rsyncSupportFor(props.image))
 
 /** 复制卡片的提示分两套:「复制」是一行 cp、没有排除;「高级复制」讲 rsync 在不在。再按复制方式细分。 */
 function copyHintText(step: StepBlock): string {
+  const image = (props.image ?? '').trim()
+  // 复制文件与复制文件夹的目标语义不同,提示各说各的(文件不补 `/`)。
+  if (step.copyMode === 'file') {
+    if ((step.copyStyle ?? 'advanced') === 'plain') return t('pipelineJob.sbCopyPlainFileHint')
+    return rsyncState.value === 'no'
+      ? t('pipelineJob.sbCopyFileHintNo', { image })
+      : t('pipelineJob.sbCopyFileHint')
+  }
   // 一行 cp 的「复制」不碰 rsync,排除项没有落点 → 说的是另一套话。
   if ((step.copyStyle ?? 'advanced') === 'plain') {
     return step.copyMode === 'entry'
       ? t('pipelineJob.sbCopyPlainHintEntry')
       : t('pipelineJob.sbCopyPlainHint')
   }
-  const image = (props.image ?? '').trim()
   if (step.copyMode === 'entry') {
     return rsyncState.value === 'no'
       ? t('pipelineJob.sbCopyHintEntryNo', { image })
@@ -142,6 +149,7 @@ const addOptions = computed<ReadonlyArray<StepOption>>(() => [
     label: copyStyleLabel('advanced'),
     desc: t('pipelineJob.sbAddCopyDesc'),
   },
+  { key: 'rename', kind: 'rename', label: STEP_KIND_META.rename.label, desc: t('pipelineJob.sbAddRenameDesc') },
   { key: 'condition', kind: 'condition', label: STEP_KIND_META.condition.label, desc: t('pipelineJob.sbAddConditionDesc') },
 ])
 
@@ -441,6 +449,7 @@ const stepCount = computed(() => steps.value.length)
                 >
                   <option value="contents">{{ t('pipelineJob.sbCopyModeContents') }}</option>
                   <option value="entry">{{ t('pipelineJob.sbCopyModeEntry') }}</option>
+                  <option value="file">{{ t('pipelineJob.sbCopyModeFile') }}</option>
                 </select>
               </div>
             </div>
@@ -481,6 +490,33 @@ const stepCount = computed(() => steps.value.length)
               />
             </div>
             <p class="sb-copy-hint" :class="{ 'sb-copy-hint--warn': rsyncState === 'no' && (step.copyStyle ?? 'advanced') !== 'plain' }">{{ copyHintText(step) }}</p>
+          </div>
+
+          <!-- 重命名/移动:一条 mv,源 → 目标(路径原样,不补斜杠) -->
+          <div v-else-if="step.kind === 'rename'" class="sb-rename">
+            <div class="sb-copy-path">
+              <input
+                :ref="(el) => registerFirstField(step.id, el as Element | null)"
+                :value="step.renameSrc ?? ''"
+                class="sb-input is-mono"
+                type="text"
+                placeholder="dist"
+                :aria-label="t('pipelineJob.sbRenameSrcAria', { n: index + 1 })"
+                @input="patchStep(step.id, { renameSrc: ($event.target as HTMLInputElement).value })"
+                @blur="flush"
+              />
+              <span class="sb-arrow" aria-hidden="true">→</span>
+              <input
+                :value="step.renameDest ?? ''"
+                class="sb-input is-mono"
+                type="text"
+                placeholder="release"
+                :aria-label="t('pipelineJob.sbRenameDestAria', { n: index + 1 })"
+                @input="patchStep(step.id, { renameDest: ($event.target as HTMLInputElement).value })"
+                @blur="flush"
+              />
+            </div>
+            <p class="sb-copy-hint">{{ t('pipelineJob.sbRenameHint') }}</p>
           </div>
 
           <!-- 条件守卫 -->
@@ -632,6 +668,7 @@ const stepCount = computed(() => steps.value.length)
 .sb-step--env { --accent: var(--color-cyan); }
 .sb-step--workDir { --accent: var(--color-amber); }
 .sb-step--copy { --accent: var(--color-green); }
+.sb-step--rename { --accent: var(--color-logblue); }
 .sb-step--condition { --accent: var(--color-red); }
 
 .sb-step--dragging {
@@ -1041,6 +1078,7 @@ const stepCount = computed(() => steps.value.length)
 .sb-add-item--workDir { --item-accent: var(--color-amber); }
 .sb-add-item--copyPlain { --item-accent: var(--color-green); }
 .sb-add-item--copyAdvanced { --item-accent: var(--color-green); }
+.sb-add-item--rename { --item-accent: var(--color-logblue); }
 .sb-add-item--condition { --item-accent: var(--color-red); }
 
 .sb-add-dot {
