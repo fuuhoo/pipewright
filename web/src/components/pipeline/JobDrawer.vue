@@ -1008,25 +1008,28 @@ async function confirmSave(): Promise<void> {
           </option>
         </select>
 
-        <!-- 复用库指令选择:选中即以该指令正文为准(同组手填正文收起);清空即回到手填。 -->
-        <select
-          v-else-if="field.kind === 'commandref'"
-          :value="fieldValue(field.key)"
-          class="drawer-select"
-          :aria-label="field.label"
-          @change="setField(field.key, ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">{{ t('pipelineJob.fieldCommandRefInline') }}</option>
-          <option v-if="staleCommandRef(field)" :value="staleCommandRef(field)">
-            {{ t('pipelineJob.fieldCommandRefMissing') }}
-          </option>
-          <option v-for="c in libraryCommands" :key="c.id" :value="c.id">
-            {{ c.name }}<template v-if="c.description"> · {{ c.description }}</template>
-          </option>
-        </select>
-        <p v-if="field.kind === 'commandref' && libraryCommandsReady && !libraryCommands.length" class="field-hint">
-          {{ t('pipelineJob.fieldCommandRefNone') }}
-        </p>
+        <!-- 复用库指令选择:选中即以该指令正文为准(同组手填正文收起);清空即回到手填。
+             提示必须和 select 留在同一分支里:独立成 v-if 会把下面的 v-else-if 链截断,
+             末尾的 v-else 输入框就变成「总是渲染」,textarea 字段会多出一个单行框。 -->
+        <template v-else-if="field.kind === 'commandref'">
+          <select
+            :value="fieldValue(field.key)"
+            class="drawer-select"
+            :aria-label="field.label"
+            @change="setField(field.key, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ t('pipelineJob.fieldCommandRefInline') }}</option>
+            <option v-if="staleCommandRef(field)" :value="staleCommandRef(field)">
+              {{ t('pipelineJob.fieldCommandRefMissing') }}
+            </option>
+            <option v-for="c in libraryCommands" :key="c.id" :value="c.id">
+              {{ c.name }}<template v-if="c.description"> · {{ c.description }}</template>
+            </option>
+          </select>
+          <p v-if="libraryCommandsReady && !libraryCommands.length" class="field-hint">
+            {{ t('pipelineJob.fieldCommandRefNone') }}
+          </p>
+        </template>
 
         <!-- credential picker -->
         <select

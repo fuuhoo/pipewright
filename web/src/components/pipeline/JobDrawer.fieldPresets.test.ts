@@ -49,6 +49,19 @@ describe('JobDrawer 字段示例芯片', () => {
     expect(lastConfig(wrapper).cachePaths).toBe('node_modules\n.m2/repository')
   })
 
+  it('多行字段只渲染一个控件:提示段不能截断 v-else-if 链', async () => {
+    const wrapper = mount(JobDrawer, {
+      props: { job: scriptJob({ commands: 'npm run build', artifactPath: 'dist', cachePaths: 'node_modules' }), stage },
+    })
+    await flushPromises()
+
+    for (const label of ['执行命令', '产物路径', '依赖缓存目录']) {
+      const field = wrapper.findAll('.drawer-field').find((f) => f.find('.drawer-field-label').text() === label)!
+      expect(field.findAll('textarea').length, label).toBe(1)
+      expect(field.findAll('input').length, label).toBe(0)
+    }
+  })
+
   it('重复点同一颗不累积;芯片正文完整放在 title 里', async () => {
     const wrapper = mount(JobDrawer, {
       props: { job: scriptJob({ artifactPath: 'dist' }), stage },
