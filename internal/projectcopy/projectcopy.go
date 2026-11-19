@@ -118,7 +118,7 @@ func (s *Service) CopyMany(ctx context.Context, ins []Input) ([]Created, error) 
 	return made, nil
 }
 
-// copyProjectRow 落新项目主行:仓库地址、默认分支、凭据引用、两个开关都原样继承。
+// copyProjectRow 落新项目主行:仓库地址、默认分支、凭据引用、两个开关、标签都原样继承。
 // 不重做 ls-remote 校验:源项目本来就能拉,复制不该因为这一刻网络抖动而建不出副本。
 func copyProjectRow(ctx context.Context, tx *sql.Tx, in Input, now string) (*Created, error) {
 	var srcID, srcName, srcGroup string
@@ -150,9 +150,9 @@ func copyProjectRow(ctx context.Context, tx *sql.Tx, in Input, now string) (*Cre
 	// credential_id 可空(纯发布项目),其余列用 SELECT 原样带过去:NULL 就是 NULL,不必在 Go 里区分。
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id,
-		                       pac_enabled, pr_status_enabled, group_id, created_at, updated_at)
+		                       pac_enabled, pr_status_enabled, group_id, tags_json, created_at, updated_at)
 		 SELECT ?, ?, repo_url, default_branch, credential_id,
-		        pac_enabled, pr_status_enabled, ?, ?, ?
+		        pac_enabled, pr_status_enabled, ?, tags_json, ?, ?
 		 FROM projects WHERE id = ?`,
 		id, name, groupID, now, now, srcID,
 	)

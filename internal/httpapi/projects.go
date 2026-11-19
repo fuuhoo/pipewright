@@ -33,6 +33,9 @@ type projectDTO struct {
 	// 前端直接渲染,不用再拿 /api/services 映射一次;serviceId 为空表示未归属。
 	ServiceID   string `json:"serviceId"`
 	ServiceName string `json:"serviceName"`
+	// Tags 是项目标签(0..N,按用户添加顺序;去重不分大小写)。纯展示 / 筛选属性,
+	// 不参与权限与运行;空列表保证为 [] 而非 null。
+	Tags []string `json:"tags"`
 	// LastRunStatus 是该项目最近一条运行的状态(queued/running/waiting_approval/success/
 	// failed/partial_failed/rolled_back);从未跑过 → null,前端据此显示「尚无运行」。
 	LastRunStatus *string `json:"lastRunStatus"`
@@ -101,6 +104,10 @@ func toProjectDTO(p *project.Project, serverNames map[string]string) projectDTO 
 			targets = append(targets, name)
 		}
 	}
+	tags := p.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	return projectDTO{
 		ID:              p.ID,
 		Name:            p.Name,
@@ -113,6 +120,7 @@ func toProjectDTO(p *project.Project, serverNames map[string]string) projectDTO 
 		GroupID:         p.GroupID,
 		ServiceID:       p.ServiceID,
 		ServiceName:     p.ServiceName,
+		Tags:            tags,
 		LastRunStatus:   lastRun,
 		LastRunAt:       lastRunAt,
 		LastRunID:       lastRunID,
@@ -148,6 +156,10 @@ func writeProjectError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_project", "请选择仓库凭据")
 	case errors.Is(err, project.ErrServiceNotFound):
 		writeError(w, http.StatusUnprocessableEntity, "service_not_found", "归属服务不存在")
+	case errors.Is(err, project.ErrTooManyTags):
+		writeError(w, http.StatusBadRequest, "invalid_project", "标签数量超出上限")
+	case errors.Is(err, project.ErrTagTooLong):
+		writeError(w, http.StatusBadRequest, "invalid_project", "单个标签过长")
 	default:
 		// 内部错误:不泄漏细节。
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
@@ -236,12 +248,13 @@ func makeCreateProjectHandler(svc project.Service, acc *access.Service, aud audi
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Name          string `json:"name"`
-			RepoURL       string `json:"repoUrl"`
-			CredentialID  string `json:"credentialId"`
-			DefaultBranch string `json:"defaultBranch"`
-			GroupID       string `json:"groupId"`
-			ServiceID     string `json:"serviceId"`
+			Name          string   `json:"name"`
+			RepoURL       string   `json:"repoUrl"`
+			CredentialID  string   `json:"credentialId"`
+			DefaultBranch string   `json:"defaultBranch"`
+			GroupID       string   `json:"groupId"`
+			ServiceID     string   `json:"serviceId"`
+			Tags          []string `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -257,6 +270,7 @@ func makeCreateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			DefaultBranch: req.DefaultBranch,
 			GroupID:       req.GroupID,
 			ServiceID:     req.ServiceID,
+			Tags:          req.Tags,
 		})
 		if err != nil {
 			writeProjectError(w, err)
@@ -266,7 +280,7 @@ func makeCreateProjectHandler(svc project.Service, acc *access.Service, aud audi
 			Action:     audit.ActionProjectCreate,
 			TargetType: audit.TargetProject,
 			TargetID:   p.ID,
-			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch, "groupId": p.GroupID},
+			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch, "groupId": p.GroupID, "tags": p.Tags},
 			IP:         clientIP(r),
 		})
 		writeJSON(w, http.StatusCreated, toProjectDTO(p, nil))
@@ -292,6 +306,8 @@ func makeUpdateProjectHandler(svc project.Service, servers target.Service, acc *
 			PRStatusEnabled *bool   `json:"prStatusEnabled"`
 			GroupID         *string `json:"groupId"`
 			ServiceID       *string `json:"serviceId"`
+			// Tags 整体替换标签;nil = 不动,[] = 清空。
+			Tags *[]string `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -333,6 +349,7 @@ func makeUpdateProjectHandler(svc project.Service, servers target.Service, acc *
 			PRStatusEnabled: req.PRStatusEnabled,
 			GroupID:         req.GroupID,
 			ServiceID:       req.ServiceID,
+			Tags:            req.Tags,
 		})
 		if err != nil {
 			writeProjectError(w, err)
@@ -342,7 +359,7 @@ func makeUpdateProjectHandler(svc project.Service, servers target.Service, acc *
 			Action:     audit.ActionProjectUpdate,
 			TargetType: audit.TargetProject,
 			TargetID:   p.ID,
-			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch, "serviceId": p.ServiceID},
+			Detail:     map[string]any{"name": p.Name, "repoUrl": p.RepoURL, "defaultBranch": p.DefaultBranch, "serviceId": p.ServiceID, "tags": p.Tags},
 			IP:         clientIP(r),
 		})
 		if req.GroupID != nil {

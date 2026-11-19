@@ -61,6 +61,10 @@ type triggerInfo struct {
 	Branch string `json:"branch"`
 	Commit string `json:"commit"`
 	Actor  string `json:"actor"`
+	// ServerID / ServerName 是手动触发时选定的主机(可选;为空 = 未指定)。
+	// 仅记录,不改变部署落点(落点由部署节点的 serverIds 决定)。
+	ServerID   string `json:"serverId"`
+	ServerName string `json:"serverName"`
 }
 
 type stepDTO struct {
@@ -108,7 +112,10 @@ func durationMs(start, end *time.Time) *int64 {
 }
 
 func toTriggerInfo(t run.Trigger) triggerInfo {
-	return triggerInfo{Type: t.Type, Branch: t.Branch, Commit: t.Commit, Actor: t.Actor}
+	return triggerInfo{
+		Type: t.Type, Branch: t.Branch, Commit: t.Commit, Actor: t.Actor,
+		ServerID: t.ServerID, ServerName: t.ServerName,
+	}
 }
 
 // toRunDetailDTO 映射运行到冻结 run-detail DTO。artifacts 填 Story 3.4 的产物 slot

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/pipeline"
@@ -58,6 +59,19 @@ var (
 	// ErrServiceNotFound 表示 service_id 指向的归属服务不存在。同样不建外键,
 	// 悬挂引用会让项目页的服务筛选多出一个查无此人的档位,写入前必须自己挡。
 	ErrServiceNotFound = errors.New("project: service not found")
+	// ErrTooManyTags 表示标签数量超过 MaxTags。标签是给人看的筛选维度,不设上限的话
+	// 下拉会变成一堵墙,卡片也铺不下。
+	ErrTooManyTags = errors.New("project: too many tags")
+	// ErrTagTooLong 表示单个标签超过 MaxTagLen 个字符(按 rune 计,中文标签也算得对)。
+	ErrTagTooLong = errors.New("project: tag too long")
+)
+
+// 标签上限。前后端共用同一口径(前端 lib/tagFilter.ts 里有同名常量)。
+const (
+	// MaxTags 是单个项目允许的标签数量上限。
+	MaxTags = 20
+	// MaxTagLen 是单个标签的长度上限(按 rune 计)。
+	MaxTagLen = 24
 )
 
 // 分页上限常量:防全量返回拖垮内存/响应。
@@ -90,6 +104,9 @@ type Project struct {
 	ServiceID string
 	// ServiceName 是冗余只读展示名(join services),便于列表与卡片直接渲染;非持久列。
 	ServiceName string
+	// Tags 是项目标签(0..N),纯展示 / 筛选属性:不参与权限,也不参与流水线。
+	// 存为 projects.tags_json;读取顺序即添加顺序,去重按不区分大小写。
+	Tags []string
 	// LastRunStatus 是该项目最近一条 pipeline_runs 的状态(queued/running/waiting_approval/
 	// success/failed/partial_failed/rolled_back);'' = 尚无运行。非持久列,由列表与单条查询
 	// join 同一条运行取回 —— 卡片过去恒定显示「尚无运行」,因为这个字段从来没被填过。
@@ -119,6 +136,8 @@ type CreateInput struct {
 	GroupID string
 	// ServiceID 可空('' = 未归属);非空时必须是真实存在的服务。
 	ServiceID string
+	// Tags 可空;落库前按 normalizeTags 收口(去空白、去重、限量)。
+	Tags []string
 }
 
 // UpdateInput 是更新项目的入参;指针字段为 nil 表示不修改。
@@ -138,6 +157,8 @@ type UpdateInput struct {
 	GroupID *string
 	// ServiceID 改归属服务;nil = 不动,指向 '' = 取消归属。
 	ServiceID *string
+	// Tags 整体替换标签;nil = 不动,指向空数组 = 清空。
+	Tags *[]string
 }
 
 // TestCloneResult 是测试连接的结果(成功时携探测到的默认分支与远端引用列表)。
@@ -186,6 +207,9 @@ type Service interface {
 	ListPaged(ctx context.Context, page, pageSize int, visible access.ListFilter) (*ListResult, error)
 	// Get 返回单个项目(无明文)。
 	Get(ctx context.Context, id string) (*Project, error)
+	// PipelineServerIDs 返回库内流水线里部署节点勾选的主机 id(去重、按声明顺序)。
+	// 手动触发的「主机」候选取自这里;配置缺失/非法 spec → 空,nil error。
+	PipelineServerIDs(ctx context.Context, id string) ([]string, error)
 	// Update 改名/改默认分支/改绑凭据;改绑凭据时重做 ls-remote 校验。
 	Update(ctx context.Context, id string, in UpdateInput) (*Project, error)
 	// Delete 删除项目及其引用关系。
@@ -343,6 +367,10 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 			return nil, ErrServiceNotFound
 		}
 	}
+	tags, err := normalizeTags(in.Tags)
+	if err != nil {
+		return nil, err
+	}
 	// 无仓库项目(纯发布)不探测:既没有地址可连,也就不该因为网络失败而建不出来。
 	var branch string
 	if in.RepoURL != "" {
@@ -361,10 +389,10 @@ func (s *service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, group_id, service_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Name, in.RepoURL, defaultBranch, credArg(in.CredentialID), groupID, serviceID, nowStr, nowStr,
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, group_id, service_id, tags_json, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Name, in.RepoURL, defaultBranch, credArg(in.CredentialID), groupID, serviceID, tagsJSON(tags), nowStr, nowStr,
 	)
 	if err != nil {
 		// 外键失败(凭据在校验后被删等竞态)归为凭据不存在;其余为内部错误。
@@ -485,17 +513,18 @@ func (s *service) Get(ctx context.Context, id string) (*Project, error) {
 
 func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Project, error) {
 	// 先取当前行(需 repo_url + credential_id 以便在改绑凭据时重做校验)。
-	var name, repoURL, defaultBranch, credentialID, groupID, serviceID string
+	var name, repoURL, defaultBranch, credentialID, groupID, serviceID, tagsRaw string
 	var pacInt, prStatusInt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, repo_url, default_branch, COALESCE(credential_id, ''), pac_enabled, pr_status_enabled, group_id, service_id FROM projects WHERE id = ?`, id,
-	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt, &groupID, &serviceID)
+		`SELECT name, repo_url, default_branch, COALESCE(credential_id, ''), pac_enabled, pr_status_enabled, group_id, service_id, tags_json FROM projects WHERE id = ?`, id,
+	).Scan(&name, &repoURL, &defaultBranch, &credentialID, &pacInt, &prStatusInt, &groupID, &serviceID, &tagsRaw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("project: load: %w", err)
 	}
+	tags := parseTags(tagsRaw)
 	pacEnabled := pacInt != 0
 	prStatusEnabled := prStatusInt != 0
 
@@ -586,6 +615,13 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 			}
 		}
 	}
+	if in.Tags != nil {
+		normalized, err := normalizeTags(*in.Tags)
+		if err != nil {
+			return nil, err
+		}
+		tags = normalized
+	}
 
 	pacInt = 0
 	if pacEnabled {
@@ -597,8 +633,8 @@ func (s *service) Update(ctx context.Context, id string, in UpdateInput) (*Proje
 	}
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE projects SET name = ?, repo_url = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, service_id = ?, updated_at = ? WHERE id = ?`,
-		name, repoURL, defaultBranch, credArg(credentialID), pacInt, prStatusInt, groupID, serviceID, nowStr, id,
+		`UPDATE projects SET name = ?, repo_url = ?, default_branch = ?, credential_id = ?, pac_enabled = ?, pr_status_enabled = ?, group_id = ?, service_id = ?, tags_json = ?, updated_at = ? WHERE id = ?`,
+		name, repoURL, defaultBranch, credArg(credentialID), pacInt, prStatusInt, groupID, serviceID, tagsJSON(tags), nowStr, id,
 	)
 	if err != nil {
 		if isForeignKeyErr(err) {
@@ -656,6 +692,57 @@ func credArg(credentialID string) any {
 	return credentialID
 }
 
+// normalizeTags 收口标签:去首尾空白、丢弃空串、按不区分大小写去重(保留先出现的写法)、
+// 保序限量。返回的切片永远非 nil,方便直接序列化成 "[]"。
+func normalizeTags(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, tag := range raw {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if utf8.RuneCountInString(tag) > MaxTagLen {
+			return nil, ErrTagTooLong
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+		if len(out) > MaxTags {
+			return nil, ErrTooManyTags
+		}
+	}
+	return out, nil
+}
+
+// tagsJSON 把标签数组写成库里那一列;normalizeTags 已保证非 nil,空集落 '[]'。
+func tagsJSON(tags []string) string {
+	if tags == nil {
+		tags = []string{}
+	}
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// parseTags 读 tags_json;空串 / 非法 JSON / null 一律当无标签看待,
+// 存量脏数据不该让项目页 500。返回的切片永远非 nil。
+func parseTags(raw string) []string {
+	out := []string{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || out == nil {
+		return []string{}
+	}
+	return out
+}
+
 // scanner 抽象 *sql.Row 与 *sql.Rows 的 Scan。
 type scanner interface {
 	Scan(dest ...any) error
@@ -668,10 +755,18 @@ type scanner interface {
 // 无运行的项目 join 出 NULL,扫成空串/nil = 卡片显示「尚无运行」。
 const projectSelectCols = `p.id, p.name, p.repo_url, p.default_branch, COALESCE(p.credential_id, ''),
 	        COALESCE(c.name, ''), p.pac_enabled, p.pr_status_enabled, p.group_id, p.service_id,
-	        COALESCE(s.name, ''), p.created_at, p.updated_at, lr.status, lr.created_at, lr.id`
+	        COALESCE(s.name, ''), p.tags_json, p.created_at, p.updated_at, lr.status, lr.created_at, lr.id`
 
 // projectFromJoin 取出「最近一条运行」整行:先按排序锁定 id 再 join,状态与时间必是同一条。
 const projectFromJoin = `LEFT JOIN pipeline_runs lr ON lr.id = (SELECT r.id FROM pipeline_runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1)`
+
+func (s *service) PipelineServerIDs(ctx context.Context, id string) ([]string, error) {
+	byProject, err := s.targetServerIDsByProject(ctx, []string{id})
+	if err != nil {
+		return nil, err
+	}
+	return byProject[id], nil
+}
 
 // targetServerIDsByProject 批量读这几个项目的流水线配置,解析出部署节点勾选的主机 id。
 //
@@ -724,16 +819,17 @@ func (s *service) targetServerIDsByProject(ctx context.Context, ids []string) (m
 
 func scanProject(sc scanner) (*Project, error) {
 	var p Project
-	var createdStr, updatedStr string
+	var createdStr, updatedStr, tagsRaw string
 	var pacInt, prStatusInt int
 	var lastRun, lastRunAt, lastRunID sql.NullString
 	if err := sc.Scan(
 		&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.CredentialID,
 		&p.CredentialName, &pacInt, &prStatusInt, &p.GroupID, &p.ServiceID,
-		&p.ServiceName, &createdStr, &updatedStr, &lastRun, &lastRunAt, &lastRunID,
+		&p.ServiceName, &tagsRaw, &createdStr, &updatedStr, &lastRun, &lastRunAt, &lastRunID,
 	); err != nil {
 		return nil, err
 	}
+	p.Tags = parseTags(tagsRaw)
 	p.LastRunID = lastRunID.String
 	p.PacEnabled = pacInt != 0
 	p.PRStatusEnabled = prStatusInt != 0

@@ -18,9 +18,18 @@ import { listGroups, type Group } from '../api/groups'
 import { listServices, createService, updateService, deleteService, type Service } from '../api/services'
 import CredentialSelect from '../components/projects/CredentialSelect.vue'
 import ProjectCard from '../components/projects/ProjectCard.vue'
+import { getProjectViewPrefs, putProjectViewPrefs } from '../api/account'
+import {
+  EMPTY_PROJECT_PREFS,
+  moveProjectId,
+  rankProjects,
+  type DropEdge,
+  type ProjectPrefs,
+} from '../lib/projectViewOrder'
 import CopyProjectsModal from '../components/projects/CopyProjectsModal.vue'
 import RefPicker from '../components/projects/RefPicker.vue'
 import ServiceBatchRun from '../components/projects/ServiceBatchRun.vue'
+import TagFilterSelect from '../components/projects/TagFilterSelect.vue'
 import TriggerRunModal from '../components/projects/TriggerRunModal.vue'
 import { HttpError } from '../api/http'
 import { useSessionStore } from '../stores/session'
@@ -31,6 +40,13 @@ import { runStatusLabel } from '../lib/runStatus'
 // lib 的 groupOptions(筛选下拉候选)与本页那个同名局部量(归组弹窗的可管组候选)不是一回事,别名隔开
 import { GROUP_ALL, GROUP_NONE, groupLabel, groupOptions as buildGroupOptions } from '../lib/groupFilter'
 import { SERVICE_ALL, matchesService, serviceOptions as buildServiceOptions } from '../lib/serviceFilter'
+import {
+  MAX_TAGS,
+  MAX_TAG_LEN,
+  allTags,
+  matchesTagFilter,
+  mergeTags,
+} from '../lib/tagFilter'
 import { groupProjects, type ProjectGroupSection } from '../lib/projectGroups'
 
 // ─── i18n ─────────────────────────────────────────────────────────────────────
@@ -69,6 +85,14 @@ const loadState = ref<LoadState>('idle')
 const loadError = ref('')
 const projects = ref<Project[]>([])
 
+// ─── 我的顺序(拖动排序)─────────────────────────────────────────────────────
+// 每人一份,存在 /api/account/project-view:先后是看的人的习惯,不是项目的属性。
+// 取不到就当没设置过 —— 排序偏好坏了不能连累项目列表本身。
+const projectPrefs = ref<ProjectPrefs>(EMPTY_PROJECT_PREFS)
+
+/** 后端默认顺序叠上我的顺序;卡片视图与分组视图都读这一份。 */
+const orderedProjects = computed(() => rankProjects(projects.value, projectPrefs.value))
+
 // ─── search + filter ─────────────────────────────────────────────────────────
 
 const searchQuery = ref('')
@@ -80,6 +104,11 @@ const groupFilter = ref<string>(GROUP_ALL)
 
 // 归属服务筛选:纯展示维度,和服务端无关(项目列表本来全量取回,这里本地筛)。
 const serviceFilter = ref<string>(SERVICE_ALL)
+
+// 标签筛选:候选是全部项目上用过的标签,同样本地筛;没有任何标签时工具栏不显示这一项。
+// 多选命中任一;空数组即「全部标签」。
+const tagFilter = ref<string[]>([])
+const TAG_OPTIONS = computed(() => allTags(orderedProjects.value))
 
 // 状态档位用规范词(后端给什么就筛什么);早前列的是中文标签,
 // 和 lastRunStatus 的 snake_case 永远对不上,选任何一档都是空列表。
@@ -99,7 +128,7 @@ const STATUS_OPTIONS = computed<Array<{ value: RunStatus | 'all'; label: string 
 ])
 
 const filteredProjects = computed(() => {
-  let list = projects.value
+  let list = orderedProjects.value
   const q = searchQuery.value.trim().toLowerCase()
   if (q) {
     list = list.filter(
@@ -118,6 +147,9 @@ const filteredProjects = computed(() => {
   }
   if (serviceFilter.value !== SERVICE_ALL) {
     list = list.filter((p) => matchesService(p.serviceId, serviceFilter.value))
+  }
+  if (tagFilter.value.length) {
+    list = list.filter((p) => matchesTagFilter(p.tags, tagFilter.value))
   }
   return list
 })
@@ -195,6 +227,54 @@ async function loadServices(): Promise<void> {
     // 服务读不到不影响项目列表:卡片退化成「未归属」,筛选只剩全部 / 未归属。
     services.value = []
   }
+}
+
+// ─── 我的顺序:读取与保存 ─────────────────────────────────────────────────────
+const ORDER_SAVE_DEBOUNCE_MS = 350
+let orderTimer: ReturnType<typeof setTimeout> | null = null
+
+async function loadProjectPrefs(): Promise<void> {
+  try {
+    projectPrefs.value = await getProjectViewPrefs()
+  } catch {
+    // 安静回落默认顺序:排序偏好没读到不该在项目页弹错。
+  }
+}
+
+/** 保存 = 整份覆盖(PUT),合并着写:连拖几张不该发一串请求。 */
+async function flushOrderPrefs(): Promise<void> {
+  orderTimer = null
+  try {
+    await putProjectViewPrefs({ order: [...projectPrefs.value.order] })
+  } catch (err) {
+    toast.error(t('projects.orderSaveFailed'), { detail: err instanceof Error ? err.message : String(err) })
+  }
+}
+
+function persistOrderPrefs(): void {
+  if (orderTimer) clearTimeout(orderTimer)
+  orderTimer = setTimeout(() => void flushOrderPrefs(), ORDER_SAVE_DEBOUNCE_MS)
+}
+
+/**
+ * 落点写的是整份项目名单的顺序(不是屏上那几张卡):搜索/分组正收窄时拖动,
+ * 底下的全集也跟着排好,筛子一撤顺序还在。
+ */
+function reorderProject(movingId: string, targetId: string, edge: DropEdge): void {
+  const all = orderedProjects.value.map((p) => p.id)
+  const next = moveProjectId(all, movingId, targetId, edge)
+  if (next.join('\u0000') === all.join('\u0000')) return
+  projectPrefs.value = { order: next }
+  persistOrderPrefs()
+}
+
+/** 键盘排序:跟屏上那一张换位置(用户看的是这一屏,「上移一格」就得按这一屏算)。 */
+function nudgeProject(projectId: string, delta: number): void {
+  const shown = filteredProjects.value.map((p) => p.id)
+  const at = shown.indexOf(projectId)
+  const swapWith = shown[at + delta]
+  if (at < 0 || swapWith === undefined) return
+  reorderProject(projectId, swapWith, delta < 0 ? 'before' : 'after')
 }
 
 // ─── 视图切换:卡片 / 分组 ─────────────────────────────────────────────────────
@@ -333,7 +413,7 @@ async function loadProjects(): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProjects(), loadCredentials(), loadGroups(), loadServices()])
+  await Promise.all([loadProjects(), loadCredentials(), loadGroups(), loadServices(), loadProjectPrefs()])
 })
 
 // ─── new project modal ────────────────────────────────────────────────────────
@@ -891,6 +971,121 @@ async function handleServiceSubmit(): Promise<void> {
   }
 }
 
+// ─── 项目标签 modal ───────────────────────────────────────────────────────────
+//
+// 标签是项目自己的属性(不属于某个分组 / 服务),所以编辑入口放在每张卡的标签行,
+// 整份名单一次 PATCH 整体替换。筛选完全在本地做,见 filteredProjects。
+
+const tagsModalOpen = ref(false)
+const taggingProject = ref<Project | null>(null)
+const tagDraft = ref<string[]>([])
+const tagInput = ref('')
+const tagBanner = ref('')
+const tagSubmitting = ref(false)
+
+/** 已有标签的候选:去掉当前草稿里已有的,给还没加上的标签一个快捷入口。 */
+const TAG_SUGGESTIONS = computed(() => {
+  const own = new Set(tagDraft.value.map((tag) => tag.toLowerCase()))
+  return allTags(projects.value).filter((tag) => !own.has(tag.toLowerCase()))
+})
+
+function openTagsModal(p: Project): void {
+  taggingProject.value = p
+  tagDraft.value = [...(p.tags ?? [])]
+  tagInput.value = ''
+  tagBanner.value = ''
+  tagSubmitting.value = false
+  tagsModalOpen.value = true
+}
+
+function closeTagsModal(): void {
+  if (tagSubmitting.value) return
+  tagsModalOpen.value = false
+  taggingProject.value = null
+}
+
+/** 加一枚标签,顺手校验数量 / 长度;重复的静默忽略(不当作错误)。 */
+function appendTag(tag: string): void {
+  tag = tag.trim()
+  if (!tag) return
+  if ([...tag].length > MAX_TAG_LEN) {
+    tagBanner.value = t('projects.tagsTooLong', { n: MAX_TAG_LEN })
+    return
+  }
+  if (tagDraft.value.length >= MAX_TAGS) {
+    tagBanner.value = t('projects.tagsTooMany', { n: MAX_TAGS })
+    return
+  }
+  const next = mergeTags(tagDraft.value, tag)
+  if (next.length !== tagDraft.value.length) {
+    tagDraft.value = next
+    tagBanner.value = ''
+  }
+}
+
+/** 输入框里可能一次粘进「a,b, c」:逐个加;有任何一个卡上限就停下并提示。 */
+function commitTagInput(): void {
+  const raw = tagInput.value
+  if (!raw.trim()) return
+  for (const piece of raw.split(/[,，\r\n]+/)) {
+    appendTag(piece)
+    if (tagBanner.value) return
+  }
+  tagInput.value = ''
+}
+
+function onTagInputKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
+    e.preventDefault()
+    commitTagInput()
+  } else if (e.key === 'Backspace' && !tagInput.value && tagDraft.value.length) {
+    tagDraft.value = tagDraft.value.slice(0, -1)
+  }
+}
+
+function removeTag(tag: string): void {
+  tagDraft.value = tagDraft.value.filter((t) => t !== tag)
+}
+
+async function handleTagsSubmit(): Promise<void> {
+  const target = taggingProject.value
+  if (!target) return
+  // 输入框里还没回车的标签也算数:直接点保存不该丢字。
+  commitTagInput()
+  if (tagInput.value.trim()) return
+  const before = target.tags ?? []
+  if (before.length === tagDraft.value.length && before.every((tag, i) => tag === tagDraft.value[i])) {
+    closeTagsModal()
+    return
+  }
+  tagSubmitting.value = true
+  tagBanner.value = ''
+  try {
+    const updated = await updateProject(target.id, { tags: tagDraft.value })
+    projects.value = projects.value.map((p) => (p.id === updated.id ? updated : p))
+    // 选中的标签已经被从最后一个项目上摘掉时把它移出筛选,别留一个筛不出东西的档位。
+    const stillUsed = new Set(allTags(projects.value).map((tag) => tag.toLowerCase()))
+    const pruned = tagFilter.value.filter((tag) => stillUsed.has(tag.toLowerCase()))
+    if (pruned.length !== tagFilter.value.length) tagFilter.value = pruned
+    tagsModalOpen.value = false
+    taggingProject.value = null
+  } catch (err) {
+    if (err instanceof HttpError) {
+      if (err.status === 0) {
+        tagBanner.value = t('projects.tagsErrNetwork')
+      } else if (err.status === 403) {
+        tagBanner.value = err.apiError?.message ?? t('projects.tagsErrForbidden')
+      } else {
+        tagBanner.value = err.apiError?.message ?? t('projects.tagsErrStatus', { status: err.status })
+      }
+    } else {
+      tagBanner.value = t('projects.tagsErrRetry')
+    }
+  } finally {
+    tagSubmitting.value = false
+  }
+}
+
 // ─── 归属服务管理 modal(管理员)─────────────────────────────────────────────
 //
 // 改名会改所有人看到的标签,建 / 删是全局变更,所以入口只对管理员开放(与后端一致)。
@@ -1230,7 +1425,14 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
         </svg>
       </div>
 
-      <!-- Status filter -->
+      <!-- 标签筛选:可搜索多选;一个标签都没用过时不占位置 -->
+      <TagFilterSelect
+        v-if="TAG_OPTIONS.length"
+        v-model="tagFilter"
+        :options="TAG_OPTIONS"
+        :all-label="t('projects.tagFilterAll')"
+        :ariaLabel="t('projects.tagFilterAria')"
+      />
       <div class="filter-tabs" role="group" :aria-label="t('projects.statusFilterAria')">
         <button
           v-for="opt in STATUS_OPTIONS"
@@ -1323,7 +1525,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
         <p class="empty-hint">{{ t('projects.noMatchHint') }}</p>
         <button
           class="btn-secondary"
-          @click="searchQuery = ''; statusFilter = 'all'; groupFilter = GROUP_ALL; serviceFilter = SERVICE_ALL"
+          @click="searchQuery = ''; statusFilter = 'all'; groupFilter = GROUP_ALL; serviceFilter = SERVICE_ALL; tagFilter = []"
         >{{ t('projects.clearFilter') }}</button>
       </div>
     </template>
@@ -1332,7 +1534,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
     <template v-else-if="loadState === 'idle'">
       <p class="result-count" aria-live="polite">
         {{ t('projects.resultCount', { n: filteredProjects.length }) }}
-        <template v-if="searchQuery || statusFilter !== 'all' || groupFilter !== GROUP_ALL || serviceFilter !== SERVICE_ALL">
+        <template v-if="searchQuery || statusFilter !== 'all' || groupFilter !== GROUP_ALL || serviceFilter !== SERVICE_ALL || tagFilter.length">
           {{ t('projects.resultCountTotal', { total: projects.length }) }}
         </template>
       </p>
@@ -1357,6 +1559,9 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
           @remove="openDeleteModal"
           @assign="openGroupModal"
           @assign-service="openServiceModal"
+          @tags="openTagsModal"
+          @reorder-project="(movingId, edge) => reorderProject(movingId, project.id, edge)"
+          @nudge-project="(delta) => nudgeProject(project.id, delta)"
         />
       </ul>
 
@@ -1437,6 +1642,9 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
                 @remove="openDeleteModal"
                 @assign="openGroupModal"
                 @assign-service="openServiceModal"
+                @tags="openTagsModal"
+                @reorder-project="(movingId, edge) => reorderProject(movingId, project.id, edge)"
+                @nudge-project="(delta) => nudgeProject(project.id, delta)"
               />
             </ul>
             <p v-else class="group-empty">{{ t('projects.groupEmpty') }}</p>
@@ -2230,6 +2438,110 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
             >
               <span v-if="serviceSubmitting" class="spinner" aria-hidden="true" />
               {{ serviceSubmitting ? t('projects.saving') : t('projects.save') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 项目标签弹窗:增删标签,整份名单一次 PATCH;筛选在项目页本地做 -->
+  <Teleport to="body">
+    <div
+      v-if="tagsModalOpen && taggingProject"
+      class="modal-scrim"
+      role="dialog"
+      :aria-label="t('projects.tagsEditTitle')"
+      aria-modal="true"
+      @keydown.esc="closeTagsModal"
+      @click.self="closeTagsModal"
+    >
+      <div class="modal modal--sm">
+        <div class="modal-head">
+          <div class="modal-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/>
+              <circle cx="7.5" cy="7.5" r="1.5"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="modal-title">{{ t('projects.tagsEditTitle') }}</h3>
+            <p class="modal-sub">{{ t('projects.tagsEditSub', { name: taggingProject.name }) }}</p>
+          </div>
+          <button
+            class="modal-close"
+            :aria-label="t('projects.closeDialog')"
+            :disabled="tagSubmitting"
+            @click="closeTagsModal"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div v-if="tagBanner" class="banner banner--error modal-banner" role="alert">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {{ tagBanner }}
+        </div>
+
+        <form class="modal-form" novalidate @submit.prevent="handleTagsSubmit">
+          <div class="field">
+            <label class="field-label" for="tag-editor-input">{{ t('projects.tagsLabel') }}</label>
+            <div class="tag-editor" :class="{ 'tag-editor--disabled': tagSubmitting }">
+              <span v-for="tag in tagDraft" :key="tag" class="tag-editor__chip">
+                {{ tag }}
+                <button
+                  type="button"
+                  class="tag-editor__remove"
+                  :aria-label="t('projects.tagsRemoveAria', { tag })"
+                  :disabled="tagSubmitting"
+                  @click="removeTag(tag)"
+                >×</button>
+              </span>
+              <input
+                id="tag-editor-input"
+                v-model="tagInput"
+                class="tag-editor__input"
+                :placeholder="t('projects.tagsInputPlaceholder')"
+                :maxlength="MAX_TAG_LEN"
+                :disabled="tagSubmitting"
+                autocomplete="off"
+                @keydown="onTagInputKeydown"
+              />
+            </div>
+            <span class="field-hint">{{ t('projects.tagsHint', { n: MAX_TAGS, m: MAX_TAG_LEN }) }}</span>
+          </div>
+
+          <div v-if="TAG_SUGGESTIONS.length" class="tag-suggest">
+            <span class="tag-suggest__label">{{ t('projects.tagsSuggestions') }}</span>
+            <button
+              v-for="tag in TAG_SUGGESTIONS.slice(0, 12)"
+              :key="tag"
+              type="button"
+              class="tag-suggest__chip"
+              :disabled="tagSubmitting"
+              @click="appendTag(tag)"
+            >{{ tag }}</button>
+          </div>
+
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="tagSubmitting"
+              @click="closeTagsModal"
+            >{{ t('projects.cancel') }}</button>
+            <button
+              type="submit"
+              class="btn-primary"
+              :disabled="tagSubmitting"
+              :aria-busy="tagSubmitting"
+            >
+              <span v-if="tagSubmitting" class="spinner" aria-hidden="true" />
+              {{ tagSubmitting ? t('projects.saving') : t('projects.save') }}
             </button>
           </div>
         </form>
@@ -3317,6 +3629,114 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
   font-size: 0.74rem;
   color: var(--color-faint);
   line-height: 1.4;
+}
+
+/* ─── 项目标签编辑 ─────────────────────────────────────────────────────────── */
+.tag-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
+  background: var(--color-input, var(--color-card-2));
+  transition: border-color var(--duration-fast);
+}
+
+.tag-editor:focus-within {
+  border-color: var(--color-primary);
+}
+
+.tag-editor--disabled {
+  opacity: 0.6;
+}
+
+.tag-editor__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 9px;
+  border-radius: var(--rounded-full);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-inset);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.tag-editor__remove {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0 3px;
+  color: var(--color-faint);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--rounded-full);
+}
+
+.tag-editor__remove:hover {
+  color: var(--color-red);
+}
+
+.tag-editor__remove:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.tag-editor__input {
+  flex: 1;
+  min-width: 120px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 3px 2px;
+  outline: none;
+}
+
+.tag-editor__input::placeholder {
+  color: var(--color-faint);
+}
+
+/* 已有标签的快捷入口:点一下就加进草稿,少打一遍字。 */
+.tag-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-suggest__label {
+  font-size: 0.74rem;
+  color: var(--color-faint);
+}
+
+.tag-suggest__chip {
+  appearance: none;
+  padding: 1px 8px;
+  border-radius: var(--rounded-full);
+  border: 1px dashed var(--color-border-strong);
+  background: transparent;
+  color: var(--color-dim);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.tag-suggest__chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-faint);
+}
+
+.tag-suggest__chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 .field-check {

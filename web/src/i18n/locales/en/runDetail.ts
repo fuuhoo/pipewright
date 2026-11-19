@@ -31,6 +31,7 @@ export default {
   metaBranch: 'Branch',
   metaCommit: 'Commit',
   metaTrigger: 'Trigger',
+  metaServer: 'Trigger host',
   metaStarted: 'Started',
   metaDuration: 'Duration',
   triggerManual: 'Manual',

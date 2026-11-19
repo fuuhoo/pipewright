@@ -31,6 +31,7 @@ export default {
   metaBranch: 'Rama',
   metaCommit: 'Commit',
   metaTrigger: 'Disparador',
+  metaServer: 'Host del disparador',
   metaStarted: 'Inicio',
   metaDuration: 'Duración',
   triggerManual: 'Manual',

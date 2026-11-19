@@ -111,6 +111,13 @@ type Trigger struct {
 	// ResolvedTargetServerIDs 是解析出的目标服务器引用 id 列表(手动触发为空)。
 	ResolvedTargetServerIDs []string
 
+	// ServerID / ServerName 是手动触发时用户从「流水线部署节点配置过的主机」里选定的那台
+	// (可选;留空 = 不指定)。它只作本次运行的人工标注/上下文记录,**不改变部署落点** ——
+	// 落点仍由各部署节点的 config.serverIds 决定,故与上面的 ResolvedTargetServerIDs 分列。
+	// ServerName 是触发时刻的机器名快照(机器改名/删除后历史记录仍可读)。
+	ServerID   string
+	ServerName string
+
 	// Params 是参数化手动运行的 key=value 参数(Story 8-11);执行时注入 script 步骤容器作环境变量。
 	// 非敏感明文(含密钥应走保险库引用);为空表示无参数。
 	Params map[string]string

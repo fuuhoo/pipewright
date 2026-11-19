@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { listRuns, triggerManual, type RunListItem, type RunStatus, type RunDetail, type ListRunsParams, type TriggerManualInput } from '../api/runs'
+import { listRuns, triggerManual, listRunHosts, type RunListItem, type RunStatus, type RunDetail, type RunHost, type ListRunsParams, type TriggerManualInput } from '../api/runs'
 import RunParamsEditor from '../components/RunParamsEditor.vue'
 import TypedRunParams from '../components/TypedRunParams.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
@@ -11,6 +11,7 @@ import { listGroups, type Group } from '../api/groups'
 import { listServices, type Service } from '../api/services'
 import { HttpError } from '../api/http'
 import ProjectPicker from '../components/projects/ProjectPicker.vue'
+import AppSelect from '../components/ui/AppSelect.vue'
 import { GROUP_ALL, groupOptions } from '../lib/groupFilter'
 import { SERVICE_ALL, SERVICE_NONE, serviceOptions } from '../lib/serviceFilter'
 import { resolveProjectFilter, withProjectFilter } from '../lib/runProjectFilter'
@@ -160,13 +161,20 @@ function clearFilters(): void {
 // ─── manual trigger modal ─────────────────────────────────────────────────────
 
 const triggerModalOpen    = ref(false)
-const triggerForm         = ref({ projectId: '', branch: '', commit: '' })
+const triggerForm         = ref({ projectId: '', branch: '', commit: '', serverId: '' })
 const triggerParams       = ref<Record<string, string>>({})
 const triggerDefs         = ref<ParamDef[]>([])
+// 手动触发可选主机:该项目流水线部署节点配置过且可见的机器(空 → 不渲染该项)。
+const triggerHosts        = ref<RunHost[]>([])
 const triggerBranchError  = ref('')
 const triggerProjectError = ref('')
 const triggerBanner       = ref('')
 const triggerSubmitting   = ref(false)
+
+const triggerHostOptions = computed(() => [
+  { value: '', label: t('runs.fieldHostNone') },
+  ...triggerHosts.value.map((h) => ({ value: h.id, label: h.name })),
+])
 
 const selectedProject = computed<Project | undefined>(() =>
   projects.value.find((p) => p.id === triggerForm.value.projectId),
@@ -204,9 +212,10 @@ async function loadServices(): Promise<void> {
 }
 
 function openTriggerModal(): void {
-  triggerForm.value        = { projectId: '', branch: '', commit: '' }
+  triggerForm.value        = { projectId: '', branch: '', commit: '', serverId: '' }
   triggerParams.value       = {}
   triggerDefs.value         = []
+  triggerHosts.value        = []
   triggerBranchError.value  = ''
   triggerProjectError.value = ''
   triggerBanner.value       = ''
@@ -222,6 +231,9 @@ function closeTriggerModal(): void {
 
 function onProjectSelect(): void {
   triggerProjectError.value = ''
+  // 切项目 → 主机候选重拉并清空已选(候选只属于当前项目)。
+  triggerForm.value.serverId = ''
+  triggerHosts.value = []
   // Auto-fill branch from project's defaultBranch when user picks a project
   const proj = selectedProject.value
   if (proj && !triggerForm.value.branch) {
@@ -235,6 +247,11 @@ function onProjectSelect(): void {
     void getParameters(pid)
       .then((defs) => {
         if (triggerForm.value.projectId === pid) triggerDefs.value = defs
+      })
+      .catch(() => {})
+    void listRunHosts(pid)
+      .then((res) => {
+        if (triggerForm.value.projectId === pid) triggerHosts.value = res.hosts
       })
       .catch(() => {})
   }
@@ -270,6 +287,7 @@ async function handleTriggerSubmit(): Promise<void> {
     const input: TriggerManualInput = { branch }
     const commit = triggerForm.value.commit.trim()
     if (commit) input.commit = commit
+    if (triggerForm.value.serverId) input.serverId = triggerForm.value.serverId
     if (Object.keys(triggerParams.value).length) input.params = triggerParams.value
 
     const run: RunDetail = await triggerManual(triggerForm.value.projectId, input)
@@ -621,10 +639,12 @@ function isFailedStatus(status: RunStatus): boolean {
               <span class="commit-hash mono">{{ shortCommit(run.trigger.commit) }}</span>
             </div>
 
-            <!-- Trigger type + actor -->
+            <!-- Trigger type + actor(+ 手动触发选定的主机) -->
             <div class="col-trigger">
               <span class="trigger-badge">{{ triggerTypeLabel(run.trigger.type) }}</span>
-              <span class="trigger-actor">{{ run.trigger.actor }}</span>
+              <span class="trigger-actor" :title="run.trigger.serverName || undefined">
+                {{ run.trigger.actor }}<template v-if="run.trigger.serverName"><span class="trigger-host mono"> · {{ run.trigger.serverName }}</span></template>
+              </span>
             </div>
 
             <!-- Duration -->
@@ -796,6 +816,22 @@ function isFailedStatus(status: RunStatus): boolean {
               :placeholder="t('runs.commitPlaceholder')"
               autocomplete="off"
               :disabled="triggerSubmitting"
+            />
+          </div>
+
+          <!-- 主机(可选;候选 = 流水线部署节点配置过的机器,无可选时不显示) -->
+          <div v-if="triggerHosts.length" class="field">
+            <label class="field-label" for="trigger-host">
+              {{ t('runs.fieldHost') }}
+              <span class="field-hint-inline">{{ t('runs.fieldHostHint') }}</span>
+            </label>
+            <AppSelect
+              input-id="trigger-host"
+              :model-value="triggerForm.serverId"
+              :options="triggerHostOptions"
+              :disabled="triggerSubmitting"
+              :aria-label="t('runs.fieldHost')"
+              @update:model-value="triggerForm.serverId = $event"
             />
           </div>
 
@@ -1211,6 +1247,13 @@ function isFailedStatus(status: RunStatus): boolean {
 .trigger-actor {
   font-size: 0.72rem;
   color: var(--color-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trigger-host {
+  color: var(--color-dim);
 }
 
 .col-dur {

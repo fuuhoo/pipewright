@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuuhoo/pipewright/internal/access"
 	"github.com/fuuhoo/pipewright/internal/audit"
+	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/fuuhoo/pipewright/internal/run"
+	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/fuuhoo/pipewright/internal/trigger"
 	"github.com/go-chi/chi/v5"
 )
@@ -105,9 +108,14 @@ func makeWebhookHandler(rc *trigger.Receiver) http.HandlerFunc {
 }
 
 // makeManualRunHandler 返回 POST /api/projects/{id}/runs handler(认证 + CSRF;手动触发）。
-// body {branch, commit?};actor=admin;成功 → 201 冻结 run-detail DTO。
-// 成功后追加 run_trigger_manual 审计(detail 记分支/commit/运行 id)。
-func makeManualRunHandler(svc run.Service, params run.ParameterService, aud audit.Recorder) http.HandlerFunc {
+// body {branch, commit?, serverId?, params?};actor=admin;成功 → 201 冻结 run-detail DTO。
+// serverId 只在「该流水线部署节点配置过 + 本次请求可见」时接受,仅作运行记录标注,
+// 不改变部署落点;不合法 → 422 invalid_server,不创建运行。
+// 成功后追加 run_trigger_manual 审计(detail 记分支/commit/主机/运行 id)。
+func makeManualRunHandler(
+	svc run.Service, params run.ParameterService, aud audit.Recorder,
+	projects project.Service, servers target.Service, acc *access.Service,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			writeError(w, http.StatusServiceUnavailable, "internal", "运行服务未初始化")
@@ -116,9 +124,10 @@ func makeManualRunHandler(svc run.Service, params run.ParameterService, aud audi
 		id := chi.URLParam(r, "id")
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var req struct {
-			Branch string            `json:"branch"`
-			Commit string            `json:"commit"`
-			Params map[string]string `json:"params"`
+			Branch   string            `json:"branch"`
+			Commit   string            `json:"commit"`
+			ServerID string            `json:"serverId"`
+			Params   map[string]string `json:"params"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -127,6 +136,26 @@ func makeManualRunHandler(svc run.Service, params run.ParameterService, aud audi
 		// 分支可选:留空时由 run.Service.Create 取项目默认分支(项目已知默认分支,系统自动解析)。
 		branch := strings.TrimSpace(req.Branch)
 		commit := strings.TrimSpace(req.Commit)
+		// 主机可选:留空 = 不指定。指定时必须是流水线配置过的候选(且可见),否则 422。
+		serverID := strings.TrimSpace(req.ServerID)
+		serverName := ""
+		if serverID != "" {
+			if projects == nil || servers == nil {
+				writeError(w, http.StatusServiceUnavailable, "internal", "服务器内部错误")
+				return
+			}
+			// 项目不存在与「主机不在候选内」是两种错误;先拿项目把 404 说清楚。
+			if _, perr := projects.Get(r.Context(), id); perr != nil {
+				writeProjectError(w, perr)
+				return
+			}
+			name, ok := resolveManualRunHost(r, projects, servers, acc, id, serverID)
+			if !ok {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_server", "所选主机不在此流水线配置的候选主机内")
+				return
+			}
+			serverName = name
+		}
 		// 参数化运行(Story 8-11):trim key、剔空 key;明文构建参数(注入 script 步骤容器环境)。
 		runParams := normalizeRunParams(req.Params)
 		// 类型化参数(P0):有项目参数定义时校验 + 强转 + 填默认;无定义则透传(向后兼容)。
@@ -144,11 +173,13 @@ func makeManualRunHandler(svc run.Service, params run.ParameterService, aud audi
 			runParams = resolved
 		}
 		rn, err := svc.Create(r.Context(), id, run.Trigger{
-			Type:   run.TriggerManual,
-			Branch: branch,
-			Commit: commit,
-			Actor:  "admin",
-			Params: runParams,
+			Type:       run.TriggerManual,
+			Branch:     branch,
+			Commit:     commit,
+			Actor:      "admin",
+			ServerID:   serverID,
+			ServerName: serverName,
+			Params:     runParams,
 		})
 		if err != nil {
 			writeRunError(w, err)
@@ -159,7 +190,7 @@ func makeManualRunHandler(svc run.Service, params run.ParameterService, aud audi
 			Action:     audit.ActionRunTriggerManual,
 			TargetType: audit.TargetRun,
 			TargetID:   rn.ID,
-			Detail:     map[string]any{"projectId": id, "branch": branch, "commit": commit, "paramCount": len(runParams)},
+			Detail:     map[string]any{"projectId": id, "branch": branch, "commit": commit, "serverId": serverID, "serverName": serverName, "paramCount": len(runParams)},
 			IP:         clientIP(r),
 		})
 		// 刚创建(queued)的运行尚无产物/无部署;nil → []/null。产物在成功路径由 worker emit、部署经 deploy 端点。

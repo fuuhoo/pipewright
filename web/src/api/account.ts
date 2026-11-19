@@ -15,6 +15,8 @@
  *   两列都可省略,但至少给一个;后端回的是**归一化后**的值(空白折叠 + 按字符截断)。
  * GET    /api/account/server-view      → ServerViewPrefs        容器页主机卡片的个人偏好
  * PUT    /api/account/server-view      → ServerViewPrefs        整份覆盖(需 CSRF)
+ * GET    /api/account/project-view     → ProjectViewPrefs       项目页卡片的个人顺序
+ * PUT    /api/account/project-view     → ProjectViewPrefs       整份覆盖(需 CSRF)
  */
 
 import { http } from './http'
@@ -135,4 +137,20 @@ export async function getServerViewPrefs(): Promise<ServerViewPrefs> {
 
 export async function putServerViewPrefs(prefs: ServerViewPrefs): Promise<ServerViewPrefs> {
   return http.put<ServerViewPrefs>('/api/account/server-view', prefs)
+}
+
+/**
+ * 项目页卡片的个人顺序:拖出来的项目 ID 数组,顺序说话。
+ * 没设置过的人 GET 到空数组(不是 404),界面落在后端默认顺序上;PUT 整份覆盖。
+ */
+export interface ProjectViewPrefs {
+  order: string[]
+}
+
+export async function getProjectViewPrefs(): Promise<ProjectViewPrefs> {
+  return http.get<ProjectViewPrefs>('/api/account/project-view')
+}
+
+export async function putProjectViewPrefs(prefs: ProjectViewPrefs): Promise<ProjectViewPrefs> {
+  return http.put<ProjectViewPrefs>('/api/account/project-view', prefs)
 }

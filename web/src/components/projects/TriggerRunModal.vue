@@ -5,9 +5,9 @@
  * 就渲染类型化控件,没有则回退自由 KV。纯发布项目(repoUrl 为空)不显示分支两项,
  * 列分支的接口对它只会 400。
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { triggerManual, type RunDetail, type TriggerManualInput } from '../../api/runs'
+import { triggerManual, listRunHosts, type RunDetail, type RunHost, type TriggerManualInput } from '../../api/runs'
 import type { Project } from '../../api/projects'
 import { listRefs, listCommits, type GitCommit } from '../../api/refs'
 import { getParameters, validateParamValues, type ParamDef } from '../../api/parameters'
@@ -15,6 +15,7 @@ import { HttpError } from '../../api/http'
 import RunParamsEditor from '../RunParamsEditor.vue'
 import TypedRunParams from '../TypedRunParams.vue'
 import RefPicker from './RefPicker.vue'
+import AppSelect from '../ui/AppSelect.vue'
 
 const props = defineProps<{ open: boolean; project: Project | null }>()
 
@@ -25,7 +26,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const form        = ref({ branch: '', commit: '' })
+const form        = ref({ branch: '', commit: '', serverId: '' })
 const params      = ref<Record<string, string>>({})
 const defs        = ref<ParamDef[]>([])
 const branchError = ref('')
@@ -35,21 +36,30 @@ const submitting  = ref(false)
 const branches = ref<string[]>([])
 const tags     = ref<string[]>([])
 const commitOptions = ref<GitCommit[]>([])
+// 可选主机:仅该流水线部署节点配置过且可见的机器。空列表 → 不渲染这一项(可选项)。
+const hosts = ref<RunHost[]>([])
+
+const hostOptions = computed(() => [
+  { value: '', label: t('projects.runHostNone') },
+  ...hosts.value.map((h) => ({ value: h.id, label: h.name })),
+])
 
 // 每次打开都从干净状态开始:调用方只给 project + open,弹窗自己负责装载候选。
 watch(
   () => [props.open, props.project?.id] as const,
   ([open, projectId]) => {
     if (!open || !props.project) return
-    form.value        = { branch: props.project.defaultBranch || '', commit: '' }
+    form.value        = { branch: props.project.defaultBranch || '', commit: '', serverId: '' }
     params.value      = {}
     defs.value        = []
+    hosts.value       = []
     branchError.value = ''
     banner.value      = ''
     submitting.value  = false
     // 纯发布项目没有仓库,列分支只会 400;参数定义照拉(运行参数与仓库无关)。
     if (props.project.repoUrl) void loadRefOptions(projectId as string)
     void loadDefs(projectId as string)
+    void loadHosts(projectId as string)
   },
   { immediate: true },
 )
@@ -59,6 +69,16 @@ async function loadDefs(projectId: string): Promise<void> {
     defs.value = await getParameters(projectId)
   } catch {
     defs.value = []
+  }
+}
+
+// 主机候选来自流水线配置;接口失败静默(主机本就是可选项,不能因此挡触发)。
+async function loadHosts(projectId: string): Promise<void> {
+  try {
+    const res = await listRunHosts(projectId)
+    hosts.value = res.hosts
+  } catch {
+    hosts.value = []
   }
 }
 
@@ -125,6 +145,7 @@ async function handleSubmit(): Promise<void> {
     if (branch) input.branch = branch
     const commit = form.value.commit.trim()
     if (commit) input.commit = commit
+    if (form.value.serverId) input.serverId = form.value.serverId
     if (Object.keys(params.value).length) input.params = params.value
 
     const run: RunDetail = await triggerManual(project.id, input)
@@ -247,6 +268,22 @@ async function handleSubmit(): Promise<void> {
             <datalist id="trigger-commit-options">
               <option v-for="c in commitOptions" :key="c.sha" :value="c.short">{{ c.subject }}</option>
             </datalist>
+          </div>
+
+          <!-- 主机(可选;候选 = 流水线部署节点配置过的机器,无可选时不显示) -->
+          <div v-if="hosts.length" class="field">
+            <label class="field-label" for="trigger-host">
+              {{ t('projects.runHost') }}
+              <span class="field-hint-inline">{{ t('projects.runHostHint') }}</span>
+            </label>
+            <AppSelect
+              input-id="trigger-host"
+              :model-value="form.serverId"
+              :options="hostOptions"
+              :disabled="submitting"
+              :aria-label="t('projects.runHost')"
+              @update:model-value="form.serverId = $event"
+            />
           </div>
 
           <!-- Parameters · 有类型化定义 → 类型化控件;无 → 自由 KV -->

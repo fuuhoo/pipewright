@@ -31,6 +31,7 @@ export default {
   metaBranch: '브랜치',
   metaCommit: '커밋',
   metaTrigger: '트리거',
+  metaServer: '트리거 호스트',
   metaStarted: '시작',
   metaDuration: '소요 시간',
   triggerManual: '수동',

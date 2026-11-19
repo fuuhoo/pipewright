@@ -61,6 +61,10 @@ export interface RunTrigger {
   branch: string
   commit: string
   actor: string
+  /** 手动触发时选定的主机(可选;空 = 未指定)。仅记录,不改变部署落点。 */
+  serverId: string
+  /** 触发时刻的机器名快照(机器改名/删除后历史仍可读)。 */
+  serverName: string
 }
 
 // ─── targets: SSH deploy execution (Story 4-2 frozen contract — FR-10) ───────
@@ -313,15 +317,31 @@ export function submitDiagnosisFeedback(
 
 // ─── Manual trigger ───────────────────────────────────────────────────────────
 //
-// POST /api/projects/{id}/runs  body { branch, commit? }
+// POST /api/projects/{id}/runs  body { branch, commit?, serverId?, params? }
 // Returns the created RunDetail (3-1 frozen DTO shape).
 // Caller uses the returned run.id to navigate to /runs/:id.
+//
+// serverId 只接受该流水线部署节点配置过且本次可见的主机(否则 422 invalid_server);
+// 它只写进运行记录作标注,不改变部署落点。
 
 export interface TriggerManualInput {
   branch?: string
   commit?: string
+  /** 手动触发选定的主机(可选;候选见 listRunHosts)。 */
+  serverId?: string
   /** Parameterized run (Story 8-11): key=value injected as container env (PW_<KEY>). */
   params?: Record<string, string>
+}
+
+export interface RunHost {
+  id: string
+  name: string
+}
+
+// GET /api/projects/{id}/run-hosts → { hosts } —— 手动触发「主机」下拉的候选:
+// 该(库内)流水线部署节点勾选过的主机 ∩ 本次可见,按配置声明顺序。
+export function listRunHosts(projectId: string): Promise<{ hosts: RunHost[] }> {
+  return http.get<{ hosts: RunHost[] }>(`/api/projects/${projectId}/run-hosts`)
 }
 
 export function triggerManual(projectId: string, input: TriggerManualInput): Promise<RunDetail> {

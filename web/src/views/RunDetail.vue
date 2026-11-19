@@ -802,6 +802,10 @@ function nodeClass(status: StepStatus): string {
             <span class="meta-key">{{ t('runDetail.metaTrigger') }}</span>
             <span class="meta-val">{{ run.trigger.type === 'webhook' ? 'Webhook' : t('runDetail.triggerManual') }} · {{ run.trigger.actor }}</span>
           </div>
+          <div v-if="run.trigger.serverName" class="meta-item">
+            <span class="meta-key">{{ t('runDetail.metaServer') }}</span>
+            <span class="meta-val mono">{{ run.trigger.serverName }}</span>
+          </div>
           <div v-if="specSourceBadge" class="meta-item">
             <span class="meta-key">{{ t('runDetail.metaSpecSource') }}</span>
             <span

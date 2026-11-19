@@ -495,3 +495,57 @@ func TestSubscribeReceivesEvents(t *testing.T) {
 		}
 	}
 }
+
+// TestTriggerServerRoundTrip 验证手动触发标注的主机随运行落库,详情与列表都能读回。
+// 它只是记录:不改变部署落点,也不应影响运行本身。
+func TestTriggerServerRoundTrip(t *testing.T) {
+	db := testDB(t)
+	svc := New(db)
+	projID := seedProject(t, db)
+
+	r, err := svc.Create(context.Background(), projID, Trigger{
+		Type:       TriggerManual,
+		Branch:     "main",
+		Actor:      "admin",
+		ServerID:   "srv-web-1",
+		ServerName: "web-1",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if r.Trigger.ServerID != "srv-web-1" || r.Trigger.ServerName != "web-1" {
+		t.Fatalf("Create 回执丢了主机标注: %+v", r.Trigger)
+	}
+
+	got, err := svc.Get(context.Background(), r.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Trigger.ServerID != "srv-web-1" || got.Trigger.ServerName != "web-1" {
+		t.Fatalf("Get 未读回主机标注: %+v", got.Trigger)
+	}
+
+	list, err := svc.List(context.Background(), ListFilter{ProjectID: projID, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("List 条数 = %d, want 1", len(list.Items))
+	}
+	if list.Items[0].Trigger.ServerID != "srv-web-1" || list.Items[0].Trigger.ServerName != "web-1" {
+		t.Fatalf("List 未读回主机标注: %+v", list.Items[0].Trigger)
+	}
+
+	// 未选定主机的运行:两列都是空串(老运行同口径),不是 NULL 崩扫。
+	plain, err := svc.Create(context.Background(), projID, Trigger{Type: TriggerManual, Branch: "main"})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	plainGot, err := svc.Get(context.Background(), plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if plainGot.Trigger.ServerID != "" || plainGot.Trigger.ServerName != "" {
+		t.Fatalf("未选主机应为空, got %+v", plainGot.Trigger)
+	}
+}

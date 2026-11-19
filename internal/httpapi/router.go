@@ -41,6 +41,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/project"
 	"github.com/fuuhoo/pipewright/internal/projectcache"
 	"github.com/fuuhoo/pipewright/internal/projectcopy"
+	"github.com/fuuhoo/pipewright/internal/projectpref"
 	"github.com/fuuhoo/pipewright/internal/promotion"
 	"github.com/fuuhoo/pipewright/internal/proxy"
 	"github.com/fuuhoo/pipewright/internal/repocache"
@@ -137,6 +138,9 @@ type options struct {
 	// serverPrefs 是容器页主机卡片的每用户偏好(置顶 + 手动顺序,internal/serverpref)。
 	// nil → /api/account/server-view 返回 503;它只按会话 user_id 读写,不参与权限判定。
 	serverPrefs *serverpref.Service
+	// projectPrefs 是项目卡片的每用户手动顺序(internal/projectpref)。
+	// nil → /api/account/project-view 返回 503;同 serverPrefs,只按会话 user_id 读写。
+	projectPrefs *projectpref.Service
 	// snapshots 是工作区目录快照仓储(运行详情「构建目录」面板数据源);nil → 端点 503。
 	// 快照跟着运行记录一起保留,没有独立窗口,所以这里不需要 TTL。
 	snapshots    *buildsnap.Store
@@ -501,6 +505,12 @@ func WithRetention(s *retention.Service) Option {
 // 可看,也没有可越权的资产,因此不写审计(界面习惯不是资产变更)。不传则端点返回 503。
 func WithServerPrefs(s *serverpref.Service) Option {
 	return func(o *options) { o.serverPrefs = s }
+}
+
+// WithProjectPrefs 注入项目卡片的每用户手动顺序服务,挂载 /api/account/project-view
+// (GET auth;PUT auth + CSRF)。与 WithServerPrefs 同一口径:只作用于本人,不写审计。
+func WithProjectPrefs(s *projectpref.Service) Option {
+	return func(o *options) { o.projectPrefs = s }
 }
 
 // WithProxy 注入自动 HTTPS + 域名反向代理服务(R1),挂载 /api/proxy/routes* 路由
@@ -945,7 +955,10 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 
 		// 手动触发创建运行(Story 3.2):认证 + CSRF;actor=admin;返 201 run-detail DTO。
 		// o.parameters 非 nil 时,据项目参数定义校验 + 强转 + 填默认(typed params,P0);无定义则透传。
-		ar.Post("/projects/{id}/runs", makeManualRunHandler(rs, o.parameters, aud))
+		// 可选 serverId:只接受该项目流水线部署节点配置过且本次可见的主机(仅记录,不改落点)。
+		ar.Post("/projects/{id}/runs", makeManualRunHandler(rs, o.parameters, aud, p, o.servers, o.access))
+		// 手动触发弹窗的候选主机:该流水线部署节点配置过 ∩ 本次可见,按配置顺序。
+		ar.Get("/projects/{id}/run-hosts", makeRunHostsHandler(p, o.servers, o.access))
 
 		// 账户设置(Story 1.7):改口令 / 会话列表 / 撤销会话。ac 为 nil 时 handler 返回 503。
 		// 改口令、撤销会话为写方法,过 auth + CSRF;列表为 GET,过 auth。
@@ -964,6 +977,10 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 按会话 user_id 定位,天然只作用于本人;没设置过的人读到空偏好,不是 404。
 		ar.Get("/account/server-view", makeGetServerViewPrefsHandler(o.serverPrefs))
 		ar.Put("/account/server-view", makePutServerViewPrefsHandler(o.serverPrefs))
+
+		// 项目页卡片的每用户手动顺序。同样按会话 user_id 定位,没设置过的人读到空顺序。
+		ar.Get("/account/project-view", makeGetProjectViewPrefsHandler(o.projectPrefs))
+		ar.Put("/account/project-view", makePutProjectViewPrefsHandler(o.projectPrefs))
 
 		// 可配置 AI 提供商(Story 7.1)。aiSvc 为 nil 时 handler 返回 503。
 		// GET 过 auth;PUT/test 为写方法,过 auth + CSRF。apiKey 加密入库、响应仅掩码。

@@ -254,10 +254,12 @@ func (s *service) Create(ctx context.Context, projectID string, trigger Trigger)
 		`INSERT INTO pipeline_runs
 		   (id, project_id, status, trigger_type, trigger_branch, trigger_commit, trigger_actor,
 		    resolved_environment, resolved_target_server_ids, params_json,
+		    trigger_server_id, trigger_server_name,
 		    chain_source_run_id, chain_depth, created_at, started_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
 		id, projectID, StatusQueued, tt, trigger.Branch, trigger.Commit, trigger.Actor,
 		trigger.ResolvedEnvironment, string(targetIDsJSON), string(paramsJSON),
+		strings.TrimSpace(trigger.ServerID), strings.TrimSpace(trigger.ServerName),
 		strings.TrimSpace(trigger.ChainSourceRunID), chainDepth,
 		now.Format(time.RFC3339),
 	)
@@ -305,6 +307,7 @@ func (s *service) Get(ctx context.Context, id string) (*Run, error) {
 		        pr.failure_log, pr.diagnosis_json, pr.params_json,
 		        pr.chain_source_run_id, pr.chain_depth,
 		        pr.resolved_environment, pr.resolved_target_server_ids,
+		        pr.trigger_server_id, pr.trigger_server_name,
 		        pr.spec_source, pr.spec_source_ref, pr.spec_source_file, pr.spec_source_fallback
 		 FROM pipeline_runs pr
 		 LEFT JOIN projects p ON p.id = pr.project_id
@@ -315,6 +318,7 @@ func (s *service) Get(ctx context.Context, id string) (*Run, error) {
 		&failureLog, &diagnosisJSON, &paramsJSON,
 		&r.Trigger.ChainSourceRunID, &r.Trigger.ChainDepth,
 		&r.Trigger.ResolvedEnvironment, &targetIDsJSON,
+		&r.Trigger.ServerID, &r.Trigger.ServerName,
 		&r.SpecSource.Source, &r.SpecSource.Ref, &r.SpecSource.File, &r.SpecSource.Fallback)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -454,6 +458,7 @@ func (s *service) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT pr.id, pr.project_id, COALESCE(p.name, ''), pr.status,
 		        pr.trigger_type, pr.trigger_branch, pr.trigger_commit, pr.trigger_actor,
+		        pr.trigger_server_id, pr.trigger_server_name,
 		        pr.created_at, pr.started_at, pr.finished_at
 		 FROM pipeline_runs pr
 		 LEFT JOIN projects p ON p.id = pr.project_id`+clause+`
@@ -474,6 +479,7 @@ func (s *service) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		)
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ProjectName, &r.Status,
 			&r.Trigger.Type, &r.Trigger.Branch, &r.Trigger.Commit, &r.Trigger.Actor,
+			&r.Trigger.ServerID, &r.Trigger.ServerName,
 			&createdStr, &startedStr, &finishStr); err != nil {
 			return nil, fmt.Errorf("run: scan run: %w", err)
 		}

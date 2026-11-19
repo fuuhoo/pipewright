@@ -6,9 +6,11 @@
  * 与权限态(能不能改归属)迟早会走样,而这两处正是出错最疼的地方。
  * 视图只负责挑项目、排布局;怎么展示一张卡、点按钮算哪个动作,都留在这里。
  */
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Project, RunStatus } from '../../api/projects'
 import { runStatusLabel } from '../../lib/runStatus'
+import type { DropEdge } from '../../lib/projectViewOrder'
 
 const props = defineProps<{
   project: Project
@@ -21,20 +23,103 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  run: [project: Project]
-  runs: [project: Project]
-  runDetail: [project: Project]
-  rename: [project: Project]
-  repo: [project: Project]
-  code: [project: Project]
-  pipeline: [project: Project]
-  copy: [project: Project]
-  remove: [project: Project]
-  assign: [project: Project]
-  assignService: [project: Project]
+  (e: 'run', project: Project): void
+  (e: 'runs', project: Project): void
+  (e: 'runDetail', project: Project): void
+  (e: 'rename', project: Project): void
+  (e: 'repo', project: Project): void
+  (e: 'code', project: Project): void
+  (e: 'pipeline', project: Project): void
+  (e: 'copy', project: Project): void
+  (e: 'remove', project: Project): void
+  (e: 'assign', project: Project): void
+  (e: 'assignService', project: Project): void
+  /** 打开标签编辑(卡片上的标签行就是入口)。 */
+  (e: 'tags', project: Project): void
+  /** 拖到这张卡上松手:movingId = 被拖那个项目的 id,edge = 排在目标前面还是后面。 */
+  (e: 'reorder-project', movingId: string, edge: DropEdge): void
+  /** 键盘排序:delta = -1 上移一格、+1 下移一格。 */
+  (e: 'nudge-project', delta: number): void
 }>()
 
 const { t } = useI18n()
+
+// 卡片位置有限:最多铺 3 枚标签,其余折成 +N(完整列表在编辑弹窗里看)。
+const SHOWN_TAGS = 3
+const shownTags = computed(() => (props.project.tags ?? []).slice(0, SHOWN_TAGS))
+const extraTagCount = computed(() => Math.max(0, (props.project.tags?.length ?? 0) - SHOWN_TAGS))
+
+// ─── 拖动排序 ────────────────────────────────────────────────────────────────
+// 只从卡头那枚握把发起拖动:卡片正文全是按钮和可选中文字,整张 draggable 会跟它们抢拖拽源。
+// 落点则整张都收,上下半决定排在目标前面还是后面(卡片高度差得多,只认「落在它上面」不够用)。
+const PROJECT_DRAG_MIME = 'application/x-pipewright-project'
+
+const rootEl = ref<HTMLElement | null>(null)
+const isDragSource = ref(false)
+const dropEdge = ref<'' | DropEdge>('')
+
+function onGripDragStart(e: DragEvent): void {
+  isDragSource.value = true
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData(PROJECT_DRAG_MIME, props.project.id)
+    // 拖动默认只带握把那十几像素的小图标,换成整张卡的快照才看得出在拖哪个项目。
+    const el = rootEl.value
+    if (el) {
+      const box = el.getBoundingClientRect()
+      e.dataTransfer.setDragImage(el, e.clientX - box.left, e.clientY - box.top)
+    }
+  }
+}
+
+function onGripDragEnd(): void {
+  isDragSource.value = false
+  dropEdge.value = ''
+}
+
+/** 别的拖动(选中的文字、地址)不带这个 MIME,据此把自己排除在落点之外。 */
+function isProjectDrag(e: DragEvent): boolean {
+  return e.dataTransfer?.types.includes(PROJECT_DRAG_MIME) === true
+}
+
+function edgeAt(e: DragEvent): DropEdge {
+  const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  return e.clientY - box.top < box.height / 2 ? 'before' : 'after'
+}
+
+function onProjectDragEnter(e: DragEvent): void {
+  if (!isProjectDrag(e) || isDragSource.value) return
+  dropEdge.value = edgeAt(e)
+}
+
+function onProjectDragOver(e: DragEvent): void {
+  if (!isProjectDrag(e) || isDragSource.value) return
+  dropEdge.value = edgeAt(e)
+}
+
+function onProjectDragLeave(e: DragEvent): void {
+  const root = e.currentTarget as HTMLElement | null
+  const next = e.relatedTarget as Node | null
+  if (!root || !next || !root.contains(next)) dropEdge.value = ''
+}
+
+function onProjectDrop(e: DragEvent): void {
+  const movingId = e.dataTransfer?.getData(PROJECT_DRAG_MIME) ?? ''
+  dropEdge.value = ''
+  if (!isProjectDrag(e) || !movingId || movingId === props.project.id) return
+  emit('reorder-project', movingId, edgeAt(e))
+}
+
+/** 握把被键盘聚焦时,上下方向键挪一格 —— 拖动只服务鼠标,这一条让不用鼠标的人也排得动。 */
+function onGripKeydown(e: KeyboardEvent): void {
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    emit('nudge-project', -1)
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    emit('nudge-project', 1)
+  }
+}
 
 // Status pill config — 文案与色调都复用运行页那套全局口径(runStatus.* + 同一组语义色)。
 type StatusConfig = { dot: string; bg: string; border: string; text: string; pulse: boolean }
@@ -63,9 +148,38 @@ function relativeTime(isoStr: string): string {
 </script>
 
 <template>
-  <li class="project-card">
-    <!-- Card header: name + status badge -->
+  <li
+    ref="rootEl"
+    class="project-card"
+    :class="{
+      'project-card--dragging': isDragSource,
+      'project-card--drop-before': dropEdge === 'before',
+      'project-card--drop-after': dropEdge === 'after',
+    }"
+    @dragenter.prevent="onProjectDragEnter"
+    @dragover.prevent="onProjectDragOver"
+    @dragleave="onProjectDragLeave"
+    @drop.prevent="onProjectDrop"
+  >
+    <!-- Card header: grip + icon + name + status badge -->
     <div class="card-header">
+      <span
+        class="card-grip"
+        draggable="true"
+        role="button"
+        tabindex="0"
+        :aria-label="t('projects.dragCardAria', { name: project.name })"
+        :title="t('projects.dragCardTitle')"
+        @dragstart="onGripDragStart"
+        @dragend="onGripDragEnd"
+        @keydown="onGripKeydown"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>
+          <circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>
+          <circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/>
+        </svg>
+      </span>
       <div class="project-icon" aria-hidden="true">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
           <path d="M14.5 9.5 21 3M21 3h-5M21 3v5"/>
@@ -194,6 +308,28 @@ function relativeTime(isoStr: string): string {
       >{{ project.serviceName || t('services.unassigned') }}</button>
     </div>
 
+    <!-- 标签:纯展示 / 筛选属性;点开即可增删 -->
+    <div class="card-meta-row card-meta-row--tags">
+      <span class="meta-label">{{ t('projects.tagsLabel') }}</span>
+      <button
+        v-if="shownTags.length"
+        type="button"
+        class="tag-list"
+        :title="t('projects.tagsEditTitlePrefix', { name: project.name })"
+        @click.stop="emit('tags', project)"
+      >
+        <span v-for="tag in shownTags" :key="tag" class="tag-chip">{{ tag }}</span>
+        <span v-if="extraTagCount" class="tag-chip tag-chip--more">+{{ extraTagCount }}</span>
+      </button>
+      <button
+        v-else
+        type="button"
+        class="meta-value tag-link tag-link--empty"
+        :title="t('projects.tagsEditTitlePrefix', { name: project.name })"
+        @click.stop="emit('tags', project)"
+      >{{ t('projects.tagsEmpty') }}</button>
+    </div>
+
     <!-- Card footer: updatedAt + actions -->
     <div class="card-footer">
       <span class="card-time" :title="project.updatedAt">
@@ -315,6 +451,7 @@ function relativeTime(isoStr: string): string {
 <style scoped>
 /* ─── project card ──────────────────────────────────────────────────────────── */
 .project-card {
+  position: relative;
   background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: var(--rounded-card);
@@ -345,6 +482,58 @@ function relativeTime(isoStr: string): string {
   .project-card:hover {
     transform: none;
   }
+}
+
+/* 握把常驻(悬停才显形的话没人会发现卡片能排序),字色取 --color-dim:和卡片其他控件齐平。 */
+.card-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 26px;
+  margin-left: -6px;
+  flex-shrink: 0;
+  border-radius: var(--rounded-sm);
+  color: var(--color-dim);
+  cursor: grab;
+  transition: color var(--duration-fast) var(--ease-out-expo), background var(--duration-fast) var(--ease-out-expo);
+}
+.card-grip:hover {
+  color: var(--color-text);
+  background: var(--color-inset);
+}
+.card-grip:active {
+  cursor: grabbing;
+}
+.card-grip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  color: var(--color-text);
+}
+
+/* 拖动中的三段状态:被我拖着的那张压暗;落点整张描边 + 上下沿一根粗线。 */
+.project-card--dragging {
+  opacity: 0.45;
+}
+.project-card--drop-before,
+.project-card--drop-after {
+  border-color: var(--color-primary);
+}
+.project-card--drop-before::before,
+.project-card--drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-primary);
+  z-index: 1;
+}
+.project-card--drop-before::before {
+  top: 0;
+}
+.project-card--drop-after::after {
+  bottom: 0;
 }
 
 /* card header: icon + name + status badge */
@@ -550,6 +739,83 @@ function relativeTime(isoStr: string): string {
 /* 服务未归属时用弱化色:它是个可选属性,空着不该和已填的字段抢注意力。 */
 .service-link--empty {
   color: var(--color-faint);
+}
+
+/* 标签行:最多三枚 + N;点整行开编辑弹窗。 */
+.card-meta-row--tags {
+  align-items: center;
+}
+
+.tag-list {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  max-width: 62%;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.tag-chip {
+  display: inline-block;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: var(--rounded-full);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-inset);
+  color: var(--color-dim);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.tag-chip--more {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-faint);
+  padding-left: 2px;
+  padding-right: 0;
+}
+
+.tag-list:hover .tag-chip {
+  border-color: var(--color-faint);
+  color: var(--color-text);
+}
+
+.tag-list:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--rounded-sm);
+}
+
+.tag-link {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 0 auto;
+  font: inherit;
+  color: var(--color-primary);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.tag-link--empty {
+  color: var(--color-faint);
+  font-style: italic;
+}
+
+.tag-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 /* card footer */

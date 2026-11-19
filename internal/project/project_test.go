@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/fuuhoo/pipewright/internal/access"
@@ -267,6 +268,75 @@ func TestUpdateRename(t *testing.T) {
 
 // TestUpdatePRStatusEnabledRoundTrip 断言 pr_status_enabled 经 Update 设置后能从 Get 读回,
 // 且默认 false、可关回、与无关字段更新互不串扰。
+// TestTagsRoundTrip 覆盖标签的收口规则与增改清空:
+// 去空白、丢空串、按不区分大小写去重且保留先出现的写法、保序;Update 整体替换,[] 清空。
+func TestTagsRoundTrip(t *testing.T) {
+	db := testDB(t)
+	v := vault.New(db, testMasterKey())
+	svc := New(db, v, &stubProber{branch: "main"})
+	credID := newCred(t, v, "tok")
+
+	p, err := svc.Create(context.Background(), CreateInput{
+		Name:         "tagged",
+		RepoURL:      "https://gitee.com/a/b.git",
+		CredentialID: credID,
+		Tags:         []string{" 生产 ", "prod", "Prod", "", "支付"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := []string{"生产", "prod", "支付"}
+	if len(p.Tags) != len(want) {
+		t.Fatalf("tags = %v, want %v", p.Tags, want)
+	}
+	for i := range want {
+		if p.Tags[i] != want[i] {
+			t.Fatalf("tags = %v, want %v", p.Tags, want)
+		}
+	}
+
+	// Update 整体替换。
+	next := []string{"staging", "v2"}
+	updated, err := svc.Update(context.Background(), p.ID, UpdateInput{Tags: &next})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.Tags) != 2 || updated.Tags[0] != "staging" || updated.Tags[1] != "v2" {
+		t.Fatalf("tags after update = %v", updated.Tags)
+	}
+	// 不碰 Tags 的更新不该清掉标签。
+	name := "renamed"
+	updated, err = svc.Update(context.Background(), p.ID, UpdateInput{Name: &name})
+	if err != nil {
+		t.Fatalf("Update name: %v", err)
+	}
+	if len(updated.Tags) != 2 {
+		t.Fatalf("tags lost on unrelated update: %v", updated.Tags)
+	}
+	// [] 清空。
+	empty := []string{}
+	updated, err = svc.Update(context.Background(), p.ID, UpdateInput{Tags: &empty})
+	if err != nil {
+		t.Fatalf("Update clear: %v", err)
+	}
+	if len(updated.Tags) != 0 {
+		t.Fatalf("tags not cleared: %v", updated.Tags)
+	}
+
+	// 超量与超长在领域层挡住。
+	many := make([]string, MaxTags+1)
+	for i := range many {
+		many[i] = "t" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+	}
+	if _, err := svc.Update(context.Background(), p.ID, UpdateInput{Tags: &many}); !errors.Is(err, ErrTooManyTags) {
+		t.Fatalf("too many tags err = %v, want ErrTooManyTags", err)
+	}
+	long := []string{strings.Repeat("长", MaxTagLen+1)}
+	if _, err := svc.Update(context.Background(), p.ID, UpdateInput{Tags: &long}); !errors.Is(err, ErrTagTooLong) {
+		t.Fatalf("long tag err = %v, want ErrTagTooLong", err)
+	}
+}
+
 func TestUpdatePRStatusEnabledRoundTrip(t *testing.T) {
 	db := testDB(t)
 	v := vault.New(db, testMasterKey())

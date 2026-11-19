@@ -54,6 +54,11 @@ export interface Project {
    */
   serviceId: string
   serviceName: string
+  /**
+   * 项目标签(0..N,按添加顺序;后端按不区分大小写去重)。
+   * 纯展示 / 筛选属性:不参与权限与流水线,项目页在本地按标签筛。
+   */
+  tags: string[]
   /** 该项目最近一次运行的状态;null = 从未跑过。 */
   lastRunStatus: RunStatus | null
   /** 同一条最近运行的触发时刻(RFC3339);null = 从未跑过。卡片拼「时间 · 状态」用它。 */
@@ -76,6 +81,8 @@ export interface CreateProjectInput {
   groupId?: string
   /** Optional service id; omitted or '' = 未归属服务(纯展示属性,不参与权限)。 */
   serviceId?: string
+  /** Optional tags; 服务端会去空白 / 去重 / 限量后落库。 */
+  tags?: string[]
 }
 
 export interface UpdateProjectInput {
@@ -95,6 +102,8 @@ export interface UpdateProjectInput {
   groupId?: string
   /** 改归属服务;传 '' 表示取消归属。省略 = 不动(不参与权限判定)。 */
   serviceId?: string
+  /** 整体替换标签;省略 = 不动,[] = 清空。 */
+  tags?: string[]
 }
 
 export interface TestCloneResult {

@@ -775,6 +775,8 @@ func (s *Service) Delete(id string) error {
 		`DELETE FROM user_roles WHERE user_id = ?`,
 		// 主机视图偏好(置顶 + 顺序)同样没外键:它是这个人的界面习惯,人没了就该跟着没。
 		`DELETE FROM server_view_prefs WHERE user_id = ?`,
+		// 项目卡片的个人顺序同理。
+		`DELETE FROM project_view_prefs WHERE user_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return fmt.Errorf("users: clear references: %w", err)

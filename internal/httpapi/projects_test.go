@@ -340,7 +340,7 @@ func TestProjectPatchAndDelete(t *testing.T) {
 	srv, client, csrf, _ := setupProjectServer(t, stubProber{branch: "main"})
 	credID := newGitCred(t, client, srv.URL, csrf, "tok")
 	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/projects", csrf,
-		`{"name":"old","repoUrl":"https://g/a.git","credentialId":"`+credID+`"}`)
+		`{"name":"old","repoUrl":"https://g/a.git","credentialId":"`+credID+`","tags":["生产","Prod","prod"]}`)
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	var created map[string]any
@@ -348,6 +348,10 @@ func TestProjectPatchAndDelete(t *testing.T) {
 	id, _ := created["id"].(string)
 	if id == "" {
 		t.Fatalf("no id: %s", raw)
+	}
+	// 标签去重不分大小写,保留先出现的写法。
+	if tags, ok := created["tags"].([]any); !ok || len(tags) != 2 || tags[0] != "生产" || tags[1] != "Prod" {
+		t.Fatalf("created tags = %v, want [生产 Prod]", created["tags"])
 	}
 
 	patchResp := doJSON(t, client, http.MethodPatch, srv.URL+"/api/projects/"+id, csrf, `{"name":"renamed"}`)
@@ -361,6 +365,28 @@ func TestProjectPatchAndDelete(t *testing.T) {
 	if patched["name"] != "renamed" {
 		t.Fatalf("name not updated: %s", pr)
 	}
+
+	// 标签整体替换;nil 不动、[] 清空。
+	tagResp := doJSON(t, client, http.MethodPatch, srv.URL+"/api/projects/"+id, csrf, `{"tags":["x","y"]}`)
+	defer tagResp.Body.Close()
+	if tagResp.StatusCode != http.StatusOK {
+		t.Fatalf("patch tags status = %d, want 200", tagResp.StatusCode)
+	}
+	tagRaw, _ := io.ReadAll(tagResp.Body)
+	var tagged map[string]any
+	_ = json.Unmarshal(tagRaw, &tagged)
+	if tags, ok := tagged["tags"].([]any); !ok || len(tags) != 2 {
+		t.Fatalf("tags = %v, want [x y]: %s", tagged["tags"], tagRaw)
+	}
+
+	longTag := strings.Repeat("长", project.MaxTagLen+1)
+	badResp := doJSON(t, client, http.MethodPatch, srv.URL+"/api/projects/"+id, csrf,
+		`{"tags":["`+longTag+`"]}`)
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("long tag status = %d, want 400", badResp.StatusCode)
+	}
+	assertErrCode(t, badResp, "invalid_project")
 
 	delResp := doJSON(t, client, http.MethodDelete, srv.URL+"/api/projects/"+id, csrf, "")
 	defer delResp.Body.Close()

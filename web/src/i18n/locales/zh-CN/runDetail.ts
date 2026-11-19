@@ -35,6 +35,7 @@ export default {
   metaBranch: '分支',
   metaCommit: 'Commit',
   metaTrigger: '触发',
+  metaServer: '触发主机',
   metaStarted: '开始',
   metaDuration: '耗时',
   triggerManual: '手动',
