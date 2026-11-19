@@ -12,6 +12,8 @@ import {
   isEnvFileName,
   nacosBaseUrlIssue,
   nacosCoordIssue,
+  parseEnvBodyVars,
+  planEnvVarMerge,
   previewEnvBody,
   repoEnvPathIssue,
 } from './envFileImport'
@@ -91,6 +93,71 @@ describe('previewEnvBody', () => {
 
   it('注释与空行不计入 skipped(那是正常写法)', () => {
     expect(previewEnvBody('# comment\n\nA=1\n').skipped).toBe(0)
+  })
+})
+
+describe('parseEnvBodyVars', () => {
+  it('取值:trim、脱成对引号、行内 # 保留', () => {
+    const got = parseEnvBodyVars('\uFEFFA= 1 \r\nexport B="two words"\nPASS=abc#123\nQ=\'x\'\n')
+    expect(got.vars).toEqual([
+      { key: 'A', value: '1' },
+      { key: 'B', value: 'two words' },
+      { key: 'PASS', value: 'abc#123' },
+      { key: 'Q', value: 'x' },
+    ])
+    expect(got.skipped).toBe(0)
+  })
+
+  it('不对成/不配对的引号与空值原样保留', () => {
+    const got = parseEnvBodyVars('A="x\nB=\nC= ""\n')
+    expect(got.vars).toEqual([
+      { key: 'A', value: '"x' },
+      { key: 'B', value: '' },
+      { key: 'C', value: '' },
+    ])
+  })
+
+  it('同名后写覆盖值但保持首次位置(与后端一致)', () => {
+    expect(parseEnvBodyVars('A=1\nB=2\nA=3\n').vars).toEqual([
+      { key: 'A', value: '3' },
+      { key: 'B', value: '2' },
+    ])
+  })
+
+  it('非法行只计数,不影响其他行', () => {
+    const got = parseEnvBodyVars('NOEQ\n=novalue\n9bad=x\nA B=1\nGOOD=1\n')
+    expect(got.vars).toEqual([{ key: 'GOOD', value: '1' }])
+    expect(got.skipped).toBe(4)
+  })
+})
+
+describe('planEnvVarMerge', () => {
+  it('同名明文行就地更新,新键追加,secret 行保持不动', () => {
+    const existing = [
+      { key: '', secret: false },
+      { key: 'PORT', secret: false },
+      { key: 'TOKEN', secret: true },
+    ]
+    const plan = planEnvVarMerge(existing, [
+      { key: 'PORT', value: '9090' },
+      { key: 'TOKEN', value: 'plain' },
+      { key: 'NEW', value: 'v' },
+    ])
+    expect(plan.updates).toEqual([{ index: 1, value: '9090' }])
+    expect(plan.appends).toEqual([{ key: 'NEW', value: 'v' }])
+    expect(plan.secretSkipped).toEqual(['TOKEN'])
+  })
+
+  it('键名按 trim 后比较;重复的现有行只认第一行', () => {
+    const plan = planEnvVarMerge(
+      [
+        { key: ' A ', secret: false },
+        { key: 'A', secret: false },
+      ],
+      [{ key: 'A', value: '1' }],
+    )
+    expect(plan.updates).toEqual([{ index: 0, value: '1' }])
+    expect(plan.appends).toEqual([])
   })
 })
 

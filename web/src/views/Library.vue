@@ -52,6 +52,7 @@ import {
 } from '../api/libraryCommands'
 import { jobTypeLabel } from '../components/pipeline/jobConfigSchema'
 import { isStudioNode } from '../components/pipeline/studioCompile'
+import { ENV_MAX_BYTES, parseEnvBodyVars, planEnvVarMerge } from '../lib/envFileImport'
 
 type Tab = 'templates' | 'variableGroups' | 'customNodes' | 'commands'
 type LoadState = 'idle' | 'loading' | 'error'
@@ -277,6 +278,7 @@ function openCreateGroup(): void {
   editorVars.value = [{ key: '', secret: false, value: '', credentialId: '', maskedValue: '' }]
   editorGroupIds.value = []
   editorBanner.value = ''
+  resetVarImport()
   editorOpen.value = true
 }
 
@@ -298,6 +300,7 @@ function openEditGroup(g: VariableGroup): void {
   }
   editorGroupIds.value = [...g.groupIds]
   editorBanner.value = ''
+  resetVarImport()
   editorOpen.value = true
 }
 
@@ -352,6 +355,66 @@ function toggleSecret(v: EditorVar): void {
     v.credentialId = ''
     v.maskedValue = ''
   }
+}
+
+// ─── 变量文本导入(粘贴 / 上传)────────────────────────────────────────────────
+// 纯前端解析后并入编辑器行:上传只在这台浏览器里读成正文,落库仍走原有保存接口;
+// 同名 secret 行保持凭据引用 —— 明文不能悄悄把一个 secret 变量降级成明文。
+const varImportOpen = ref(false)
+const varImportText = ref('')
+const varImportFileName = ref('')
+const varImportError = ref('')
+
+const varImportPreview = computed(() => {
+  const parsed = parseEnvBodyVars(varImportText.value)
+  if (parsed.vars.length === 0) return ''
+  return parsed.skipped > 0
+    ? t('library.importPreviewSkipped', { n: parsed.vars.length, m: parsed.skipped })
+    : t('library.importPreview', { n: parsed.vars.length })
+})
+
+function resetVarImport(): void {
+  varImportOpen.value = false
+  varImportText.value = ''
+  varImportFileName.value = ''
+  varImportError.value = ''
+}
+
+async function onVarFilePicked(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  varImportError.value = ''
+  if (!file) return
+  if (file.size > ENV_MAX_BYTES) {
+    varImportError.value = t('library.importFileTooLarge', { n: ENV_MAX_BYTES >> 10 })
+    return
+  }
+  try {
+    varImportText.value = await file.text()
+    varImportFileName.value = file.name
+  } catch {
+    varImportError.value = t('library.importFileReadFailed')
+  }
+}
+
+function applyVarImport(): void {
+  varImportError.value = ''
+  const parsed = parseEnvBodyVars(varImportText.value)
+  if (parsed.vars.length === 0) {
+    varImportError.value = t('library.importNothing')
+    return
+  }
+  const plan = planEnvVarMerge(editorVars.value, parsed.vars)
+  for (const u of plan.updates) editorVars.value[u.index].value = u.value
+  for (const v of plan.appends) {
+    editorVars.value.push({ key: v.key, secret: false, value: v.value, credentialId: '', maskedValue: '' })
+  }
+  message.success(t('library.importDone', { added: plan.appends.length, updated: plan.updates.length }))
+  if (plan.secretSkipped.length) {
+    message.warning(t('library.importSecretSkipped', { keys: plan.secretSkipped.join(', ') }))
+  }
+  resetVarImport()
 }
 
 const editorTitle = computed(() => (editorMode.value === 'create' ? t('library.createGroup') : t('library.editGroup')))
@@ -1080,8 +1143,44 @@ onMounted(() => {
         <div class="field">
           <div class="field-label-row">
             <span class="field-label">{{ t('library.fieldVariables') }}</span>
-            <button class="link-add" @click="addEditorVar">{{ t('library.addVariable') }}</button>
+            <span class="var-tools">
+              <button class="link-add" @click="varImportOpen ? resetVarImport() : (varImportOpen = true)">
+                {{ varImportOpen ? t('library.importCollapse') : t('library.importVars') }}
+              </button>
+              <button class="link-add" @click="addEditorVar">{{ t('library.addVariable') }}</button>
+            </span>
           </div>
+
+          <!-- 粘贴或上传 .env 文本:本机解析后并入下面的变量行,保存仍走同一接口。 -->
+          <div v-if="varImportOpen" class="var-import">
+            <textarea
+              v-model="varImportText"
+              class="input var-import__text"
+              rows="5"
+              :placeholder="t('library.importPlaceholder')"
+              :aria-label="t('library.importVars')"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea>
+            <div class="var-import__bar">
+              <label class="btn-secondary btn-sm var-import__file">
+                {{ t('library.importChooseFile') }}
+                <input type="file" accept=".env,.txt,text/plain" hidden @change="onVarFilePicked" />
+              </label>
+              <span v-if="varImportFileName" class="var-import__file-name" :title="varImportFileName">
+                {{ t('library.importFilePicked', { name: varImportFileName }) }}
+              </span>
+              <span class="var-import__preview">{{ varImportPreview }}</span>
+              <button
+                class="btn-primary btn-sm"
+                :disabled="!varImportText.trim()"
+                @click="applyVarImport"
+              >{{ t('library.importApply') }}</button>
+            </div>
+            <p v-if="varImportError" class="var-import__error" role="alert">{{ varImportError }}</p>
+            <p class="field-hint">{{ t('library.importVarsHint') }}</p>
+          </div>
+
           <div class="var-rows">
             <div v-for="(v, idx) in editorVars" :key="idx" class="var-row">
               <input
@@ -1850,6 +1949,41 @@ onMounted(() => {
 
 .var-rows { display: flex; flex-direction: column; gap: 0.5rem; }
 .var-row { display: flex; align-items: center; gap: 0.5rem; }
+.var-tools { display: flex; align-items: center; gap: 0.9rem; }
+
+/* 变量文本导入:粘贴框 + 选文件 + 识别结果 */
+.var-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.6rem;
+  padding: 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-card-2);
+}
+.var-import__text {
+  min-height: 6.5rem;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.var-import__bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; }
+.var-import__file { cursor: pointer; }
+.var-import__file-name,
+.var-import__preview {
+  font-size: 0.78rem;
+  color: var(--color-faint);
+}
+.var-import__file-name {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.var-import__preview { margin-left: auto; }
+.var-import__error { font-size: 0.8rem; color: var(--color-red); line-height: 1.45; }
 .input--key { flex: 0 0 32%; font-family: var(--font-mono, ui-monospace, monospace); }
 .input--val,
 .input--cred { flex: 1 1 auto; }

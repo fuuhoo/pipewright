@@ -41,14 +41,21 @@ export function envBodyIssue(text: string): EnvBodyIssue {
   return new TextEncoder().encode(text).length > ENV_MAX_BYTES ? 'tooLarge' : ''
 }
 
+export interface ParsedEnvVar {
+  key: string
+  value: string
+}
+
 /**
- * 按后端 ParseEnvBody 同一条口径预览这份正文能提出哪些变量。
+ * 与后端 ParseEnvBody 逐条对齐的 KEY=VALUE 解析(值也一并取出,供变量组导入)。
  *
- * 只用于表单里那句「识别出 N 个变量」+ 跳过行告警:改名会静默少几个变量,让人在构建日志里查半天,
- * 所以配表单时就得看见。解析本身仍以服务端为准(容器拿到的是后端解析的结果)。
+ * 认:`export ` 前缀、空行、`#` 整行注释、CRLF、开头的 BOM、值两端成对同种引号。
+ * 不认(原样保留):行内 `#` 之后的注释、`${VAR}` 插值、多行值、引号内转义。
+ * 同名键后写覆盖值但保持首次位置;不合规的行不报错,只计入 skipped。
  */
-export function previewEnvBody(text: string): { keys: string[]; skipped: number } {
-  const keys: string[] = []
+export function parseEnvBodyVars(text: string): { vars: ParsedEnvVar[]; skipped: number } {
+  const vars: ParsedEnvVar[] = []
+  const at = new Map<string, number>()
   let skipped = 0
   for (const rawLine of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     let line = rawLine.trim()
@@ -64,9 +71,75 @@ export function previewEnvBody(text: string): { keys: string[]; skipped: number 
       skipped++
       continue
     }
-    if (!keys.includes(key)) keys.push(key)
+    const value = stripOuterQuotes(line.slice(i + 1).trim())
+    const idx = at.get(key)
+    if (idx !== undefined) {
+      vars[idx].value = value
+      continue
+    }
+    at.set(key, vars.length)
+    vars.push({ key, value })
   }
-  return { keys, skipped }
+  return { vars, skipped }
+}
+
+/** 脱掉值外层成对的同种引号;不成对或长度不足原样返回(与后端 stripOuterQuotes 一致)。 */
+function stripOuterQuotes(v: string): string {
+  if (v.length >= 2) {
+    const first = v[0]
+    if ((first === '"' || first === "'") && v[v.length - 1] === first) return v.slice(1, -1)
+  }
+  return v
+}
+
+/**
+ * 按后端 ParseEnvBody 同一条口径预览这份正文能提出哪些变量。
+ *
+ * 只用于表单里那句「识别出 N 个变量」+ 跳过行告警:改名会静默少几个变量,让人在构建日志里查半天,
+ * 所以配表单时就得看见。解析本身仍以服务端为准(容器拿到的是后端解析的结果)。
+ */
+export function previewEnvBody(text: string): { keys: string[]; skipped: number } {
+  const { vars, skipped } = parseEnvBodyVars(text)
+  return { keys: vars.map((v) => v.key), skipped }
+}
+
+export interface ImportableVar {
+  key: string
+  secret: boolean
+}
+
+export interface VarMergePlan {
+  /** 与现有明文行同名:就地改值(保留原行 id)。 */
+  updates: Array<{ index: number; value: string }>
+  /** 新键:追加为明文行。 */
+  appends: ParsedEnvVar[]
+  /** 与现有 secret 行同名:保留凭据引用,不拿明文覆盖。 */
+  secretSkipped: string[]
+}
+
+/**
+ * 把导入的明文变量并进变量组编辑器行:
+ * - 同名明文行覆盖值(不新增重复行;编辑器里万一已有重复键,只认第一行);
+ * - 同名 secret 行保持不动 —— secret 只存凭据引用,用明文覆盖会让它悄悄变成明文变量;
+ * - 其余按键在文本里的顺序追加。
+ */
+export function planEnvVarMerge(existing: ImportableVar[], parsed: ParsedEnvVar[]): VarMergePlan {
+  const at = new Map<string, number>()
+  existing.forEach((row, i) => {
+    const key = row.key.trim()
+    if (key && !at.has(key)) at.set(key, i)
+  })
+  const plan: VarMergePlan = { updates: [], appends: [], secretSkipped: [] }
+  for (const v of parsed) {
+    const idx = at.get(v.key)
+    if (idx === undefined) {
+      plan.appends.push(v)
+      continue
+    }
+    if (existing[idx].secret) plan.secretSkipped.push(v.key)
+    else plan.updates.push({ index: idx, value: v.value })
+  }
+  return plan
 }
 
 // ─── Nacos 来源 ──────────────────────────────────────────────────────────────
