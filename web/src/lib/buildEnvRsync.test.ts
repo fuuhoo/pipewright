@@ -13,6 +13,10 @@ describe('rsyncSupportFor', () => {
     expect(rsyncSupportFor('registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14')).toBe('no')
   })
 
+  it('1.0.15 实测装了 rsync', () => {
+    expect(rsyncSupportFor('registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.15')).toBe('yes')
+  })
+
   it('没实测过的镜像串说「运行时决定」,绝不替用户猜', () => {
     expect(rsyncSupportFor('harbor.local/team/my-jdk:17-with-rsync')).toBe('unknown')
     expect(rsyncSupportFor('')).toBe('unknown')

@@ -1,0 +1,36 @@
+# vfox-full 1.0.15:在 1.0.14 上补一个 rsync。
+#
+# 为什么单开一层而不改 deploy/vfox/Dockerfile:那一层有防呆,只能叠在 1.0.12 基底上
+# (见其注释);这次只加一个 apt 包,直接以 1.0.14 的双架构 tag 为基底最省事,也不必重新
+# 下载 Maven / pnpm。1.0.14 的 tag 不动,出问题可直接回退。
+#
+# 构建(两种架构各一次,再合成中性多架构清单;ACR 429 时冷却一两分钟再试):
+#   docker build --platform linux/arm64 -f deploy/vfox/Dockerfile.rsync \
+#     --build-arg BASE_IMAGE=registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14-arm64 \
+#     -t registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.15-arm64 deploy/vfox
+#   docker build --platform linux/amd64 -f deploy/vfox/Dockerfile.rsync \
+#     --build-arg BASE_IMAGE=registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14-amd64 \
+#     -t registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.15-amd64 deploy/vfox
+#   docker push ...:1.0.15-arm64 && docker push ...:1.0.15-amd64
+#   docker buildx imagetools create -t ...:1.0.15 ...:1.0.15-arm64 ...:1.0.15-amd64
+
+ARG BASE_IMAGE=registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.version="1.0.15"
+
+# 只加 rsync:「复制文件」步骤的 rsync 分支靠它;基底是 Ubuntu 24.04,apt 源换阿里云镜像
+# (含 ports.ubuntu.com,arm64 走的就是它),装完清掉 apt 列表,别把缓存烘进镜像。
+RUN set -eu; \
+    if command -v rsync >/dev/null 2>&1; then echo "[rsync] already present"; exit 0; fi; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do \
+      [ -f "$f" ] || continue; \
+      sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g; s|http://security.ubuntu.com|https://mirrors.aliyun.com|g; s|http://ports.ubuntu.com|https://mirrors.aliyun.com|g' "$f"; \
+    done; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rsync; \
+    rm -rf /var/lib/apt/lists/*; \
+    rsync --version | head -1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]

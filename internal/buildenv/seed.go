@@ -53,6 +53,8 @@ var builtinBuildEnvs = []SeedEnv{
 	// vfox 1.0.13 起镜像自带 `vfox use` 包装层:平台脚本(dash,无 hook)里直接切换生效,
 	// 不需要 eval activate,也不用把整段包进 bash heredoc;并补了 Maven 3.9。
 	// 1.0.14 在同一叠加层上加了 pnpm 12(装在 /opt/pnpm,切 Node 版本后仍可用)。
+	// 1.0.15 在 1.0.14 上补了 rsync(「复制文件」步骤可直接走 rsync 分支)。
+	{Language: "vfox", Version: "1.0.15", DisplayName: "vfox 全量工具链 + Maven + pnpm + rsync", Description: "vfox 1.0.15:在 1.0.14 基础上加 rsync(复制文件步骤可直接走 rsync 分支)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.15", SourceType: SourceCustom, Enabled: true, SortOrder: 87},
 	{Language: "vfox", Version: "1.0.14", DisplayName: "vfox 全量工具链 + Maven + pnpm", Description: "vfox 1.0.14:vfox use 免激活直接生效,内置 Maven 3.9 与 pnpm 12(SDK 已烘进镜像)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14", SourceType: SourceCustom, Enabled: true, SortOrder: 88},
 	{Language: "vfox", Version: "1.0.13", DisplayName: "vfox 全量工具链 + Maven", Description: "vfox 1.0.13:vfox use <sdk>@<版本> 免激活直接生效,内置 Maven 3.9(SDK 已烘进镜像)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.13", SourceType: SourceCustom, Enabled: true, SortOrder: 89},
 	{Language: "vfox", Version: "1.0.12", DisplayName: "vfox 全量工具链", Description: "vfox 1.0.12:一个容器内按需 vfox use 切 Node/Java/Go 等版本(需先 eval activate,无 Maven)", Image: "registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.12", SourceType: SourceCustom, Enabled: true, SortOrder: 90},

@@ -5,16 +5,16 @@
  * 要等命令真在容器里跑起来才知道 —— 编辑态问不了实时(问一次就得 `docker run` 进镜像,
  * 先把镜像拉下来不说,还只有本机 daemon 准,远程 runner 上是另一台)。
  *
- * 所以这里只放**能负责地断言**的事实:内置目录那 21 条镜像逐条实测过(见下表注释),
- * 一条都没装 rsync。目录外的镜像串(自建 / 私有仓库)一律 'unknown',UI 就说「运行时决定」,
- * 绝不替用户猜一个镜像里有什么。
+ * 所以这里只放**能负责地断言**的事实:内置目录的镜像逐条实测过(见下表注释),除
+ * vfox-full 1.0.15 外都没装 rsync。目录外的镜像串(自建 / 私有仓库)一律 'unknown',
+ * UI 就说「运行时决定」,绝不替用户猜一个镜像里有什么。
  */
 
 export type RsyncSupport = 'yes' | 'no' | 'unknown'
 
 /**
  * 实测口径(2026-10-26,本机 OrbStack / arm64;temurin 17 的 alpine 档只出 amd64,用 --platform 跑):
- *   docker run --rm --entrypoint sh <镜像> -c 'command -v rsync'   → 21 条全部空输出
+ *   docker run --rm --entrypoint sh <镜像> -c 'command -v rsync'   → 旧条目全部空输出;1.0.15 输出 /usr/bin/rsync
  * 覆盖的是 internal/buildenv/seed.go 里 builtinBuildEnvs 的全部条目。
  * 新增内置项时要一起实测;镜像串**精确匹配**,所以管理员把某条换成装了 rsync 的自建镜像时
  * 会落到 'unknown'(说「运行时决定」),不会留下一句过期的「这个镜像里没有」。
@@ -38,6 +38,7 @@ const MEASURED: Record<string, RsyncSupport> = {
   'php:8.3-cli-alpine': 'no',
   'rust:1.79-alpine': 'no',
   'alpine:latest': 'no',
+  'registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.15': 'yes',
   'registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.14': 'no',
   'registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.13': 'no',
   'registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.12': 'no',

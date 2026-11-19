@@ -145,6 +145,14 @@ buildEnvs:
   enabled: true
   sortOrder: 70
 - language: vfox
+  version: '1.0.15'
+  displayName: vfox 全量工具链 + Maven + pnpm + rsync
+  description: vfox 1.0.15:在 1.0.14 基础上加 rsync(复制文件步骤可直接走 rsync 分支)
+  sourceType: custom
+  image: registry.cn-qingdao.aliyuncs.com/fubin/vfox-full:1.0.15
+  enabled: true
+  sortOrder: 87
+- language: vfox
   version: '1.0.14'
   displayName: vfox 全量工具链 + Maven + pnpm
   description: vfox 1.0.14:vfox use 免激活直接生效,内置 Maven 3.9 与 pnpm 12(SDK 已烘进镜像)
