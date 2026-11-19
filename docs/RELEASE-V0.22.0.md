@@ -92,9 +92,10 @@
 - **caddy-image 失败原因**:`xcaddy` 拉插件最新版,`caddy-l4@v0.1.3` 的 go.mod 要求
   `caddyserver/caddy/v2@v2.11.7`,而 `deploy/caddy/Dockerfile` 钉在 `2.11.4` → 依赖解析 FATAL。
   与本版代码无关。修法:`de6e450` 把 `CADDY_VERSION` 提到 `2.11.7`(运行镜像与 builder 都已确认存在),
-  推 master(ci success)后 `workflow_dispatch` 传 `caddy_version=2.11.7` 补发。
-  **已推送的 tag 不移动**,所以 `pipewright-caddy:v0.22.0` 这个标签缺失;
-  按 metadata 规则手动补发产出 `latest` + `manual-<run>`。下一版 tag 会恢复正常。
+  推 master(ci success)后 `workflow_dispatch` 传 `caddy_version=2.11.7` 补发(run #24 success,
+  补发后 `latest` = `sha256:35087058…`,镜像内 `caddy version` 报 **v2.11.7**)。
+  **已推送的 tag 不移动**,workflow 的标签规则也只给 tag 事件打 `v*`、手动触发只有 `latest`,
+  所以 `pipewright-caddy:v0.22.0` 这个标签缺失,`latest` 已恢复;下一版 tag 构建会重新带上版本标签。
 - **第 7 步硬证据(产物级)**:
   - GitHub Release `v0.22.0` 资产 7 个 = 四平台 `tar.gz` + 两个 windows `zip` + `checksums.txt`;
     六个包本机 `shasum -a 256 -c checksums.txt` **逐行 OK**。
@@ -109,5 +110,7 @@
 - **发版前本地门禁**:`make fmt-check` / `make vet` / `make test` 全绿,
   `npm run typecheck` / `npm run test`(115 文件 / 1354 用例)/ `npm run build` 全绿,
   `make go-build` 正常注入版本;`:18080` 一次性实例完成标签筛选、拖拽排序与触发主机交互实测。
-- **已知尾巴**:`~/github/pat.txt` 那条 PAT 仍不可用,本次 run 汇总走 `gh` CLI 的 keyring 会话;
-  `:8081` Docker 实例的镜像重建仍受 Docker Hub 限流影响,恢复后补刷。
+- **本地实例**:`:8080` 已用 `make go-build` 重建并重启(自述 `v0.22.0-2-gd974b32`,含 tag 内容);
+  `:8081` 的 `pipewright:dev-docker` 本次构建通过(前几版被 Docker Hub 限流挡过),容器已重建;
+  两个实例入口都是 `index-Cy8_mCT9.js`,与 `web/dist` 一致。
+- **已知尾巴**:`~/github/pat.txt` 那条 PAT 仍不可用,本次 run 汇总走 `gh` CLI 的 keyring 会话。
