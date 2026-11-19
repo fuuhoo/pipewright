@@ -859,10 +859,13 @@ func TestAllServerMetricsStreamIsProgressive(t *testing.T) {
 	if frames[0].arrived >= slowDelay {
 		t.Fatalf("fast frame arrived at %v, want < %v (stream waited for the slow host)", frames[0].arrived, slowDelay)
 	}
-	if frames[1].id != slowID || frames[1].reach || frames[1].arrived < slowDelay {
+	// 探针的 delay 与客户端 time.Since 是两套计时,慢 runner 上会差几十微秒
+	// (ci 实测 1199.97ms < 1200ms),给一点调度容差,避免把抖动当成「没等慢台」。
+	const timingSlack = 100 * time.Millisecond
+	if frames[1].id != slowID || frames[1].reach || frames[1].arrived+timingSlack < slowDelay {
 		t.Fatalf("second frame should be the slow host reported unreachable after its probe, got %+v", frames[1])
 	}
-	if frames[1].arrived-slowDelay > 5*time.Second {
+	if frames[1].arrived > slowDelay+5*time.Second {
 		t.Fatalf("slow frame way late: %v", frames[1].arrived)
 	}
 }
