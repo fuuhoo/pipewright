@@ -24,12 +24,17 @@ func mkfile(t *testing.T, path string, size int) {
 	}
 }
 
-// fixture 搭一棵典型工作区:.git 噪声 + 源码/产物两层树 + 一个成员超标的目录。
+// fixture 搭一棵典型工作区:点开头的隐藏目录 + 源码/产物两层树 + 一个成员超标的目录。
 func fixture(t *testing.T) string {
 	t.Helper()
 	ws := filepath.Join(t.TempDir(), "ws")
 	mkdir(t, filepath.Join(ws, ".git", "objects"))
 	mkfile(t, filepath.Join(ws, ".git", "HEAD"), 20)
+	mkdir(t, filepath.Join(ws, ".cache", "junk"))
+	mkfile(t, filepath.Join(ws, ".cache", "junk", "blob.bin"), 9)
+	mkdir(t, filepath.Join(ws, ".github", "workflows"))
+	mkfile(t, filepath.Join(ws, ".github", "workflows", "ci.yml"), 12)
+	mkfile(t, filepath.Join(ws, ".env"), 8)
 	mkfile(t, filepath.Join(ws, "package.json"), 42)
 	mkfile(t, filepath.Join(ws, "src", "index.ts"), 7)
 	mkfile(t, filepath.Join(ws, "src", "deep", "nested", "leaf.txt"), 3)
@@ -58,20 +63,25 @@ func find(entries []Entry, p string) (Entry, bool) {
 	return Entry{}, false
 }
 
-// TestCollectBasics 验证基础清单形态:浅层先出、目录带尾斜杠、文件带大小、.git 整支不产出。
+// TestCollectBasics 验证基础清单形态:浅层先出、目录带尾斜杠、文件带大小、
+// 点开头的目录整支不产出,但点开头的文件照常列出。
 func TestCollectBasics(t *testing.T) {
 	ws := fixture(t)
 	snap := Collect(ws, nil, Limits{})
 
 	got := paths(snap.Entries)
-	for _, want := range []string{"package.json", "src/", "dist/", "dist/app.js", "dist/assets/", "src/deep/"} {
+	for _, want := range []string{"package.json", "src/", "dist/", "dist/app.js", "dist/assets/", "src/deep/", ".env"} {
 		if _, ok := find(snap.Entries, want); !ok {
 			t.Fatalf("清单缺 %q,实际=%v", want, got)
 		}
 	}
-	for _, banned := range []string{".git", ".git/", ".git/HEAD"} {
+	for _, banned := range []string{
+		".git", ".git/", ".git/HEAD",
+		".cache/", ".cache/junk/", ".cache/junk/blob.bin",
+		".github/", ".github/workflows/", ".github/workflows/ci.yml",
+	} {
 		if _, ok := find(snap.Entries, banned); ok {
-			t.Fatalf(".git 不该出现在清单里:%v", got)
+			t.Fatalf("%q 是点开头的目录,不该出现在清单里:%v", banned, got)
 		}
 	}
 	if fi, ok := find(snap.Entries, "package.json"); !ok || fi.Size != 42 {
@@ -120,15 +130,17 @@ func TestCollectDepthCap(t *testing.T) {
 }
 
 // TestCollectPerDirCap 验证单目录上限:超限的兄弟项不整支丢弃,而是在目录条目上记 Dropped。
+// 上限取 5:根层有 .env/dist/noise/package.json/src 五项,刚好吃满不触发根级截断,
+// 让断言落在 noise/ 自己的 10 个成员上。
 func TestCollectPerDirCap(t *testing.T) {
 	ws := fixture(t)
-	snap := Collect(ws, nil, Limits{MaxPerDir: 4})
+	snap := Collect(ws, nil, Limits{MaxPerDir: 5})
 	e, ok := find(snap.Entries, "noise/")
 	if !ok {
 		t.Fatalf("noise/ 应被列出:%v", paths(snap.Entries))
 	}
-	if e.Dropped != 6 {
-		t.Fatalf("noise/ Dropped = %d (want 6)", e.Dropped)
+	if e.Dropped != 5 {
+		t.Fatalf("noise/ Dropped = %d (want 5)", e.Dropped)
 	}
 	// 保留下来的仍是工作区内容,而非整支消失。
 	var kept int
@@ -137,8 +149,8 @@ func TestCollectPerDirCap(t *testing.T) {
 			kept++
 		}
 	}
-	if kept != 4 {
-		t.Fatalf("noise/ 下实际列出 %d 项 (want 4)", kept)
+	if kept != 5 {
+		t.Fatalf("noise/ 下实际列出 %d 项 (want 5)", kept)
 	}
 	if snap.Truncated {
 		t.Fatalf("单目录截断不该标整份截断")
@@ -187,6 +199,12 @@ func TestCollectMissingAncestor(t *testing.T) {
 	}
 	if d := byPath["build/*.zip"]; d.Parent != "." || len(d.Siblings) == 0 {
 		t.Fatalf("build/*.zip 应回溯到工作区根并列出身项:%q %v", d.Parent, d.Siblings)
+	} else {
+		for _, s := range d.Siblings {
+			if strings.HasPrefix(s, ".") && strings.HasSuffix(s, "/") {
+				t.Fatalf("祖先目录兄弟项不该列点开头的目录:%v", d.Siblings)
+			}
+		}
 	}
 	if d := byPath["package.json"]; d.Parent != "" || d.Siblings != nil {
 		t.Fatalf("命中的路径不该补祖先信息:%q %v", d.Parent, d.Siblings)

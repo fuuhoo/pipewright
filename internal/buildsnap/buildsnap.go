@@ -44,8 +44,12 @@ const (
 	defaultMaxPerDir  = 200
 )
 
-// skipDir 永不展开:纯版本控制噪声,对"产物生成在哪"零信号,且条目数通常是全场最大。
-const skipDir = ".git"
+// skipDirName 报告目录名是否属于永不展开的隐藏目录:所有点开头的分支(.git / .github /
+// .venv / .cache …)。它们是工具链噪声,对"产物生成在哪"零信号,且常是条目数最多的一支
+// (.git 动辄上万)。点开头的**文件**不跳过 —— .env / .gitignore 之类体量小,留在清单里有用。
+func skipDirName(name string) bool {
+	return strings.HasPrefix(name, ".")
+}
 
 // Limits 是采集上限;零值字段按默认处理。
 type Limits struct {
@@ -153,14 +157,14 @@ func walk(root string, limits Limits) ([]Entry, bool) {
 		kept, dropped := 0, 0
 		for _, ch := range children {
 			name := ch.Name()
-			if name == skipDir {
+			isDir := ch.IsDir()
+			if isDir && skipDirName(name) {
 				continue
 			}
 			if len(out) >= limits.MaxEntries {
 				truncated = true
 				break
 			}
-			isDir := ch.IsDir()
 			relPath := cur.rel + name
 			if isDir {
 				relPath += "/"
@@ -199,7 +203,7 @@ func walk(root string, limits Limits) ([]Entry, bool) {
 }
 
 // nearestExistingDir 从声明路径的父目录逐级上溯,返回第一个真实存在的目录(工作区相对路径,
-// 根为 ".")及其下的实际条目名(目录带尾斜杠,同样跳过 .git)。用来回答"我写的路径不存在,
+// 根为 ".")及其下的实际条目名(目录带尾斜杠,同样跳过点开头的隐藏目录)。用来回答"我写的路径不存在,
 // 那它旁边到底有什么"。条目至多取 maxPerDir 个,超出只报数量 —— 祖先目录万一是 node_modules
 // 时,列全名毫无意义。
 func nearestExistingDir(workspace, declared string, maxPerDir int) (string, []string, int) {
@@ -215,10 +219,10 @@ func nearestExistingDir(workspace, declared string, maxPerDir int) (string, []st
 			names := make([]string, 0, len(children))
 			for _, ch := range children {
 				n := ch.Name()
-				if n == skipDir {
-					continue
-				}
 				if ch.IsDir() {
+					if skipDirName(n) {
+						continue
+					}
 					n += "/"
 				}
 				names = append(names, n)
