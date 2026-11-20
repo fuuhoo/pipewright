@@ -97,8 +97,8 @@ describe('RunTerminal 尾部窗口渲染', () => {
     const count = wrapper.find('.term-count').text()
     expect(count).toContain(String(LOG_TAIL_WINDOW))
     expect(count).toContain(String(total))
-    // 服务端还没搬下来的那批也算进按钮,否则它会少报能翻的量
-    expect(wrapper.find('.term-earlier').text()).toContain(String(total - LOG_TAIL_WINDOW))
+    // 服务端还没搬下来的那批也算进按钮,但一次只报一页(展开步长是上限)
+    expect(wrapper.find('.term-earlier').text()).toContain(String(Math.min(LOG_WINDOW_STEP, total - LOG_TAIL_WINDOW)))
   })
 
   it('「显示更早」向服务端要更早的一页,翻到 seq 1 后按钮消失', async () => {
@@ -147,7 +147,7 @@ describe('RunTerminal 尾部窗口渲染', () => {
     )
 
     const wrapper = await mountTerminal(lines, 7)
-    // 一屏只有这一步的最近 1500 行,不是整条日志的 1500 行
+    // 一屏只有这一步的最近 LOG_TAIL_WINDOW 行,不是整条日志的同一数量
     expect(wrapper.findAll('.term-line')).toHaveLength(LOG_TAIL_WINDOW)
     const firstLoaded = Number(wrapper.find('.term-line').find('.term-ln').text())
     expect(firstLoaded).toBe(402)
@@ -156,8 +156,9 @@ describe('RunTerminal 尾部窗口渲染', () => {
     await settle()
 
     expect(getRunLogsTailMock).toHaveBeenLastCalledWith('r1', LOG_WINDOW_STEP, 402, 7)
-    // 断开的 seq 不影响往前接:这一步一共 1700 行,现在全在里面了。
-    expect(wrapper.findAll('.term-line')).toHaveLength(1700)
+    // 断开的 seq 不影响往前接:这一步剩下的行全接上了,窗口展开到能装下整步。
+    const stepTotal = total / 2
+    expect(wrapper.findAll('.term-line')).toHaveLength(stepTotal)
     expect(wrapper.find('.term-line').find('.term-ln').text()).toBe('2')
     expect(wrapper.find('.term-earlier').exists()).toBe(false)
   })

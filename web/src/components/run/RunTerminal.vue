@@ -254,7 +254,7 @@ const hasLines = computed(() => shown.value.total > 0)
 const showFollowButton = computed(() => !stickToBottom.value && hasLines.value)
 
 // 「显示更早」能给的行数 = 已加载但没挂出来的 + 服务端还没搬下来的。两段合起来才算,
-// 否则按钮会说"再显示 1500 行"而实际只压着 37 行。
+// 否则按钮会说"再显示一页"而实际只压着 37 行。
 const notFetched = computed(() =>
   hasEarlier.value ? Math.max(0, serverTotal.value - shown.value.total) : 0,
 )
@@ -264,7 +264,7 @@ const earlierBatch = computed(() =>
 const canShowEarlier = computed(() => earlierBatch.value > 0)
 
 // 行数是「已加载 / 共」两个数:窗口模式下 shown.total 只是搬进浏览器的那部分,
-// 直接报它等于把"共 13553 行"谎报成"1500 行"。
+// 直接报它等于把"共 13553 行"谎报成"一窗"。
 const countLabel = computed(() => {
   const loaded = shown.value.total
   const total = hasEarlier.value ? Math.max(serverTotal.value, loaded) : loaded

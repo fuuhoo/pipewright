@@ -152,11 +152,12 @@ export function createRunLogBuffer(): RunLogBuffer {
   }
 }
 
-/** 默认只挂最近这么多行:再多的行走「显示更早」分批展开。 */
-export const LOG_TAIL_WINDOW = 1500
+/** 默认只挂最近这么多行:再多的行走「显示更早」分批展开。
+ *  窗口越大 DOM 越多,长日志打开就卡;按 500 行一页折中可读与流畅。 */
+export const LOG_TAIL_WINDOW = 500
 
 /** 每点一次「显示更早」多展开这么多行。 */
-export const LOG_WINDOW_STEP = 1500
+export const LOG_WINDOW_STEP = 500
 
 /** 一帧内新增这么多行以上就不再做淡入动画(几百个动画同时跑比不 anim 更贵)。 */
 export const LOG_ANIMATE_MAX = 200

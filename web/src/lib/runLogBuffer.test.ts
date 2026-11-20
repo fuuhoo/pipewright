@@ -5,6 +5,7 @@ import {
   splitRunLogText,
   logWindowFor,
   LOG_TAIL_WINDOW,
+  LOG_WINDOW_STEP,
 } from './runLogBuffer'
 
 function line(seq: number, over: Partial<RunLogLine> = {}): RunLogLine {
@@ -192,11 +193,11 @@ describe('logWindowFor', () => {
   })
 
   it('「显示更早」按累计展开量前移左边界,展开到底就停在 0', () => {
-    const total = 3000
-    expect(logWindowFor(total, 1500).start).toBe(0)
-    expect(logWindowFor(total, 1200).start).toBe(300)
+    const total = LOG_TAIL_WINDOW * 2
+    expect(logWindowFor(total, LOG_WINDOW_STEP).start).toBe(0)
+    expect(logWindowFor(total, LOG_WINDOW_STEP - 300).start).toBe(300)
     expect(logWindowFor(total, 999_999).start).toBe(0)
-    expect(logWindowFor(total, -5).start).toBe(1500)
+    expect(logWindowFor(total, -5).start).toBe(LOG_TAIL_WINDOW)
   })
 
   it('实时 tail 继续追加时窗口右端始终跟到末尾', () => {
