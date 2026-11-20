@@ -394,6 +394,39 @@ describe('stepCompile', () => {
         expect(compileSteps([back]).commands).toBe(legacy)
       })
     })
+
+    describe('源带通配符(*.jar)', () => {
+      it('安全的通配符路径裸写(与手写命令一致),源不再补 /', () => {
+        // 整段引号会让 shell 不展开 `*`,rsync 报 change_dir ... No such file or directory。
+        expect(copyStepLine('target/*.jar', 'docker/test/', [], 'contents')).toBe(
+          "if command -v rsync >/dev/null 2>&1; then mkdir -p 'docker/test/' && rsync -a target/*.jar 'docker/test/';" +
+            " else mkdir -p 'docker/test/' && cp -a target/*.jar 'docker/test/'; fi",
+        )
+      })
+
+      it('「复制文件」到已有文件夹:和手写 cp 同形,不引号、不 mkdir、不补斜杠', () => {
+        expect(copyStepLine('./target/*.jar', './docker/test', [], 'file')).toBe(
+          "if command -v rsync >/dev/null 2>&1; then rsync -a ./target/*.jar './docker/test';" +
+            " else cp -a ./target/*.jar './docker/test'; fi",
+        )
+        expect(plainCopyLine('./target/*.jar', './docker/test', 'file')).toBe(
+          "cp -a ./target/*.jar './docker/test'",
+        )
+      })
+
+      it('普通段仍加引号(路径里有空格也不拆开)', () => {
+        expect(copyStepLine('my dist/*.jar', 'out', [], 'file')).toContain("rsync -a 'my dist/'*'.jar' 'out'")
+      })
+
+      it('通配符行 round-trip 一字不差,并读回「复制文件」', () => {
+        const line = copyStepLine('target/*.jar', 'docker/test/', [], 'contents')
+        const back = lineToStep(line)
+        expect(back.kind).toBe('copy')
+        expect(back.copySrc).toBe('target/*.jar')
+        expect(back.copyMode).toBe('file')
+        expect(compileSteps([back]).commands).toBe(line)
+      })
+    })
   })
 
   describe('复制 step (plain cp:一行 cp,不升级成 rsync 骨架)', () => {
@@ -405,6 +438,14 @@ describe('stepCompile', () => {
       expect(plainCopyLine('frontend/dist', 'build/out', 'entry')).toBe(
         "mkdir -p 'build/out/' && cp -a 'frontend/dist' 'build/out/'",
       )
+      // 通配符源:安全路径裸写,不补 `/.`
+      const glob = plainCopyLine('target/*.jar', 'docker/test/')
+      expect(glob).toBe("mkdir -p 'docker/test/' && cp -a target/*.jar 'docker/test/'")
+      const back = lineToStep(glob)
+      expect(back.kind).toBe('copy')
+      expect(back.copySrc).toBe('target/*.jar')
+      expect(back.copyMode).toBe('file')
+      expect(compileSteps([back]).commands).toBe(glob)
       // file = 复制文件:目标就是路径,不补斜杠、不 mkdir;自己写 / 才按目录处理。
       expect(plainCopyLine('app.jar', 'out/app-v1.jar', 'file')).toBe("cp -a 'app.jar' 'out/app-v1.jar'")
       expect(plainCopyLine('app.jar', 'out/', 'file')).toBe(
@@ -479,7 +520,6 @@ describe('stepCompile', () => {
       const notCopy = [
         'cp -av src out', // 多一个旗标
         'cp src out', // 没旗标,语义不确定
-        'cp -r src/* out', // 通配
         'cp -a "$SRC" out', // 变量
         'cp -a src out && echo done', // 后面还有一句
         'cp -a src out extra', // 三个参数

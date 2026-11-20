@@ -126,6 +126,41 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+// 路径里的通配符。整段单引号会关掉 shell 展开,rsync/cp 收到字面 `*` 只报
+// `change_dir ... No such file or directory` —— 所以含通配符的 token 必须按段引号。
+const GLOB_PATTERN = /[*?[\]]/
+
+/** 路径是否含通配符(含则不整段引号)。 */
+export function hasGlob(value: string): boolean {
+  return GLOB_PATTERN.test(value)
+}
+
+// 不含空格 / 变量 / 重定向等风险字符的路径可以直接裸写(通配符照常展开,和手写命令一模一样)。
+const SAFE_BARE_PATH = /^[A-Za-z0-9_@%+=:,./*?[\]-]+$/
+
+/**
+ * 路径 token 的 shell 转义:普通路径照旧整段单引号;含通配符的路径只在普通段加引号,
+ * 让 `*` / `?` / `[...]` 露在引号外交给 shell 展开(段内空格仍受引号保护)。
+ * 通配符路径若本身不含风险字符,干脆裸写 —— `./target/*.jar` 与手写命令完全一致。
+ */
+export function shellPathToken(value: string): string {
+  if (!hasGlob(value)) return shellQuote(value)
+  if (!value.startsWith('-') && SAFE_BARE_PATH.test(value)) return value
+  let out = ''
+  let plain = ''
+  for (const ch of value) {
+    if (GLOB_PATTERN.test(ch)) {
+      if (plain) out += shellQuote(plain)
+      plain = ''
+      out += ch
+    } else {
+      plain += ch
+    }
+  }
+  if (plain) out += shellQuote(plain)
+  return out
+}
+
 // 条件守卫单行模板:`if ! ( <cond> ); then echo '…'; exit 0; fi`(set -e 安全;cond 原样,不转义)。
 const COND_GUARD_PREFIX = 'if ! ( '
 const COND_GUARD_SUFFIX = " ); then echo '条件不成立,跳过后续步骤'; exit 0; fi"
@@ -181,6 +216,8 @@ function trimTrailingSlash(p: string): string {
  *       · 目标自己以 `/` 结尾 → 用户明确要放进目录:`mkdir -p 'dest/'` 后复制进去。
  * 有排除项时兜底分支先 echo 一句告警(cp 不吃排除,日志必须说清那几项没生效)。
  * 源尾斜杠归一;file 的目标保留原样(尾斜杠是语义);任一空 → 返回空串。
+ * 源里带通配符(`*.jar` 等)时不再补 `/` 或 `/.` —— 那是「目录内容」的语义,通配符匹配到的
+ * 是文件,补了反而变成不存在的路径;通配符本身也按段引号,交给 shell 展开。
  */
 export function copyStepLine(
   src: string,
@@ -196,16 +233,17 @@ export function copyStepLine(
   const warn = excludes.length ? COPY_WARN : ''
   if (mode === 'file' && !rawDest.endsWith('/')) {
     return (
-      `${COPY_HEAD_ENTRY}${excludeTok}${shellQuote(s)} ${shellQuote(rawDest)}` +
-      `${COPY_ELSE}${warn}${CP_PREFIX}${shellQuote(s)} ${shellQuote(rawDest)}${COPY_TAIL}`
+      `${COPY_HEAD_ENTRY}${excludeTok}${shellPathToken(s)} ${shellQuote(rawDest)}` +
+      `${COPY_ELSE}${warn}${CP_PREFIX}${shellPathToken(s)} ${shellQuote(rawDest)}${COPY_TAIL}`
     )
   }
   const destTok = shellQuote(`${d}/`)
-  const rsyncSrc = mode === 'contents' ? `${s}/` : s
-  const cpSrc = mode === 'contents' ? `${s}/.` : s
+  const contents = mode === 'contents' && !hasGlob(s)
+  const rsyncSrc = contents ? `${s}/` : s
+  const cpSrc = contents ? `${s}/.` : s
   return (
-    `${COPY_HEAD}${destTok}${COPY_RSYNC}${excludeTok}${shellQuote(rsyncSrc)} ${destTok}` +
-    `${COPY_ELSE}${warn}${COPY_MKDIR}${destTok}${COPY_CP}${shellQuote(cpSrc)} ${destTok}${COPY_TAIL}`
+    `${COPY_HEAD}${destTok}${COPY_RSYNC}${excludeTok}${shellPathToken(rsyncSrc)} ${destTok}` +
+    `${COPY_ELSE}${warn}${COPY_MKDIR}${destTok}${COPY_CP}${shellPathToken(cpSrc)} ${destTok}${COPY_TAIL}`
   )
 }
 
@@ -222,11 +260,11 @@ export function plainCopyLine(src: string, dest: string, mode: CopyMode = 'conte
   const d = trimTrailingSlash(rawDest)
   if (!s || !d) return ''
   if (mode === 'file' && !rawDest.endsWith('/')) {
-    return `${CP_PREFIX}${shellQuote(s)} ${shellQuote(rawDest)}`
+    return `${CP_PREFIX}${shellPathToken(s)} ${shellQuote(rawDest)}`
   }
   const destTok = shellQuote(`${d}/`)
-  const cpSrc = mode === 'contents' ? `${s}/.` : s
-  return `${COPY_MKDIR}${destTok}${CP_CONJ}${CP_FLAG} ${shellQuote(cpSrc)} ${destTok}`
+  const cpSrc = mode === 'contents' && !hasGlob(s) ? `${s}/.` : s
+  return `${COPY_MKDIR}${destTok}${CP_CONJ}${CP_FLAG} ${shellPathToken(cpSrc)} ${destTok}`
 }
 
 /**
@@ -382,6 +420,41 @@ function readQuotedToken(s: string, i: number): { value: string; next: number } 
 }
 
 /**
+ * 读源路径 token:shellPathToken 的逆操作 —— 相邻的单引号段与裸露的通配符合起来还原成一个值。
+ * 目标/排除项仍是整段引号,继续走 readQuotedToken。
+ */
+function readSourceToken(s: string, i: number): { value: string; next: number } | null {
+  let k = i
+  let out = ''
+  let any = false
+  while (k < s.length) {
+    if (s[k] === "'") {
+      const tok = readQuotedToken(s, k)
+      if (!tok) return null
+      out += tok.value
+      k = tok.next
+      any = true
+    } else if (GLOB_PATTERN.test(s[k])) {
+      out += s[k]
+      k += 1
+      any = true
+    } else {
+      // 裸路径段(手写的 `cp app.jar out`):吃到空格、引号或通配符为止,
+      // 其余 shell 元字符仍拒(变量 / 重定向 / 管道不是「源」的一部分)。
+      let j = k
+      while (j < s.length && s[j] !== ' ' && s[j] !== "'" && !GLOB_PATTERN.test(s[j])) j += 1
+      const raw = s.slice(k, j)
+      if (!raw) break
+      if (/[$`|&;<>"\\]/.test(raw)) return null
+      out += raw
+      k = j
+      any = true
+    }
+  }
+  return any ? { value: out, next: k } : null
+}
+
+/**
  * 反解析复制步骤:严格按 copyStepLine 的字面骨架逐段吃。
  *   - 无 mkdir 前缀(`then rsync -a 'src' 'dest'; else cp -a 'src' 'dest'; fi`)→ 只可能是
  *     file(复制文件),目标不带尾斜杠、原样使用。
@@ -416,6 +489,12 @@ export function parseCopyLine(line: string): {
     i = tok.next
     return tok
   }
+  const takeSource = (): { value: string } | null => {
+    const tok = readSourceToken(t, i)
+    if (!tok) return null
+    i = tok.next
+    return tok
+  }
   if (t.startsWith(COPY_HEAD)) {
     destMkdir = take()
     if (!destMkdir || !skip(COPY_RSYNC)) return null
@@ -427,7 +506,7 @@ export function parseCopyLine(line: string): {
     excludes.push(e.value)
     if (!skip(' ')) return null
   }
-  const rsyncSrc = take()
+  const rsyncSrc = takeSource()
   if (!rsyncSrc || !skip(' ')) return null
   // 尾斜杠 = 「复制目录内容」;没有 = 「复制文件夹/文件本身」。两种方式的 cp 源据此校验。
   const mode: CopyMode = rsyncSrc.value.endsWith('/') ? 'contents' : 'entry'
@@ -444,7 +523,7 @@ export function parseCopyLine(line: string): {
     // 无 mkdir 形态只代表 entry(源不带尾斜杠);源带斜杠却缺 mkdir 是手写的 contents 变体,
     // 重编译会多出 mkdir,不算原样,退回命令。
     if (mode !== 'entry' || rsyncDest.value.endsWith('/') || !skip(CP_PREFIX)) return null
-    const cpSrc = take()
+    const cpSrc = takeSource()
     if (!cpSrc || cpSrc.value !== srcName || !skip(' ')) return null
     const cpDest = take()
     if (!cpDest || cpDest.value !== rsyncDest.value || !t.startsWith(COPY_TAIL, i)) return null
@@ -454,8 +533,9 @@ export function parseCopyLine(line: string): {
   if (!skip(COPY_MKDIR)) return null
   const destAgain = take()
   if (!destAgain || destAgain.value !== destMkdir.value || !skip(COPY_CP)) return null
-  const cpSrc = take()
-  const expectCpSrc = mode === 'contents' ? `${srcName}/.` : srcName
+  const cpSrc = takeSource()
+  // 源带通配符时生成器不补 `/.`(那是目录内容语义),兜底分支也按原样写回。
+  const expectCpSrc = mode === 'contents' && !hasGlob(srcName) ? `${srcName}/.` : srcName
   if (!cpSrc || cpSrc.value !== expectCpSrc || !skip(' ')) return null
   const cpDest = take()
   if (!cpDest || cpDest.value !== destMkdir.value || !t.startsWith(COPY_TAIL, i)) return null
@@ -516,7 +596,7 @@ export function parsePlainCpLine(line: string): {
   if (space === -1) return null
   if (!CP_FLAGS.has(t.slice(i, space))) return null
   i = space + 1
-  const src = readPathArg(t, i)
+  const src = readSourceToken(t, i)
   if (!src || t[src.next] !== ' ') return null
   const dest = readPathArg(t, src.next + 1)
   // 目标之后不能再有东西(管道、`&&`、注释都算篡改)
@@ -562,6 +642,9 @@ export function lineToStep(line: string): StepBlock {
   const trimmed = line.trim()
   const copy = parseCopyLine(trimmed)
   if (copy) {
+    // 通配符源(如 `target/*.jar`)不存在「目录内容」语义,读回「复制文件」;
+    // 字面骨架与 entry 相同,重编译不会变。
+    const mode = hasGlob(copy.src) ? 'file' : copy.mode
     return {
       id: nextStepId(),
       kind: 'copy',
@@ -569,18 +652,19 @@ export function lineToStep(line: string): StepBlock {
       copyDest: copy.dest,
       copyExcludes: copy.excludes.join(' '),
       // contents 是缺省值,不写进对象(老配置读出的步骤形状保持不变)。
-      ...(copy.mode !== 'contents' ? { copyMode: copy.mode } : {}),
+      ...(mode !== 'contents' ? { copyMode: mode } : {}),
     }
   }
   const plain = parsePlainCpLine(trimmed)
   if (plain) {
+    const mode = hasGlob(plain.src) ? 'file' : plain.mode
     return {
       id: nextStepId(),
       kind: 'copy',
       copyStyle: 'plain',
       copySrc: plain.src,
       copyDest: plain.dest,
-      ...(plain.mode !== 'contents' ? { copyMode: plain.mode } : {}),
+      ...(mode !== 'contents' ? { copyMode: mode } : {}),
     }
   }
   const rename = parseRenameLine(trimmed)
