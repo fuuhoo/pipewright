@@ -40,6 +40,7 @@ import {
 } from '../api/runs'
 import { listServers, type Server } from '../api/servers'
 import { HttpError } from '../api/http'
+import { projectCodeHref } from '../router'
 import { useSessionStore } from '../stores/session'
 import DiagnosisPanel from '../components/run/DiagnosisPanel.vue'
 import SuccessFailDiff from '../components/run/SuccessFailDiff.vue'
@@ -632,6 +633,15 @@ function goBack(): void {
   void router.push({ name: 'runs' })
 }
 
+/** 标题里的项目名可直接跳去该项目的流水线编排。 */
+function goToProjectPipeline(): void {
+  if (!run.value) return
+  void router.push({ name: 'project-pipeline', params: { id: run.value.projectId } })
+}
+
+// 站内代码页地址走路由表解析(项目默认分支),与流水线配置里源节点的「查看源码」同一条链路。
+const sourceCodeHref = computed(() => (run.value ? projectCodeHref(run.value.projectId) : ''))
+
 // ─── Computed step status for skewer node style ───────────────────────────────
 function nodeClass(status: StepStatus): string {
   switch (status) {
@@ -716,7 +726,15 @@ function nodeClass(status: StepStatus): string {
             </span>
 
             <h1 class="detail-title">
-              {{ run.projectName }}
+              <button
+                v-if="session.meets({ perm: 'project.view' })"
+                type="button"
+                class="detail-project-btn"
+                :title="t('runDetail.openPipelineHint')"
+                :aria-label="t('runDetail.openPipelineAria', { name: run.projectName })"
+                @click="goToProjectPipeline"
+              >{{ run.projectName }}</button>
+              <span v-else>{{ run.projectName }}</span>
               <span class="detail-id mono">#{{ shortId(run.id) }}</span>
             </h1>
           </div>
@@ -785,7 +803,17 @@ function nodeClass(status: StepStatus): string {
         <div class="meta-strip">
           <div class="meta-item">
             <span class="meta-key">{{ t('runDetail.metaProject') }}</span>
-            <span class="meta-val">{{ run.projectName }}</span>
+            <span class="meta-val">
+              {{ run.projectName }}
+              <a
+                v-if="sourceCodeHref && session.meets({ perm: 'project.view' })"
+                class="meta-source-link"
+                :href="sourceCodeHref"
+                target="_blank"
+                rel="noopener noreferrer"
+                :title="t('runDetail.viewSourceTitle')"
+              >{{ t('runDetail.viewSourceLabel') }}</a>
+            </span>
           </div>
           <div class="meta-item">
             <span class="meta-key">{{ t('runDetail.metaBranch') }}</span>
@@ -1563,6 +1591,29 @@ function nodeClass(status: StepStatus): string {
   font-weight: 400;
 }
 
+/* 标题里的项目名:点开去该项目的流水线编排,所以做成按钮,但保持标题字重与行内形态。 */
+.detail-project-btn {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.detail-project-btn:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.detail-project-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 /* ─── status pill ────────────────────────────────────────────────────────── */
 .status-pill {
   display: inline-flex;
@@ -1625,6 +1676,25 @@ function nodeClass(status: StepStatus): string {
 .meta-val {
   font-size: 0.83rem;
   color: var(--color-dim);
+}
+
+/* 「项目」那一格的看源码出口:与流水线配置里源节点的链接同口径,新标签打开站内代码页。 */
+.meta-source-link {
+  margin-left: 8px;
+  font-size: 0.76rem;
+  color: var(--color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.meta-source-link:hover {
+  text-decoration: underline;
+}
+
+.meta-source-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 /* 失败且未取到 commit:用失败色,不留纯空白(误导成还在跑)。 */
 .meta-val--failed {
