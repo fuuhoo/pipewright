@@ -923,6 +923,25 @@ const stepCount = computed(() => steps.value.length)
   font-weight: 700;
 }
 
+/* 抽屉只有 360px,两格路径并排各剩 ~150px,长路径看不全 —— 重命名改成上下两行,
+   箭头朝下,整行都归路径;框也加高、字号也放大。 */
+.sb-rename .sb-copy-path {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.sb-rename .sb-arrow {
+  justify-self: center;
+  line-height: 1;
+  transform: rotate(90deg);
+}
+
+.sb-rename .sb-input {
+  height: 36px;
+  padding: 0 11px;
+  font-size: 0.85rem;
+}
+
 .sb-copy-mode {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
