@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -94,21 +94,20 @@ const projectPrefs = ref<ProjectPrefs>(EMPTY_PROJECT_PREFS)
 const orderedProjects = computed(() => rankProjects(projects.value, projectPrefs.value))
 
 // ─── search + filter ─────────────────────────────────────────────────────────
+//
+// 筛选是「这一屏现在怎么看」的工作状态,不是项目的属性,但也不能只活在 ref 里:
+// 从项目切去别的菜单再回来,组件会整个卸载重挂,筛选条件就跟着丢了。所以存
+// sessionStorage —— 切菜单、刷新都还在,新标签页仍从干净的默认值开始。
+// (视图偏好是跨会话的习惯,依旧走 localStorage,两回事。)
+type FilterState = {
+  q: string
+  status: RunStatus | 'all'
+  group: string
+  service: string
+  tags: string[]
+}
 
-const searchQuery = ref('')
-const statusFilter = ref<RunStatus | 'all'>('all')
-
-// 分组筛选:候选是「可见分组」(后端已按名册收敛),未归组单列一档。
-// 用哨兵而不是空串:空串在这里是合法值(它就是「未归组」那一档的 groupId)。
-const groupFilter = ref<string>(GROUP_ALL)
-
-// 归属服务筛选:纯展示维度,和服务端无关(项目列表本来全量取回,这里本地筛)。
-const serviceFilter = ref<string>(SERVICE_ALL)
-
-// 标签筛选:候选是全部项目上用过的标签,同样本地筛;没有任何标签时工具栏不显示这一项。
-// 多选命中任一;空数组即「全部标签」。
-const tagFilter = ref<string[]>([])
-const TAG_OPTIONS = computed(() => allTags(orderedProjects.value))
+const FILTER_STATE_KEY = 'pipewright.projects.filters'
 
 // 状态档位用规范词(后端给什么就筛什么);早前列的是中文标签,
 // 和 lastRunStatus 的 snake_case 永远对不上,选任何一档都是空列表。
@@ -121,6 +120,81 @@ const STATUS_VALUES: RunStatus[] = [
   'rolled_back',
   'queued',
 ]
+
+/** 读回来先过类型:旧版本或手改留下的脏值一律当没设置,免得筛出恒空的列表。 */
+function readFilterState(): Partial<FilterState> {
+  try {
+    const raw = sessionStorage.getItem(FILTER_STATE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as Partial<FilterState>) : {}
+  } catch {
+    // 隐私模式 / 存储被禁用:退回全默认,不影响本次筛选。
+    return {}
+  }
+}
+
+const savedFilters = readFilterState()
+
+const searchQuery = ref(typeof savedFilters.q === 'string' ? savedFilters.q : '')
+const statusFilter = ref<RunStatus | 'all'>(
+  savedFilters.status === 'all' || STATUS_VALUES.some((value) => value === savedFilters.status)
+    ? (savedFilters.status ?? 'all')
+    : 'all',
+)
+
+// 分组筛选:候选是「可见分组」(后端已按名册收敛),未归组单列一档。
+// 用哨兵而不是空串:空串在这里是合法值(它就是「未归组」那一档的 groupId)。
+const groupFilter = ref<string>(
+  typeof savedFilters.group === 'string' && savedFilters.group ? savedFilters.group : GROUP_ALL,
+)
+
+// 归属服务筛选:纯展示维度,和服务端无关(项目列表本来全量取回,这里本地筛)。
+const serviceFilter = ref<string>(
+  typeof savedFilters.service === 'string' && savedFilters.service ? savedFilters.service : SERVICE_ALL,
+)
+
+// 标签筛选:候选是全部项目上用过的标签,同样本地筛;没有任何标签时工具栏不显示这一项。
+// 多选命中任一;空数组即「全部标签」。
+const tagFilter = ref<string[]>(
+  Array.isArray(savedFilters.tags)
+    ? savedFilters.tags.filter((tag): tag is string => typeof tag === 'string' && tag !== '')
+    : [],
+)
+const TAG_OPTIONS = computed(() => allTags(orderedProjects.value))
+
+watch([searchQuery, statusFilter, groupFilter, serviceFilter, tagFilter], () => {
+  const state: FilterState = {
+    q: searchQuery.value,
+    status: statusFilter.value,
+    group: groupFilter.value,
+    service: serviceFilter.value,
+    tags: [...tagFilter.value],
+  }
+  try {
+    sessionStorage.setItem(FILTER_STATE_KEY, JSON.stringify(state))
+  } catch {
+    // 存不下不影响这次筛选。
+  }
+})
+
+const hasActiveFilters = computed(
+  () =>
+    searchQuery.value.trim() !== '' ||
+    statusFilter.value !== 'all' ||
+    groupFilter.value !== GROUP_ALL ||
+    serviceFilter.value !== SERVICE_ALL ||
+    tagFilter.value.length > 0,
+)
+
+/** 一键清除:搜索、状态、分组、服务、标签一起归位;视图模式不是筛选,不动。 */
+function clearFilters(): void {
+  searchQuery.value = ''
+  statusFilter.value = 'all'
+  groupFilter.value = GROUP_ALL
+  serviceFilter.value = SERVICE_ALL
+  tagFilter.value = []
+}
 
 const STATUS_OPTIONS = computed<Array<{ value: RunStatus | 'all'; label: string }>>(() => [
   { value: 'all', label: t('projects.statusAll') },
@@ -199,6 +273,8 @@ const canViewRuns = computed(() => sessionStore.canPerm('run.view'))
 async function loadGroups(): Promise<void> {
   try {
     groups.value = await listGroups()
+    // 会话里存下的分组可能已被删掉或不再可见:留着一个选不中的值等于筛出空列表。
+    if (!GROUP_OPTIONS.value.some((opt) => opt.value === groupFilter.value)) groupFilter.value = GROUP_ALL
   } catch {
     // 分组读不到不影响项目列表本身:归属列退化成「未归组」,不弹错误横幅。
     groups.value = []
@@ -223,6 +299,7 @@ const SERVICE_OPTIONS = computed(() =>
 async function loadServices(): Promise<void> {
   try {
     services.value = await listServices()
+    if (!SERVICE_OPTIONS.value.some((opt) => opt.value === serviceFilter.value)) serviceFilter.value = SERVICE_ALL
   } catch {
     // 服务读不到不影响项目列表:卡片退化成「未归属」,筛选只剩全部 / 未归属。
     services.value = []
@@ -397,6 +474,12 @@ async function loadProjects(): Promise<void> {
   loadError.value = ''
   try {
     projects.value = await listProjects()
+    // 存下的标签可能因为项目删除/改标签而不复存在,剪掉它,别让列表无声地恒空。
+    if (tagFilter.value.length) {
+      const live = new Set(TAG_OPTIONS.value.map((tag) => tag.toLowerCase()))
+      const pruned = tagFilter.value.filter((tag) => live.has(tag.toLowerCase()))
+      if (pruned.length !== tagFilter.value.length) tagFilter.value = pruned
+    }
     loadState.value = 'idle'
   } catch (err) {
     if (err instanceof HttpError) {
@@ -1446,6 +1529,19 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
         </button>
       </div>
 
+      <!-- 一键清除:只有真有筛选时才出现,平时不占工具栏位置 -->
+      <button
+        v-if="hasActiveFilters"
+        type="button"
+        class="filter-clear"
+        @click="clearFilters"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+        {{ t('projects.clearFilter') }}
+      </button>
+
       <!-- 视图切换:卡片铺开 / 按组折叠。放在工具栏最右,和「这一页怎么看」的位置一致。 -->
       <div class="filter-tabs view-toggle" role="group" :aria-label="t('projects.viewModeAria')">
         <button
@@ -1525,7 +1621,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
         <p class="empty-hint">{{ t('projects.noMatchHint') }}</p>
         <button
           class="btn-secondary"
-          @click="searchQuery = ''; statusFilter = 'all'; groupFilter = GROUP_ALL; serviceFilter = SERVICE_ALL; tagFilter = []"
+          @click="clearFilters"
         >{{ t('projects.clearFilter') }}</button>
       </div>
     </template>
@@ -1534,7 +1630,7 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
     <template v-else-if="loadState === 'idle'">
       <p class="result-count" aria-live="polite">
         {{ t('projects.resultCount', { n: filteredProjects.length }) }}
-        <template v-if="searchQuery || statusFilter !== 'all' || groupFilter !== GROUP_ALL || serviceFilter !== SERVICE_ALL || tagFilter.length">
+        <template v-if="hasActiveFilters">
           {{ t('projects.resultCountTotal', { total: projects.length }) }}
         </template>
       </p>
@@ -2913,6 +3009,34 @@ async function onCopied(created: CopiedProject[]): Promise<void> {
 }
 
 .filter-tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* 一键清除:条件性出现,不与状态档的胶囊混在一起 */
+.filter-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--rounded);
+  background: transparent;
+  color: var(--color-faint);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+
+.filter-clear:hover {
+  color: var(--color-red);
+  border-color: var(--color-border);
+}
+
+.filter-clear:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
