@@ -138,6 +138,34 @@ describe('StepBuilder 步骤间插入', () => {
     }
   })
 
+  it('点击外部收起菜单,点菜单本身不抢在选项之前收起', async () => {
+    const { wrapper, host } = mountBuilder()
+    try {
+      const menu = await openInsertMenu(wrapper, 1)
+      // 菜单内的 pointerdown 不能把菜单先收掉,否则选项的 click 落空
+      menu
+        .findAll('.sb-add-item')[0]
+        .element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+      await nextTick()
+      expect(wrapper.findAll('.sb-insert-menu').length).toBe(1)
+
+      // 「加步骤」与步骤间菜单互斥:开一个,另一个让位
+      await wrapper.find('.sb-add-btn').trigger('click')
+      await nextTick()
+      expect(wrapper.findAll('.sb-insert-menu').length).toBe(0)
+      expect(wrapper.findAll('.sb-add-menu').length).toBe(1)
+
+      // 点外部(这里是 body)收起剩下的那张,且没有误加步骤
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+      await nextTick()
+      expect(wrapper.findAll('.sb-add-menu').length).toBe(0)
+      expect(wrapper.find('.sb-add-btn').attributes('aria-expanded')).toBe('false')
+      expect(wrapper.findAll('.sb-step').length).toBe(3)
+    } finally {
+      host.remove()
+    }
+  })
+
   it('gives a fresh node a step to start from, with a strip above and below it', () => {
     const { wrapper, host } = mountBuilder({})
     try {

@@ -10,7 +10,7 @@
  * 「步骤」那部分,把 commands 这一个键回传。产物目录是节点的固定属性(档位=产物时表单里
  * 始终有这一格),不在「加步骤」里。
  */
-import { ref, watch, computed, nextTick } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   type StepBlock,
@@ -131,6 +131,22 @@ interface StepOption {
 
 const addMenuOpen = ref(false)
 
+function toggleAddMenu(): void {
+  addMenuOpen.value = !addMenuOpen.value
+  if (addMenuOpen.value) insertMenuIndex.value = null
+}
+
+/** 菜单点到自身以外就收起。用 pointerdown 不用 click:选项自己的 click 必须先跑完;菜单与按钮本身要排除。 */
+function closeMenusOnOutside(e: Event): void {
+  const el = e.target as Element | null
+  if (el?.closest?.('.sb-add-menu, .sb-add-btn, .sb-insert-menu, .sb-insert-btn')) return
+  addMenuOpen.value = false
+  insertMenuIndex.value = null
+}
+
+onMounted(() => document.addEventListener('pointerdown', closeMenusOnOutside, true))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', closeMenusOnOutside, true))
+
 const addOptions = computed<ReadonlyArray<StepOption>>(() => [
   { key: 'command', kind: 'command', label: STEP_KIND_META.command.label, desc: t('pipelineJob.sbAddCommandDesc') },
   { key: 'env', kind: 'env', label: STEP_KIND_META.env.label, desc: t('pipelineJob.sbAddEnvDesc') },
@@ -169,6 +185,7 @@ const insertMenuIndex = ref<number | null>(null)
 
 function toggleInsertMenu(index: number): void {
   insertMenuIndex.value = insertMenuIndex.value === index ? null : index
+  if (insertMenuIndex.value !== null) addMenuOpen.value = false
 }
 
 function insertFromMenu(index: number, opt: StepOption): void {
@@ -582,7 +599,7 @@ const stepCount = computed(() => steps.value.length)
         class="sb-add-btn"
         :class="{ 'sb-add-btn--open': addMenuOpen }"
         :aria-expanded="addMenuOpen"
-        @click="addMenuOpen = !addMenuOpen"
+        @click="toggleAddMenu"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
         {{ t('pipelineJob.sbAddStep') }}
