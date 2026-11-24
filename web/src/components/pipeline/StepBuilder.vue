@@ -910,33 +910,24 @@ const stepCount = computed(() => steps.value.length)
   flex: 1 1 200px;
 }
 
+/* 抽屉只有 360px,两格路径并排各剩 ~150px,长路径看不全 —— 源、目标改成上下两行,
+   箭头朝下,整行都归路径;框也加高、字号也放大。复制与重命名共用这一套。 */
 .sb-copy-path {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
 }
 
 .sb-arrow {
   color: var(--color-faint);
   font-family: var(--font-mono);
   font-weight: 700;
-}
-
-/* 抽屉只有 360px,两格路径并排各剩 ~150px,长路径看不全 —— 重命名改成上下两行,
-   箭头朝下,整行都归路径;框也加高、字号也放大。 */
-.sb-rename .sb-copy-path {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
-}
-
-.sb-rename .sb-arrow {
   justify-self: center;
   line-height: 1;
   transform: rotate(90deg);
 }
 
-.sb-rename .sb-input {
+.sb-copy-path .sb-input {
   height: 36px;
   padding: 0 11px;
   font-size: 0.85rem;
