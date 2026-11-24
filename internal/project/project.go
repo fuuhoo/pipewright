@@ -451,7 +451,8 @@ func (s *service) ListPaged(ctx context.Context, page, pageSize int, visible acc
 	if where != "" {
 		listSQL += " WHERE " + where
 	}
-	listSQL += " ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?"
+	// 新建与修改同权:最近动过的项目排最前,复制出来的副本也就落在第一位。
+	listSQL += " ORDER BY p.updated_at DESC, p.created_at DESC, p.id LIMIT ? OFFSET ?"
 	listArgs := append(append([]any{}, whereArgs...), pageSize, offset)
 	rows, err := s.db.QueryContext(ctx, listSQL, listArgs...)
 	if err != nil {

@@ -109,6 +109,37 @@ func TestCreateAndList(t *testing.T) {
 	}
 }
 
+// TestListOrdersByRecentChange 新建与修改同权:最近建/改的项目排最前,新建副本落在第一位。
+func TestListOrdersByRecentChange(t *testing.T) {
+	db := testDB(t)
+	svc := New(db, nil, &stubProber{})
+	for _, row := range []struct{ id, name, created, updated string }{
+		{"p-old", "老项目", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"},
+		{"p-new", "新项目", "2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z"},
+		{"p-bumped", "改过的", "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z"},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO projects (id, name, repo_url, default_branch, credential_id, created_at, updated_at)
+			 VALUES (?, ?, '', '', NULL, ?, ?)`,
+			row.id, row.name, row.created, row.updated); err != nil {
+			t.Fatalf("seed %s: %v", row.id, err)
+		}
+	}
+
+	list, err := svc.List(context.Background(), access.ListFilter{Unrestricted: true})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := make([]string, 0, len(list))
+	for _, p := range list {
+		got = append(got, p.ID)
+	}
+	want := []string{"p-bumped", "p-new", "p-old"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("List 顺序 = %v, want %v", got, want)
+	}
+}
+
 // TestServiceAssignment 覆盖归属服务的落库、展示名 join、非法引用与取消归属。
 func TestServiceAssignment(t *testing.T) {
 	db := testDB(t)

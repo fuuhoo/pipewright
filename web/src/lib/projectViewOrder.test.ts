@@ -8,14 +8,19 @@ describe('rankProjects', () => {
     expect(rankProjects(projects, EMPTY_PROJECT_PREFS).map((p) => p.id)).toEqual(['p1', 'p2', 'p3', 'p4'])
   })
 
-  it('按保存的顺序排,没排过的保持入参顺序垫底', () => {
+  it('按保存的顺序排,没排过的保持入参顺序置顶', () => {
     const out = rankProjects(projects, { order: ['p3', 'p1'] })
-    expect(out.map((p) => p.id)).toEqual(['p3', 'p1', 'p2', 'p4'])
+    expect(out.map((p) => p.id)).toEqual(['p2', 'p4', 'p3', 'p1'])
+  })
+
+  it('新复制出来的项目即使已有自定义顺序也排最前', () => {
+    const out = rankProjects([{ id: 'copy' }, ...projects], { order: ['p3', 'p1', 'p2', 'p4'] })
+    expect(out.map((p) => p.id)).toEqual(['copy', 'p3', 'p1', 'p2', 'p4'])
   })
 
   it('认不出的 id 被忽略,不会顶掉真项目', () => {
     const out = rankProjects(projects, { order: ['gone', 'p4'] })
-    expect(out.map((p) => p.id)).toEqual(['p4', 'p1', 'p2', 'p3'])
+    expect(out.map((p) => p.id)).toEqual(['p1', 'p2', 'p3', 'p4'])
   })
 })
 

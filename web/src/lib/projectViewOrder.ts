@@ -3,7 +3,7 @@
  *
  * 和 serverViewOrder(容器页主机卡片)同一口径:这里只做排序,不判权限也不取数。
  * 列表存的是项目 ID —— 项目改名、改状态都不影响先后;order 里查不到的(新建的、
- * 别人建的)保持默认顺序沉到末尾。
+ * 复制出来的、别人建的)按后端默认顺序排在最前,免得新项目被埋到自定义顺序末尾。
  */
 
 /** 落点:拖到目标卡片上半 = 排在它前面,下半 = 排在它后面。 */
@@ -20,13 +20,12 @@ export function hasCustomOrder(prefs: ProjectPrefs): boolean {
   return prefs.order.length > 0
 }
 
-/** 卡片顺序 = 按 saved order 排,没排过的保持入参顺序垫底。 */
+/** 卡片顺序 = 没排过的(新项目/副本)按入参顺序置顶,其余按 saved order。 */
 export function rankProjects<T extends { id: string }>(projects: readonly T[], prefs: ProjectPrefs): T[] {
   if (!hasCustomOrder(prefs)) return [...projects]
   const orderAt = new Map(prefs.order.map((id, i) => [id, i] as const))
-  const tail = Number.MAX_SAFE_INTEGER
   return projects
-    .map((p, i) => ({ p, i, at: orderAt.get(p.id) ?? tail }))
+    .map((p, i) => ({ p, i, at: orderAt.get(p.id) ?? -1 }))
     .sort((a, b) => a.at - b.at || a.i - b.i)
     .map((x) => x.p)
 }
