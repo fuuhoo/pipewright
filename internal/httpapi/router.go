@@ -956,7 +956,7 @@ func New(webFS fs.FS, authn auth.Authenticator, opts ...Option) http.Handler {
 		// 手动触发创建运行(Story 3.2):认证 + CSRF;actor=admin;返 201 run-detail DTO。
 		// o.parameters 非 nil 时,据项目参数定义校验 + 强转 + 填默认(typed params,P0);无定义则透传。
 		// 可选 serverId:只接受该项目流水线部署节点配置过且本次可见的主机(仅记录,不改落点)。
-		ar.Post("/projects/{id}/runs", makeManualRunHandler(rs, o.parameters, aud, p, o.servers, o.access))
+		ar.Post("/projects/{id}/runs", makeManualRunHandler(rs, o.parameters, aud, o.vault, p, o.servers, o.access, o.refsLister))
 		// 手动触发弹窗的候选主机:该流水线部署节点配置过 ∩ 本次可见,按配置顺序。
 		ar.Get("/projects/{id}/run-hosts", makeRunHostsHandler(p, o.servers, o.access))
 

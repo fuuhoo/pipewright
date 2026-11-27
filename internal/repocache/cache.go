@@ -228,7 +228,14 @@ func (c *Cache) ListRefs(ctx context.Context, repoURL, username, token string) (
 	}
 	if tIter, terr := repo.Tags(); terr == nil {
 		_ = tIter.ForEach(func(r *plumbing.Reference) error {
-			out.Tags = append(out.Tags, Ref{Name: r.Name().Short(), Commit: r.Hash().String(), IsTag: true})
+			commit := r.Hash()
+			// 注解 tag 的 ref 指向 tag object,不是 commit;下拉与触发解析必须 peel 到真实提交。
+			if tag, terr := repo.TagObject(r.Hash()); terr == nil {
+				if target, cerr := tag.Commit(); cerr == nil {
+					commit = target.Hash
+				}
+			}
+			out.Tags = append(out.Tags, Ref{Name: r.Name().Short(), Commit: commit.String(), IsTag: true})
 			return nil
 		})
 	}

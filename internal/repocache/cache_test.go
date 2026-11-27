@@ -130,6 +130,41 @@ func TestListRefs(t *testing.T) {
 	}
 }
 
+func TestListRefsPeelsAnnotatedTagToCommit(t *testing.T) {
+	src, _ := makeSourceRepo(t)
+	repo, err := gogit.PlainOpen(src)
+	if err != nil {
+		t.Fatalf("open source: %v", err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	sig := &object.Signature{Name: "t", Email: "t@x", When: time.Now()}
+	if _, err := repo.CreateTag("v-light", head.Hash(), nil); err != nil {
+		t.Fatalf("create lightweight tag: %v", err)
+	}
+	if _, err := repo.CreateTag("v-annotated", head.Hash(), &gogit.CreateTagOptions{
+		Tagger:  sig,
+		Message: "release",
+	}); err != nil {
+		t.Fatalf("create annotated tag: %v", err)
+	}
+
+	refs, err := newTestCache(t).ListRefs(context.Background(), src, "", "")
+	if err != nil {
+		t.Fatalf("ListRefs: %v", err)
+	}
+	if len(refs.Tags) != 2 {
+		t.Fatalf("tags = %+v, want two", refs.Tags)
+	}
+	for _, tag := range refs.Tags {
+		if tag.Commit != head.Hash().String() {
+			t.Fatalf("tag %s commit = %s, want peeled commit %s", tag.Name, tag.Commit, head.Hash())
+		}
+	}
+}
+
 func TestListCommits(t *testing.T) {
 	src, _ := makeSourceRepo(t)
 	addCommit(t, src, "a.txt", "a")

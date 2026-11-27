@@ -14,6 +14,7 @@ import (
 	"github.com/fuuhoo/pipewright/internal/run"
 	"github.com/fuuhoo/pipewright/internal/target"
 	"github.com/fuuhoo/pipewright/internal/trigger"
+	"github.com/fuuhoo/pipewright/internal/vault"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -108,13 +109,14 @@ func makeWebhookHandler(rc *trigger.Receiver) http.HandlerFunc {
 }
 
 // makeManualRunHandler 返回 POST /api/projects/{id}/runs handler(认证 + CSRF;手动触发）。
-// body {branch, commit?, serverId?, params?};actor=admin;成功 → 201 冻结 run-detail DTO。
+// body {branch, commit?, tag?, serverId?, params?};actor=admin;成功 → 201 冻结 run-detail DTO。
+// tag 与 commit 互斥;指定 tag 时解析为固定 commit SHA,保证发布代码不受后续分支/tag 移动影响。
 // serverId 只在「该流水线部署节点配置过 + 本次请求可见」时接受,仅作运行记录标注,
 // 不改变部署落点;不合法 → 422 invalid_server,不创建运行。
-// 成功后追加 run_trigger_manual 审计(detail 记分支/commit/主机/运行 id)。
+// 成功后追加 run_trigger_manual 审计(detail 记分支/commit/tag/主机/运行 id)。
 func makeManualRunHandler(
 	svc run.Service, params run.ParameterService, aud audit.Recorder,
-	projects project.Service, servers target.Service, acc *access.Service,
+	v vault.Vault, projects project.Service, servers target.Service, acc *access.Service, refs RefsLister,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
@@ -126,6 +128,7 @@ func makeManualRunHandler(
 		var req struct {
 			Branch   string            `json:"branch"`
 			Commit   string            `json:"commit"`
+			Tag      string            `json:"tag"`
 			ServerID string            `json:"serverId"`
 			Params   map[string]string `json:"params"`
 		}
@@ -136,6 +139,46 @@ func makeManualRunHandler(
 		// 分支可选:留空时由 run.Service.Create 取项目默认分支(项目已知默认分支,系统自动解析)。
 		branch := strings.TrimSpace(req.Branch)
 		commit := strings.TrimSpace(req.Commit)
+		tag := strings.TrimSpace(req.Tag)
+		if tag != "" && commit != "" {
+			writeError(w, http.StatusUnprocessableEntity, "conflicting_ref", "tag 与 commit 不能同时指定")
+			return
+		}
+		if tag != "" {
+			if projects == nil || refs == nil {
+				writeError(w, http.StatusServiceUnavailable, "repocache_disabled", "代码管理区未启用,无法解析 tag")
+				return
+			}
+			proj, perr := projects.Get(r.Context(), id)
+			if perr != nil {
+				writeProjectError(w, perr)
+				return
+			}
+			if !repoBound(w, proj) {
+				return
+			}
+			username, token := "", ""
+			if v != nil && strings.TrimSpace(proj.CredentialID) != "" {
+				if auth, terr := v.GetGitAuth(proj.CredentialID); terr == nil {
+					username, token = auth.Username, auth.Token
+				}
+			}
+			repoRefs, rerr := refs.ListRefs(r.Context(), proj.RepoURL, username, token)
+			if rerr != nil || repoRefs == nil {
+				writeError(w, http.StatusBadGateway, "refs_unavailable", "无法读取仓库 tag(仓库不可达或凭据无效)")
+				return
+			}
+			for _, candidate := range repoRefs.Tags {
+				if candidate.Name == tag {
+					commit = strings.TrimSpace(candidate.Commit)
+					break
+				}
+			}
+			if commit == "" {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_tag", "指定 tag 不存在")
+				return
+			}
+		}
 		// 主机可选:留空 = 不指定。指定时必须是流水线配置过的候选(且可见),否则 422。
 		serverID := strings.TrimSpace(req.ServerID)
 		serverName := ""
@@ -190,7 +233,7 @@ func makeManualRunHandler(
 			Action:     audit.ActionRunTriggerManual,
 			TargetType: audit.TargetRun,
 			TargetID:   rn.ID,
-			Detail:     map[string]any{"projectId": id, "branch": branch, "commit": commit, "serverId": serverID, "serverName": serverName, "paramCount": len(runParams)},
+			Detail:     map[string]any{"projectId": id, "branch": branch, "commit": commit, "tag": tag, "serverId": serverID, "serverName": serverName, "paramCount": len(runParams)},
 			IP:         clientIP(r),
 		})
 		// 刚创建(queued)的运行尚无产物/无部署;nil → []/null。产物在成功路径由 worker emit、部署经 deploy 端点。
