@@ -749,7 +749,8 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <!-- 状态筛选段 + 文本搜索(均作用于各卡片的容器 tab) -->
+      <!-- 状态筛选段 + 视图切换 + 分组/每页 + 搜索,统一排成一行工具栏:
+           搜索框 flex-grow 吃掉剩余宽度,右侧控件因此不会再被挤到第二行中间空出一段。 -->
       <div class="controls-row">
         <div class="filter-bar" role="group" :aria-label="t('containers.filterAria')">
           <button
@@ -764,77 +765,75 @@ onUnmounted(() => {
             <span class="filter-chip__count">{{ filterCount(f.key) }}</span>
           </button>
         </div>
-        <div class="controls-right">
-          <!-- 视图切换:同一份逐台聚合结果,按机器摊 or 按 compose 项目摊(后者看得见一条栈铺了几台) -->
-          <div class="view-switch" role="group" :aria-label="t('containers.viewAria')">
-            <button
-              class="filter-chip"
-              :class="{ 'filter-chip--active': viewMode === HOST_VIEW }"
-              :aria-pressed="viewMode === HOST_VIEW"
-              @click="viewMode = HOST_VIEW"
-            >
-              {{ t('containers.viewHost') }}
-              <span class="filter-chip__count">{{ scopeGroups.length }}</span>
-            </button>
-            <button
-              class="filter-chip"
-              :class="{ 'filter-chip--active': viewMode === STACK_VIEW }"
-              :aria-pressed="viewMode === STACK_VIEW"
-              @click="viewMode = STACK_VIEW"
-            >
-              {{ t('containers.viewStack') }}
-              <span class="filter-chip__count">{{ stackCount }}</span>
-            </button>
-          </div>
-          <!-- 宿主分组筛选:容器跟宿主走,所以这一档切的是「哪几台机器的容器」 -->
-          <div v-if="groupsLoaded" class="group-filter">
-            <select v-model="groupFilter" class="group-filter__select" :aria-label="t('groups.filterAria')">
-              <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-            </select>
-            <svg class="group-filter__arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-              <path d="M6 9l6 6 6-6"/>
-            </svg>
-          </div>
-          <div class="page-size">
-            <span class="page-size__label">{{ t('containers.pageSizeLabel') }}</span>
-            <select v-model.number="pageSize" class="page-size__select" :aria-label="t('containers.pageSizeAria')">
-              <option v-for="n in PAGE_SIZE_OPTIONS" :key="n" :value="n">
-                {{ n === PAGE_ALL ? t('containers.pageSizeAll') : n }}
-              </option>
-            </select>
-          </div>
-          <div class="search-box">
-            <input
-              v-model="searchText"
-              type="search"
-              class="search-box__input"
-              :placeholder="t('containers.searchPlaceholder')"
-              :aria-label="t('containers.searchAria')"
-            />
-            <button v-if="searchText" class="search-box__clear" :title="t('containers.searchClear')" @click="searchText = ''">✕</button>
-          </div>
-          <!-- 拖过序就再也回不到「在线的在前、离线的沉底」了,所以给一个反悔的出口(置顶保留) -->
+        <!-- 视图切换:同一份逐台聚合结果,按机器摊 or 按 compose 项目摊(后者看得见一条栈铺了几台) -->
+        <div class="view-switch" role="group" :aria-label="t('containers.viewAria')">
           <button
-            v-if="viewMode === HOST_VIEW && hasHostOrder"
-            class="order-reset"
-            type="button"
-            :title="t('containers.resetOrderTitle')"
-            @click="resetHostOrder"
+            class="filter-chip"
+            :class="{ 'filter-chip--active': viewMode === HOST_VIEW }"
+            :aria-pressed="viewMode === HOST_VIEW"
+            @click="viewMode = HOST_VIEW"
           >
-            {{ t('containers.resetOrder') }}
+            {{ t('containers.viewHost') }}
+            <span class="filter-chip__count">{{ scopeGroups.length }}</span>
           </button>
-          <!-- 机器 / 栈 一多,逐个点折叠太累:一档开关按当前范围整体收起/放开 -->
           <button
-            v-if="foldableKeys.length > 1"
-            class="fold-all"
-            type="button"
-            :aria-pressed="allFolded"
-            :title="t(allFolded ? 'containers.unfoldAll' : 'containers.foldAll')"
-            @click="foldAll"
+            class="filter-chip"
+            :class="{ 'filter-chip--active': viewMode === STACK_VIEW }"
+            :aria-pressed="viewMode === STACK_VIEW"
+            @click="viewMode = STACK_VIEW"
           >
-            {{ t(allFolded ? 'containers.unfoldAll' : 'containers.foldAll') }}
+            {{ t('containers.viewStack') }}
+            <span class="filter-chip__count">{{ stackCount }}</span>
           </button>
         </div>
+        <!-- 宿主分组筛选:容器跟宿主走,所以这一档切的是「哪几台机器的容器」 -->
+        <div v-if="groupsLoaded" class="group-filter">
+          <select v-model="groupFilter" class="group-filter__select" :aria-label="t('groups.filterAria')">
+            <option v-for="opt in GROUP_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <svg class="group-filter__arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </div>
+        <div class="page-size">
+          <span class="page-size__label">{{ t('containers.pageSizeLabel') }}</span>
+          <select v-model.number="pageSize" class="page-size__select" :aria-label="t('containers.pageSizeAria')">
+            <option v-for="n in PAGE_SIZE_OPTIONS" :key="n" :value="n">
+              {{ n === PAGE_ALL ? t('containers.pageSizeAll') : n }}
+            </option>
+          </select>
+        </div>
+        <div class="search-box">
+          <input
+            v-model="searchText"
+            type="search"
+            class="search-box__input"
+            :placeholder="t('containers.searchPlaceholder')"
+            :aria-label="t('containers.searchAria')"
+          />
+          <button v-if="searchText" class="search-box__clear" :title="t('containers.searchClear')" @click="searchText = ''">✕</button>
+        </div>
+        <!-- 拖过序就再也回不到「在线的在前、离线的沉底」了,所以给一个反悔的出口(置顶保留) -->
+        <button
+          v-if="viewMode === HOST_VIEW && hasHostOrder"
+          class="order-reset"
+          type="button"
+          :title="t('containers.resetOrderTitle')"
+          @click="resetHostOrder"
+        >
+          {{ t('containers.resetOrder') }}
+        </button>
+        <!-- 机器 / 栈 一多,逐个点折叠太累:一档开关按当前范围整体收起/放开 -->
+        <button
+          v-if="foldableKeys.length > 1"
+          class="fold-all"
+          type="button"
+          :aria-pressed="allFolded"
+          :title="t(allFolded ? 'containers.unfoldAll' : 'containers.foldAll')"
+          @click="foldAll"
+        >
+          {{ t(allFolded ? 'containers.unfoldAll' : 'containers.foldAll') }}
+        </button>
       </div>
 
       <!-- 批量操作条 -->
@@ -1022,30 +1021,37 @@ onUnmounted(() => {
   color: var(--color-warn);
 }
 
-/* 筛选段 + 搜索同一行 */
+/* 一行工具栏:状态段 → 视图/分组/每页 → 搜索(吃掉剩余宽度)→ 折叠开关。
+   搜索是唯一的弹性项,右侧控件因此永远贴着右边缘,不会被挤成第二行、中间空一大块。 */
 .controls-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-/* 状态筛选段 */
-.filter-bar {
-  display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-/* 右侧一组:文本搜索 + 一键折叠 */
-.controls-right {
+/* 这一行的五种控件(状态胶囊 / 视图胶囊 / 两个下拉 / 搜索 / 折叠键)统一 34px 高:
+   差 2px 就会被读成「没对齐」,而这排本来就靠对齐才显得是一组。 */
+.filter-chip,
+.group-filter__select,
+.page-size,
+.search-box__input,
+.fold-all,
+.order-reset {
+  height: 34px;
+}
+
+/* 状态筛选段:右侧多留一档间距 —— 状态胶囊和视图胶囊是同样式,挨在一起会读成一片。
+   间距挂在段尾而不是视图段的段首,换行时才不会把第二行整体缩进。 */
+.filter-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  margin-right: 14px;
 }
-/* 视图切换(按主机 / 按 Stack):同一份数据的两种切法,放在同一行展示控件的最前 */
+
+/* 视图切换(按主机 / 按 Stack):同一份数据的两种切法。 */
 .view-switch {
   display: inline-flex;
   align-items: center;
@@ -1059,7 +1065,7 @@ onUnmounted(() => {
 }
 .group-filter__select {
   width: 100%;
-  padding: 7px 30px 7px 13px;
+  padding: 0 30px 0 13px;
   font-family: inherit;
   font-size: var(--text-label);
   color: var(--color-text);
@@ -1088,7 +1094,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  padding: 5px 11px;
+  padding: 0 11px;
   border: 1px solid var(--color-border);
   border-radius: 999px;
   background: var(--color-card);
@@ -1115,7 +1121,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: var(--text-label);
   font-weight: 600;
-  padding: 7px 13px;
+  padding: 0 13px;
   border-radius: 999px;
   border: 1px solid var(--color-border-strong);
   background: transparent;
@@ -1130,17 +1136,18 @@ onUnmounted(() => {
   border-color: var(--color-text);
 }
 
-/* 文本搜索 */
+/* 文本搜索:这一行唯一的弹性项,吃掉状态段和折叠键之间的剩余宽度,
+   右侧控件才不会被顶到第二行、中间留下一道空洞。 */
 .search-box {
   position: relative;
   display: inline-flex;
   align-items: center;
-  flex: 0 1 320px;
+  flex: 1 1 260px;
   min-width: 200px;
 }
 .search-box__input {
   width: 100%;
-  padding: 7px 30px 7px 13px;
+  padding: 0 30px 0 13px;
   font-size: var(--text-label);
   color: var(--color-text);
   background: var(--color-card);
