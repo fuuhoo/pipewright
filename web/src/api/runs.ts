@@ -327,6 +327,8 @@ export function submitDiagnosisFeedback(
 export interface TriggerManualInput {
   branch?: string
   commit?: string
+  /** 可选 Git tag;指定后固定发布该 tag 对应的提交,与 commit 互斥。 */
+  tag?: string
   /** 手动触发选定的主机(可选;候选见 listRunHosts)。 */
   serverId?: string
   /** Parameterized run (Story 8-11): key=value injected as container env (PW_<KEY>). */

@@ -102,7 +102,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
       type="button"
       class="ref-picker__trigger"
       :disabled="disabled || !hasOptions"
-      :aria-label="branchesLabel"
+      :aria-label="branches.length ? branchesLabel : tagsLabel"
       tabindex="-1"
       @click="toggle"
     >

@@ -96,6 +96,26 @@ describe('TriggerRunModal', () => {
     expect(triggerManual).toHaveBeenCalledWith('p-1', { branch: 'main' })
   })
 
+  it('submits an optional tag and clears the conflicting commit', async () => {
+    listRefs.mockResolvedValue({
+      branches: [{ name: 'main' }, { name: 'release' }],
+      tags: [{ name: 'v1.2.3', commit: 'abc123' }],
+    })
+    const wrapper = mountModal()
+    await flushPromises()
+
+    await wrapper.get('#trigger-commit').setValue('abc123')
+    await wrapper.get('#trigger-tag').setValue('v1.2.3')
+
+    expect((wrapper.get('#trigger-commit').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#trigger-commit').element as HTMLInputElement).disabled).toBe(true)
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(triggerManual).toHaveBeenCalledWith('p-1', { branch: 'main', tag: 'v1.2.3' })
+  })
+
   it('keeps the dialog open and shows the error when the run request fails', async () => {
     triggerManual.mockRejectedValueOnce(new Error('boom'))
     const wrapper = mountModal()

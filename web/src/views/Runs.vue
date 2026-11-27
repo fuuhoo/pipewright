@@ -7,10 +7,12 @@ import RunParamsEditor from '../components/RunParamsEditor.vue'
 import TypedRunParams from '../components/TypedRunParams.vue'
 import { getParameters, validateParamValues, type ParamDef } from '../api/parameters'
 import { listProjects, type Project } from '../api/projects'
+import { listRefs } from '../api/refs'
 import { listGroups, type Group } from '../api/groups'
 import { listServices, type Service } from '../api/services'
 import { HttpError } from '../api/http'
 import ProjectPicker from '../components/projects/ProjectPicker.vue'
+import RefPicker from '../components/projects/RefPicker.vue'
 import AppSelect from '../components/ui/AppSelect.vue'
 import { GROUP_ALL, groupOptions } from '../lib/groupFilter'
 import { SERVICE_ALL, SERVICE_NONE, serviceOptions } from '../lib/serviceFilter'
@@ -161,9 +163,11 @@ function clearFilters(): void {
 // ─── manual trigger modal ─────────────────────────────────────────────────────
 
 const triggerModalOpen    = ref(false)
-const triggerForm         = ref({ projectId: '', branch: '', commit: '', serverId: '' })
+const triggerForm         = ref({ projectId: '', branch: '', commit: '', tag: '', serverId: '' })
 const triggerParams       = ref<Record<string, string>>({})
 const triggerDefs         = ref<ParamDef[]>([])
+const triggerBranches     = ref<string[]>([])
+const triggerTags         = ref<string[]>([])
 // 手动触发可选主机:该项目流水线部署节点配置过且可见的机器(空 → 不渲染该项)。
 const triggerHosts        = ref<RunHost[]>([])
 const triggerBranchError  = ref('')
@@ -212,9 +216,11 @@ async function loadServices(): Promise<void> {
 }
 
 function openTriggerModal(): void {
-  triggerForm.value        = { projectId: '', branch: '', commit: '', serverId: '' }
+  triggerForm.value        = { projectId: '', branch: '', commit: '', tag: '', serverId: '' }
   triggerParams.value       = {}
   triggerDefs.value         = []
+  triggerBranches.value     = []
+  triggerTags.value         = []
   triggerHosts.value        = []
   triggerBranchError.value  = ''
   triggerProjectError.value = ''
@@ -234,16 +240,28 @@ function onProjectSelect(): void {
   // 切项目 → 主机候选重拉并清空已选(候选只属于当前项目)。
   triggerForm.value.serverId = ''
   triggerHosts.value = []
-  // Auto-fill branch from project's defaultBranch when user picks a project
+  triggerForm.value.branch = ''
+  triggerForm.value.commit = ''
+  triggerForm.value.tag = ''
+  triggerBranches.value = []
+  triggerTags.value = []
+  triggerBranchError.value = ''
   const proj = selectedProject.value
-  if (proj && !triggerForm.value.branch) {
-    triggerForm.value.branch = proj.defaultBranch || ''
-  }
+  if (proj) triggerForm.value.branch = proj.defaultBranch || ''
   // 切项目 → 重载类型化参数定义(P0);清空已填值。失败静默回退自由 KV。
   triggerParams.value = {}
   triggerDefs.value = []
   const pid = triggerForm.value.projectId
   if (pid) {
+    if (selectedProject.value?.repoUrl) {
+      void listRefs(pid)
+        .then((refs) => {
+          if (triggerForm.value.projectId !== pid) return
+          triggerBranches.value = refs.branches.map((r) => r.name)
+          triggerTags.value = refs.tags.map((r) => r.name)
+        })
+        .catch(() => {})
+    }
     void getParameters(pid)
       .then((defs) => {
         if (triggerForm.value.projectId === pid) triggerDefs.value = defs
@@ -255,6 +273,10 @@ function onProjectSelect(): void {
       })
       .catch(() => {})
   }
+}
+
+function onTriggerTagInput(): void {
+  triggerForm.value.commit = ''
 }
 
 async function handleTriggerSubmit(): Promise<void> {
@@ -285,8 +307,13 @@ async function handleTriggerSubmit(): Promise<void> {
   triggerSubmitting.value = true
   try {
     const input: TriggerManualInput = { branch }
-    const commit = triggerForm.value.commit.trim()
-    if (commit) input.commit = commit
+    const tag = triggerForm.value.tag.trim()
+    if (tag) {
+      input.tag = tag
+    } else {
+      const commit = triggerForm.value.commit.trim()
+      if (commit) input.commit = commit
+    }
     if (triggerForm.value.serverId) input.serverId = triggerForm.value.serverId
     if (Object.keys(triggerParams.value).length) input.params = triggerParams.value
 
@@ -781,18 +808,18 @@ function isFailedStatus(status: RunStatus): boolean {
               {{ t('runs.fieldBranch') }}
               <span class="field-hint-inline">{{ t('runs.fieldBranchHint') }}</span>
             </label>
-            <input
-              id="trigger-branch"
+            <RefPicker
+              input-id="trigger-branch"
               v-model="triggerForm.branch"
-              class="field-input field-input--mono"
-              :class="{ 'field-input--error': triggerBranchError }"
-              type="text"
-              placeholder="main"
-              autocomplete="off"
+              :branches="triggerBranches"
+              :tags="[]"
               :disabled="triggerSubmitting"
-              :aria-invalid="triggerBranchError ? 'true' : undefined"
-              :aria-describedby="triggerBranchError ? 'trigger-branch-err' : undefined"
-              @input="triggerBranchError = ''"
+              :has-error="!!triggerBranchError"
+              :described-by="triggerBranchError ? 'trigger-branch-err' : undefined"
+              placeholder="main"
+              :branches-label="t('projects.refGroupBranches')"
+              :tags-label="t('projects.refGroupTags')"
+              @update:model-value="triggerBranchError = ''"
             />
             <span
               v-if="triggerBranchError"
@@ -800,6 +827,25 @@ function isFailedStatus(status: RunStatus): boolean {
               class="field-error"
               role="alert"
             >{{ triggerBranchError }}</span>
+          </div>
+
+          <!-- Tag (optional; fixed commit takes precedence over branch/commit) -->
+          <div class="field">
+            <label class="field-label" for="trigger-tag">
+              {{ t('runs.fieldTag') }}
+              <span class="field-hint-inline">{{ t('runs.fieldTagHint') }}</span>
+            </label>
+            <RefPicker
+              input-id="trigger-tag"
+              v-model="triggerForm.tag"
+              :branches="[]"
+              :tags="triggerTags"
+              :disabled="triggerSubmitting"
+              :placeholder="t('runs.tagPlaceholder')"
+              :branches-label="t('projects.refGroupBranches')"
+              :tags-label="t('projects.refGroupTags')"
+              @update:model-value="onTriggerTagInput"
+            />
           </div>
 
           <!-- Commit (optional) -->
@@ -815,7 +861,7 @@ function isFailedStatus(status: RunStatus): boolean {
               type="text"
               :placeholder="t('runs.commitPlaceholder')"
               autocomplete="off"
-              :disabled="triggerSubmitting"
+              :disabled="triggerSubmitting || !!triggerForm.tag.trim()"
             />
           </div>
 

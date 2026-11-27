@@ -26,7 +26,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const form        = ref({ branch: '', commit: '', serverId: '' })
+const form        = ref({ branch: '', commit: '', tag: '', serverId: '' })
 const params      = ref<Record<string, string>>({})
 const defs        = ref<ParamDef[]>([])
 const branchError = ref('')
@@ -49,7 +49,7 @@ watch(
   () => [props.open, props.project?.id] as const,
   ([open, projectId]) => {
     if (!open || !props.project) return
-    form.value        = { branch: props.project.defaultBranch || '', commit: '', serverId: '' }
+    form.value        = { branch: props.project.defaultBranch || '', commit: '', tag: '', serverId: '' }
     params.value      = {}
     defs.value        = []
     hosts.value       = []
@@ -114,6 +114,10 @@ function onBranchInput(value?: string): void {
   if (props.project) void loadCommitOptions(props.project.id, value ?? form.value.branch)
 }
 
+function onTagInput(): void {
+  form.value.commit = ''
+}
+
 function close(): void {
   if (submitting.value) return
   emit('update:open', false)
@@ -143,8 +147,13 @@ async function handleSubmit(): Promise<void> {
   try {
     const input: TriggerManualInput = {}
     if (branch) input.branch = branch
-    const commit = form.value.commit.trim()
-    if (commit) input.commit = commit
+    const tag = form.value.tag.trim()
+    if (tag) {
+      input.tag = tag
+    } else {
+      const commit = form.value.commit.trim()
+      if (commit) input.commit = commit
+    }
     if (form.value.serverId) input.serverId = form.value.serverId
     if (Object.keys(params.value).length) input.params = params.value
 
@@ -231,7 +240,7 @@ async function handleSubmit(): Promise<void> {
               input-id="trigger-branch"
               v-model="form.branch"
               :branches="branches"
-              :tags="tags"
+              :tags="[]"
               :disabled="submitting"
               :has-error="!!branchError"
               :described-by="branchError ? 'trigger-branch-err' : undefined"
@@ -248,6 +257,25 @@ async function handleSubmit(): Promise<void> {
             >{{ branchError }}</span>
           </div>
 
+          <!-- Tag (optional; fixed commit takes precedence over branch/commit) -->
+          <div v-if="project.repoUrl" class="field">
+            <label class="field-label" for="trigger-tag">
+              {{ t('projects.tag') }}
+              <span class="field-hint-inline">{{ t('projects.tagHint') }}</span>
+            </label>
+            <RefPicker
+              input-id="trigger-tag"
+              v-model="form.tag"
+              :branches="[]"
+              :tags="tags"
+              :disabled="submitting"
+              :placeholder="t('projects.tagPlaceholder')"
+              :branches-label="t('projects.refGroupBranches')"
+              :tags-label="t('projects.refGroupTags')"
+              @update:model-value="onTagInput"
+            />
+          </div>
+
           <!-- Commit (optional) -->
           <div v-if="project.repoUrl" class="field">
             <label class="field-label" for="trigger-commit">
@@ -262,7 +290,7 @@ async function handleSubmit(): Promise<void> {
               :placeholder="t('projects.commitPlaceholder')"
               autocomplete="off"
               list="trigger-commit-options"
-              :disabled="submitting"
+              :disabled="submitting || !!form.tag.trim()"
             />
             <!-- 代码管理区:当前分支最近 commit 下拉建议(短 sha — 首行说明) -->
             <datalist id="trigger-commit-options">
